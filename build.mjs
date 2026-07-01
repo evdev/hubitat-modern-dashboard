@@ -31,6 +31,16 @@ const HPM_BASE_URL =
   process.env.HPM_BASE_URL ??
   "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist";
 
+const APP_AUTHOR = "Ephrayim (evdev)";
+const GITHUB_URL = "https://github.com/evdev/hubitat-modern-dashboard";
+const LICENSE_NAME = "Apache License 2.0";
+const LICENSE_URL =
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/LICENSE";
+const PACKAGE_DESCRIPTION =
+  "Minimal-setup Hubitat dashboard: select your devices and you're done. Devices are grouped by room with clean names (room prefixes removed automatically). Installable PWA; fully hosted on your hub with no outside dependencies.";
+const FEATURE_SUMMARY =
+  "Modern, mobile-first Hubitat dashboard for lights (switches, dimmers, color temperature, RGB), thermostats (setpoint dial, mode, fan), temperature sensors, and music/media players (Sonos, Echo Speaks, AirPlay, Chromecast). Room-grouped layout with per-room on/off, drag-to-dim sliders, sticky search, and collapsible rooms. Works on local and cloud URLs with no Maker API; installable as a PWA from the cloud link. Dark, light, and auto themes; instant LAN updates via WebSocket when available.";
+
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";
 const FILE_MANAGER_ASSETS = [
@@ -184,6 +194,14 @@ function fileManagerAssetList() {
   return FILE_MANAGER_ASSETS.map((a) => `   - ${a.name}`).join("\n");
 }
 
+function substituteGroovyTemplate(template) {
+  return template
+    .replaceAll("__APP_VERSION__", pkg.version)
+    .replaceAll("__APP_AUTHOR__", APP_AUTHOR)
+    .replaceAll("__GITHUB_URL__", GITHUB_URL)
+    .replaceAll("__LICENSE_NAME__", LICENSE_NAME);
+}
+
 mkdirSync(upload, { recursive: true });
 
 copyFileSync(join(root, "src", "index.html"), join(upload, "mld-index.html"));
@@ -202,7 +220,8 @@ assertUnderHubLimit("mld-app-post.js", part2Out);
 writeFileSync(join(upload, "mld-app.js"), part1Out);
 writeFileSync(join(upload, "mld-app-post.js"), part2Out);
 
-const groovy = readFileSync(join(root, "app", "ModernLightsDashboard.groovy.template"), "utf8");
+const groovyRaw = readFileSync(join(root, "app", "ModernLightsDashboard.groovy.template"), "utf8");
+const groovy = substituteGroovyTemplate(groovyRaw);
 writeFileSync(join(dist, "ModernLightsDashboard.groovy"), groovy);
 
 // Hubitat bundle manifest (install.txt / update.txt format)
@@ -258,15 +277,14 @@ execSync(`cd "${staging}" && zip -rq "${bundleZip}" .`, { stdio: "inherit" });
 const hpmManifest = {
   packageName: APP_DISPLAY_NAME,
   minimumHEVersion: "2.3.0",
-  author: "you",
+  author: APP_AUTHOR,
   version: pkg.version,
   dateReleased: new Date().toISOString().slice(0, 10),
-  licenseFile: "",
-  releaseNotes:
-    "0.1.4: HPM update detection fix — manifest asset URLs now track master; bump version for hubs that matched 0.1.3 without deploying files.\n" +
-    "Modern, mobile-first Hubitat dashboard for lights (switches, dimmers, color temperature, RGB), thermostats (setpoint dial, mode, fan), temperature sensors, and music/media players (Sonos, Echo Speaks, AirPlay, Chromecast). Room-grouped layout with per-room on/off, drag-to-dim sliders, sticky search, and collapsible rooms. Works on local and cloud URLs with no Maker API; installable as a PWA from the cloud link. Dark, light, and auto themes; instant LAN updates via WebSocket when available.",
-  documentationLink: "",
+  licenseFile: LICENSE_URL,
+  releaseNotes: `${pkg.version}: ${PACKAGE_DESCRIPTION}\n${FEATURE_SUMMARY}`,
+  documentationLink: `${GITHUB_URL}#readme`,
   communityLink: "",
+  gitHubUrl: GITHUB_URL,
   apps: [
     {
       id: HPM_APP_ID,

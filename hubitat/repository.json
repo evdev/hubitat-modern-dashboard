@@ -7,7 +7,7 @@
 			"name": "Modern Dashboard",
 			"category": "Convenience",
 			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/packageManifest.json",
-			"description": "Modern mobile-first Hubitat dashboard for lights (dim/RGB/CT), thermostats, temperature sensors, and music players — room-grouped with local and cloud access, no Maker API, PWA installable.",
+			"description": "Minimal-setup Hubitat dashboard: select your devices and you're done. Devices are grouped by room with clean names (room prefixes removed automatically). Installable PWA; fully hosted on your hub with no outside dependencies.",
 			"tags": [
 				"Cloud",
 				"Dashboards",

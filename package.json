@@ -1,9 +1,9 @@
 {
   "name": "hubitat-dashboard",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
-  "description": "Modern Dashboard — mobile-first Hubitat companion for lights, thermostats, temperature sensors, and music/media players, with local and cloud access.",
+  "description": "Minimal-setup Hubitat dashboard: select your devices and you're done. Room-grouped layout with clean names, installable PWA, fully hosted on your hub.",
   "scripts": {
     "build": "node build.mjs",
     "preview": "node preview/server.mjs"

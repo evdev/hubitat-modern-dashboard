@@ -1,19 +1,20 @@
-// ===========================================================================
-// Modern Dashboard - Hubitat companion app (small; no embedded assets)
+// Modern Dashboard v__APP_VERSION__
+// Author: __APP_AUTHOR__
+// Distribution: __GITHUB_URL__
+// License: __LICENSE_NAME__ (see LICENSE in repository)
 //
 // INSTALL:
 //   1. Paste this file into Apps Code, enable OAuth, Save.
 //   2. Upload the 9 files from dist/upload/ to Settings -> File Manager:
 //        mld-index.html, mld-app.css, mld-app-pre.js, mld-app.js, mld-app-post.js,
 //        mld-manifest.webmanifest, mld-sw.js, mld-icon-192.b64, mld-icon-512.b64
-//   3. Apps -> Add User App -> Modern Dashboard -> select lights -> Done
-// ===========================================================================
+//   3. Apps -> Add User App -> Modern Dashboard -> select devices -> Done
 
 definition(
     name: "Modern Dashboard",
     namespace: "modernlights",
-    author: "you",
-    description: "Mobile-first dashboard for lights (dim/RGB/CT), thermostats, temp sensors, and music players — grouped by room with dimmer sliders, climate dial, and media transport. Local + cloud URLs; PWA-ready. UI files live in File Manager; this app serves them and device data.",
+    author: "__APP_AUTHOR__",
+    description: "Minimal-setup Hubitat dashboard: select your devices and you're done. Room-grouped layout with clean names (room prefixes removed automatically). Installable PWA; fully hosted on your hub with no outside dependencies.",
     category: "My Apps",
     iconUrl: "",
     iconX2Url: "",
@@ -31,6 +32,13 @@ def mainPage() {
     def localUrl = dashboardUrl(true)
     def cloudUrl = dashboardUrl(false)
     dynamicPage(name: "mainPage", uninstall: true, install: true) {
+        section("About Modern Dashboard", hideable: true, hidden: false) {
+            paragraph "<small><b>Minimal setup:</b> select your devices below — the dashboard groups them by Hubitat room and lays them out automatically.</small>"
+            paragraph "<small><b>Smart names:</b> room names are stripped from device labels so you don't see redundant text like \"Kitchen Kitchen Light\".</small>"
+            paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen.</small>"
+            paragraph "<small><b>Hub-only:</b> the UI and API are served entirely from your Hubitat hub — no Maker API or external cloud services.</small>"
+            paragraph "<small>Version __APP_VERSION__ · __APP_AUTHOR__ · __LICENSE_NAME__ · <a href='__GITHUB_URL__' target='_blank'>Source</a></small>"
+        }
         section("Devices") {
             input "lights", "capability.switch", title: "Select your light devices (switches and dimmers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
@@ -63,7 +71,7 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Options") {
-            input "dashboardName", "string", title: "Dashboard name", defaultValue: "Lights", required: false
+            input "dashboardName", "string", title: "Dashboard name", defaultValue: "mDash", required: false
             input "pollSec", "number", title: "Refresh interval (seconds)", defaultValue: 5, required: false, range: "2..60"
             input "enableWs", "bool", title: "Enable real-time updates on local network (eventsocket)", defaultValue: true, required: false
         }
@@ -510,6 +518,10 @@ def renderIndex() {
     if (iconHref) {
         html = html.replace('href="icons/icon-192.png"', "href=\"${iconHref}\"")
     }
+    def title = htmlEsc(resolvedDashboardName())
+    html = html.replace('<title>mDash</title>', "<title>${title}</title>")
+    html = html.replace('id="dashboard-title">mDash</span>', "id=\"dashboard-title\">${title}</span>")
+    html = html.replace('name="apple-mobile-web-app-title" content="mDash"', "name=\"apple-mobile-web-app-title\" content=\"${title}\"")
     if (token) {
         def q = "?access_token=${token}"
         html = html.replace('href="app.css"', "href=\"app.css${q}\"")
@@ -553,7 +565,8 @@ def renderManifest() {
     def q = token ? "?access_token=${token}" : ""
     def icon192 = readLocalAsset(assetIcon192File())?.trim()
     def out = new StringBuilder()
-    out << '{"name":"Modern Dashboard","short_name":"Lights"'
+    def pwaName = (dashboardName?.trim()) ?: "mDash"
+    out << '{"name":' << jsonStr(pwaName) << ',"short_name":' << jsonStr(pwaName)
     out << ',"start_url":"./dashboard' << q << '"'
     out << ',"scope":"./"'
     out << ',"display":"standalone"'
@@ -593,7 +606,7 @@ def renderData() {
     out << "{\"config\":{"
     out << "\"pollIntervalMs\":" << (pollSec ? (pollSec.toInteger() * 1000) : 5000)
     out << ",\"useWebSocket\":" << (enableWs == null ? true : enableWs)
-    out << ",\"dashboardName\":" << jsonStr((dashboardName?.trim()) ?: "Lights")
+    out << ",\"dashboardName\":" << jsonStr((dashboardName?.trim()) ?: "mDash")
     out << roomOrderJsonFragment()
     out << favoritesJsonFragment()
     out << "},\"rooms\":["
@@ -897,6 +910,19 @@ def firstMeaningfulAttr(d, skipAttr) {
         }
     } catch (e) {}
     return null
+}
+
+def resolvedDashboardName() {
+    return (dashboardName?.trim()) ?: "mDash"
+}
+
+def htmlEsc(s) {
+    if (s == null) return ""
+    return s.toString()
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
 }
 
 def jsonStr(s) {

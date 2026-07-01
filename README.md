@@ -1,10 +1,11 @@
 # Modern Dashboard for Hubitat Elevation
 
-A modern, mobile-first dashboard for Hubitat — lights, thermostats, and temperature
-sensors grouped by room, with prominent per-room on/off controls and drag-to-dim
-sliders. It's delivered by a single companion Hubitat app that serves its own UI
-and data over **both** the local URL and Hubitat's **cloud proxy**, so the same
-dashboard works at home and remotely.
+A minimal-setup, mobile-first Hubitat dashboard — **select your devices and you're
+done**. The app groups everything by Hubitat room, strips redundant room prefixes
+from device names, and lays out lights, thermostats, sensors, locks, and media
+players in a clean, touch-friendly UI. The dashboard is **fully hosted on your
+hub** (no Maker API or external services) and works over both the local URL and
+Hubitat's **cloud proxy**, so the same experience works at home and remotely.
 
 Supports dimmers, switches, color-temperature and RGB bulbs, thermostats (dial
 setpoints, mode, fan), music and media speakers (Sonos, Echo Speaks, AirPlay,
@@ -12,8 +13,24 @@ Chromecast — play/pause/stop, skip when supported, volume, current track), and
 read-only temperature sensors. Designed to show ~130
 lights on one page, comfortably within Hubitat's 128 KB per-response cloud cap.
 
+## Get started in minutes
+
+1. **Minimal setup** — install the app, pick your devices in the Hubitat app
+   preferences, and open the dashboard link. Hubitat room assignment drives the
+   layout automatically; no manual grouping or naming rules.
+2. **Smart names** — device labels have room prefixes removed when the room is
+   already shown in the header (e.g. "Kitchen Light" under the Kitchen room, not
+   "Kitchen Kitchen Light").
+3. **Installable PWA** — open the cloud URL on your phone and add to your home
+   screen for a standalone app icon (Android Chrome: Install app; iOS: Add to
+   Home Screen).
+4. **Hub-only** — the UI, API, and File Manager assets are served entirely from
+   your Hubitat hub. No third-party cloud backend required.
+
 ## Why this design
 
+- **Zero-config layout** — pick devices once; rooms, ordering, and display names
+  are handled for you based on Hubitat room assignments.
 - **Looks better than the built-in dashboard** — modern dark/light UI, large touch
   targets, sticky search, collapsible rooms, smooth dimmer sliders, thermostat dial.
 - **Portable across hubs** — the same app code works on any hub. No file edits,
@@ -179,3 +196,11 @@ devices. Nothing to edit.
   may change. Polling is the reliable baseline.
 - Theme (Dark / Light / Auto) is in the topbar overflow menu (⋯) and saved in
   this browser; Auto follows your system appearance.
+
+## License
+
+Copyright 2026 Ephrayim (evdev)
+
+Licensed under the [Apache License, Version 2.0](LICENSE). See [LICENSE](LICENSE) for the full text.
+
+Source: [https://github.com/evdev/hubitat-modern-dashboard](https://github.com/evdev/hubitat-modern-dashboard)
