@@ -40,6 +40,7 @@ def mainPage() {
             paragraph "<small>Version __APP_VERSION__ · __APP_AUTHOR__ · __LICENSE_NAME__ · <a href='__GITHUB_URL__' target='_blank'>Source</a></small>"
         }
         section("Devices") {
+            paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
             input "lights", "capability.switch", title: "Select your light devices (switches and dimmers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "thermostats", "capability.thermostat", title: "Select your thermostats",
@@ -475,7 +476,7 @@ def renderPngFromBase64Asset(String b64FileName, String missingMsg) {
 }
 
 def missingAssetHtml() {
-    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup</title></head><body style="font-family:system-ui;padding:24px;max-width:480px;margin:auto"><h1>Setup required</h1><p>Upload these files to <b>Settings → File Manager</b>:</p><ul><li>mld-index.html</li><li>mld-app.css</li><li>mld-app-pre.js</li><li>mld-app.js</li><li>mld-app-post.js</li><li>mld-manifest.webmanifest</li><li>mld-sw.js</li><li>mld-icon-192.b64</li><li>mld-icon-512.b64</li></ul><p>Then reopen the Modern Dashboard app.</p></body></html>"""
+    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup</title></head><body style="font-family:system-ui;padding:24px;max-width:520px;margin:auto;line-height:1.5"><h1>Setup required</h1><p>Modern Dashboard serves its UI from File Manager on your hub. Upload these nine files to <b>Settings &rarr; File Manager</b> (root folder, exact names):</p><ul><li>mld-index.html</li><li>mld-app.css</li><li>mld-app-pre.js</li><li>mld-app.js</li><li>mld-app-post.js</li><li>mld-manifest.webmanifest</li><li>mld-sw.js</li><li>mld-icon-192.b64</li><li>mld-icon-512.b64</li></ul><p><b>Easiest install:</b> use <a href="__GITHUB_URL__#readme">Hubitat Package Manager</a> — OAuth and File Manager files are deployed automatically.</p><p>Then reopen the Modern Dashboard app, select your devices, and open the dashboard link.</p></body></html>"""
 }
 
 // ---------------------------------------------------------------------------

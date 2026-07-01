@@ -123,7 +123,7 @@ No manual OAuth toggle or File Manager upload is needed when installing via HPM.
 5. **Settings → File Manager** — upload the 9 files from `dist/upload/` (or extract `file-manager/` from the bundle zip):
    - `mld-index.html`, `mld-app.css`, `mld-app-pre.js`, `mld-app.js`, `mld-app-post.js`
    - `mld-manifest.webmanifest`, `mld-sw.js`, `mld-icon-192.b64`, `mld-icon-512.b64`
-6. **Apps → Add User App → Modern Dashboard** → select lights, thermostats, and/or temperature sensors → **Done**.
+6. **Apps → Add User App → Modern Dashboard** → select your devices → **Done**.
 7. Open the **Cloud** URL shown in the app page and install as a PWA (see below).
 
 ## Install on a hub (manual paste)
@@ -138,8 +138,13 @@ No manual OAuth toggle or File Manager upload is needed when installing via HPM.
 
 > If you are updating an existing install, re-paste the new `dist/ModernLightsDashboard.groovy` (or re-import the bundle) so the hub learns new routes (`/manifest.webmanifest`, `/sw.js`, `/icons/*`), then upload any new `mld-*` files.
 5. **Apps → Add User App → Modern Dashboard**.
-6. Select your light, thermostat, and temperature sensor devices; set options; click **Done**.
+6. Select your devices; set options; click **Done**.
 7. Open the **Cloud** URL shown in the app page and install as a PWA (see below).
+
+## Community and wider distribution
+
+- **Forum release post:** draft in [`docs/hubitat-community-post.md`](docs/hubitat-community-post.md). After you publish on the [Hubitat Community](https://community.hubitat.com/), set `COMMUNITY_LINK` in [`build.mjs`](build.mjs) (or `COMMUNITY_LINK=... npm run build`) to your thread URL and rebuild so HPM shows the link.
+- **HPM community registry:** see [`docs/hpm-registry.md`](docs/hpm-registry.md) for submitting a PR so the package appears in HPM search for all users (optional; custom repo install works today).
 
 ## Install as a PWA (cloud URL)
 
@@ -201,6 +206,10 @@ devices. Nothing to edit.
 
 Copyright 2026 Ephrayim (evdev)
 
-Licensed under the [Apache License, Version 2.0](LICENSE). See [LICENSE](LICENSE) for the full text.
+Licensed under the [Apache License, Version 2.0](LICENSE). See [LICENSE](LICENSE) and [NOTICE](NOTICE) for attribution.
 
 Source: [https://github.com/evdev/hubitat-modern-dashboard](https://github.com/evdev/hubitat-modern-dashboard)
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).

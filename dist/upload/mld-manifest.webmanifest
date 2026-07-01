@@ -1,6 +1,7 @@
 {
-  "name": "Modern Dashboard",
-  "short_name": "Lights",
+  "name": "mDash",
+  "short_name": "mDash",
+  "description": "Minimal-setup Hubitat dashboard — select devices, control from your home screen.",
   "start_url": "./dashboard",
   "scope": "./",
   "display": "standalone",

@@ -40,6 +40,14 @@ const PACKAGE_DESCRIPTION =
   "Minimal-setup Hubitat dashboard: select your devices and you're done. Devices are grouped by room with clean names (room prefixes removed automatically). Installable PWA; fully hosted on your hub with no outside dependencies.";
 const FEATURE_SUMMARY =
   "Modern, mobile-first Hubitat dashboard for lights (switches, dimmers, color temperature, RGB), thermostats (setpoint dial, mode, fan), temperature sensors, and music/media players (Sonos, Echo Speaks, AirPlay, Chromecast). Room-grouped layout with per-room on/off, drag-to-dim sliders, sticky search, and collapsible rooms. Works on local and cloud URLs with no Maker API; installable as a PWA from the cloud link. Dark, light, and auto themes; instant LAN updates via WebSocket when available.";
+// Set to your Hubitat Community thread URL after posting docs/hubitat-community-post.md
+const COMMUNITY_LINK =
+  process.env.COMMUNITY_LINK ?? `${GITHUB_URL}/discussions`;
+const HPM_REPO_PACKAGE_ID = "e8f4a1c2-3b5d-4e9f-a7c6-1d2e3f4a5b6c";
+const REPOSITORY_JSON_URL =
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/repository.json";
+const PACKAGE_MANIFEST_URL =
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/packageManifest.json";
 
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";
@@ -202,6 +210,31 @@ function substituteGroovyTemplate(template) {
     .replaceAll("__LICENSE_NAME__", LICENSE_NAME);
 }
 
+function changelogEntryForVersion(version) {
+  const changelogPath = join(root, "CHANGELOG.md");
+  let changelog;
+  try {
+    changelog = readFileSync(changelogPath, "utf8");
+  } catch {
+    return PACKAGE_DESCRIPTION;
+  }
+  const escaped = version.replace(/\./g, "\\.");
+  const re = new RegExp(`## ${escaped}\\s+([\\s\\S]*?)(?=\\n## |$)`);
+  const match = changelog.match(re);
+  if (!match) return PACKAGE_DESCRIPTION;
+  return match[1]
+    .trim()
+    .split("\n")
+    .map((line) => line.replace(/^- /, ""))
+    .filter(Boolean)
+    .join("; ");
+}
+
+function hpmReleaseNotes() {
+  const entry = changelogEntryForVersion(pkg.version);
+  return `${pkg.version}: ${entry}\n${FEATURE_SUMMARY}`;
+}
+
 mkdirSync(upload, { recursive: true });
 
 copyFileSync(join(root, "src", "index.html"), join(upload, "mld-index.html"));
@@ -240,22 +273,29 @@ for (const { name } of FILE_MANAGER_ASSETS) {
 
 writeFileSync(
   join(staging, "file-manager", "README.txt"),
-  `After importing the bundle on your hub:
+  `Modern Dashboard — File Manager assets
 
-1. Open Settings → File Manager
-2. Upload these 9 files from this folder (names must match exactly):
+Minimal setup: after the Groovy app is installed, upload these nine files (exact names).
+Then Apps → Add User App → ${APP_DISPLAY_NAME} → select your devices → Done.
+The dashboard groups devices by Hubitat room automatically.
+
+Installable PWA: open the cloud URL from the app page on your phone.
+Fully hosted on your hub — no Maker API or external services.
+
+Upload to Settings → File Manager (root folder):
 ${fileManagerAssetList()}
-3. Apps → Add User App → ${APP_DISPLAY_NAME}
-4. Enable OAuth on the app in Apps Code if not already enabled
-5. Select lights and open the dashboard URL shown in the app
 
 For automatic OAuth and File Manager deployment, install via Hubitat Package Manager instead.
+See ${GITHUB_URL}#readme
 `
 );
 
 writeFileSync(
   join(staging, "BUNDLE-README.txt"),
   `Modern Dashboard — Hubitat bundle
+
+Minimal setup: select your devices in the app — rooms and layout are automatic.
+Installable PWA via the cloud URL. Fully hosted on your hub.
 
 IMPORT (installs the Groovy app):
   Settings → Developer Tools → Bundles → Import ZIP
@@ -264,9 +304,11 @@ IMPORT (installs the Groovy app):
 THEN (required — bundles cannot install File Manager files or enable OAuth):
   Upload the files from the file-manager/ folder to Settings → File Manager
   Open Apps Code → ${APP_DISPLAY_NAME} → enable OAuth → Save
+  Apps → Add User App → ${APP_DISPLAY_NAME} → select devices → Done
 
 HPM INSTALL (recommended):
-  Install via Hubitat Package Manager — OAuth and File Manager files are handled automatically.
+  Hubitat Package Manager — OAuth and File Manager files are handled automatically.
+  Custom repo: ${REPOSITORY_JSON_URL}
 `
 );
 
@@ -281,9 +323,9 @@ const hpmManifest = {
   version: pkg.version,
   dateReleased: new Date().toISOString().slice(0, 10),
   licenseFile: LICENSE_URL,
-  releaseNotes: `${pkg.version}: ${PACKAGE_DESCRIPTION}\n${FEATURE_SUMMARY}`,
+  releaseNotes: hpmReleaseNotes(),
   documentationLink: `${GITHUB_URL}#readme`,
-  communityLink: "",
+  communityLink: COMMUNITY_LINK,
   gitHubUrl: GITHUB_URL,
   apps: [
     {
@@ -308,6 +350,29 @@ mkdirSync(hubitat, { recursive: true });
 writeFileSync(join(hubitat, "packageManifest.json"), hpmManifestJson);
 writeFileSync(join(dist, "packageManifest.json"), hpmManifestJson);
 
+const hpmRepository = {
+  author: APP_AUTHOR,
+  gitHubUrl: GITHUB_URL,
+  packages: [
+    {
+      id: HPM_REPO_PACKAGE_ID,
+      name: APP_DISPLAY_NAME,
+      category: "Convenience",
+      location: PACKAGE_MANIFEST_URL,
+      description: PACKAGE_DESCRIPTION,
+      tags: [
+        "Cloud",
+        "Dashboards",
+        "Lights & Switches",
+        "Climate Control",
+        "Temperature & Humidity",
+        "Multimedia",
+      ],
+    },
+  ],
+};
+writeFileSync(join(hubitat, "repository.json"), JSON.stringify(hpmRepository, null, "\t") + "\n");
+
 const kb = (p) => (readFileSync(p).length / 1024).toFixed(1);
 console.log("Built:");
 console.log(`  dist/ModernLightsDashboard.groovy       ${kb(join(dist, "ModernLightsDashboard.groovy"))} KB`);
@@ -316,6 +381,7 @@ console.log(`  dist/upload/mld-app.js                  ${kb(join(upload, "mld-ap
 console.log(`  dist/upload/mld-app-post.js             ${kb(join(upload, "mld-app-post.js"))} KB`);
 console.log(`  dist/upload/                            (${FILE_MANAGER_ASSETS.length} File Manager assets)`);
 console.log(`  hubitat/packageManifest.json            (HPM: app + oauth + ${FILE_MANAGER_ASSETS.length} files)`);
+console.log(`  hubitat/repository.json                 (HPM custom repository listing)`);
 console.log(`  dist/packageManifest.json               (copy of HPM manifest)`);
 if (HPM_BASE_URL.includes("UPDATE_USER")) {
   console.log("\nHPM: set HPM_BASE_URL to your hosted dist/ raw URL before publishing, then rebuild.");
