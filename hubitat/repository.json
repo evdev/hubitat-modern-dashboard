@@ -1,0 +1,21 @@
+{
+	"author": "evdev",
+	"gitHubUrl": "https://github.com/evdev/hubitat-modern-dashboard",
+	"packages": [
+		{
+			"id": "e8f4a1c2-3b5d-4e9f-a7c6-1d2e3f4a5b6c",
+			"name": "Modern Dashboard",
+			"category": "Convenience",
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/packageManifest.json",
+			"description": "Modern mobile-first Hubitat dashboard for lights (dim/RGB/CT), thermostats, temperature sensors, and music players — room-grouped with local and cloud access, no Maker API, PWA installable.",
+			"tags": [
+				"Cloud",
+				"Dashboards",
+				"Lights & Switches",
+				"Climate Control",
+				"Temperature & Humidity",
+				"Multimedia"
+			]
+		}
+	]
+}
