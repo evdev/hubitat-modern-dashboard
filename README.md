@@ -77,18 +77,23 @@ Outputs:
 Set `HPM_BASE_URL` to the raw URL prefix where you host `dist/` (e.g. a GitHub release or tagged path) before publishing to HPM:
 
 ```bash
-HPM_BASE_URL=https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/v0.1.3/dist node build.mjs
+HPM_BASE_URL=https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist node build.mjs
 ```
 
 The Groovy app does **not** embed the UI (Hubitat cannot compile huge base64 blobs). The app reads nine files from File Manager at runtime. The JS is split into `mld-app-pre.js` (constants/helpers), `mld-app.js` (core logic), and `mld-app-post.js` (render/commands/init) to keep each file under the hub's single-file serving limit (~128 KB). PWA assets (`mld-manifest.webmanifest`, `mld-sw.js`, icon `.b64` files) enable install-from-home-screen on the cloud URL. Icons are stored as base64 text in File Manager because Hubitat cannot reliably read binary PNG files from the hub filesystem.
 
 ## Install on a hub (HPM — recommended)
 
-1. Publish `hubitat/packageManifest.json` to your HPM repository (set `HPM_BASE_URL` and rebuild so URLs point at hosted `dist/ModernLightsDashboard.groovy` and `dist/upload/mld-*`).
-2. Hubitat → **Apps → Hubitat Package Manager** → install **Modern Dashboard**.
+1. In HPM **Settings**, add this custom repository URL (required for updates):
+   `https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/repository.json`
+2. **Install → By Repository** → find **Modern Dashboard** → install.
 3. HPM installs the Groovy app, **enables OAuth automatically**, and deploys all nine File Manager assets.
-4. **Apps → Add User App → Modern Dashboard** → select lights, thermostats, and/or temperature sensors → **Done**.
+4. **Apps → Add User App → Modern Dashboard** → select devices → **Done**.
 5. Open the **Cloud** URL shown in the app page and install as a PWA (see below).
+
+**Important for updates:** HPM must track the floating manifest on `master`, not a version-tagged URL like `v0.1.2/dist/packageManifest.json`. Tagged URLs freeze the version HPM sees and updates will never appear. If you previously installed from a tagged manifest URL, use **Unmatch** on the old entry, then install again via the custom repository above.
+
+If HPM shows the latest version but files did not change (for example after **Match Up**), use **Repair** on the package to redeploy assets without waiting for a version bump.
 
 No manual OAuth toggle or File Manager upload is needed when installing via HPM.
 
