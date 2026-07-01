@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#0b0d12" />
+<title>Lights</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192.png" />
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="topbar-row">
+      <h1 class="brand"><span class="brand-dot"></span><span id="dashboard-title">Lights</span></h1>
+      <div class="topbar-actions">
+        <button id="reorder-cancel" class="ghost-btn" type="button" hidden aria-label="Cancel reordering" title="Cancel reordering">Cancel</button>
+        <button id="reorder-done" class="ghost-btn reorder-done-btn" type="button" hidden aria-label="Save room order" title="Save room order">Done</button>
+        <button id="expand-all" class="ghost-btn icon-btn" type="button" aria-label="Collapse all rooms" title="Collapse all rooms"></button>
+        <button id="tstat-central-btn" class="topbar-central-btn" type="button" title="Control all thermostats" hidden>All thermostats</button>
+        <button id="music-central-btn" class="topbar-central-btn" type="button" title="Control all music" hidden>All music</button>
+        <button id="all-off" class="topbar-off-btn" type="button" title="Turn all lights off">All off</button>
+        <button id="all-on" class="topbar-on-btn" type="button" title="Turn all lights on">All on</button>
+        <div class="topbar-overflow">
+          <button id="topbar-overflow-btn" class="ghost-btn icon-btn" type="button" aria-label="More options" aria-haspopup="menu" aria-expanded="false" title="More options">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.75"/><circle cx="12" cy="12" r="1.75"/><circle cx="12" cy="19" r="1.75"/></svg>
+          </button>
+          <div id="topbar-overflow-menu" class="topbar-overflow-menu" role="menu" hidden>
+            <button id="menu-reorder" class="topbar-overflow-item" type="button" role="menuitem">Reorder</button>
+            <div class="topbar-overflow-sep" role="separator"></div>
+            <div class="topbar-overflow-label">Preferences</div>
+            <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="true">
+              <input type="checkbox" id="menu-haptics" />
+              <span>Haptic feedback</span>
+            </label>
+            <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="false">
+              <input type="checkbox" id="menu-tabs" />
+              <span>Show favorites, sensors, thermostats, music as tabs</span>
+            </label>
+            <div class="topbar-overflow-label">Theme</div>
+            <div id="menu-theme-segment" class="topbar-overflow-segment" role="group" aria-label="Theme">
+              <button type="button" class="topbar-overflow-seg" data-theme="dark" role="menuitemradio" aria-checked="false">Dark</button>
+              <button type="button" class="topbar-overflow-seg" data-theme="light" role="menuitemradio" aria-checked="false">Light</button>
+              <button type="button" class="topbar-overflow-seg" data-theme="auto" role="menuitemradio" aria-checked="true">Auto</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <nav class="quick-nav" aria-label="Quick access">
+      <button id="quick-lights" class="ghost-btn icon-btn" type="button" aria-label="Lights" title="Lights" hidden></button>
+      <button id="quick-locks" class="ghost-btn icon-btn" type="button" aria-label="Locks" title="Locks"></button>
+      <button id="quick-scenes" class="ghost-btn icon-btn" type="button" aria-label="Scenes" title="Scenes"></button>
+      <button id="quick-hub-mode" class="ghost-btn icon-btn" type="button" aria-label="Hub mode" title="Hub mode"></button>
+      <button id="quick-security" class="ghost-btn icon-btn" type="button" aria-label="Security" title="Security"></button>
+      <button id="quick-blinds" class="ghost-btn icon-btn" type="button" aria-label="Blinds" title="Blinds"></button>
+      <button id="quick-scheduling" class="ghost-btn icon-btn" type="button" aria-label="Scheduling" title="Scheduling"></button>
+      <button id="quick-sensors" class="ghost-btn icon-btn" type="button" aria-label="Sensors" title="Sensors"></button>
+      <button id="quick-thermostats" class="ghost-btn icon-btn" type="button" aria-label="Thermostats" title="Thermostats"></button>
+      <button id="quick-music" class="ghost-btn icon-btn" type="button" aria-label="Music" title="Music"></button>
+      <button id="quick-favorites" class="ghost-btn icon-btn" type="button" aria-label="Favorites" title="Favorites"></button>
+    </nav>
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="search" type="search" placeholder="Search lights or rooms" autocomplete="off" />
+    </div>
+  </header>
+
+  <main id="rooms" class="rooms"></main>
+
+  <div id="status" class="status" hidden></div>
+</div>
+<script src="app-pre.js"></script>
+<script src="app.js"></script>
+<script src="app-post.js"></script>
+</body>
+</html>

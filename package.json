@@ -1,0 +1,11 @@
+{
+  "name": "hubitat-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Modern Dashboard — a mobile-first Hubitat companion app for lights and thermostats.",
+  "scripts": {
+    "build": "node build.mjs",
+    "preview": "node preview/server.mjs"
+  }
+}

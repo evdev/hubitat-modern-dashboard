@@ -1,0 +1,1567 @@
+// ===========================================================================
+// Modern Dashboard - Hubitat companion app (small; no embedded assets)
+//
+// INSTALL:
+//   1. Paste this file into Apps Code, enable OAuth, Save.
+//   2. Upload the 9 files from dist/upload/ to Settings -> File Manager:
+//        mld-index.html, mld-app.css, mld-app-pre.js, mld-app.js, mld-app-post.js,
+//        mld-manifest.webmanifest, mld-sw.js, mld-icon-192.b64, mld-icon-512.b64
+//   3. Apps -> Add User App -> Modern Dashboard -> select lights -> Done
+// ===========================================================================
+
+definition(
+    name: "Modern Dashboard",
+    namespace: "modernlights",
+    author: "you",
+    description: "Modern mobile-first lights dashboard. UI files live in File Manager; this app serves them plus device data over local + cloud endpoints.",
+    category: "My Apps",
+    iconUrl: "",
+    iconX2Url: "",
+    iconX3Url: "",
+    oauth: [displayName: "Modern Dashboard", displayLink: ""]
+)
+
+preferences {
+    page(name: "mainPage", uninstall: true, install: true)
+}
+
+def mainPage() {
+    if (!state.accessToken) { createAccessToken() }
+    def assetsOk = assetsPresent()
+    def localUrl = dashboardUrl(true)
+    def cloudUrl = dashboardUrl(false)
+    dynamicPage(name: "mainPage", uninstall: true, install: true) {
+        section("Devices") {
+            input "lights", "capability.switch", title: "Select your light devices (switches and dimmers)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "thermostats", "capability.thermostat", title: "Select your thermostats",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "tempSensors", "capability.temperatureMeasurement", title: "Temperature sensors (display only)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "locks", "capability.lock", title: "Select your locks",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "musicPlayers", "capability.musicPlayer", title: "Music / media players (Sonos, Echo Speaks, AirPlay, …)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, …)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+        }
+        section("Other sensors") {
+            paragraph "<small>Select sensors to show in the Sensors popup. A device selected in multiple pickers below appears once, using the first matching type.</small>"
+            input "motionSensors", "capability.motionSensor", title: "Motion sensors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "contactSensors", "capability.contactSensor", title: "Contact / door / window sensors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "waterSensors", "capability.waterSensor", title: "Water / leak sensors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "presenceSensors", "capability.presenceSensor", title: "Presence sensors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "humiditySensors", "capability.relativeHumidityMeasurement", title: "Humidity sensors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "illuminanceSensors", "capability.illuminanceMeasurement", title: "Illuminance / light sensors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "smokeSensors", "capability.smokeDetector", title: "Smoke / CO detectors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+        }
+        section("Options") {
+            input "dashboardName", "string", title: "Dashboard name", defaultValue: "Lights", required: false
+            input "pollSec", "number", title: "Refresh interval (seconds)", defaultValue: 5, required: false, range: "2..60"
+            input "enableWs", "bool", title: "Enable real-time updates on local network (eventsocket)", defaultValue: true, required: false
+        }
+        section("Locks") {
+            input "unlockPinEnabled", "bool", title: "Require PIN to unlock doors from dashboard", defaultValue: false, submitOnChange: true
+            if (unlockPinEnabled) {
+                input "unlockPin", "password", title: "Unlock PIN", required: false
+                paragraph "<small>PIN is validated by this app before sending unlock commands. Locking does not require a PIN.</small>"
+            }
+        }
+        section("Thermostats") {
+            input "thermostatsPopupEnabled", "bool", title: "Show thermostats in dashboard quick menu", defaultValue: true, submitOnChange: true
+        }
+        section("Security (HSM)") {
+            input "hsmEnabled", "bool", title: "Enable HSM security control", defaultValue: false, submitOnChange: true
+            if (hsmEnabled) {
+                input "hsmPinEnabled", "bool", title: "Require PIN to arm/disarm from dashboard", defaultValue: false, submitOnChange: true
+                if (hsmPinEnabled) {
+                    input "hsmPin", "password", title: "HSM PIN", required: false
+                    paragraph "<small>PIN is validated by this app before sending arm/disarm commands to Hubitat Safety Monitor.</small>"
+                }
+            }
+        }
+        section("Hub file access", hideable: true, hidden: true) {
+            paragraph "Only needed if <b>Settings → Hub Login Security</b> is enabled (blocks local file reads)."
+            input "hubSecurity", "bool", title: "Hub Login Security is enabled", defaultValue: false, submitOnChange: true
+            if (hubSecurity) {
+                input "hubUsername", "string", title: "Hub username", required: false
+                input "hubPassword", "password", title: "Hub password", required: false
+            }
+        }
+        if (assetsOk) {
+            section("Dashboard links") {
+                paragraph "<div style='margin-bottom:12px'><b>Local</b> (on your home network):<br><a href='${localUrl}' target='_blank' style='word-break:break-all'>${localUrl}</a></div>"
+                paragraph "<div style='margin-bottom:8px'><b>Cloud</b> (works anywhere via Hubitat proxy):<br><a href='${cloudUrl}' target='_blank' style='word-break:break-all'>${cloudUrl}</a></div>"
+                paragraph "<small>Open the <b>cloud</b> link on your phone to install as a PWA (Android Chrome: Install app) or use <b>Add to Home Screen</b> on iOS. Cloud URL must include <code>/dashboard</code> in the path.</small>"
+            }
+        } else {
+            section("Required: upload dashboard files") {
+                def names = listLocalFileNames()
+                def need = requiredAssetFiles()
+                def missing = need.findAll { n -> !fileNamePresent(names, n) }
+                paragraph "Upload these files via <b>Settings → File Manager</b> (root folder, exact names):"
+                paragraph "<ul><li><code>mld-index.html</code></li><li><code>mld-app.css</code></li><li><code>mld-app-pre.js</code></li><li><code>mld-app.js</code></li><li><code>mld-app-post.js</code></li><li><code>mld-manifest.webmanifest</code></li><li><code>mld-sw.js</code></li><li><code>mld-icon-192.b64</code></li><li><code>mld-icon-512.b64</code></li></ul>"
+                if (names) {
+                    def mld = names.findAll { it?.contains("mld-") }
+                    paragraph "<small>Files seen on hub: ${mld ? mld.join(', ') : '(none matching mld-*)'}</small>"
+                }
+                if (missing) {
+                    paragraph "<small><b>Still missing:</b> ${missing.join(', ')}</small>"
+                }
+                if (hubSecurity && (!hubUsername || !hubPassword)) {
+                    paragraph "<small>If Hub Login Security is on, expand <b>Hub file access</b> above and enter your hub login.</small>"
+                }
+            }
+        }
+    }
+}
+
+def installed() {
+    if (!state.accessToken) { createAccessToken() }
+    logInit()
+}
+
+def updated() {
+    logInit()
+}
+
+def logInit() {
+    if (lights) { log.info "Modern Dashboard: ${lights.size()} light(s) authorized" }
+    if (thermostats) { log.info "Modern Dashboard: ${thermostats.size()} thermostat(s) authorized" }
+    if (tempSensors) { log.info "Modern Dashboard: ${tempSensors.size()} temperature sensor(s) authorized" }
+    def sensorCount = allSensorDevices()?.size() ?: 0
+    if (sensorCount) { log.info "Modern Dashboard: ${sensorCount} other sensor(s) authorized" }
+    def audioCount = allAudioDevices()?.size() ?: 0
+    if (audioCount) { log.info "Modern Dashboard: ${audioCount} audio device(s) authorized" }
+    if (state.accessToken == null) { state.accessToken = createAccessToken() }
+    if (!assetsPresent()) { log.warn "Modern Dashboard: upload all mld-* dashboard files to File Manager (see app setup page)" }
+}
+
+def allAudioDevices() {
+    def out = []
+    def seen = [:]
+    if (musicPlayers) {
+        for (d in musicPlayers) {
+            def key = d.id.toString()
+            if (!seen[key]) { seen[key] = true; out << d }
+        }
+    }
+    if (audioSpeakers) {
+        for (d in audioSpeakers) {
+            def key = d.id.toString()
+            if (!seen[key]) { seen[key] = true; out << d }
+        }
+    }
+    return out
+}
+
+// Sensor type descriptors: ordered for dedup priority (safety first).
+// [settingName, typeKey, primaryAttr, alertValues (lowercase set)]
+def SENSOR_TYPE_INPUTS = [
+    [name: "smokeSensors",     t: "smoke",      attr: "smoke",        alerts: ["detected"]],
+    [name: "waterSensors",     t: "leak",       attr: "water",        alerts: ["wet"]],
+    [name: "contactSensors",   t: "contact",    attr: "contact",      alerts: ["open"]],
+    [name: "motionSensors",    t: "motion",     attr: "motion",       alerts: ["active"]],
+    [name: "presenceSensors",  t: "presence",   attr: "presence",     alerts: ["present"]],
+    [name: "humiditySensors",  t: "humidity",   attr: "humidity",     alerts: []],
+    [name: "illuminanceSensors", t: "illuminance", attr: "illuminance", alerts: []]
+]
+
+// Noisy / internal attributes to skip when building the generic fallback's ex list.
+def SENSOR_SKIP_ATTRS = ["lastupdate","lastevent","epevent","devicewatch-devicestatus","devicewatch-devicestatus","checkinterval","status","name"] as Set
+
+def allSensorDevices() {
+    def out = []
+    def seen = [:]
+    for (spec in SENSOR_TYPE_INPUTS) {
+        def list = settings[spec.name]
+        if (!list) continue
+        for (d in list) {
+            def key = d.id.toString()
+            if (seen[key]) continue
+            seen[key] = true
+            out << [device: d, type: spec.t, attr: spec.attr, alerts: spec.alerts]
+        }
+    }
+    return out
+}
+
+def sensorRoomId(d, roomsList) {
+    def roomName = null
+    try { roomName = d.getRoomName() } catch (e) { roomName = null }
+    if (roomName) {
+        def rm = roomsList.find { it.name == roomName }
+        if (rm) return rm.id
+    }
+    return null
+}
+
+// Build the ordered ex[] array of secondary attributes for a sensor.
+// alwaysEx forces inclusion of these keys first (battery), then up to `max` more.
+def sensorExtraAttrs(d, primaryAttr, int max) {
+    def out = []
+    def states = null
+    try { states = d.currentStates } catch (e) { states = null }
+    if (states == null) return out
+    def ordered = []
+    ordered << "battery"
+    ordered << "temperature"
+    ordered << "humidity"
+    // then any others present, sorted
+    def present = []
+    try {
+        for (st in states) {
+            def nm = st?.name?.toString()?.toLowerCase()
+            if (nm && nm != primaryAttr && !SENSOR_SKIP_ATTRS.contains(nm)) present << nm
+        }
+    } catch (e) {}
+    for (nm in ((present as Set).sort())) {
+        if (!ordered.contains(nm)) ordered << nm
+    }
+    int added = 0
+    for (nm in ordered) {
+        if (added >= max) break
+        if (nm == primaryAttr) continue
+        def raw = null
+        def unit = null
+        try {
+            def st = d.currentState(nm)
+            raw = st?.value
+            unit = st?.unit
+        } catch (e) {}
+        if (raw == null) continue
+        def v = raw.toString()
+        if (v.isEmpty()) continue
+        out << [k: nm, v: v, u: unit != null ? unit.toString() : null]
+        added++
+    }
+    return out
+}
+
+def audioControlFlags(d) {
+    if (d == null) return 0
+    int f = 0
+    if (d.hasCommand("play")) f |= 1
+    if (d.hasCommand("pause")) f |= 2
+    if (d.hasCommand("stop")) f |= 4
+    if (d.hasCommand("previousTrack")) f |= 8
+    if (d.hasCommand("nextTrack")) f |= 16
+    if (d.hasCommand("setVolume") || d.hasCapability("MusicPlayer") || d.hasCapability("AudioVolume")) f |= 32
+    if (d.hasCommand("mute")) f |= 64
+    return f
+}
+
+def normalizeAudioStatus(d) {
+    def st = safeCurrent(d, "status")
+    if (st != null) {
+        def s = st.toString().toLowerCase()
+        if (s == "running") return "playing"
+        if (s == "idle") return "idle"
+        return s
+    }
+    def ts = safeCurrent(d, "transportStatus")
+    if (ts != null) return ts.toString().toLowerCase()
+    return "idle"
+}
+
+def normalizeAudioVolume(d) {
+    def lvl = safeCurrent(d, "level")
+    if (lvl != null) return lvl
+    return safeCurrent(d, "volume")
+}
+
+def normalizeAudioTrack(d) {
+    def tr = safeCurrent(d, "trackDescription")
+    if (tr) return tr.toString()
+    for (attr in ["currentAlbum", "currentStation", "mediaTitle"]) {
+        def v = safeCurrent(d, attr)
+        if (v) return v.toString()
+    }
+    def src = safeCurrent(d, "mediaSource")
+    if (src && src.toString().toLowerCase() != "none") return src.toString()
+    return ""
+}
+
+def audioRoomId(d, roomsList) {
+    def roomName = null
+    try { roomName = d.getRoomName() } catch (e) { roomName = null }
+    if (!roomName) return null
+    def rm = roomsList.find { it.name == roomName }
+    return rm ? rm.id : null
+}
+
+def appendAudioDeviceJson(out, d, roomsList) {
+    def rid = audioRoomId(d, roomsList)
+    def statusVal = normalizeAudioStatus(d)
+    def lvl = normalizeAudioVolume(d)
+    def track = normalizeAudioTrack(d)
+    def muteVal = safeCurrent(d, "mute")
+    def flags = audioControlFlags(d)
+    out << "{\"i\":" << d.id
+    out << ",\"n\":" << jsonStr(d.displayName)
+    out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+    out << ",\"st\":" << jsonStr(statusVal ?: "idle")
+    out << ",\"v\":" << (lvl == null ? "null" : lvl.toString())
+    out << ",\"tr\":" << jsonStr(track ?: "")
+    out << ",\"m\":" << jsonStr(muteVal ?: "unmuted")
+    out << ",\"f\":" << flags.toString()
+    out << "}"
+}
+
+// Cloud API Gateway does not route path("/") — use a named endpoint (see Hubitat community webhook examples).
+def dashboardUrl(boolean local) {
+    def base = local ? getFullLocalApiServerUrl() : getFullApiServerUrl()
+    return "${base}/dashboard?access_token=${state.accessToken}"
+}
+
+// File Manager asset names (uploaded to /local/)
+def assetHtmlFile() { return "mld-index.html" }
+def assetCssFile()  { return "mld-app.css" }
+def assetJsPreFile() { return "mld-app-pre.js" }
+def assetJsFile()   { return "mld-app.js" }
+def assetJsPostFile() { return "mld-app-post.js" }
+def assetManifestFile() { return "mld-manifest.webmanifest" }
+def assetSwFile() { return "mld-sw.js" }
+def assetIcon192File() { return "mld-icon-192.b64" }
+def assetIcon512File() { return "mld-icon-512.b64" }
+
+def requiredAssetFiles() {
+    return [
+        assetHtmlFile(), assetCssFile(), assetJsPreFile(), assetJsFile(), assetJsPostFile(),
+        assetManifestFile(), assetSwFile(), assetIcon192File()
+    ]
+}
+
+def hubBaseUri() {
+    return "http://${location.hub.localIP}:8080"
+}
+
+def hubRequestHeaders() {
+    def cookie = hubAuthCookie()
+    return cookie ? ["Cookie": cookie] : null
+}
+
+def hubAuthCookie() {
+    if (!hubSecurity || !hubUsername || !hubPassword) return null
+    try {
+        def cookie = null
+        httpPost([
+            uri: hubBaseUri(),
+            path: "/login",
+            query: [loginRedirect: "/"],
+            body: [username: hubUsername, password: hubPassword, submit: "Login"],
+            textParser: true,
+            ignoreSSLIssues: true
+        ]) { resp ->
+            if (resp?.headers) {
+                def setCookie = resp.headers["Set-Cookie"]
+                if (setCookie instanceof List) setCookie = setCookie[0]
+                if (setCookie) cookie = setCookie.toString().split(";")[0]
+            }
+        }
+        return cookie
+    } catch (e) {
+        log.error "hubAuthCookie: ${e.message}"
+        return null
+    }
+}
+
+def listLocalFileNames() {
+    def names = []
+    try {
+        def params = [
+            uri: "${hubBaseUri()}/hub/fileManager/json",
+            contentType: "application/json",
+            timeout: 15,
+            ignoreSSLIssues: true
+        ]
+        def headers = hubRequestHeaders()
+        if (headers) params.headers = headers
+        httpGet(params) { resp ->
+            def code = resp?.status ?: resp?.statusCode
+            if (code == 200 && resp?.data?.files) {
+                resp.data.files.each { f ->
+                    if (f.type == "file" && f.name) names << f.name.trim()
+                }
+            }
+        }
+    } catch (e) {
+        log.error "listLocalFileNames: ${e.message}"
+    }
+    return names
+}
+
+def fileNamePresent(List names, String want) {
+    if (!names || !want) return false
+    return names.any { n -> n == want || n.endsWith("/${want}") || n.endsWith(want) }
+}
+
+def assetsPresent() {
+    def names = listLocalFileNames()
+    if (names) {
+        return requiredAssetFiles().every { n -> fileNamePresent(names, n) }
+    }
+    // fallback if file list API unavailable
+    return requiredAssetFiles().every { n -> readLocalAsset(n)?.length() > 0 }
+}
+
+def readHttpBody(data) {
+    if (data == null) return ""
+    try {
+        def sb = new StringBuilder()
+        int i = data.read()
+        while (i != -1) {
+            sb.append((char) i)
+            i = data.read()
+        }
+        if (sb.length() > 0) return sb.toString()
+    } catch (e) {}
+    def s = data.toString()
+    return s.startsWith("java.io.") ? "" : s
+}
+
+def readLocalAsset(String fileName) {
+    def result = ""
+    try {
+        def params = [
+            uri: "${hubBaseUri()}/local/${fileName}",
+            contentType: "text/plain",
+            textParser: true,
+            timeout: 30,
+            ignoreSSLIssues: true
+        ]
+        def headers = hubRequestHeaders()
+        if (headers) params.headers = headers
+        httpGet(params) { resp ->
+            def code = resp?.status ?: resp?.statusCode
+            if (code == 200 && resp?.data != null) {
+                def data = resp.getData() != null ? resp.getData() : resp.data
+                result = readHttpBody(data)
+            }
+        }
+    } catch (e) {
+        log.error "readLocalAsset ${fileName}: ${e.message}"
+    }
+    return result
+}
+
+def renderPngFromBase64Asset(String b64FileName, String missingMsg) {
+    def b64 = readLocalAsset(b64FileName)
+    if (!b64) {
+        return render(contentType: "text/plain", data: missingMsg, status: 404)
+    }
+    try {
+        def bytes = b64.trim().decodeBase64()
+        return render(contentType: "image/png", data: new String(bytes, "ISO-8859-1"), status: 200)
+    } catch (e) {
+        log.error "renderPngFromBase64Asset ${b64FileName}: ${e.message}"
+        return render(contentType: "text/plain", data: "Invalid icon file", status: 500)
+    }
+}
+
+def missingAssetHtml() {
+    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup</title></head><body style="font-family:system-ui;padding:24px;max-width:480px;margin:auto"><h1>Setup required</h1><p>Upload these files to <b>Settings → File Manager</b>:</p><ul><li>mld-index.html</li><li>mld-app.css</li><li>mld-app-pre.js</li><li>mld-app.js</li><li>mld-app-post.js</li><li>mld-manifest.webmanifest</li><li>mld-sw.js</li><li>mld-icon-192.b64</li><li>mld-icon-512.b64</li></ul><p>Then reopen the Modern Dashboard app.</p></body></html>"""
+}
+
+// ---------------------------------------------------------------------------
+// HTTP mappings
+// ---------------------------------------------------------------------------
+mappings {
+    path("/dashboard") { action: [GET: "renderIndex"] }
+    path("/")          { action: [GET: "renderIndex"] }
+    path("/app.css")   { action: [GET: "renderCss"] }
+    path("/app-pre.js") { action: [GET: "renderJsPre"] }
+    path("/app.js")    { action: [GET: "renderJs"] }
+    path("/app-post.js") { action: [GET: "renderJsPost"] }
+    path("/manifest.webmanifest") { action: [GET: "renderManifest"] }
+    path("/sw.js") { action: [GET: "renderSw"] }
+    path("/icons/icon-192.png") { action: [GET: "renderIcon192"] }
+    path("/icons/icon-512.png") { action: [GET: "renderIcon512"] }
+    path("/data")      { action: [GET: "renderData"] }
+    path("/device")    { action: [GET: "renderDevice"] }
+    path("/cmd")       { action: [GET: "doCmd"] }
+    path("/cmd/batch") { action: [POST: "doCmdBatch"] }
+    path("/settings/room-order") { action: [GET: "saveRoomOrderGet", POST: "saveRoomOrder"] }
+    path("/room-order") { action: [GET: "saveRoomOrderGet", POST: "saveRoomOrder"] }
+    path("/hub-mode") { action: [GET: "setHubModeGet", POST: "setHubMode"] }
+    path("/hsm") { action: [GET: "setHsmGet", POST: "setHsm"] }
+    path("/scene/activate") { action: [GET: "activateSceneGet", POST: "activateScene"] }
+    path("/favorites") { action: [GET: "saveFavoritesGet", POST: "saveFavorites"] }
+}
+
+def readIconDataUri(String b64FileName) {
+    def b64 = readLocalAsset(b64FileName)?.trim()
+    if (!b64) return null
+    return "data:image/png;base64,${b64}"
+}
+
+def renderIndex() {
+    def html = readLocalAsset(assetHtmlFile())
+    if (!html) { html = missingAssetHtml() }
+    def token = params?.access_token
+    def iconHref = readIconDataUri(assetIcon192File())
+    if (iconHref) {
+        html = html.replace('href="icons/icon-192.png"', "href=\"${iconHref}\"")
+    }
+    if (token) {
+        def q = "?access_token=${token}"
+        html = html.replace('href="app.css"', "href=\"app.css${q}\"")
+        html = html.replace('href="manifest.webmanifest"', "href=\"manifest.webmanifest${q}\"")
+        if (!iconHref) {
+            html = html.replace('href="icons/icon-192.png"', "href=\"icons/icon-192.png${q}\"")
+        }
+        html = html.replace('src="app-pre.js"', "src=\"app-pre.js${q}\"")
+        html = html.replace('src="app.js"', "src=\"app.js${q}\"")
+        html = html.replace('src="app-post.js"', "src=\"app-post.js${q}\"")
+    }
+    render contentType: "text/html", data: html, status: 200
+}
+
+def renderCss() {
+    def css = readLocalAsset(assetCssFile())
+    if (!css) { css = "/* upload mld-app.css to File Manager */" }
+    render contentType: "text/css", data: css, status: 200
+}
+
+def renderJsPre() {
+    def js = readLocalAsset(assetJsPreFile())
+    if (!js) { js = "console.warn('Upload mld-app-pre.js to File Manager');" }
+    render contentType: "application/javascript", data: js, status: 200
+}
+
+def renderJs() {
+    def js = readLocalAsset(assetJsFile())
+    if (!js) { js = "document.body.innerHTML='<p>Upload mld-app.js to File Manager</p>';" }
+    render contentType: "application/javascript", data: js, status: 200
+}
+
+def renderJsPost() {
+    def js = readLocalAsset(assetJsPostFile())
+    if (!js) { js = "console.warn('Upload mld-app-post.js to File Manager');" }
+    render contentType: "application/javascript", data: js, status: 200
+}
+
+def renderManifest() {
+    def token = params?.access_token
+    def q = token ? "?access_token=${token}" : ""
+    def icon192 = readLocalAsset(assetIcon192File())?.trim()
+    def out = new StringBuilder()
+    out << '{"name":"Modern Dashboard","short_name":"Lights"'
+    out << ',"start_url":"./dashboard' << q << '"'
+    out << ',"scope":"./"'
+    out << ',"display":"standalone"'
+    out << ',"background_color":"#0b0d12"'
+    out << ',"theme_color":"#0b0d12"'
+    out << ',"icons":['
+    if (icon192) {
+        def uri = "data:image/png;base64,${icon192}"
+        out << '{"src":"' << uri << '","sizes":"192x192","type":"image/png","purpose":"any"},'
+        out << '{"src":"' << uri << '","sizes":"512x512","type":"image/png","purpose":"any"},'
+        out << '{"src":"' << uri << '","sizes":"192x192","type":"image/png","purpose":"maskable"},'
+        out << '{"src":"' << uri << '","sizes":"512x512","type":"image/png","purpose":"maskable"}'
+    }
+    out << ']}'
+    render contentType: "application/manifest+json", data: out.toString(), status: 200
+}
+
+def renderSw() {
+    def js = readLocalAsset(assetSwFile())
+    if (!js) { js = "self.addEventListener('fetch',e=>e.respondWith(fetch(e.request)));" }
+    render contentType: "application/javascript", data: js, status: 200
+}
+
+def renderIcon192() {
+    return renderPngFromBase64Asset(assetIcon192File(), "Upload mld-icon-192.b64 to File Manager")
+}
+
+def renderIcon512() {
+    return renderPngFromBase64Asset(assetIcon512File(), "Upload mld-icon-512.b64 to File Manager")
+}
+
+// ---------------------------------------------------------------------------
+// /data - slim JSON
+// ---------------------------------------------------------------------------
+def renderData() {
+    def out = new StringBuilder()
+    out << "{\"config\":{"
+    out << "\"pollIntervalMs\":" << (pollSec ? (pollSec.toInteger() * 1000) : 5000)
+    out << ",\"useWebSocket\":" << (enableWs == null ? true : enableWs)
+    out << ",\"dashboardName\":" << jsonStr((dashboardName?.trim()) ?: "Lights")
+    out << roomOrderJsonFragment()
+    out << favoritesJsonFragment()
+    out << "},\"rooms\":["
+    def roomsList = app.getRooms() ?: []
+    boolean first = true
+    for (r in roomsList) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << r.id << ",\"name\":" << jsonStr(r.name) << "}"
+    }
+    out << "],\"devices\":["
+    first = true
+    if (lights) {
+        for (d in lights) {
+            if (!first) out << ","; first = false
+            def isDim = d.hasCapability("SwitchLevel")
+            def roomName = null
+            try { roomName = d.getRoomName() } catch (e) { roomName = null }
+            def rid = null
+            if (roomName) {
+                def rm = roomsList.find { it.name == roomName }
+                if (rm) rid = rm.id
+            }
+            def hasCt = d.hasCapability("ColorTemperature")
+            def hasRgb = d.hasCapability("ColorControl")
+            def sw = safeCurrent(d, "switch")
+            def lvl = isDim ? safeCurrent(d, "level") : null
+            def kelvin = hasCt ? safeCurrent(d, "colorTemperature") : null
+            def hue = hasRgb ? safeCurrent(d, "hue") : null
+            def sat = hasRgb ? safeCurrent(d, "saturation") : null
+            def cmode = (hasCt && hasRgb) ? safeCurrent(d, "colorMode") : null
+            out << "{\"i\":" << d.id
+            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+            out << ",\"d\":" << (isDim ? 1 : 0)
+            out << ",\"ct\":" << (hasCt ? 1 : 0)
+            out << ",\"rgb\":" << (hasRgb ? 1 : 0)
+            out << ",\"s\":" << (sw == "on" ? 1 : 0)
+            out << ",\"l\":" << (lvl == null ? "null" : lvl.toString())
+            out << ",\"k\":" << (kelvin == null ? "null" : kelvin.toString())
+            out << ",\"h\":" << (hue == null ? "null" : hue.toString())
+            out << ",\"sat\":" << (sat == null ? "null" : sat.toString())
+            out << ",\"cm\":" << jsonStr(cmode)
+            out << "}"
+        }
+    }
+    out << "],\"thermostats\":["
+    first = true
+    if (thermostats) {
+        for (d in thermostats) {
+            if (!first) out << ","; first = false
+            def roomName = null
+            try { roomName = d.getRoomName() } catch (e) { roomName = null }
+            def rid = null
+            if (roomName) {
+                def rm = roomsList.find { it.name == roomName }
+                if (rm) rid = rm.id
+            }
+            def tmode = safeCurrent(d, "thermostatMode")
+            def ostate = safeCurrent(d, "thermostatOperatingState")
+            def hsp = safeCurrent(d, "heatingSetpoint")
+            def csp = safeCurrent(d, "coolingSetpoint")
+            def temp = safeCurrent(d, "temperature")
+            def tempUnit = "F"
+            try {
+                def st = d.currentState("temperature")
+                if (st?.unit) tempUnit = st.unit
+            } catch (e) {}
+            def hasFanMode = d.hasCapability("ThermostatFanMode") || d.hasAttribute("thermostatFanMode")
+            def fmode = hasFanMode ? safeCurrent(d, "thermostatFanMode") : null
+            def hasFanSpeed = d.hasAttribute("fanSpeed") || d.hasCommand("setFanSpeed") || d.hasAttribute("fanSpeedLevels")
+            def fspeed = hasFanSpeed ? safeCurrent(d, "fanSpeed") : null
+            def supModes = safeCurrent(d, "supportedThermostatModes")
+            def supFanModes = hasFanMode ? safeCurrent(d, "supportedFanModes") : null
+            def fsLevels = hasFanSpeed ? safeCurrent(d, "fanSpeedLevels") : null
+            out << "{\"i\":" << d.id
+            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+            out << ",\"tm\":" << jsonStr(tmode)
+            out << ",\"os\":" << jsonStr(ostate)
+            out << ",\"hsp\":" << numOrNull(hsp)
+            out << ",\"csp\":" << numOrNull(csp)
+            out << ",\"temp\":" << numOrNull(temp)
+            out << ",\"u\":" << jsonStr(tempUnit)
+            out << ",\"hasFm\":" << (hasFanMode ? 1 : 0)
+            out << ",\"fm\":" << jsonStr(fmode)
+            out << ",\"hasFs\":" << (hasFanSpeed ? 1 : 0)
+            out << ",\"fs\":" << jsonStr(fspeed)
+            out << ",\"supM\":" << jsonStr(supModes)
+            out << ",\"supFM\":" << jsonStr(supFanModes)
+            out << ",\"fsLev\":" << jsonStr(fsLevels)
+            out << "}"
+        }
+    }
+    out << "],\"tempSensors\":["
+    first = true
+    def thermoIds = thermostats ? thermostats.collect { it.id } : []
+    if (tempSensors) {
+        for (d in tempSensors) {
+            if (thermoIds.contains(d.id)) continue
+            if (!first) out << ","; first = false
+            def roomName = null
+            try { roomName = d.getRoomName() } catch (e) { roomName = null }
+            def rid = null
+            if (roomName) {
+                def rm = roomsList.find { it.name == roomName }
+                if (rm) rid = rm.id
+            }
+            def temp = safeCurrent(d, "temperature")
+            def tempUnit = "F"
+            try {
+                def st = d.currentState("temperature")
+                if (st?.unit) tempUnit = st.unit
+            } catch (e) {}
+            out << "{\"i\":" << d.id
+            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+            out << ",\"temp\":" << numOrNull(temp)
+            out << ",\"u\":" << jsonStr(tempUnit)
+            out << "}"
+        }
+    }
+    out << "],\"sensors\":["
+    first = true
+    def excludeIds = [] as Set
+    if (lights) for (d in lights) excludeIds << d.id.toString()
+    if (thermostats) for (d in thermostats) excludeIds << d.id.toString()
+    if (tempSensors) for (d in tempSensors) excludeIds << d.id.toString()
+    if (locks) for (d in locks) excludeIds << d.id.toString()
+    for (d in allAudioDevices()) excludeIds << d.id.toString()
+    def sensorDevs = allSensorDevices()
+    if (sensorDevs) {
+        for (entry in sensorDevs) {
+            def d = entry.device
+            if (excludeIds.contains(d.id.toString())) continue
+            // Determine type: prefer declared primary attr; fall back to generic.
+            def t = entry.type
+            def primaryAttr = entry.attr
+            def rawVal = safeCurrent(d, primaryAttr)
+            def alertVals = entry.alerts as Set
+            // If primary attr missing, try to classify generically
+            if (rawVal == null) {
+                // Try smoke carbonMonoxide fallback for smoke detectors
+                if (t == "smoke") {
+                    def co = safeCurrent(d, "carbonMonoxide")
+                    if (co != null) { rawVal = co; primaryAttr = "carbonMonoxide"; alertVals = ["detected"] as Set }
+                }
+                if (rawVal == null) {
+                    t = "generic"
+                    def fm = firstMeaningfulAttr(d, null)
+                    if (fm != null) { rawVal = fm.value; primaryAttr = fm.name }
+                }
+            }
+            def aFlag = 0
+            if (rawVal != null && alertVals && alertVals.contains(rawVal.toString().toLowerCase())) aFlag = 1
+            def rid = sensorRoomId(d, roomsList)
+            if (!first) out << ","; first = false
+            out << "{\"i\":" << d.id
+            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+            out << ",\"t\":" << jsonStr(t)
+            if (rawVal != null && isNumberLike(rawVal)) {
+                out << ",\"v\":" << numOrNull(rawVal)
+            } else {
+                out << ",\"v\":" << jsonStr(rawVal)
+            }
+            out << ",\"a\":" << aFlag
+            // ex: battery + up to 2 more (3 for generic)
+            int exMax = (t == "generic") ? 3 : 2
+            def extras = sensorExtraAttrs(d, primaryAttr, exMax)
+            out << ",\"ex\":["
+            boolean exFirst = true
+            for (ex in extras) {
+                if (!exFirst) out << ","; exFirst = false
+                out << "{\"k\":" << jsonStr(ex.k)
+                if (isNumberLike(ex.v)) {
+                    out << ",\"v\":" << numOrNull(ex.v)
+                } else {
+                    out << ",\"v\":" << jsonStr(ex.v)
+                }
+                out << ",\"u\":" << jsonStr(ex.u)
+                out << "}"
+            }
+            out << "]}"
+        }
+    }
+    out << "],\"music\":["
+    first = true
+    def audioDevs = allAudioDevices()
+    if (audioDevs) {
+        for (d in audioDevs) {
+            if (!first) out << ","; first = false
+            appendAudioDeviceJson(out, d, roomsList)
+        }
+    }
+    out << "],\"locks\":["
+    first = true
+    if (locks) {
+        for (d in locks) {
+            if (!first) out << ","; first = false
+            def roomName = null
+            try { roomName = d.getRoomName() } catch (e) { roomName = null }
+            def rid = null
+            if (roomName) {
+                def rm = roomsList.find { it.name == roomName }
+                if (rm) rid = rm.id
+            }
+            def lockSt = safeCurrent(d, "lock")
+            out << "{\"i\":" << d.id
+            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+            out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
+            out << ",\"st\":" << jsonStr(lockSt)
+            out << "}"
+        }
+    }
+    out << "],\"hubModes\":["
+    def hubModesList = []
+    try { hubModesList = location.modes ?: [] } catch (e) {}
+    first = true
+    for (m in hubModesList) {
+        if (!first) out << ","; first = false
+        out << jsonStr(m?.toString())
+    }
+    def hubModeCurrent = ""
+    try { hubModeCurrent = location.mode?.toString() ?: "" } catch (e) {}
+    out << "],\"currentHubMode\":" << jsonStr(hubModeCurrent)
+    def hsmStatusVal = ""
+    def hsmAlertVal = ""
+    def hsmAlertDescVal = ""
+    try { hsmStatusVal = location.currentState("hsmStatus")?.value?.toString() ?: "" } catch (e) {}
+    try {
+        def alertSt = location.currentState("hsmAlert")
+        hsmAlertVal = alertSt?.value?.toString() ?: ""
+        hsmAlertDescVal = alertSt?.descriptionText?.toString() ?: ""
+    } catch (e) {}
+    out << ",\"hsmStatus\":" << jsonStr(hsmStatusVal)
+    out << ",\"hsmAlert\":" << jsonStr(hsmAlertVal)
+    out << ",\"hsmAlertDesc\":" << jsonStr(hsmAlertDescVal)
+    out << ",\"hsmEnabled\":" << (hsmEnabled == true ? "true" : "false")
+    out << ",\"hsmPinRequired\":" << (hsmEnabled == true && hsmPinEnabled == true && hsmPin?.toString()?.trim() ? "true" : "false")
+    out << ",\"thermostatsPopupEnabled\":" << (thermostatsPopupEnabled == true ? "true" : "false")
+    out << ",\"unlockPinEnabled\":" << (unlockPinEnabled == true ? "true" : "false")
+    out << ",\"unlockPinRequired\":" << (unlockPinEnabled == true && unlockPin?.toString()?.trim() ? "true" : "false")
+    out << ",\"scenes\":["
+    def sceneEntries = []
+    try {
+        def scenesMap = location.scenes ?: [:]
+        scenesMap.each { sid, sname ->
+            sceneEntries << [id: sid, name: sname?.toString() ?: ""]
+        }
+        sceneEntries.sort { a, b -> a.name <=> b.name }
+    } catch (e) {}
+    first = true
+    for (sc in sceneEntries) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << sc.id << ",\"n\":" << jsonStr(sc.name) << "}"
+    }
+    out << "]}"
+    render contentType: "application/json", data: out.toString(), status: 200
+}
+
+def safeCurrent(d, attrName) {
+    try {
+        def st = d.currentState(attrName)
+        return st?.value
+    } catch (e) { return null }
+}
+
+def numOrNull(v) {
+    if (v == null) return "null"
+    try {
+        def n = new BigDecimal(v.toString())
+        return n.toString()
+    } catch (e) { return "null" }
+}
+
+def isNumberLike(v) {
+    if (v == null) return false
+    try {
+        new BigDecimal(v.toString())
+        return true
+    } catch (e) { return false }
+}
+
+// First meaningful (non-skip, non-empty) attribute value for generic sensors.
+def firstMeaningfulAttr(d, skipAttr) {
+    def states = null
+    try { states = d.currentStates } catch (e) { states = null }
+    if (states == null) return null
+    try {
+        for (st in states) {
+            def nm = st?.name?.toString()?.toLowerCase()
+            if (!nm) continue
+            if (nm == skipAttr) continue
+            if (SENSOR_SKIP_ATTRS.contains(nm)) continue
+            def v = st?.value
+            if (v == null) continue
+            def s = v.toString()
+            if (s.isEmpty()) continue
+            return [name: nm, value: s]
+        }
+    } catch (e) {}
+    return null
+}
+
+def jsonStr(s) {
+    if (s == null) return "null"
+    String v = s.toString()
+    StringBuilder b = new StringBuilder("\"")
+    for (int i = 0; i < v.length(); i++) {
+        char c = v.charAt(i)
+        switch (c) {
+            case '"':  b.append("\\\""); break
+            case '\\': b.append("\\\\"); break
+            case '\n': b.append("\\n");  break
+            case '\r': b.append("\\r");  break
+            case '\t': b.append("\\t");  break
+            default:
+                if (c < 0x20) { b.append(String.format("\\u%04x", (int) c)) }
+                else { b.append(c) }
+        }
+    }
+    b.append("\"")
+    return b.toString()
+}
+
+// ---------------------------------------------------------------------------
+// /device?id=.. - single-device state (reconcile dimmer level after "on")
+// ---------------------------------------------------------------------------
+def renderDevice() {
+    def id = params.id
+    if (id == null) {
+        return render(contentType: "application/json", data: '{"error":"missing id"}', status: 400)
+    }
+    def dev = lights?.find { it.id.toString() == id.toString() }
+    if (dev != null) {
+        def isDim = dev.hasCapability("SwitchLevel")
+        def hasCt = dev.hasCapability("ColorTemperature")
+        def hasRgb = dev.hasCapability("ColorControl")
+        try { dev.refresh() } catch (e) {}
+        def sw = safeCurrent(dev, "switch")
+        def lvl = isDim ? safeCurrent(dev, "level") : null
+        def kelvin = hasCt ? safeCurrent(dev, "colorTemperature") : null
+        def hue = hasRgb ? safeCurrent(dev, "hue") : null
+        def sat = hasRgb ? safeCurrent(dev, "saturation") : null
+        def out = new StringBuilder()
+        out << "{\"i\":" << dev.id << ",\"d\":" << (isDim ? 1 : 0)
+        out << ",\"ct\":" << (hasCt ? 1 : 0)
+        out << ",\"rgb\":" << (hasRgb ? 1 : 0)
+        out << ",\"s\":" << (sw == "on" ? 1 : 0)
+        out << ",\"l\":" << (lvl == null ? "null" : lvl.toString())
+        out << ",\"k\":" << (kelvin == null ? "null" : kelvin.toString())
+        out << ",\"h\":" << (hue == null ? "null" : hue.toString())
+        out << ",\"sat\":" << (sat == null ? "null" : sat.toString()) << "}"
+        return render(contentType: "application/json", data: out.toString(), status: 200)
+    }
+    // thermostat?
+    def t = thermostats?.find { it.id.toString() == id.toString() }
+    if (t != null) {
+        try { t.refresh() } catch (e) {}
+        def hasFanMode = t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode")
+        def hasFanSpeed = t.hasAttribute("fanSpeed") || t.hasCommand("setFanSpeed") || t.hasAttribute("fanSpeedLevels")
+        def out = new StringBuilder()
+        out << "{\"i\":" << t.id
+        out << ",\"tm\":" << jsonStr(safeCurrent(t, "thermostatMode"))
+        out << ",\"os\":" << jsonStr(safeCurrent(t, "thermostatOperatingState"))
+        out << ",\"hsp\":" << numOrNull(safeCurrent(t, "heatingSetpoint"))
+        out << ",\"csp\":" << numOrNull(safeCurrent(t, "coolingSetpoint"))
+        out << ",\"temp\":" << numOrNull(safeCurrent(t, "temperature"))
+        out << ",\"hasFm\":" << (hasFanMode ? 1 : 0)
+        out << ",\"fm\":" << jsonStr(hasFanMode ? safeCurrent(t, "thermostatFanMode") : null)
+        out << ",\"hasFs\":" << (hasFanSpeed ? 1 : 0)
+        out << ",\"fs\":" << jsonStr(hasFanSpeed ? safeCurrent(t, "fanSpeed") : null)
+        out << "}"
+        return render(contentType: "application/json", data: out.toString(), status: 200)
+    }
+    def s = tempSensors?.find { it.id.toString() == id.toString() }
+    if (s != null) {
+        try { s.refresh() } catch (e) {}
+        def out = new StringBuilder()
+        out << "{\"i\":" << s.id
+        out << ",\"temp\":" << numOrNull(safeCurrent(s, "temperature"))
+        out << "}"
+        return render(contentType: "application/json", data: out.toString(), status: 200)
+    }
+    def senEntry = allSensorDevices()?.find { it.device.id.toString() == id.toString() }
+    if (senEntry != null) {
+        def sd = senEntry.device
+        try { sd.refresh() } catch (e) {}
+        def out = new StringBuilder()
+        out << "{\"i\":" << sd.id
+        out << ",\"t\":" << jsonStr(senEntry.type)
+        out << ",\"v\":" << jsonStr(safeCurrent(sd, senEntry.attr))
+        out << "}"
+        return render(contentType: "application/json", data: out.toString(), status: 200)
+    }
+    def lk = locks?.find { it.id.toString() == id.toString() }
+    if (lk != null) {
+        try { lk.refresh() } catch (e) {}
+        def lockSt = safeCurrent(lk, "lock")
+        def out = new StringBuilder()
+        out << "{\"i\":" << lk.id
+        out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
+        out << ",\"st\":" << jsonStr(lockSt) << "}"
+        return render(contentType: "application/json", data: out.toString(), status: 200)
+    }
+    def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
+    if (mp != null) {
+        try { mp.refresh() } catch (e) {}
+        def out = new StringBuilder()
+        out << "{\"i\":" << mp.id
+        out << ",\"st\":" << jsonStr(normalizeAudioStatus(mp) ?: "idle")
+        def lvl = normalizeAudioVolume(mp)
+        out << ",\"v\":" << (lvl == null ? "null" : lvl.toString())
+        out << ",\"tr\":" << jsonStr(normalizeAudioTrack(mp) ?: "")
+        def muteVal = safeCurrent(mp, "mute")
+        out << ",\"m\":" << jsonStr(muteVal ?: "unmuted")
+        out << ",\"f\":" << audioControlFlags(mp).toString()
+        out << "}"
+        return render(contentType: "application/json", data: out.toString(), status: 200)
+    }
+    render(contentType: "application/json", data: '{"error":"not found"}', status: 404)
+}
+
+// ---------------------------------------------------------------------------
+// /cmd?id=..&c=on|off|setLevel|setCT|setColor&v=..
+// POST /cmd/batch  body: {"commands":[{"id":1,"c":"on","v":null},...]}
+// ---------------------------------------------------------------------------
+def runLightCmd(dev, c, v) {
+    switch (c) {
+        case "on":       dev.on(); break
+        case "off":      dev.off(); break
+        case "setLevel":
+            int lvl = (v != null) ? Math.max(0, Math.min(100, v.toInteger())) : 0
+            dev.setLevel(lvl)
+            break
+        case "setCT":
+            int k = (v != null) ? Math.max(2500, Math.min(6000, v.toInteger())) : 3000
+            dev.setColorTemperature(k)
+            break
+        case "setColor":
+            def parts = v?.toString()?.split(",")
+            int hue = (parts && parts.length > 0) ? Math.max(0, Math.min(100, parts[0].trim().toInteger())) : 0
+            int sat = (parts && parts.length > 1) ? Math.max(0, Math.min(100, parts[1].trim().toInteger())) : 100
+            dev.setColor([hue: hue, saturation: sat])
+            break
+        default:
+            throw new IllegalArgumentException("unknown command")
+    }
+}
+
+def runThermostatCmd(t, c, v) {
+    switch (c) {
+        case "setMode":
+            if (v != null) t.setThermostatMode(v.toString())
+            break
+        case "modeAuto": t.auto(); break
+        case "modeHeat": t.heat(); break
+        case "modeCool": t.cool(); break
+        case "off":      t.off(); break
+        case "setHeat":
+            if (v != null) t.setHeatingSetpoint(v.toInteger())
+            break
+        case "setCool":
+            if (v != null) t.setCoolingSetpoint(v.toInteger())
+            break
+        case "setFanMode":
+            if (v != null && (t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode"))) t.setFanMode(v.toString())
+            break
+        case "setFanSpeed":
+            if (v != null && (t.hasAttribute("fanSpeed") || t.hasCommand("setFanSpeed"))) t.setFanSpeed(v.toString())
+            break
+        default:
+            throw new IllegalArgumentException("unknown command")
+    }
+}
+
+def runLockCmd(dev, c, v) {
+    switch (c) {
+        case "lock":   dev.lock(); break
+        case "unlock": dev.unlock(); break
+        default:
+            throw new IllegalArgumentException("unknown command")
+    }
+}
+
+def runAudioCmd(dev, c, v) {
+    switch (c) {
+        case "play":
+            if (!dev.hasCommand("play")) throw new IllegalArgumentException("unsupported command")
+            dev.play()
+            break
+        case "pause":
+            if (!dev.hasCommand("pause")) throw new IllegalArgumentException("unsupported command")
+            dev.pause()
+            break
+        case "stop":
+            if (!dev.hasCommand("stop")) throw new IllegalArgumentException("unsupported command")
+            dev.stop()
+            break
+        case "nextTrack":
+            if (!dev.hasCommand("nextTrack")) throw new IllegalArgumentException("unsupported command")
+            dev.nextTrack()
+            break
+        case "previousTrack":
+            if (!dev.hasCommand("previousTrack")) throw new IllegalArgumentException("unsupported command")
+            dev.previousTrack()
+            break
+        case "mute":
+            if (!dev.hasCommand("mute")) throw new IllegalArgumentException("unsupported command")
+            dev.mute()
+            break
+        case "unmute":
+            if (!dev.hasCommand("unmute")) throw new IllegalArgumentException("unsupported command")
+            dev.unmute()
+            break
+        case "setVolume":
+            if (!dev.hasCommand("setVolume") && !dev.hasCapability("MusicPlayer") && !dev.hasCapability("AudioVolume")) {
+                throw new IllegalArgumentException("unsupported command")
+            }
+            int vol = (v != null) ? Math.max(0, Math.min(100, v.toInteger())) : 0
+            dev.setVolume(vol)
+            break
+        default:
+            throw new IllegalArgumentException("unknown command")
+    }
+}
+
+def validateUnlockPin(pin) {
+    if (unlockPinEnabled != true) return [ok: true]
+    def expected = unlockPin?.toString()?.trim() ?: ""
+    if (!expected) return [ok: false, error: "pin not configured"]
+    if (!pin?.trim()) return [ok: false, error: "wrong pin"]
+    if (!pinsMatch(expected, pin.trim())) return [ok: false, error: "wrong pin"]
+    return [ok: true]
+}
+
+def executeOneCmd(id, c, v, pin) {
+    if (id == null || c == null) {
+        return [ok: false, error: "missing params"]
+    }
+    def dev = lights?.find { it.id.toString() == id.toString() }
+    def t = thermostats?.find { it.id.toString() == id.toString() }
+    def lk = locks?.find { it.id.toString() == id.toString() }
+    def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
+    if (dev == null && t == null && lk == null && mp == null) {
+        return [ok: false, error: "device not found"]
+    }
+    try {
+        if (dev != null) {
+            runLightCmd(dev, c, v)
+        } else if (t != null) {
+            runThermostatCmd(t, c, v)
+        } else if (lk != null) {
+            if (c == "unlock") {
+                def pinResult = validateUnlockPin(pin)
+                if (!pinResult.ok) return pinResult
+            }
+            runLockCmd(lk, c, v)
+        } else {
+            runAudioCmd(mp, c, v)
+        }
+        return [ok: true]
+    } catch (e) {
+        return [ok: false, error: e.message ?: e.toString()]
+    }
+}
+
+def doCmd() {
+    def result = executeOneCmd(params.id, params.c, params.v, params.pin)
+    if (!result.ok) {
+        def status = result.error == "device not found" ? 404 : (result.error == "missing params" ? 400 : 500)
+        if (result.error?.contains("unknown command")) status = 400
+        if (result.error == "wrong pin") status = 403
+        if (result.error == "pin not configured") status = 400
+        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(result.error)}}", status: status)
+    }
+    return render(contentType: "application/json", data: '{"ok":true}', status: 200)
+}
+
+def doCmdBatch() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def commands = body?.commands
+    if (!(commands instanceof List) || commands.isEmpty()) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing commands"}', status: 400)
+    }
+    def errors = []
+    int failed = 0
+    for (item in commands) {
+        def id = item?.id
+        def c = item?.c
+        def v = item?.containsKey("v") ? item.v : null
+        def pin = item?.containsKey("pin") ? item.pin : null
+        def result = executeOneCmd(id, c, v, pin)
+        if (!result.ok) {
+            failed++
+            errors << [id: id, error: result.error]
+        }
+    }
+    def out = new StringBuilder()
+    out << "{\"ok\":" << (failed == 0 ? "true" : "false")
+    out << ",\"total\":" << commands.size()
+    out << ",\"failed\":" << failed
+    out << ",\"errors\":["
+    boolean first = true
+    for (err in errors) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << (err.id == null ? "null" : err.id.toString())
+        out << ",\"error\":" << jsonStr(err.error) << "}"
+    }
+    out << "]}"
+    def status = 200
+    return render(contentType: "application/json", data: out.toString(), status: status)
+}
+
+// ---------------------------------------------------------------------------
+// Room order (state.roomOrder — synced across devices)
+// ---------------------------------------------------------------------------
+def parseRoomOrderState() {
+    if (!state.roomOrder) return []
+    try {
+        return state.roomOrder.split(",").collect { it.trim() }.findAll { it }.collect { it.toInteger() }
+    } catch (e) {
+        return []
+    }
+}
+
+def roomOrderJsonFragment() {
+    def ids = parseRoomOrderState()
+    def out = new StringBuilder()
+    out << ",\"roomOrder\":["
+    boolean first = true
+    for (id in ids) {
+        if (!first) out << ","; first = false
+        out << id
+    }
+    out << "]"
+    return out.toString()
+}
+
+def validRoomIdSet() {
+    def set = new HashSet()
+    set.add("-1")
+    def roomsList = app.getRooms() ?: []
+    for (r in roomsList) set.add(r.id.toString())
+    return set
+}
+
+def saveRoomOrderGet() {
+    def orderStr = params?.order
+    if (!orderStr?.trim()) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
+    }
+    def order = orderStr.split(",").collect { it.trim() }.findAll { it }
+    return saveRoomOrderFromList(order)
+}
+
+def saveRoomOrder() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def order = body?.order
+    return saveRoomOrderFromList(order)
+}
+
+def saveRoomOrderFromList(order) {
+    if (!(order instanceof List) || order.isEmpty()) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
+    }
+    def valid = validRoomIdSet()
+    def validated = []
+    def seen = new HashSet()
+    for (item in order) {
+        def key
+        try {
+            key = (item instanceof Number) ? item.longValue().toString() : item.toString().trim()
+        } catch (e) { continue }
+        if (!key || !valid.contains(key)) continue
+        if (seen.contains(key)) continue
+        seen.add(key)
+        validated << (key == "-1" ? -1 : key.toLong())
+    }
+    if (validated.isEmpty()) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"empty order"}', status: 400)
+    }
+    state.roomOrder = validated.join(",")
+    def out = new StringBuilder()
+    out << "{\"ok\":true,\"order\":["
+    boolean first = true
+    for (id in validated) {
+        if (!first) out << ","; first = false
+        out << id
+    }
+    out << "]}"
+    return render(contentType: "application/json", data: out.toString(), status: 200)
+}
+
+// ---------------------------------------------------------------------------
+// Hub mode, scenes, favorites
+// ---------------------------------------------------------------------------
+def parseFavoritesState() {
+    if (!state.favorites) return []
+    try {
+        return state.favorites.split(",").collect { it.trim() }.findAll { it }.collect { it.toLong() }
+    } catch (e) {
+        return []
+    }
+}
+
+def favoritesJsonFragment() {
+    def ids = parseFavoritesState()
+    def out = new StringBuilder()
+    out << ",\"favorites\":["
+    boolean first = true
+    for (id in ids) {
+        if (!first) out << ","; first = false
+        out << id
+    }
+    out << "]"
+    return out.toString()
+}
+
+def validFavoriteIdSet() {
+    def set = new HashSet()
+    lights?.each { set.add(it.id.toString()) }
+    thermostats?.each { set.add(it.id.toString()) }
+    tempSensors?.each { set.add(it.id.toString()) }
+    allSensorDevices()?.each { set.add(it.device.id.toString()) }
+    return set
+}
+
+def setHubModeGet() {
+    def mode = params?.mode
+    if (!mode?.trim()) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing mode"}', status: 400)
+    }
+    return setHubModeFromName(mode.trim())
+}
+
+def setHubMode() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def mode = body?.mode
+    if (!mode?.toString()?.trim()) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing mode"}', status: 400)
+    }
+    return setHubModeFromName(mode.toString().trim())
+}
+
+def setHubModeFromName(modeName) {
+    def modes = []
+    try { modes = location.modes ?: [] } catch (e) {}
+    if (!modes.contains(modeName)) {
+        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr("unknown mode")}}", status: 400)
+    }
+    try {
+        location.setMode(modeName)
+        return render(contentType: "application/json", data: "{\"ok\":true,\"mode\":${jsonStr(modeName)}}", status: 200)
+    } catch (e) {
+        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
+    }
+}
+
+def pinsMatch(expected, provided) {
+    if (expected == null || expected == "") {
+        return provided == null || provided == ""
+    }
+    if (provided == null) provided = ""
+    def a = expected.toString()
+    def b = provided.toString()
+    def diff = a.length() ^ b.length()
+    def maxLen = Math.max(a.length(), b.length())
+    for (int i = 0; i < maxLen; i++) {
+        def ca = i < a.length() ? (int)a.charAt(i) : 0
+        def cb = i < b.length() ? (int)b.charAt(i) : 0
+        diff |= (ca ^ cb)
+    }
+    return diff == 0
+}
+
+def hsmModeToStatus(mode) {
+    switch (mode) {
+        case "armAway": return "armedAway"
+        case "armHome": return "armedHome"
+        case "armNight": return "armedNight"
+        case "disarm": return "disarmed"
+        case "disarmAll": return "allDisarmed"
+        case "armAll": return "disarmed"
+        default: return ""
+    }
+}
+
+def hsmResponseAfterCommand(mode) {
+    def status = hsmModeToStatus(mode)
+    def alertVal = ""
+    def alertDescVal = ""
+    try {
+        def current = location.currentState("hsmStatus")?.value?.toString()
+        if (current) status = current
+    } catch (e) {}
+    try {
+        def alertSt = location.currentState("hsmAlert")
+        alertVal = alertSt?.value?.toString() ?: ""
+        alertDescVal = alertSt?.descriptionText?.toString() ?: ""
+    } catch (e) {}
+    if (mode == "cancelAlerts") {
+        alertVal = ""
+        alertDescVal = ""
+    }
+    return [status: status, alert: alertVal, alertDesc: alertDescVal]
+}
+
+def setHsmGet() {
+    def mode = params?.mode
+    def pin = params?.pin
+    if (!mode?.trim()) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing mode"}', status: 400)
+    }
+    return setHsmFromMode(mode.trim(), pin)
+}
+
+def setHsm() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def mode = body?.mode
+    def pin = body?.pin
+    if (!mode?.toString()?.trim()) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing mode"}', status: 400)
+    }
+    return setHsmFromMode(mode.toString().trim(), pin?.toString())
+}
+
+def setHsmFromMode(mode, pin) {
+    if (hsmEnabled != true) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"HSM control disabled"}', status: 400)
+    }
+    def validModes = ["armAway", "armHome", "armNight", "disarm", "armAll", "disarmAll", "armRules", "disarmRules", "cancelAlerts"]
+    if (!validModes.contains(mode)) {
+        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr("unknown mode")}}", status: 400)
+    }
+    if (hsmPinEnabled == true) {
+        def expectedPin = hsmPin?.toString()?.trim() ?: ""
+        if (!expectedPin) {
+            return render(contentType: "application/json", data: '{"ok":false,"error":"pin not configured"}', status: 400)
+        }
+        if (!pin?.trim()) {
+            return render(contentType: "application/json", data: '{"ok":false,"error":"wrong pin"}', status: 403)
+        }
+        if (!pinsMatch(expectedPin, pin.trim())) {
+            return render(contentType: "application/json", data: '{"ok":false,"error":"wrong pin"}', status: 403)
+        }
+    }
+    try {
+        sendLocationEvent(name: "hsmSetArm", value: mode)
+        def out = hsmResponseAfterCommand(mode)
+        return render(contentType: "application/json", data: "{\"ok\":true,\"mode\":${jsonStr(mode)},\"status\":${jsonStr(out.status)},\"alert\":${jsonStr(out.alert)},\"alertDesc\":${jsonStr(out.alertDesc)}}", status: 200)
+    } catch (e) {
+        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
+    }
+}
+
+def activateSceneGet() {
+    def id = params?.id
+    if (id == null) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing id"}', status: 400)
+    }
+    return activateSceneFromId(id)
+}
+
+def activateScene() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def id = body?.id
+    if (id == null) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing id"}', status: 400)
+    }
+    return activateSceneFromId(id)
+}
+
+def activateSceneFromId(id) {
+    def sceneId
+    try { sceneId = id instanceof Number ? id.longValue() : id.toString().toLong() } catch (e) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"invalid id"}', status: 400)
+    }
+    def scenesMap = [:]
+    try { scenesMap = location.scenes ?: [:] } catch (e) {}
+    if (!scenesMap.containsKey(sceneId)) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"scene not found"}', status: 404)
+    }
+    try {
+        location.activateScene(sceneId)
+        return render(contentType: "application/json", data: "{\"ok\":true,\"id\":${sceneId}}", status: 200)
+    } catch (e) {
+        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
+    }
+}
+
+def saveFavoritesGet() {
+    def idsStr = params?.ids
+    if (!idsStr?.trim()) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing ids"}', status: 400)
+    }
+    def ids = idsStr.split(",").collect { it.trim() }.findAll { it }
+    return saveFavoritesFromList(ids)
+}
+
+def saveFavorites() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def ids = body?.ids
+    if (!(ids instanceof List)) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"missing ids"}', status: 400)
+    }
+    return saveFavoritesFromList(ids)
+}
+
+def saveFavoritesFromList(ids) {
+    def valid = validFavoriteIdSet()
+    def validated = []
+    def seen = new HashSet()
+    for (item in ids) {
+        def key
+        try {
+            key = (item instanceof Number) ? item.longValue().toString() : item.toString().trim()
+        } catch (e) { continue }
+        if (!key || !valid.contains(key)) continue
+        if (seen.contains(key)) continue
+        seen.add(key)
+        validated << key.toLong()
+    }
+    state.favorites = validated.join(",")
+    def out = new StringBuilder()
+    out << "{\"ok\":true,\"ids\":["
+    boolean first = true
+    for (id in validated) {
+        if (!first) out << ","; first = false
+        out << id
+    }
+    out << "]}"
+    return render(contentType: "application/json", data: out.toString(), status: 200)
+}

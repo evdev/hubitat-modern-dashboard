@@ -1,0 +1,69 @@
+{
+	"packageName": "Modern Dashboard",
+	"minimumHEVersion": "2.3.0",
+	"author": "you",
+	"version": "0.1.0",
+	"dateReleased": "2026-07-01",
+	"licenseFile": "",
+	"releaseNotes": "Modern mobile-first lights dashboard with room controls and dimmer sliders.",
+	"documentationLink": "",
+	"communityLink": "",
+	"apps": [
+		{
+			"id": "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f",
+			"name": "Modern Dashboard",
+			"namespace": "modernlights",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/ModernLightsDashboard.groovy",
+			"required": true,
+			"oauth": true,
+			"primary": true
+		}
+	],
+	"files": [
+		{
+			"id": "b1a2c3d4-e5f6-7890-abcd-ef1234567890",
+			"name": "mld-index.html",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/upload/mld-index.html"
+		},
+		{
+			"id": "c2b3d4e5-f6a7-8901-bcde-f12345678901",
+			"name": "mld-app.css",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/upload/mld-app.css"
+		},
+		{
+			"id": "d3c4e5f6-a7b8-9012-cdef-123456789012",
+			"name": "mld-app-pre.js",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/upload/mld-app-pre.js"
+		},
+		{
+			"id": "e4d5f6a7-b8c9-0123-def0-234567890123",
+			"name": "mld-app.js",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/upload/mld-app.js"
+		},
+		{
+			"id": "f5e6a7b8-c9d0-1234-ef01-345678901234",
+			"name": "mld-app-post.js",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/upload/mld-app-post.js"
+		},
+		{
+			"id": "a6f7b8c9-d0e1-2345-f012-456789012345",
+			"name": "mld-manifest.webmanifest",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/upload/mld-manifest.webmanifest"
+		},
+		{
+			"id": "b7a8c9d0-e1f2-3456-0123-567890123456",
+			"name": "mld-sw.js",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/upload/mld-sw.js"
+		},
+		{
+			"id": "c8b9d0e1-f2a3-4567-1234-678901234567",
+			"name": "mld-icon-192.b64",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/upload/mld-icon-192.b64"
+		},
+		{
+			"id": "d9c0e1f2-a3b4-5678-2345-789012345678",
+			"name": "mld-icon-512.b64",
+			"location": "https://raw.githubusercontent.com/UPDATE_USER/UPDATE_REPO/UPDATE_TAG/dist/upload/mld-icon-512.b64"
+		}
+	]
+}
