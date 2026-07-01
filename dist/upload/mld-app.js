@@ -376,6 +376,7 @@
         renderTstatDial();
         updateClimateWidgets();
       }
+      refreshOpenTstatQuickPopups();
       postCall("refreshDevice", id);
     }, LEVEL_OPTIMISTIC_MS);
     setpointOptimistic.set(id, entry);
@@ -1340,11 +1341,13 @@
     if (haptic) hapticTap();
     renderTstatDial();
     updateClimateWidgets();
+    refreshOpenTstatQuickPopups();
     const results = await Promise.all(ids.map((id) => sendCmd(id, cmd, val)));
     if (results.some((r) => !r?.ok)) {
       for (const id of ids) clearSetpointOptimistic(id);
       renderTstatDial();
       updateClimateWidgets();
+      refreshOpenTstatQuickPopups();
       for (const id of ids) reconcileTstat(id);
       return false;
     }
@@ -1638,6 +1641,7 @@
       else if (key === "auto") t.os = "idle";
       tstatDeviceModeLock.set(id, { until: Date.now() + 4000, mode: key });
     }
+    refreshOpenTstatQuickPopups();
   }
 
   function sendTstatModeCmd(id, cmd, key) {
@@ -1655,7 +1659,7 @@
     const cur = Number(t[field]);
     const base = Number.isFinite(cur) ? cur : (target === "heat" ? 70 : 74);
     const val = clampSetpoint(base + delta, unit);
-    commitTstatSetpoint([id], target, val).then(() => refreshOpenTstatQuickPopups());
+    commitTstatSetpoint([id], target, val);
   }
 
   function refreshOpenTstatQuickPopups() {
@@ -1723,7 +1727,6 @@
     updateClimateWidgets();
     sendTstatModeCmd(id, cmd, key);
     reconcileTstat(id);
-    refreshOpenTstatQuickPopups();
   }
 
   function openFavoriteTstatModeMenu(anchorBtn, tstatId) {

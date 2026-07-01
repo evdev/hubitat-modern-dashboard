@@ -29,7 +29,7 @@ const APP_DISPLAY_NAME = "Modern Dashboard";
 
 const HPM_BASE_URL =
   process.env.HPM_BASE_URL ??
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/v0.1.1/dist";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/v0.1.2/dist";
 
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";

@@ -376,6 +376,7 @@
         renderTstatDial();
         updateClimateWidgets();
       }
+      refreshOpenTstatQuickPopups();
       postCall("refreshDevice", id);
     }, LEVEL_OPTIMISTIC_MS);
     setpointOptimistic.set(id, entry);
@@ -1340,11 +1341,13 @@
     if (haptic) hapticTap();
     renderTstatDial();
     updateClimateWidgets();
+    refreshOpenTstatQuickPopups();
     const results = await Promise.all(ids.map((id) => sendCmd(id, cmd, val)));
     if (results.some((r) => !r?.ok)) {
       for (const id of ids) clearSetpointOptimistic(id);
       renderTstatDial();
       updateClimateWidgets();
+      refreshOpenTstatQuickPopups();
       for (const id of ids) reconcileTstat(id);
       return false;
     }
@@ -1638,6 +1641,7 @@
       else if (key === "auto") t.os = "idle";
       tstatDeviceModeLock.set(id, { until: Date.now() + 4000, mode: key });
     }
+    refreshOpenTstatQuickPopups();
   }
 
   function sendTstatModeCmd(id, cmd, key) {
@@ -1655,7 +1659,7 @@
     const cur = Number(t[field]);
     const base = Number.isFinite(cur) ? cur : (target === "heat" ? 70 : 74);
     const val = clampSetpoint(base + delta, unit);
-    commitTstatSetpoint([id], target, val).then(() => refreshOpenTstatQuickPopups());
+    commitTstatSetpoint([id], target, val);
   }
 
   function refreshOpenTstatQuickPopups() {
@@ -1723,7 +1727,6 @@
     updateClimateWidgets();
     sendTstatModeCmd(id, cmd, key);
     reconcileTstat(id);
-    refreshOpenTstatQuickPopups();
   }
 
   function openFavoriteTstatModeMenu(anchorBtn, tstatId) {
@@ -3433,8 +3436,7 @@
   }
 
   function reconcileLock(id) {
-    setTimeout(() => refreshDevice(id), 600);
-    setTimeout(() => refreshDevice(id), 2000);
+    setTimeout(() => refreshDevice(id), 7000);
   }
 
   function reconcileMusic(id) {
@@ -4057,11 +4059,15 @@
       body.textContent = "No hub modes configured";
       return;
     }
-    const modes = ce("div", "tstat-modes quick-hub-modes");
+    const grid = ce("div", "hub-mode-grid");
     for (const mode of hubModes) {
-      const b = ce("button", "tstat-mode");
+      const meta = hubModeMeta(mode);
+      const b = ce("button", "hub-mode-btn");
       b.type = "button";
-      b.textContent = mode;
+      b.innerHTML = meta.svg;
+      const label = ce("span", "hub-mode-label");
+      label.textContent = mode;
+      b.appendChild(label);
       if (mode === currentHubMode) b.classList.add("active");
       b.addEventListener("click", async () => {
         if (mode === currentHubMode) return;
@@ -4071,9 +4077,9 @@
         renderHubModePopup();
         await setHubModeApi(mode);
       });
-      modes.appendChild(b);
+      grid.appendChild(b);
     }
-    body.appendChild(modes);
+    body.appendChild(grid);
   }
 
   function ensurePinPadPopup() {
@@ -4524,15 +4530,15 @@
     updateStates();
   }
 
-  function thermostatsPopupSignature() {
-    return thermostats.map((t) => `${t.i}:${t.tm}:${t.os}:${t.hsp}:${t.csp}:${t.temp}`).join("|");
+  function thermostatsListSignature() {
+    return thermostats.map((t) => t.i).join(",");
   }
 
   function refreshThermostatsPopup() {
     if (currentCategory() !== "thermostats") return;
-    const sig = thermostatsPopupSignature();
+    const listSig = thermostatsListSignature();
     const body = currentBody();
-    if (!body.querySelector(".quick-fav-grid") || sig !== tstatsPopupSig) {
+    if (!body.querySelector(".quick-fav-grid") || listSig !== tstatsPopupSig) {
       renderThermostatsPopup();
       return;
     }
@@ -4548,7 +4554,7 @@
     body.className = "quick-body quick-body-thermostats" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";
     tstatsPopupMap.clear();
-    tstatsPopupSig = thermostatsPopupSignature();
+    tstatsPopupSig = thermostatsListSignature();
     if (!thermostats.length) {
       body.textContent = "No thermostats selected — add thermostats in the Hubitat app settings";
       return;
@@ -4624,6 +4630,7 @@
     closeMusicMasterPopup();
     const popup = ensureQuickPopup();
     popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats");
+    popup.classList.toggle("quick-popup-hub-mode", id === "hub-mode");
     popup._title.textContent = title;
     popup.setAttribute("aria-label", title);
     quickPopupOpenType = id;
@@ -4651,6 +4658,7 @@
     quickPopup.hidden = true;
     quickPopup.classList.remove("open");
     quickPopup.classList.remove("quick-popup-wide");
+    quickPopup.classList.remove("quick-popup-hub-mode");
     quickPopupOpenType = null;
     favDevMap.clear();
     favTstatMap.clear();

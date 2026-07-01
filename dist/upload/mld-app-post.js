@@ -1225,8 +1225,7 @@
   }
 
   function reconcileLock(id) {
-    setTimeout(() => refreshDevice(id), 600);
-    setTimeout(() => refreshDevice(id), 2000);
+    setTimeout(() => refreshDevice(id), 7000);
   }
 
   function reconcileMusic(id) {
@@ -1849,11 +1848,15 @@
       body.textContent = "No hub modes configured";
       return;
     }
-    const modes = ce("div", "tstat-modes quick-hub-modes");
+    const grid = ce("div", "hub-mode-grid");
     for (const mode of M.hubModes) {
-      const b = ce("button", "tstat-mode");
+      const meta = hubModeMeta(mode);
+      const b = ce("button", "hub-mode-btn");
       b.type = "button";
-      b.textContent = mode;
+      b.innerHTML = meta.svg;
+      const label = ce("span", "hub-mode-label");
+      label.textContent = mode;
+      b.appendChild(label);
       if (mode === M.currentHubMode) b.classList.add("active");
       b.addEventListener("click", async () => {
         if (mode === M.currentHubMode) return;
@@ -1863,9 +1866,9 @@
         renderHubModePopup();
         await setHubModeApi(mode);
       });
-      modes.appendChild(b);
+      grid.appendChild(b);
     }
-    body.appendChild(modes);
+    body.appendChild(grid);
   }
 
   function ensurePinPadPopup() {
@@ -2316,15 +2319,15 @@
     updateStates();
   }
 
-  function thermostatsPopupSignature() {
-    return M.thermostats.map((t) => `${t.i}:${t.tm}:${t.os}:${t.hsp}:${t.csp}:${t.temp}`).join("|");
+  function thermostatsListSignature() {
+    return M.thermostats.map((t) => t.i).join(",");
   }
 
   function refreshThermostatsPopup() {
     if (currentCategory() !== "thermostats") return;
-    const sig = thermostatsPopupSignature();
+    const listSig = thermostatsListSignature();
     const body = currentBody();
-    if (!body.querySelector(".quick-fav-grid") || sig !== M.tstatsPopupSig) {
+    if (!body.querySelector(".quick-fav-grid") || listSig !== M.tstatsPopupSig) {
       renderThermostatsPopup();
       return;
     }
@@ -2340,7 +2343,7 @@
     body.className = "quick-body quick-body-thermostats" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";
     M.tstatsPopupMap.clear();
-    M.tstatsPopupSig = thermostatsPopupSignature();
+    M.tstatsPopupSig = thermostatsListSignature();
     if (!M.thermostats.length) {
       body.textContent = "No thermostats selected — add thermostats in the Hubitat app settings";
       return;
@@ -2416,6 +2419,7 @@
     M.closeMusicMasterPopup();
     const popup = ensureQuickPopup();
     popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats");
+    popup.classList.toggle("quick-popup-hub-mode", id === "hub-mode");
     popup._title.textContent = title;
     popup.setAttribute("aria-label", title);
     M.quickPopupOpenType = id;
@@ -2443,6 +2447,7 @@
     quickPopup.hidden = true;
     quickPopup.classList.remove("open");
     quickPopup.classList.remove("quick-popup-wide");
+    quickPopup.classList.remove("quick-popup-hub-mode");
     M.quickPopupOpenType = null;
     M.favDevMap.clear();
     M.favTstatMap.clear();
@@ -3033,5 +3038,5 @@
     refreshThermostatsPopup,
     toggleFavorite,
   });
-  Object.assign(M, { replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, getDisplayRoomIds, saveRoomOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, render, buildDom, makeTile, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, testHaptics, toggleSwitch, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, devicesNeedingCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, renderLocksPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsPopupSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, closeConfirm, ensureConfirmPopup, confirmAction, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, startWS, scheduleReconnect });
+  Object.assign(M, { replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, getDisplayRoomIds, saveRoomOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, render, buildDom, makeTile, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, testHaptics, toggleSwitch, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, devicesNeedingCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, renderLocksPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, closeConfirm, ensureConfirmPopup, confirmAction, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, startWS, scheduleReconnect });
 })();

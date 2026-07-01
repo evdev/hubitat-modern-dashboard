@@ -686,6 +686,7 @@ body {
   pointer-events: auto;
 }
 .quick-popup-wide .quick-panel { width: min(480px, calc(100vw - 32px)); }
+.quick-popup-hub-mode .quick-panel { width: min(520px, calc(100vw - 32px)); padding: 22px; }
 .quick-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .quick-title {
   margin: 0; font-size: 17px; font-weight: 700; color: var(--text);
@@ -818,6 +819,27 @@ body {
   opacity: 0.45; cursor: not-allowed; box-shadow: none;
 }
 .quick-hub-modes { flex-wrap: wrap; }
+.hub-mode-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+}
+.hub-mode-btn {
+  appearance: none; border: 1px solid var(--stroke-2); background: var(--panel-2);
+  color: var(--text-dim); cursor: pointer; border-radius: 16px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; min-height: 92px; padding: 14px 10px;
+  transition: all .15s var(--ease);
+  touch-action: manipulation; -webkit-touch-callout: none;
+}
+.hub-mode-btn svg { width: 32px; height: 32px; flex-shrink: 0; overflow: visible; }
+.hub-mode-label {
+  font-size: 14px; font-weight: 700; text-align: center; line-height: 1.2;
+  color: inherit;
+}
+.hub-mode-btn.active {
+  background: var(--accent); color: #fff; border-color: transparent;
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+.hub-mode-btn:active { transform: scale(.95); }
 .quick-body-scenes, .quick-body-favorites, .quick-body-locks { text-align: left; padding: 0; }
 .quick-body-sensors { text-align: left; padding: 0; }
 .quick-body-thermostats { text-align: left; padding: 0; }

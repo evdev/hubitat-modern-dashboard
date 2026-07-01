@@ -14,6 +14,33 @@ const SCENES_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGra
 const MUSIC_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnMusic" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c4b5ff"/><stop offset="1" stop-color="#7b5cff"/></linearGradient></defs><path d="M9.5 17.6V5.4l9-2v12.2" fill="none" stroke="url(#qnMusic)" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.5 5.4l9-2" stroke="url(#qnMusic)" stroke-width="3" stroke-linecap="round"/><ellipse cx="6.9" cy="17.6" rx="2.7" ry="2.1" fill="url(#qnMusic)" stroke="#5a3df0" stroke-width="0.6" transform="rotate(-22 6.9 17.6)"/><ellipse cx="15.8" cy="15.6" rx="2.4" ry="1.8" fill="url(#qnMusic)" stroke="#5a3df0" stroke-width="0.6" transform="rotate(-22 15.8 15.6)"/></svg>';
 const SCHEDULE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnSched" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7aa2ff"/><stop offset="1" stop-color="#3b6bff"/></linearGradient></defs><rect x="3.5" y="5" width="17" height="15.5" rx="2.6" fill="var(--panel-2)" stroke="url(#qnSched)" stroke-width="1.5"/><path d="M3.5 9.2h17" stroke="url(#qnSched)" stroke-width="1.5"/><path d="M8 3.3v3.4M16 3.3v3.4" stroke="#5b8cff" stroke-width="2" stroke-linecap="round"/><path d="M7 13h3M7 15.5h6M14 13h3" stroke="#9aa4b8" stroke-width="1.5" stroke-linecap="round"/></svg>';
 const HUB_MODE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><radialGradient id="qnSun" cx="42%" cy="38%" r="65%"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#ff9d3c"/></radialGradient></defs><g stroke="#ffb86b" stroke-width="2" stroke-linecap="round"><path d="M12 2.4v2.4M12 19.2v2.4M4.8 4.8l1.7 1.7M17.5 17.5l1.7 1.7M2.4 12h2.4M19.2 12h2.4M4.8 19.2l1.7-1.7M17.5 6.5l1.7-1.7"/></g><circle cx="12" cy="12" r="4.1" fill="url(#qnSun)" stroke="#e0832a" stroke-width="0.8"/></svg>';
+
+// Hub location mode icons for the mode popup (Hubitat API exposes names only, not icons).
+const HUB_MODE_DAY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><radialGradient id="hmDay" cx="42%" cy="38%" r="65%"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#ff9d3c"/></radialGradient></defs><g stroke="#ffb86b" stroke-width="2" stroke-linecap="round"><path d="M12 2.4v2.4M12 19.2v2.4M4.8 4.8l1.7 1.7M17.5 17.5l1.7 1.7M2.4 12h2.4M19.2 12h2.4M4.8 19.2l1.7-1.7M17.5 6.5l1.7-1.7"/></g><circle cx="12" cy="12" r="4.1" fill="url(#hmDay)" stroke="#e0832a" stroke-width="0.8"/></svg>';
+const HUB_MODE_EVENING_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="hmEvening" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff9d5c"/><stop offset="1" stop-color="#e05858"/></linearGradient></defs><path d="M3 17.5h18" stroke="#c96a4a" stroke-width="1.5" stroke-linecap="round"/><path d="M12 14.5a5.5 5.5 0 0 1 0-11 5.5 5.5 0 0 1 0 11Z" fill="url(#hmEvening)" stroke="#c96a4a" stroke-width="0.8"/></svg>';
+const HUB_MODE_NIGHT_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="hmNight" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c4b5ff"/><stop offset="1" stop-color="#6b5cff"/></linearGradient></defs><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z" fill="url(#hmNight)" stroke="#5a4de0" stroke-width="0.8"/><circle cx="17" cy="7" r="0.9" fill="#fff" opacity="0.85"/><circle cx="19.5" cy="10.5" r="0.6" fill="#fff" opacity="0.65"/></svg>';
+const HUB_MODE_AWAY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="hmAway" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7aa2ff"/><stop offset="1" stop-color="#3b6bff"/></linearGradient></defs><path d="M5 17.5h14l-1.4-4.2H6.4L5 17.5Z" fill="url(#hmAway)" stroke="#2b54e6" stroke-width="0.8" stroke-linejoin="round"/><path d="M7.2 13.3l1.8-5.4h6l1.8 5.4" fill="none" stroke="#2b54e6" stroke-width="1.4" stroke-linejoin="round"/><circle cx="8.5" cy="17.5" r="1.4" fill="var(--panel-2)" stroke="#2b54e6" stroke-width="1.2"/><circle cx="15.5" cy="17.5" r="1.4" fill="var(--panel-2)" stroke="#2b54e6" stroke-width="1.2"/></svg>';
+const HUB_MODE_GENERIC_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="hmGeneric" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd08a"/><stop offset="1" stop-color="#cf8f3a"/></linearGradient></defs><path d="M4 10.5 12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19V10.5Z" fill="url(#hmGeneric)" stroke="#a96a22" stroke-width="0.8" stroke-linejoin="round"/><path d="M10 20.5v-6h4v6" fill="var(--panel-2)" stroke="#a96a22" stroke-width="0.8" stroke-linejoin="round"/></svg>';
+
+const HUB_MODE_META = {
+  day: HUB_MODE_DAY_SVG,
+  home: HUB_MODE_DAY_SVG,
+  evening: HUB_MODE_EVENING_SVG,
+  dusk: HUB_MODE_EVENING_SVG,
+  sunset: HUB_MODE_EVENING_SVG,
+  night: HUB_MODE_NIGHT_SVG,
+  sleep: HUB_MODE_NIGHT_SVG,
+  asleep: HUB_MODE_NIGHT_SVG,
+  bedtime: HUB_MODE_NIGHT_SVG,
+  away: HUB_MODE_AWAY_SVG,
+  vacation: HUB_MODE_AWAY_SVG,
+  holiday: HUB_MODE_AWAY_SVG,
+};
+
+function hubModeMeta(name) {
+  const key = String(name || "").trim().toLowerCase();
+  return { svg: HUB_MODE_META[key] || HUB_MODE_GENERIC_SVG };
+}
 const FAVORITES_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9L12 17.8 5.8 21.1 7 14.2 2 9.3l6.9-1L12 2z"/></svg>';
 const FAV_NAV_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnFav" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#f0a93a"/></linearGradient></defs><path d="M12 2.6l2.9 5.9 6.5.95-4.7 4.58 1.1 6.47L12 17.5l-5.8 3.05 1.1-6.47L2.6 9.45l6.5-.95L12 2.6z" fill="url(#qnFav)" stroke="#c98a2a" stroke-width="0.7" stroke-linejoin="round"/><path d="M12 2.6l2.9 5.9 3.1.46" fill="none" stroke="#fff4cc" stroke-width="1" stroke-linecap="round" opacity="0.75"/></svg>';
 const SECURITY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnSec" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7aa2ff"/><stop offset="1" stop-color="#3b6bff"/></linearGradient></defs><path d="M12 2.2l8 3.8v6c0 5-3.5 9.3-8 9.8-4.5-.5-8-4.8-8-9.8V6l8-3.8z" fill="url(#qnSec)" stroke="#2b54e6" stroke-width="0.8" stroke-linejoin="round"/><path d="M8.5 12l2.4 2.4L15.8 9.6" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
