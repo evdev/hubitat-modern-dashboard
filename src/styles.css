@@ -738,8 +738,15 @@ body {
   font-size: 14px; font-weight: 700;
   background: #e5484d; color: #fff;
   box-shadow: 0 4px 14px rgba(229,72,77,0.35);
+  display: flex; align-items: center; justify-content: center; gap: 8px;
   touch-action: manipulation; -webkit-touch-callout: none;
 }
+.quick-hsm-cancel-btn svg {
+  width: 18px; height: 18px; flex-shrink: 0;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.quick-hsm-cancel-label { line-height: 1; }
 .quick-hsm-cancel-btn:active { transform: scale(.97); }
 .quick-hsm-section { margin-bottom: 16px; }
 .quick-hsm-section:last-child { margin-bottom: 0; }
@@ -752,6 +759,9 @@ body {
 }
 .quick-hsm-modes { flex-wrap: wrap; }
 .quick-hsm-mode { flex: 1 1 calc(50% - 4px); min-width: 120px; }
+.quick-hsm-mode-label {
+  font-size: 13px; font-weight: 700; line-height: 1.2; text-align: center;
+}
 
 /* PIN pad (HSM security) */
 .pin-pad-popup {
@@ -1551,6 +1561,11 @@ body {
 .tstat-mode.active { background: var(--accent); color: #fff; border-color: transparent; box-shadow: 0 4px 14px var(--accent-glow); }
 .tstat-mode.off.active { background: var(--panel-solid); color: var(--text); border-color: var(--text-faint); box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-faint) 55%, transparent); }
 .tstat-mode:active { transform: scale(.95); }
+.tstat-mode.quick-hsm-mode {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 7px; padding: 14px 8px;
+}
+.tstat-mode.quick-hsm-mode svg { width: 28px; height: 28px; }
 
 /* Small phones (320-360px) */
 @media (max-width: 359px) {

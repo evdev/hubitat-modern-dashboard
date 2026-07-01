@@ -66,7 +66,7 @@
     try { localStorage.setItem(TABS_STORAGE_KEY, on ? "1" : "0"); } catch {}
   }
 
-  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "Lights", roomOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref() };
+  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", roomOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref() };
 
   // state
   let rooms = [];            // [{id,name}]
@@ -1966,19 +1966,19 @@
     playBtn.setAttribute("aria-label", "Play all");
     playBtn.innerHTML = MUSIC_PLAY_SVG;
     playBtn.disabled = !canPlay;
-    playBtn.addEventListener("click", () => broadcastMusic("play"));
+    playBtn.addEventListener("click", () => postCall("broadcastMusic", "play"));
     const pauseBtn = ce("button", "music-btn music-btn-primary");
     pauseBtn.type = "button";
     pauseBtn.setAttribute("aria-label", "Pause all");
     pauseBtn.innerHTML = MUSIC_PAUSE_SVG;
     pauseBtn.disabled = !canPause;
-    pauseBtn.addEventListener("click", () => broadcastMusic("pause"));
+    pauseBtn.addEventListener("click", () => postCall("broadcastMusic", "pause"));
     const stopBtn = ce("button", "music-btn");
     stopBtn.type = "button";
     stopBtn.setAttribute("aria-label", "Stop all");
     stopBtn.innerHTML = MUSIC_STOP_SVG;
     stopBtn.disabled = !canStop;
-    stopBtn.addEventListener("click", () => broadcastMusic("stop"));
+    stopBtn.addEventListener("click", () => postCall("broadcastMusic", "stop"));
     transport.appendChild(playBtn);
     transport.appendChild(pauseBtn);
     transport.appendChild(stopBtn);
@@ -1992,13 +1992,13 @@
     volDown.setAttribute("aria-label", "Volume down for all");
     volDown.textContent = "\u2212";
     volDown.disabled = !canVolume;
-    volDown.addEventListener("click", () => broadcastMusicVolume(-MUSIC_VOL_STEP));
+    volDown.addEventListener("click", () => postCall("broadcastMusicVolume", -MUSIC_VOL_STEP));
     const volUp = ce("button", "music-btn music-master-vol-btn");
     volUp.type = "button";
     volUp.setAttribute("aria-label", "Volume up for all");
     volUp.textContent = "+";
     volUp.disabled = !canVolume;
-    volUp.addEventListener("click", () => broadcastMusicVolume(MUSIC_VOL_STEP));
+    volUp.addEventListener("click", () => postCall("broadcastMusicVolume", MUSIC_VOL_STEP));
     volRow.appendChild(volLabel);
     volRow.appendChild(volDown);
     volRow.appendChild(volUp);
@@ -2008,7 +2008,7 @@
   function openMusicMasterPopup() {
     closeTstatPopup();
     if (colorSession) closeColorPopup(false);
-    if (quickPopup && quickPopup.classList.contains("open")) closeQuickPopup();
+    postCall("closeQuickPopup");
     if (!music.length) return;
     renderMusicMasterBody();
     const popup = ensureMusicMasterPopup();
@@ -2098,7 +2098,7 @@
   }
 
   function applyDashboardName(name) {
-    const title = String(name || "").trim() || "Lights";
+    const title = String(name || "").trim() || "mDash";
     cfg.dashboardName = title;
     if (DASHBOARD_TITLE_EL) DASHBOARD_TITLE_EL.textContent = title;
     document.title = title;
@@ -4272,7 +4272,7 @@
     for (const mode of modes) {
       const b = ce("button", "tstat-mode quick-hsm-mode");
       b.type = "button";
-      b.textContent = mode.label;
+      b.innerHTML = (mode.svg || "") + '<span class="quick-hsm-mode-label">' + mode.label + "</span>";
       if (hsmModeIsActive(hsmStatus, mode)) b.classList.add("active");
       b.addEventListener("click", () => {
         if (skipActive && hsmModeIsActive(hsmStatus, mode)) return;
@@ -4308,7 +4308,7 @@
       alertBanner.appendChild(alertText);
       const cancelBtn = ce("button", "quick-hsm-cancel-btn");
       cancelBtn.type = "button";
-      cancelBtn.textContent = "Cancel Alert";
+      cancelBtn.innerHTML = HSM_CANCEL_ALERT_SVG + '<span class="quick-hsm-cancel-label">Cancel Alert</span>';
       cancelBtn.addEventListener("click", () => {
         runHsmAction("cancel alert", "cancelAlerts");
       });

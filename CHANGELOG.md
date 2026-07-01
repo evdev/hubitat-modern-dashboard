@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7
+
+- Default dashboard and PWA title renamed to **mDash**.
+- HSM quick popup: shield icons for arm/disarm modes and cancel-alert button.
+- Fix music master transport and popup close across JS chunks (`postCall`); build-time check for part-1/part-2 symbol leaks.
+
 ## 0.1.6
 
 - Documentation pass: community post draft, HPM registry guide, CHANGELOG, NOTICE, bundle READMEs, PWA description, generated `repository.json`, setup page copy.

@@ -166,21 +166,32 @@ const TSTAT_MODE_DEFS = [
   { key: "cool", label: "Cool", cmd: "modeCool" },
 ];
 
+const HSM_SHIELD = '<path d="M12 3 5 6v5c0 4.4 3 8.5 7 9.8 4-1.3 7-5.4 7-9.8V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>';
+const HSM_DISARM_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true">' + HSM_SHIELD + '<path d="m6 6.4 12 11.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+const HSM_ARM_AWAY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true">' + HSM_SHIELD + '<path d="M9.5 12.6v-1.5a2.5 2.5 0 0 1 5 0v1.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><rect x="8.6" y="12.6" width="6.8" height="5" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
+const HSM_ARM_HOME_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true">' + HSM_SHIELD + '<path d="M8.8 16.6v-3.1l3.2-2.4 3.2 2.4v3.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 16.6v-1.5h2v1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+const HSM_ARM_NIGHT_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true">' + HSM_SHIELD + '<path d="M15.6 10.8a3.6 3.6 0 1 1-3.5-3.5 2.9 2.9 0 0 0 3.5 3.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+const HSM_ARM_MONITORING_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true">' + HSM_SHIELD + '<path d="M12 9.3s3 3.3 3 5.3a3 3 0 0 1-6 0c0-2 3-5.3 3-5.3Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>';
+const HSM_DISARM_ALL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true">' + HSM_SHIELD + '<path d="m6.5 7 11 10M17.5 7 6.5 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+const HSM_ARM_RULES_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="17" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+const HSM_DISARM_RULES_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="17" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="m7 5 10 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+const HSM_CANCEL_ALERT_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a5 5 0 0 1 5 5v2.5l1.5 2.5H5.5L7 11.5V9a5 5 0 0 1 5-5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 19a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m8 8 8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+
 const HSM_INTRUSION_MODES = [
-  { cmd: "disarm", label: "Disarm", status: "disarmed" },
-  { cmd: "armAway", label: "Arm Away", status: "armedAway" },
-  { cmd: "armHome", label: "Arm Home", status: "armedHome" },
-  { cmd: "armNight", label: "Arm Night", status: "armedNight" },
+  { cmd: "disarm", label: "Disarm", status: "disarmed", svg: HSM_DISARM_SVG },
+  { cmd: "armAway", label: "Arm Away", status: "armedAway", svg: HSM_ARM_AWAY_SVG },
+  { cmd: "armHome", label: "Arm Home", status: "armedHome", svg: HSM_ARM_HOME_SVG },
+  { cmd: "armNight", label: "Arm Night", status: "armedNight", svg: HSM_ARM_NIGHT_SVG },
 ];
 
 const HSM_MONITORING_MODES = [
-  { cmd: "armAll", label: "Arm Monitoring", status: "disarmed" },
-  { cmd: "disarmAll", label: "Disarm All", status: "allDisarmed" },
+  { cmd: "armAll", label: "Arm Monitoring", status: "disarmed", svg: HSM_ARM_MONITORING_SVG },
+  { cmd: "disarmAll", label: "Disarm All", status: "allDisarmed", svg: HSM_DISARM_ALL_SVG },
 ];
 
 const HSM_RULE_MODES = [
-  { cmd: "armRules", label: "Arm Custom Rules" },
-  { cmd: "disarmRules", label: "Disarm Custom Rules" },
+  { cmd: "armRules", label: "Arm Custom Rules", svg: HSM_ARM_RULES_SVG },
+  { cmd: "disarmRules", label: "Disarm Custom Rules", svg: HSM_DISARM_RULES_SVG },
 ];
 
 const HSM_MODES = HSM_INTRUSION_MODES;

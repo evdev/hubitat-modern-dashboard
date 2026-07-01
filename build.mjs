@@ -153,6 +153,94 @@ function parseTopLevelFunctions(lines) {
   return [...new Set(ids)];
 }
 
+function parseTopLevelIdsFromLines(lines) {
+  const ids = new Set();
+  for (const line of lines) {
+    if (!line.startsWith("  ")) continue;
+    let m = line.match(/^  (?:let|const) ([A-Za-z_$][\w$]*)/);
+    if (m) {
+      ids.add(m[1]);
+      continue;
+    }
+    m = line.match(/^  (?:async )?function ([A-Za-z_$][\w$]*)/);
+    if (m) ids.add(m[1]);
+  }
+  return ids;
+}
+
+function stripStringsAndComments(code) {
+  const parts = [];
+  let i = 0;
+  while (i < code.length) {
+    const ch = code[i];
+    if (ch === "/" && code[i + 1] === "/") {
+      const start = i;
+      i += 2;
+      while (i < code.length && code[i] !== "\n") i++;
+      parts.push({ literal: true, text: code.slice(start, i) });
+      continue;
+    }
+    if (ch === "/" && code[i + 1] === "*") {
+      const start = i;
+      i += 2;
+      while (i < code.length && !(code[i] === "*" && code[i + 1] === "/")) i++;
+      i += 2;
+      parts.push({ literal: true, text: code.slice(start, i) });
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const start = i;
+      i++;
+      while (i < code.length) {
+        if (code[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (code[i] === ch) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      parts.push({ literal: true, text: code.slice(start, i) });
+      continue;
+    }
+    const start = i;
+    while (i < code.length) {
+      const c = code[i];
+      if (c === '"' || c === "'" || c === "`") break;
+      if (c === "/" && (code[i + 1] === "/" || code[i + 1] === "*")) break;
+      i++;
+    }
+    parts.push({ literal: false, text: code.slice(start, i) });
+  }
+  return parts.filter((p) => !p.literal).map((p) => p.text).join("");
+}
+
+function assertNoPart1BarePart2Refs(part1Lines, part2Lines) {
+  const part1Ids = parseTopLevelIdsFromLines(part1Lines);
+  const part2Ids = parseTopLevelIdsFromLines(part2Lines);
+  const part2Only = [...part2Ids].filter((id) => !part1Ids.has(id));
+  const part1Code = stripStringsAndComments(part1Lines.join("\n"));
+  const offenders = [];
+  for (const id of part2Only) {
+    const escaped = id.replace(/\$/g, "\\$");
+    const declRe = new RegExp(`(?:const|let|var|function|async function)\\s+${escaped}\\b`);
+    const propRe = new RegExp(`\\b${escaped}\\s*:`);
+    const refRe = new RegExp(
+      `(?<!(?:const|let|var|function|async function) )\\b${escaped}\\b`
+    );
+    if (!refRe.test(part1Code)) continue;
+    if (declRe.test(part1Code) || propRe.test(part1Code)) continue;
+    offenders.push(id);
+  }
+  if (offenders.length) {
+    throw new Error(
+      `Part 1 references part-2-only symbols without postCall(): ${offenders.sort().join(", ")}`
+    );
+  }
+}
+
 function rewritePart2(part2Lines, exportIds) {
   const localIds = new Set(parseTopLevelIds(part2Lines));
   const replaceIds = exportIds.filter((id) => !localIds.has(id));
@@ -175,6 +263,8 @@ function splitAppJs(srcPath) {
   };
   trimTrailing(part1Lines);
   trimTrailing(part2Lines);
+
+  assertNoPart1BarePart2Refs(part1Lines, part2Lines);
 
   const exportIds = parseTopLevelIds(part1Lines.slice(1));
   const exportBlock = `  globalThis.__MLD = { ${exportIds.join(", ")} };`;

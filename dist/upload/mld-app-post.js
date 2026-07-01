@@ -2061,7 +2061,7 @@
     for (const mode of modes) {
       const b = ce("button", "tstat-mode quick-hsm-mode");
       b.type = "button";
-      b.textContent = mode.label;
+      b.innerHTML = (mode.svg || "") + '<span class="quick-hsm-mode-label">' + mode.label + "</span>";
       if (hsmModeIsActive(M.hsmStatus, mode)) b.classList.add("active");
       b.addEventListener("click", () => {
         if (skipActive && hsmModeIsActive(M.hsmStatus, mode)) return;
@@ -2097,7 +2097,7 @@
       alertBanner.appendChild(alertText);
       const cancelBtn = ce("button", "quick-hsm-cancel-btn");
       cancelBtn.type = "button";
-      cancelBtn.textContent = "Cancel Alert";
+      cancelBtn.innerHTML = HSM_CANCEL_ALERT_SVG + '<span class="quick-hsm-cancel-label">Cancel Alert</span>';
       cancelBtn.addEventListener("click", () => {
         runHsmAction("cancel alert", "cancelAlerts");
       });
