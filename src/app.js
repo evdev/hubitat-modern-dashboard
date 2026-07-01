@@ -224,7 +224,7 @@
     }
     const timer = setTimeout(() => {
       lockOptimistic.delete(id);
-      if (currentCategory() === "locks") postCall("renderLocksPopup");
+      if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
     }, LEVEL_OPTIMISTIC_MS);
     lockOptimistic.set(id, { lk, st, until: Date.now() + LEVEL_OPTIMISTIC_MS, timer });
   }
@@ -323,7 +323,7 @@
     };
     entry.timer = setTimeout(() => {
       musicOptimistic.delete(id);
-      if (currentCategory() === "music") postCall("renderMusicPopup");
+      if (postCall("currentCategory") === "music") postCall("renderMusicPopup");
     }, LEVEL_OPTIMISTIC_MS);
     musicOptimistic.set(id, entry);
   }
@@ -1663,8 +1663,8 @@
   }
 
   function refreshOpenTstatQuickPopups() {
-    refreshFavoritesPopup();
-    refreshThermostatsPopup();
+    postCall("refreshFavoritesPopup");
+    postCall("refreshThermostatsPopup");
   }
 
   function closeFavoriteTstatModeMenu() {

@@ -77,7 +77,7 @@ Outputs:
 Set `HPM_BASE_URL` to the raw URL prefix where you host `dist/` (e.g. a GitHub release or tagged path) before publishing to HPM:
 
 ```bash
-HPM_BASE_URL=https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/v0.1.2/dist node build.mjs
+HPM_BASE_URL=https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/v0.1.3/dist node build.mjs
 ```
 
 The Groovy app does **not** embed the UI (Hubitat cannot compile huge base64 blobs). The app reads nine files from File Manager at runtime. The JS is split into `mld-app-pre.js` (constants/helpers), `mld-app.js` (core logic), and `mld-app-post.js` (render/commands/init) to keep each file under the hub's single-file serving limit (~128 KB). PWA assets (`mld-manifest.webmanifest`, `mld-sw.js`, icon `.b64` files) enable install-from-home-screen on the cloud URL. Icons are stored as base64 text in File Manager because Hubitat cannot reliably read binary PNG files from the hub filesystem.
