@@ -23,8 +23,16 @@
         <button id="expand-all" class="ghost-btn icon-btn" type="button" aria-label="Collapse all rooms" title="Collapse all rooms"></button>
         <button id="tstat-central-btn" class="topbar-central-btn" type="button" title="Control all thermostats" hidden>All thermostats</button>
         <button id="music-central-btn" class="topbar-central-btn" type="button" title="Control all music" hidden>All music</button>
-        <button id="all-off" class="topbar-off-btn" type="button" title="Turn all lights off">All off</button>
-        <button id="all-on" class="topbar-on-btn" type="button" title="Turn all lights on">All on</button>
+        <div id="all-off-track" class="slide-confirm-track topbar-slide-track topbar-slide-off" title="Turn all lights off">
+          <button id="all-off-save" class="slide-confirm-action topbar-snap-action topbar-snap-save" type="button" aria-label="Save home state" tabindex="-1">Save Home State</button>
+          <button id="all-off" class="topbar-off-btn" type="button">All off</button>
+          <span class="slide-confirm-thumb" aria-hidden="true"></span>
+        </div>
+        <div id="all-on-track" class="slide-confirm-track topbar-slide-track topbar-slide-on" title="Turn all lights on">
+          <button id="all-on" class="topbar-on-btn" type="button">All on</button>
+          <button id="all-on-restore" class="slide-confirm-action topbar-snap-action topbar-snap-restore" type="button" aria-label="Restore home state" tabindex="-1" disabled aria-disabled="true">Restore Home State</button>
+          <span class="slide-confirm-thumb" aria-hidden="true"></span>
+        </div>
         <div class="topbar-overflow">
           <button id="topbar-overflow-btn" class="ghost-btn icon-btn" type="button" aria-label="More options" aria-haspopup="menu" aria-expanded="false" title="More options">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.75"/><circle cx="12" cy="12" r="1.75"/><circle cx="12" cy="19" r="1.75"/></svg>

@@ -375,8 +375,10 @@ function renderScenesPopup() {
     const nonLights = id !== "lights";
     if (M.ROOMS_EL) M.ROOMS_EL.hidden = nonLights;
     if (M.tabViewEl) M.tabViewEl.hidden = !nonLights;
-    if (M.ALL_ON_BTN) M.ALL_ON_BTN.hidden = nonLights;
-    if (M.ALL_OFF_BTN) M.ALL_OFF_BTN.hidden = nonLights;
+    if (M.ALL_ON_TRACK) M.ALL_ON_TRACK.hidden = nonLights;
+    else if (M.ALL_ON_BTN) M.ALL_ON_BTN.hidden = nonLights;
+    if (M.ALL_OFF_TRACK) M.ALL_OFF_TRACK.hidden = nonLights;
+    else if (M.ALL_OFF_BTN) M.ALL_OFF_BTN.hidden = nonLights;
     if (M.CENTRAL_TSTAT_BTN) M.CENTRAL_TSTAT_BTN.hidden = !(M.tabMode && id === "thermostats");
     if (M.CENTRAL_MUSIC_BTN) M.CENTRAL_MUSIC_BTN.hidden = !(M.tabMode && id === "music");
     if (M.SEARCH_EL) M.SEARCH_EL.placeholder = nonLights ? "Search " + (M.TAB_LABELS[id] || "items") : "Search lights or rooms";
@@ -407,8 +409,10 @@ function renderScenesPopup() {
       M.activeTab = "lights";
       if (M.ROOMS_EL) M.ROOMS_EL.hidden = false;
       if (M.tabViewEl) M.tabViewEl.hidden = true;
-      if (M.ALL_ON_BTN) M.ALL_ON_BTN.hidden = false;
-      if (M.ALL_OFF_BTN) M.ALL_OFF_BTN.hidden = false;
+      if (M.ALL_ON_TRACK) M.ALL_ON_TRACK.hidden = false;
+      else if (M.ALL_ON_BTN) M.ALL_ON_BTN.hidden = false;
+      if (M.ALL_OFF_TRACK) M.ALL_OFF_TRACK.hidden = false;
+      else if (M.ALL_OFF_BTN) M.ALL_OFF_BTN.hidden = false;
       if (M.CENTRAL_TSTAT_BTN) M.CENTRAL_TSTAT_BTN.hidden = true;
       if (M.CENTRAL_MUSIC_BTN) M.CENTRAL_MUSIC_BTN.hidden = true;
       if (M.SEARCH_EL) M.SEARCH_EL.placeholder = "Search lights or rooms";
@@ -477,13 +481,44 @@ function renderScenesPopup() {
     });
   }
 
-  if (M.ALL_ON_BTN) {
+  if (M.ALL_ON_BTN && M.ALL_ON_TRACK && M.ALL_ON_RESTORE_BTN) {
+    M.attachRoomSlideAction(M.ALL_ON_TRACK, M.ALL_ON_BTN, M.ALL_ON_RESTORE_BTN, {
+      direction: "right",
+      onTap: async () => {
+        if (!M.devices.length) return;
+        if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) M.allLights("on");
+      },
+      onCommit: () => {
+        M.snapshotRestoreApi("house").then((ok) => {
+          if (ok) M.flash("Restoring home…");
+        });
+      },
+      canCommit: () => !!M.snapshots[M.snapshotHouseKey()],
+    });
+  } else if (M.ALL_ON_BTN) {
     M.ALL_ON_BTN.addEventListener("click", async () => {
       if (!M.devices.length) return;
       if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) M.allLights("on");
     });
   }
-  if (M.ALL_OFF_BTN) {
+  if (M.ALL_OFF_BTN && M.ALL_OFF_TRACK && M.ALL_OFF_SAVE_BTN) {
+    M.attachRoomSlideAction(M.ALL_OFF_TRACK, M.ALL_OFF_BTN, M.ALL_OFF_SAVE_BTN, {
+      direction: "left",
+      onTap: async () => {
+        if (!M.devices.length) return;
+        if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) M.allLights("off");
+      },
+      onCommit: () => {
+        M.snapshotSaveApi("house").then((ok) => {
+          if (!ok) return;
+          M.snapshots[M.snapshotHouseKey()] = { ts: Date.now(), count: M.devices.length };
+          M.updateRoomSnapshotUi();
+          M.flash("Home saved");
+        });
+      },
+      canCommit: () => true,
+    });
+  } else if (M.ALL_OFF_BTN) {
     M.ALL_OFF_BTN.addEventListener("click", async () => {
       if (!M.devices.length) return;
       if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) M.allLights("off");

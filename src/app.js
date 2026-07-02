@@ -6,6 +6,10 @@
   const STATUS_EL = document.getElementById("status");
   const ALL_ON_BTN = document.getElementById("all-on");
   const ALL_OFF_BTN = document.getElementById("all-off");
+  const ALL_ON_TRACK = document.getElementById("all-on-track");
+  const ALL_OFF_TRACK = document.getElementById("all-off-track");
+  const ALL_ON_RESTORE_BTN = document.getElementById("all-on-restore");
+  const ALL_OFF_SAVE_BTN = document.getElementById("all-off-save");
   const CENTRAL_TSTAT_BTN = document.getElementById("tstat-central-btn");
   const CENTRAL_MUSIC_BTN = document.getElementById("music-central-btn");
   const EXPAND_ALL_BTN = document.getElementById("expand-all");
@@ -2701,6 +2705,10 @@
     return "room:" + roomKey;
   }
 
+  function snapshotHouseKey() {
+    return "house";
+  }
+
   function setRoomGestureLock(on) {
     if (on) {
       roomGestureLockCount++;
@@ -2712,8 +2720,8 @@
   }
 
   const SLIDE_HOLD_MS = 400;
-  const SLIDE_FALLBACK_COMMIT_PX = 72;
-  const SLIDE_MIN_COMMIT_PX = 48;
+  const SLIDE_FALLBACK_COMMIT_PX = 86;
+  const SLIDE_MIN_COMMIT_PX = 52;
   const SLIDE_TAP_MOVE = 10;
 
   function attachRoomSlideAction(track, primaryBtn, actionBtn, opts) {
@@ -2727,22 +2735,43 @@
     let holdBlocked = false;
     let sliding = false;
     let slidePx = 0;
+    let slideMaxPx = SLIDE_FALLBACK_COMMIT_PX;
     let gestureHandled = false;
 
     track.addEventListener("contextmenu", (e) => e.preventDefault());
     track.addEventListener("selectstart", (e) => e.preventDefault());
 
-    function commitDistance() {
+    function actionWidth() {
       const rectW = actionBtn?.getBoundingClientRect?.().width || 0;
       const styleW = actionBtn ? parseFloat(getComputedStyle(actionBtn).maxWidth) || 0 : 0;
-      const w = Math.max(rectW, styleW, SLIDE_FALLBACK_COMMIT_PX);
-      return Math.max(SLIDE_MIN_COMMIT_PX, Math.round(w * 0.9));
+      return Math.max(rectW, styleW, SLIDE_FALLBACK_COMMIT_PX);
+    }
+
+    function setupSlideMetrics() {
+      const primaryRect = primaryBtn.getBoundingClientRect();
+      const actionStyle = actionBtn ? getComputedStyle(actionBtn) : null;
+      const actionW = actionWidth();
+      const thumbW = parseFloat(getComputedStyle(track).getPropertyValue("--slide-thumb-size")) || 28;
+      const margin = actionStyle
+        ? (direction === "left" ? parseFloat(actionStyle.marginRight) || 0 : parseFloat(actionStyle.marginLeft) || 0)
+        : 0;
+      const primaryW = primaryRect.width || 64;
+      const start = direction === "left"
+        ? actionW + margin + Math.max(0, (primaryW - thumbW) / 2)
+        : Math.max(0, (primaryW - thumbW) / 2);
+      slideMaxPx = Math.max(SLIDE_MIN_COMMIT_PX, Math.round((primaryW / 2) + margin + (actionW / 2)));
+      track.style.setProperty("--slide-thumb-left", Math.round(start) + "px");
+      applySlide();
+    }
+
+    function commitDistance() {
+      return slideMaxPx || SLIDE_FALLBACK_COMMIT_PX;
     }
 
     function applySlide() {
       const signed = direction === "left" ? -slidePx : slidePx;
-      track.style.setProperty("--room-slide-x", signed + "px");
-      track.style.setProperty("--room-slide-progress", Math.min(1, slidePx / commitDistance()).toFixed(3));
+      track.style.setProperty("--slide-thumb-x", signed + "px");
+      track.style.setProperty("--slide-progress", Math.min(1, slidePx / commitDistance()).toFixed(3));
     }
 
     function reset() {
@@ -2754,9 +2783,11 @@
       holdBlocked = false;
       sliding = false;
       slidePx = 0;
-      track.style.removeProperty("--room-slide-x");
-      track.style.removeProperty("--room-slide-progress");
-      track.classList.remove("room-slide-active", "room-slide-revealed", "room-slide-target");
+      slideMaxPx = SLIDE_FALLBACK_COMMIT_PX;
+      track.style.removeProperty("--slide-thumb-x");
+      track.style.removeProperty("--slide-thumb-left");
+      track.style.removeProperty("--slide-progress");
+      track.classList.remove("slide-confirm-active", "slide-confirm-revealed", "slide-confirm-target", "room-slide-active", "room-slide-revealed", "room-slide-target");
       setRoomGestureLock(false);
       try { track.releasePointerCapture(pointerId); } catch {}
       try { primaryBtn.releasePointerCapture(pointerId); } catch {}
@@ -2794,7 +2825,9 @@
         slidePx = Math.min(maxSlide, Math.max(0, dx));
       }
       applySlide();
-      track.classList.toggle("room-slide-target", slidePx >= maxSlide);
+      const atTarget = slidePx >= maxSlide;
+      track.classList.toggle("slide-confirm-target", atTarget);
+      track.classList.toggle("room-slide-target", atTarget);
     }
 
     function onUp(e) {
@@ -2853,7 +2886,8 @@
           return;
         }
         holdActive = true;
-        track.classList.add("room-slide-active", "room-slide-revealed");
+        track.classList.add("slide-confirm-active", "slide-confirm-revealed", "room-slide-active", "room-slide-revealed");
+        setupSlideMetrics();
         setRoomGestureLock(true);
         hapticTap();
       }, SLIDE_HOLD_MS);
@@ -2883,6 +2917,15 @@
         rec.restoreBtn.disabled = !has;
         rec.restoreBtn.setAttribute("aria-disabled", has ? "false" : "true");
       }
+    }
+    const hasHouse = !!snapshots[snapshotHouseKey()];
+    if (ALL_ON_TRACK) {
+      ALL_ON_TRACK.classList.toggle("house-has-snapshot", hasHouse);
+      ALL_ON_TRACK.classList.toggle("house-no-snapshot", !hasHouse);
+    }
+    if (ALL_ON_RESTORE_BTN) {
+      ALL_ON_RESTORE_BTN.disabled = !hasHouse;
+      ALL_ON_RESTORE_BTN.setAttribute("aria-disabled", hasHouse ? "false" : "true");
     }
   }
 
@@ -3311,8 +3354,8 @@
 
       const toggle = ce("div", "room-toggle");
 
-      const offTrack = ce("div", "room-slide-track room-slide-off");
-      const saveBtn = ce("button", "room-snap-action room-snap-save");
+      const offTrack = ce("div", "slide-confirm-track room-slide-track room-slide-off");
+      const saveBtn = ce("button", "slide-confirm-action room-snap-action room-snap-save");
       saveBtn.type = "button";
       saveBtn.textContent = "Save Current State";
       saveBtn.setAttribute("aria-label", "Save current state");
@@ -3322,12 +3365,13 @@
       offBtn.textContent = "Off";
       offTrack.appendChild(saveBtn);
       offTrack.appendChild(offBtn);
+      offTrack.appendChild(ce("span", "slide-confirm-thumb"));
 
-      const onTrack = ce("div", "room-slide-track room-slide-on");
+      const onTrack = ce("div", "slide-confirm-track room-slide-track room-slide-on");
       const onBtn = ce("button", "btn-on");
       onBtn.type = "button";
       onBtn.textContent = "On";
-      const restoreBtn = ce("button", "room-snap-action room-snap-restore");
+      const restoreBtn = ce("button", "slide-confirm-action room-snap-action room-snap-restore");
       restoreBtn.type = "button";
       restoreBtn.textContent = "Restore Saved State";
       restoreBtn.setAttribute("aria-label", "Restore saved state");
@@ -3336,6 +3380,7 @@
       restoreBtn.setAttribute("aria-disabled", "true");
       onTrack.appendChild(onBtn);
       onTrack.appendChild(restoreBtn);
+      onTrack.appendChild(ce("span", "slide-confirm-thumb"));
 
       toggle.appendChild(offTrack);
       toggle.appendChild(onTrack);
@@ -5325,8 +5370,10 @@
     const nonLights = id !== "lights";
     if (ROOMS_EL) ROOMS_EL.hidden = nonLights;
     if (tabViewEl) tabViewEl.hidden = !nonLights;
-    if (ALL_ON_BTN) ALL_ON_BTN.hidden = nonLights;
-    if (ALL_OFF_BTN) ALL_OFF_BTN.hidden = nonLights;
+    if (ALL_ON_TRACK) ALL_ON_TRACK.hidden = nonLights;
+    else if (ALL_ON_BTN) ALL_ON_BTN.hidden = nonLights;
+    if (ALL_OFF_TRACK) ALL_OFF_TRACK.hidden = nonLights;
+    else if (ALL_OFF_BTN) ALL_OFF_BTN.hidden = nonLights;
     if (CENTRAL_TSTAT_BTN) CENTRAL_TSTAT_BTN.hidden = !(tabMode && id === "thermostats");
     if (CENTRAL_MUSIC_BTN) CENTRAL_MUSIC_BTN.hidden = !(tabMode && id === "music");
     if (SEARCH_EL) SEARCH_EL.placeholder = nonLights ? "Search " + (TAB_LABELS[id] || "items") : "Search lights or rooms";
@@ -5357,8 +5404,10 @@
       activeTab = "lights";
       if (ROOMS_EL) ROOMS_EL.hidden = false;
       if (tabViewEl) tabViewEl.hidden = true;
-      if (ALL_ON_BTN) ALL_ON_BTN.hidden = false;
-      if (ALL_OFF_BTN) ALL_OFF_BTN.hidden = false;
+      if (ALL_ON_TRACK) ALL_ON_TRACK.hidden = false;
+      else if (ALL_ON_BTN) ALL_ON_BTN.hidden = false;
+      if (ALL_OFF_TRACK) ALL_OFF_TRACK.hidden = false;
+      else if (ALL_OFF_BTN) ALL_OFF_BTN.hidden = false;
       if (CENTRAL_TSTAT_BTN) CENTRAL_TSTAT_BTN.hidden = true;
       if (CENTRAL_MUSIC_BTN) CENTRAL_MUSIC_BTN.hidden = true;
       if (SEARCH_EL) SEARCH_EL.placeholder = "Search lights or rooms";
@@ -5427,13 +5476,44 @@
     });
   }
 
-  if (ALL_ON_BTN) {
+  if (ALL_ON_BTN && ALL_ON_TRACK && ALL_ON_RESTORE_BTN) {
+    attachRoomSlideAction(ALL_ON_TRACK, ALL_ON_BTN, ALL_ON_RESTORE_BTN, {
+      direction: "right",
+      onTap: async () => {
+        if (!devices.length) return;
+        if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) allLights("on");
+      },
+      onCommit: () => {
+        snapshotRestoreApi("house").then((ok) => {
+          if (ok) flash("Restoring home…");
+        });
+      },
+      canCommit: () => !!snapshots[snapshotHouseKey()],
+    });
+  } else if (ALL_ON_BTN) {
     ALL_ON_BTN.addEventListener("click", async () => {
       if (!devices.length) return;
       if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) allLights("on");
     });
   }
-  if (ALL_OFF_BTN) {
+  if (ALL_OFF_BTN && ALL_OFF_TRACK && ALL_OFF_SAVE_BTN) {
+    attachRoomSlideAction(ALL_OFF_TRACK, ALL_OFF_BTN, ALL_OFF_SAVE_BTN, {
+      direction: "left",
+      onTap: async () => {
+        if (!devices.length) return;
+        if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) allLights("off");
+      },
+      onCommit: () => {
+        snapshotSaveApi("house").then((ok) => {
+          if (!ok) return;
+          snapshots[snapshotHouseKey()] = { ts: Date.now(), count: devices.length };
+          updateRoomSnapshotUi();
+          flash("Home saved");
+        });
+      },
+      canCommit: () => true,
+    });
+  } else if (ALL_OFF_BTN) {
     ALL_OFF_BTN.addEventListener("click", async () => {
       if (!devices.length) return;
       if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) allLights("off");

@@ -181,6 +181,10 @@ async function setHsmApi(mode, pin, padApi) {
     return "room:" + roomKey;
   }
 
+  function snapshotHouseKey() {
+    return "house";
+  }
+
   function setRoomGestureLock(on) {
     if (on) {
       M.roomGestureLockCount++;
@@ -192,8 +196,8 @@ async function setHsmApi(mode, pin, padApi) {
   }
 
   const SLIDE_HOLD_MS = 400;
-  const SLIDE_FALLBACK_COMMIT_PX = 72;
-  const SLIDE_MIN_COMMIT_PX = 48;
+  const SLIDE_FALLBACK_COMMIT_PX = 86;
+  const SLIDE_MIN_COMMIT_PX = 52;
   const SLIDE_TAP_MOVE = 10;
 
   function attachRoomSlideAction(track, primaryBtn, actionBtn, opts) {
@@ -207,22 +211,43 @@ async function setHsmApi(mode, pin, padApi) {
     let holdBlocked = false;
     let sliding = false;
     let slidePx = 0;
+    let slideMaxPx = SLIDE_FALLBACK_COMMIT_PX;
     let gestureHandled = false;
 
     track.addEventListener("contextmenu", (e) => e.preventDefault());
     track.addEventListener("selectstart", (e) => e.preventDefault());
 
-    function commitDistance() {
+    function actionWidth() {
       const rectW = actionBtn?.getBoundingClientRect?.().width || 0;
       const styleW = actionBtn ? parseFloat(getComputedStyle(actionBtn).maxWidth) || 0 : 0;
-      const w = Math.max(rectW, styleW, SLIDE_FALLBACK_COMMIT_PX);
-      return Math.max(SLIDE_MIN_COMMIT_PX, Math.round(w * 0.9));
+      return Math.max(rectW, styleW, SLIDE_FALLBACK_COMMIT_PX);
+    }
+
+    function setupSlideMetrics() {
+      const primaryRect = primaryBtn.getBoundingClientRect();
+      const actionStyle = actionBtn ? getComputedStyle(actionBtn) : null;
+      const actionW = actionWidth();
+      const thumbW = parseFloat(getComputedStyle(track).getPropertyValue("--slide-thumb-size")) || 28;
+      const margin = actionStyle
+        ? (direction === "left" ? parseFloat(actionStyle.marginRight) || 0 : parseFloat(actionStyle.marginLeft) || 0)
+        : 0;
+      const primaryW = primaryRect.width || 64;
+      const start = direction === "left"
+        ? actionW + margin + Math.max(0, (primaryW - thumbW) / 2)
+        : Math.max(0, (primaryW - thumbW) / 2);
+      slideMaxPx = Math.max(SLIDE_MIN_COMMIT_PX, Math.round((primaryW / 2) + margin + (actionW / 2)));
+      track.style.setProperty("--slide-thumb-left", Math.round(start) + "px");
+      applySlide();
+    }
+
+    function commitDistance() {
+      return slideMaxPx || SLIDE_FALLBACK_COMMIT_PX;
     }
 
     function applySlide() {
       const signed = direction === "left" ? -slidePx : slidePx;
-      track.style.setProperty("--room-slide-x", signed + "px");
-      track.style.setProperty("--room-slide-progress", Math.min(1, slidePx / commitDistance()).toFixed(3));
+      track.style.setProperty("--slide-thumb-x", signed + "px");
+      track.style.setProperty("--slide-progress", Math.min(1, slidePx / commitDistance()).toFixed(3));
     }
 
     function reset() {
@@ -234,9 +259,11 @@ async function setHsmApi(mode, pin, padApi) {
       holdBlocked = false;
       sliding = false;
       slidePx = 0;
-      track.style.removeProperty("--room-slide-x");
-      track.style.removeProperty("--room-slide-progress");
-      track.classList.remove("room-slide-active", "room-slide-revealed", "room-slide-target");
+      slideMaxPx = SLIDE_FALLBACK_COMMIT_PX;
+      track.style.removeProperty("--slide-thumb-x");
+      track.style.removeProperty("--slide-thumb-left");
+      track.style.removeProperty("--slide-progress");
+      track.classList.remove("slide-confirm-active", "slide-confirm-revealed", "slide-confirm-target", "room-slide-active", "room-slide-revealed", "room-slide-target");
       setRoomGestureLock(false);
       try { track.releasePointerCapture(pointerId); } catch {}
       try { primaryBtn.releasePointerCapture(pointerId); } catch {}
@@ -274,7 +301,9 @@ async function setHsmApi(mode, pin, padApi) {
         slidePx = Math.min(maxSlide, Math.max(0, dx));
       }
       applySlide();
-      track.classList.toggle("room-slide-target", slidePx >= maxSlide);
+      const atTarget = slidePx >= maxSlide;
+      track.classList.toggle("slide-confirm-target", atTarget);
+      track.classList.toggle("room-slide-target", atTarget);
     }
 
     function onUp(e) {
@@ -333,7 +362,8 @@ async function setHsmApi(mode, pin, padApi) {
           return;
         }
         holdActive = true;
-        track.classList.add("room-slide-active", "room-slide-revealed");
+        track.classList.add("slide-confirm-active", "slide-confirm-revealed", "room-slide-active", "room-slide-revealed");
+        setupSlideMetrics();
         setRoomGestureLock(true);
         M.hapticTap();
       }, SLIDE_HOLD_MS);
@@ -363,6 +393,15 @@ async function setHsmApi(mode, pin, padApi) {
         rec.restoreBtn.disabled = !has;
         rec.restoreBtn.setAttribute("aria-disabled", has ? "false" : "true");
       }
+    }
+    const hasHouse = !!M.snapshots[snapshotHouseKey()];
+    if (M.ALL_ON_TRACK) {
+      M.ALL_ON_TRACK.classList.toggle("house-has-snapshot", hasHouse);
+      M.ALL_ON_TRACK.classList.toggle("house-no-snapshot", !hasHouse);
+    }
+    if (M.ALL_ON_RESTORE_BTN) {
+      M.ALL_ON_RESTORE_BTN.disabled = !hasHouse;
+      M.ALL_ON_RESTORE_BTN.setAttribute("aria-disabled", hasHouse ? "false" : "true");
     }
   }
 
@@ -791,8 +830,8 @@ async function setHsmApi(mode, pin, padApi) {
 
       const toggle = ce("div", "room-toggle");
 
-      const offTrack = ce("div", "room-slide-track room-slide-off");
-      const saveBtn = ce("button", "room-snap-action room-snap-save");
+      const offTrack = ce("div", "slide-confirm-track room-slide-track room-slide-off");
+      const saveBtn = ce("button", "slide-confirm-action room-snap-action room-snap-save");
       saveBtn.type = "button";
       saveBtn.textContent = "Save Current State";
       saveBtn.setAttribute("aria-label", "Save current state");
@@ -802,12 +841,13 @@ async function setHsmApi(mode, pin, padApi) {
       offBtn.textContent = "Off";
       offTrack.appendChild(saveBtn);
       offTrack.appendChild(offBtn);
+      offTrack.appendChild(ce("span", "slide-confirm-thumb"));
 
-      const onTrack = ce("div", "room-slide-track room-slide-on");
+      const onTrack = ce("div", "slide-confirm-track room-slide-track room-slide-on");
       const onBtn = ce("button", "btn-on");
       onBtn.type = "button";
       onBtn.textContent = "On";
-      const restoreBtn = ce("button", "room-snap-action room-snap-restore");
+      const restoreBtn = ce("button", "slide-confirm-action room-snap-action room-snap-restore");
       restoreBtn.type = "button";
       restoreBtn.textContent = "Restore Saved State";
       restoreBtn.setAttribute("aria-label", "Restore saved state");
@@ -816,6 +856,7 @@ async function setHsmApi(mode, pin, padApi) {
       restoreBtn.setAttribute("aria-disabled", "true");
       onTrack.appendChild(onBtn);
       onTrack.appendChild(restoreBtn);
+      onTrack.appendChild(ce("span", "slide-confirm-thumb"));
 
       toggle.appendChild(offTrack);
       toggle.appendChild(onTrack);
@@ -2432,5 +2473,5 @@ async function setHsmApi(mode, pin, padApi) {
     ruleSection.appendChild(ruleModes);
     body.appendChild(ruleSection);
   }
-  Object.assign(M, { setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, render, buildDom, makeTile, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, renderLocksPopup, renderBlindsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
+  Object.assign(M, { setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, render, buildDom, makeTile, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, renderLocksPopup, renderBlindsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
 })();
