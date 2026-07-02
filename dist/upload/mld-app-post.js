@@ -192,8 +192,7 @@ async function setHsmApi(mode, pin, padApi) {
   }
 
   const SLIDE_HOLD_MS = 400;
-  const SLIDE_REVEAL_PX = 80;
-  const SLIDE_COMMIT_RATIO = 0.65;
+  const SLIDE_COMMIT_PX = 48;
   const SLIDE_TAP_MOVE = 10;
 
   function attachRoomSlideAction(track, primaryBtn, actionBtn, opts) {
@@ -221,8 +220,7 @@ async function setHsmApi(mode, pin, padApi) {
       holdBlocked = false;
       sliding = false;
       slidePx = 0;
-      primaryBtn.style.transform = "";
-      track.classList.remove("room-slide-active");
+      track.classList.remove("room-slide-active", "room-slide-revealed", "room-slide-target");
       setRoomGestureLock(false);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -252,12 +250,11 @@ async function setHsmApi(mode, pin, padApi) {
       }
       e.preventDefault();
       if (direction === "left") {
-        slidePx = Math.max(0, Math.min(SLIDE_REVEAL_PX, -dx));
+        slidePx = Math.max(0, -dx);
       } else {
-        slidePx = Math.max(0, Math.min(SLIDE_REVEAL_PX, dx));
+        slidePx = Math.max(0, dx);
       }
-      const tx = direction === "left" ? -slidePx : slidePx;
-      primaryBtn.style.transform = "translateX(" + tx + "px)";
+      track.classList.toggle("room-slide-target", slidePx >= SLIDE_COMMIT_PX * 0.55);
     }
 
     function onUp(e) {
@@ -280,8 +277,7 @@ async function setHsmApi(mode, pin, padApi) {
         return;
       }
 
-      const commitThreshold = SLIDE_REVEAL_PX * SLIDE_COMMIT_RATIO;
-      if (holdActive && slidePx >= commitThreshold && (!canCommit || canCommit())) {
+      if (holdActive && slidePx >= SLIDE_COMMIT_PX && (!canCommit || canCommit())) {
         reset();
         onCommit();
         return;
@@ -315,7 +311,7 @@ async function setHsmApi(mode, pin, padApi) {
           return;
         }
         holdActive = true;
-        track.classList.add("room-slide-active");
+        track.classList.add("room-slide-active", "room-slide-revealed");
         setRoomGestureLock(true);
         M.hapticTap();
       }, SLIDE_HOLD_MS);
@@ -776,7 +772,7 @@ async function setHsmApi(mode, pin, padApi) {
       const offTrack = ce("div", "room-slide-track room-slide-off");
       const saveBtn = ce("button", "room-snap-action room-snap-save");
       saveBtn.type = "button";
-      saveBtn.textContent = "Save";
+      saveBtn.textContent = "Save Current State";
       saveBtn.setAttribute("aria-label", "Save current state");
       saveBtn.tabIndex = -1;
       const offBtn = ce("button", "btn-off");
@@ -791,7 +787,7 @@ async function setHsmApi(mode, pin, padApi) {
       onBtn.textContent = "On";
       const restoreBtn = ce("button", "room-snap-action room-snap-restore");
       restoreBtn.type = "button";
-      restoreBtn.textContent = "Restore";
+      restoreBtn.textContent = "Restore Saved State";
       restoreBtn.setAttribute("aria-label", "Restore saved state");
       restoreBtn.tabIndex = -1;
       restoreBtn.disabled = true;

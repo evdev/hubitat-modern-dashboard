@@ -1470,6 +1470,22 @@ def clearLightCommandJob() {
     try { unschedule("lightCommandNextStep") } catch (e) {}
 }
 
+def scheduleLightCommandNextStep(delayMs) {
+    def ms = delayMs
+    if (ms == null) ms = lightControlMeterDelayMsValue()
+    try {
+        ms = Math.max(1, ms.toInteger())
+    } catch (e) {
+        ms = 75
+    }
+    try {
+        runInMillis(ms, "lightCommandNextStep")
+    } catch (e) {
+        def sec = Math.max(1, Math.ceil(ms / 1000.0).toInteger())
+        runIn(sec, "lightCommandNextStep")
+    }
+}
+
 def lightJobActive() {
     def job = parseLightCommandJob()
     return job != null && job.index != null && job.total != null && job.index < job.total
@@ -1630,7 +1646,7 @@ def enqueueLightCommandJob(kind, steps, meta) {
     ]
     if (meta) job.putAll(meta)
     saveLightCommandJob(job)
-    runIn(0, "lightCommandNextStep")
+    lightCommandNextStep()
     return [ok: true, async: true, total: steps.size()]
 }
 
@@ -1666,12 +1682,7 @@ def lightCommandNextStep() {
         return
     }
     saveLightCommandJob(job)
-    def delayMs = lightControlMeterDelayMsValue()
-    if (delayMs > 0) {
-        runIn(delayMs / 1000.0, "lightCommandNextStep")
-    } else {
-        runIn(0, "lightCommandNextStep")
-    }
+    scheduleLightCommandNextStep(lightControlMeterDelayMsValue())
 }
 
 def renderAsyncEnqueueResult(result, extra) {
