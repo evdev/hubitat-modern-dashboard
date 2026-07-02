@@ -1716,7 +1716,7 @@ def snapshotSaveFromParams(body) {
         deviceIds << d.id
         devicesMap[d.id.toString()] = captureLightState(d)
     }
-    def ts = System.currentTimeMillis()
+    def ts = now()
     def snap = [ts: ts, deviceIds: deviceIds, devices: devicesMap]
     def all = parseSnapshotsMap()
     all[key] = snap
