@@ -40,7 +40,14 @@
           <div id="topbar-overflow-menu" class="topbar-overflow-menu" role="menu" hidden>
             <button id="menu-reorder" class="topbar-overflow-item" type="button" role="menuitem">Reorder</button>
             <div class="topbar-overflow-sep" role="separator"></div>
+            <button id="menu-open-local" class="topbar-overflow-item" type="button" role="menuitem" hidden>Open local mode</button>
+            <button id="menu-open-cloud" class="topbar-overflow-item" type="button" role="menuitem" hidden>Open cloud mode</button>
+            <div class="topbar-overflow-sep" role="separator"></div>
             <div class="topbar-overflow-label">Preferences</div>
+            <label class="topbar-overflow-field" for="menu-local-url">
+              <span class="topbar-overflow-label">Local hub URL</span>
+              <input id="menu-local-url" class="topbar-overflow-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.x.x/..." />
+            </label>
             <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="true">
               <input type="checkbox" id="menu-haptics" />
               <span>Haptic feedback</span>

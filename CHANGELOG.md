@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.9
+
+- Local/cloud mode switching: overflow menu links, editable local URL, Android cloud banner, and remembered local access.
+- House snapshot slides on **All on** / **All off** with slide-confirm thumb UI; refined room snapshot gesture and animation.
+- App JS split into three File Manager chunks (`mld-app-post2.js`) to stay under hub size limits.
+- Light command metering uses `runInMillis`; snapshot timestamps use Hubitat `now()`.
+
 ## 0.1.8
 
 - Motorized shades & blinds: device picker, room tiles, quick popup with open/close/pause and drag-to-position.

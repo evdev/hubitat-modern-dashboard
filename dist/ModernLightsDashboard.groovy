@@ -1,4 +1,4 @@
-// Modern Dashboard v0.1.8
+// Modern Dashboard v0.1.9
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -37,7 +37,7 @@ def mainPage() {
             paragraph "<small><b>Smart names:</b> room names are stripped from device labels so you don't see redundant text like \"Kitchen Kitchen Light\".</small>"
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen.</small>"
             paragraph "<small><b>Hub-only:</b> the UI and API are served entirely from your Hubitat hub — no Maker API or external cloud services.</small>"
-            paragraph "<small>Version 0.1.8 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.1.9 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -640,6 +640,8 @@ def renderData() {
     out << "\"pollIntervalMs\":" << (pollSec ? (pollSec.toInteger() * 1000) : 5000)
     out << ",\"useWebSocket\":" << (enableWs == null ? true : enableWs)
     out << ",\"dashboardName\":" << jsonStr((dashboardName?.trim()) ?: "mDash")
+    out << ",\"localUrl\":" << jsonStr(dashboardUrl(true))
+    out << ",\"cloudUrl\":" << jsonStr(dashboardUrl(false))
     out << roomOrderJsonFragment()
     out << favoritesJsonFragment()
     out << lightControlConfigJsonFragment()

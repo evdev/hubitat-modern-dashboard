@@ -21,9 +21,15 @@
   const MENU_HAPTICS_EL = document.getElementById("menu-haptics");
   const MENU_TABS_EL = document.getElementById("menu-tabs");
   const MENU_THEME_SEGMENT = document.getElementById("menu-theme-segment");
+  const MENU_OPEN_LOCAL_BTN = document.getElementById("menu-open-local");
+  const MENU_OPEN_CLOUD_BTN = document.getElementById("menu-open-cloud");
+  const MENU_LOCAL_URL_EL = document.getElementById("menu-local-url");
   const HAPTICS_STORAGE_KEY = "mld_haptics";
   const THEME_STORAGE_KEY = "mld_theme";
   const TABS_STORAGE_KEY = "mld_tabs";
+  const LOCAL_URL_STORAGE_KEY = "mld_localUrl";
+  const LOCAL_OK_STORAGE_KEY = "mld_localOk";
+  const LOCAL_OK_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
   const THEME_OPTIONS = ["dark", "light", "auto"];
   const APP_EL = document.getElementById("app");
   const REORDER_DRAG_THRESHOLD = 8;
@@ -70,7 +76,10 @@
     try { localStorage.setItem(TABS_STORAGE_KEY, on ? "1" : "0"); } catch {}
   }
 
-  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", roomOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref() };
+  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", roomOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref(), localUrl: "", cloudUrl: "" };
+
+  let localModeBannerEl = null;
+  let localBannerDismissed = false;
 
   // state
   let rooms = [];            // [{id,name}]
@@ -2191,6 +2200,179 @@
     document.title = title;
   }
 
+  // ---------- local / cloud mode switching ----------
+  function isCloudOrigin() {
+    return location.hostname === "cloud.hubitat.com" || location.protocol === "https:";
+  }
+
+  function isLocalOrigin() {
+    return location.protocol === "http:" && location.hostname !== "cloud.hubitat.com";
+  }
+
+  function isAndroid() {
+    try {
+      if (navigator.userAgentData?.platform === "Android") return true;
+    } catch {}
+    return /Android/i.test(navigator.userAgent || "");
+  }
+
+  function loadStoredLocalUrl() {
+    try { return localStorage.getItem(LOCAL_URL_STORAGE_KEY) || ""; } catch { return ""; }
+  }
+
+  function saveStoredLocalUrl(url) {
+    try {
+      const v = String(url || "").trim();
+      if (v) localStorage.setItem(LOCAL_URL_STORAGE_KEY, v);
+      else localStorage.removeItem(LOCAL_URL_STORAGE_KEY);
+    } catch {}
+  }
+
+  function loadLocalOkTs() {
+    try {
+      const n = Number(localStorage.getItem(LOCAL_OK_STORAGE_KEY));
+      return Number.isFinite(n) ? n : 0;
+    } catch { return 0; }
+  }
+
+  function saveLocalOkTs(ts) {
+    try { localStorage.setItem(LOCAL_OK_STORAGE_KEY, String(ts || Date.now())); } catch {}
+  }
+
+  function localOkFresh() {
+    const ts = loadLocalOkTs();
+    return ts > 0 && (Date.now() - ts) < LOCAL_OK_MAX_AGE_MS;
+  }
+
+  function refreshLocalUrlFromConfig() {
+    if (cfg.localUrl) {
+      saveStoredLocalUrl(cfg.localUrl);
+      if (MENU_LOCAL_URL_EL && document.activeElement !== MENU_LOCAL_URL_EL) {
+        MENU_LOCAL_URL_EL.value = cfg.localUrl;
+      }
+    }
+  }
+
+  function navigateToLocal(url, remember) {
+    const target = String(url || loadStoredLocalUrl() || "").trim();
+    if (!target) return false;
+    if (remember !== false && isCloudOrigin()) saveLocalOkTs(Date.now());
+    location.replace(target);
+    return true;
+  }
+
+  function maybeRefreshLocalOkFromReferrer() {
+    if (!isCloudOrigin()) return;
+    try {
+      const ref = document.referrer;
+      if (!ref || ref.includes("cloud.hubitat.com")) return;
+      const refUrl = new URL(ref);
+      if (refUrl.protocol === "http:" && refUrl.hostname !== "cloud.hubitat.com") {
+        saveLocalOkTs(Date.now());
+      }
+    } catch {}
+  }
+
+  function navigateToCloud() {
+    const target = String(cfg.cloudUrl || "").trim();
+    if (!target) return false;
+    location.replace(target);
+    return true;
+  }
+
+  function updateLocalModeMenuUI() {
+    const localUrl = loadStoredLocalUrl() || cfg.localUrl || "";
+    const onCloud = isCloudOrigin();
+    const onLocal = isLocalOrigin();
+    if (MENU_OPEN_LOCAL_BTN) {
+      MENU_OPEN_LOCAL_BTN.hidden = !(onCloud && !!localUrl);
+    }
+    if (MENU_OPEN_CLOUD_BTN) {
+      MENU_OPEN_CLOUD_BTN.hidden = !(onLocal && !!cfg.cloudUrl);
+    }
+    if (MENU_LOCAL_URL_EL && document.activeElement !== MENU_LOCAL_URL_EL) {
+      MENU_LOCAL_URL_EL.value = localUrl;
+    }
+  }
+
+  function hideLocalModeBanner() {
+    if (localModeBannerEl) {
+      localModeBannerEl.remove();
+      localModeBannerEl = null;
+    }
+  }
+
+  function showLocalModeBanner() {
+    if (localModeBannerEl || localBannerDismissed || !isCloudOrigin() || !isAndroid()) return;
+    const localUrl = loadStoredLocalUrl();
+    if (!localUrl) return;
+
+    const banner = document.createElement("div");
+    banner.className = "local-mode-banner";
+    banner.setAttribute("role", "region");
+    banner.setAttribute("aria-label", "Switch to local mode");
+
+    const text = document.createElement("span");
+    text.className = "local-mode-banner-text";
+    text.textContent = "You're home — switch to faster local mode?";
+
+    const switchBtn = document.createElement("button");
+    switchBtn.type = "button";
+    switchBtn.className = "ghost-btn local-mode-banner-switch";
+    switchBtn.textContent = "Switch";
+
+    const dismissBtn = document.createElement("button");
+    dismissBtn.type = "button";
+    dismissBtn.className = "ghost-btn icon-btn local-mode-banner-dismiss";
+    dismissBtn.setAttribute("aria-label", "Dismiss");
+    dismissBtn.textContent = "\u00d7";
+
+    switchBtn.addEventListener("click", () => navigateToLocal(localUrl));
+    dismissBtn.addEventListener("click", () => {
+      localBannerDismissed = true;
+      hideLocalModeBanner();
+    });
+
+    banner.appendChild(text);
+    banner.appendChild(switchBtn);
+    banner.appendChild(dismissBtn);
+
+    if (APP_EL && ROOMS_EL) APP_EL.insertBefore(banner, ROOMS_EL);
+    else if (APP_EL) APP_EL.appendChild(banner);
+    localModeBannerEl = banner;
+  }
+
+  // Returns true when navigating away (caller should stop init).
+  function applyLocalModeStrategy() {
+    refreshLocalUrlFromConfig();
+
+    if (isLocalOrigin()) {
+      updateLocalModeMenuUI();
+      return false;
+    }
+
+    if (!isCloudOrigin()) {
+      updateLocalModeMenuUI();
+      return false;
+    }
+
+    maybeRefreshLocalOkFromReferrer();
+
+    const localUrl = loadStoredLocalUrl();
+    if (!localUrl) {
+      updateLocalModeMenuUI();
+      return false;
+    }
+
+    if (isAndroid()) {
+      if (localOkFresh()) return navigateToLocal(localUrl, false);
+      showLocalModeBanner();
+    }
+
+    updateLocalModeMenuUI();
+    return false;
+  }
+
   // ---------- API (OAuth: access_token required on every request, especially cloud) ----------
   const ACCESS_TOKEN = (() => {
     try { return new URLSearchParams(location.search).get("access_token") || ""; }
@@ -2218,6 +2400,8 @@
       if (!reorderMode && Array.isArray(d.config.roomOrder)) {
         cfg.roomOrder = d.config.roomOrder.length ? d.config.roomOrder : null;
       }
+      if (d.config.localUrl != null) cfg.localUrl = String(d.config.localUrl || "");
+      if (d.config.cloudUrl != null) cfg.cloudUrl = String(d.config.cloudUrl || "");
     }
     return d;
   }
@@ -3080,6 +3264,7 @@
 
   function openTopbarOverflowMenu() {
     if (!OVERFLOW_MENU || !OVERFLOW_BTN || reorderMode) return;
+    updateLocalModeMenuUI();
     OVERFLOW_MENU.hidden = false;
     OVERFLOW_BTN.setAttribute("aria-expanded", "true");
     const onClick = (e) => {
@@ -5694,6 +5879,42 @@
     }
   }
 
+  if (MENU_OPEN_LOCAL_BTN) {
+    MENU_OPEN_LOCAL_BTN.addEventListener("click", () => {
+      closeTopbarOverflowMenu();
+      navigateToLocal();
+    });
+  }
+
+  if (MENU_OPEN_CLOUD_BTN) {
+    MENU_OPEN_CLOUD_BTN.addEventListener("click", () => {
+      closeTopbarOverflowMenu();
+      navigateToCloud();
+    });
+  }
+
+  if (MENU_LOCAL_URL_EL) {
+    MENU_LOCAL_URL_EL.addEventListener("click", (e) => e.stopPropagation());
+    MENU_LOCAL_URL_EL.addEventListener("change", () => {
+      const v = MENU_LOCAL_URL_EL.value.trim();
+      saveStoredLocalUrl(v);
+      cfg.localUrl = v;
+      if (!v) {
+        try { localStorage.removeItem(LOCAL_OK_STORAGE_KEY); } catch {}
+      }
+      updateLocalModeMenuUI();
+    });
+    MENU_LOCAL_URL_EL.addEventListener("blur", () => {
+      const v = MENU_LOCAL_URL_EL.value.trim();
+      saveStoredLocalUrl(v);
+      cfg.localUrl = v;
+      if (!v) {
+        try { localStorage.removeItem(LOCAL_OK_STORAGE_KEY); } catch {}
+      }
+      updateLocalModeMenuUI();
+    });
+  }
+
   try {
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (cfg.theme === "auto") applyTheme("auto");
@@ -5706,6 +5927,8 @@
   async function refresh() {
     try {
       const d = await fetchData();
+      refreshLocalUrlFromConfig();
+      updateLocalModeMenuUI();
       render(d);
       setStatus("");
     } catch (e) {
@@ -5921,6 +6144,7 @@
     loadingState();
     try {
       const d = await fetchData();
+      if (applyLocalModeStrategy()) return;
       render(d);
       startPolling();
       startWS();

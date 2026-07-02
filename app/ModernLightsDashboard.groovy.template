@@ -640,6 +640,8 @@ def renderData() {
     out << "\"pollIntervalMs\":" << (pollSec ? (pollSec.toInteger() * 1000) : 5000)
     out << ",\"useWebSocket\":" << (enableWs == null ? true : enableWs)
     out << ",\"dashboardName\":" << jsonStr((dashboardName?.trim()) ?: "mDash")
+    out << ",\"localUrl\":" << jsonStr(dashboardUrl(true))
+    out << ",\"cloudUrl\":" << jsonStr(dashboardUrl(false))
     out << roomOrderJsonFragment()
     out << favoritesJsonFragment()
     out << lightControlConfigJsonFragment()

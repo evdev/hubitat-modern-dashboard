@@ -21,9 +21,15 @@
   const MENU_HAPTICS_EL = document.getElementById("menu-haptics");
   const MENU_TABS_EL = document.getElementById("menu-tabs");
   const MENU_THEME_SEGMENT = document.getElementById("menu-theme-segment");
+  const MENU_OPEN_LOCAL_BTN = document.getElementById("menu-open-local");
+  const MENU_OPEN_CLOUD_BTN = document.getElementById("menu-open-cloud");
+  const MENU_LOCAL_URL_EL = document.getElementById("menu-local-url");
   const HAPTICS_STORAGE_KEY = "mld_haptics";
   const THEME_STORAGE_KEY = "mld_theme";
   const TABS_STORAGE_KEY = "mld_tabs";
+  const LOCAL_URL_STORAGE_KEY = "mld_localUrl";
+  const LOCAL_OK_STORAGE_KEY = "mld_localOk";
+  const LOCAL_OK_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
   const THEME_OPTIONS = ["dark", "light", "auto"];
   const APP_EL = document.getElementById("app");
   const REORDER_DRAG_THRESHOLD = 8;
@@ -70,7 +76,10 @@
     try { localStorage.setItem(TABS_STORAGE_KEY, on ? "1" : "0"); } catch {}
   }
 
-  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", roomOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref() };
+  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", roomOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref(), localUrl: "", cloudUrl: "" };
+
+  let localModeBannerEl = null;
+  let localBannerDismissed = false;
 
   // state
   let rooms = [];            // [{id,name}]
@@ -2191,6 +2200,179 @@
     document.title = title;
   }
 
+  // ---------- local / cloud mode switching ----------
+  function isCloudOrigin() {
+    return location.hostname === "cloud.hubitat.com" || location.protocol === "https:";
+  }
+
+  function isLocalOrigin() {
+    return location.protocol === "http:" && location.hostname !== "cloud.hubitat.com";
+  }
+
+  function isAndroid() {
+    try {
+      if (navigator.userAgentData?.platform === "Android") return true;
+    } catch {}
+    return /Android/i.test(navigator.userAgent || "");
+  }
+
+  function loadStoredLocalUrl() {
+    try { return localStorage.getItem(LOCAL_URL_STORAGE_KEY) || ""; } catch { return ""; }
+  }
+
+  function saveStoredLocalUrl(url) {
+    try {
+      const v = String(url || "").trim();
+      if (v) localStorage.setItem(LOCAL_URL_STORAGE_KEY, v);
+      else localStorage.removeItem(LOCAL_URL_STORAGE_KEY);
+    } catch {}
+  }
+
+  function loadLocalOkTs() {
+    try {
+      const n = Number(localStorage.getItem(LOCAL_OK_STORAGE_KEY));
+      return Number.isFinite(n) ? n : 0;
+    } catch { return 0; }
+  }
+
+  function saveLocalOkTs(ts) {
+    try { localStorage.setItem(LOCAL_OK_STORAGE_KEY, String(ts || Date.now())); } catch {}
+  }
+
+  function localOkFresh() {
+    const ts = loadLocalOkTs();
+    return ts > 0 && (Date.now() - ts) < LOCAL_OK_MAX_AGE_MS;
+  }
+
+  function refreshLocalUrlFromConfig() {
+    if (cfg.localUrl) {
+      saveStoredLocalUrl(cfg.localUrl);
+      if (MENU_LOCAL_URL_EL && document.activeElement !== MENU_LOCAL_URL_EL) {
+        MENU_LOCAL_URL_EL.value = cfg.localUrl;
+      }
+    }
+  }
+
+  function navigateToLocal(url, remember) {
+    const target = String(url || loadStoredLocalUrl() || "").trim();
+    if (!target) return false;
+    if (remember !== false && isCloudOrigin()) saveLocalOkTs(Date.now());
+    location.replace(target);
+    return true;
+  }
+
+  function maybeRefreshLocalOkFromReferrer() {
+    if (!isCloudOrigin()) return;
+    try {
+      const ref = document.referrer;
+      if (!ref || ref.includes("cloud.hubitat.com")) return;
+      const refUrl = new URL(ref);
+      if (refUrl.protocol === "http:" && refUrl.hostname !== "cloud.hubitat.com") {
+        saveLocalOkTs(Date.now());
+      }
+    } catch {}
+  }
+
+  function navigateToCloud() {
+    const target = String(cfg.cloudUrl || "").trim();
+    if (!target) return false;
+    location.replace(target);
+    return true;
+  }
+
+  function updateLocalModeMenuUI() {
+    const localUrl = loadStoredLocalUrl() || cfg.localUrl || "";
+    const onCloud = isCloudOrigin();
+    const onLocal = isLocalOrigin();
+    if (MENU_OPEN_LOCAL_BTN) {
+      MENU_OPEN_LOCAL_BTN.hidden = !(onCloud && !!localUrl);
+    }
+    if (MENU_OPEN_CLOUD_BTN) {
+      MENU_OPEN_CLOUD_BTN.hidden = !(onLocal && !!cfg.cloudUrl);
+    }
+    if (MENU_LOCAL_URL_EL && document.activeElement !== MENU_LOCAL_URL_EL) {
+      MENU_LOCAL_URL_EL.value = localUrl;
+    }
+  }
+
+  function hideLocalModeBanner() {
+    if (localModeBannerEl) {
+      localModeBannerEl.remove();
+      localModeBannerEl = null;
+    }
+  }
+
+  function showLocalModeBanner() {
+    if (localModeBannerEl || localBannerDismissed || !isCloudOrigin() || !isAndroid()) return;
+    const localUrl = loadStoredLocalUrl();
+    if (!localUrl) return;
+
+    const banner = document.createElement("div");
+    banner.className = "local-mode-banner";
+    banner.setAttribute("role", "region");
+    banner.setAttribute("aria-label", "Switch to local mode");
+
+    const text = document.createElement("span");
+    text.className = "local-mode-banner-text";
+    text.textContent = "You're home — switch to faster local mode?";
+
+    const switchBtn = document.createElement("button");
+    switchBtn.type = "button";
+    switchBtn.className = "ghost-btn local-mode-banner-switch";
+    switchBtn.textContent = "Switch";
+
+    const dismissBtn = document.createElement("button");
+    dismissBtn.type = "button";
+    dismissBtn.className = "ghost-btn icon-btn local-mode-banner-dismiss";
+    dismissBtn.setAttribute("aria-label", "Dismiss");
+    dismissBtn.textContent = "\u00d7";
+
+    switchBtn.addEventListener("click", () => navigateToLocal(localUrl));
+    dismissBtn.addEventListener("click", () => {
+      localBannerDismissed = true;
+      hideLocalModeBanner();
+    });
+
+    banner.appendChild(text);
+    banner.appendChild(switchBtn);
+    banner.appendChild(dismissBtn);
+
+    if (APP_EL && ROOMS_EL) APP_EL.insertBefore(banner, ROOMS_EL);
+    else if (APP_EL) APP_EL.appendChild(banner);
+    localModeBannerEl = banner;
+  }
+
+  // Returns true when navigating away (caller should stop init).
+  function applyLocalModeStrategy() {
+    refreshLocalUrlFromConfig();
+
+    if (isLocalOrigin()) {
+      updateLocalModeMenuUI();
+      return false;
+    }
+
+    if (!isCloudOrigin()) {
+      updateLocalModeMenuUI();
+      return false;
+    }
+
+    maybeRefreshLocalOkFromReferrer();
+
+    const localUrl = loadStoredLocalUrl();
+    if (!localUrl) {
+      updateLocalModeMenuUI();
+      return false;
+    }
+
+    if (isAndroid()) {
+      if (localOkFresh()) return navigateToLocal(localUrl, false);
+      showLocalModeBanner();
+    }
+
+    updateLocalModeMenuUI();
+    return false;
+  }
+
   // ---------- API (OAuth: access_token required on every request, especially cloud) ----------
   const ACCESS_TOKEN = (() => {
     try { return new URLSearchParams(location.search).get("access_token") || ""; }
@@ -2218,6 +2400,8 @@
       if (!reorderMode && Array.isArray(d.config.roomOrder)) {
         cfg.roomOrder = d.config.roomOrder.length ? d.config.roomOrder : null;
       }
+      if (d.config.localUrl != null) cfg.localUrl = String(d.config.localUrl || "");
+      if (d.config.cloudUrl != null) cfg.cloudUrl = String(d.config.cloudUrl || "");
     }
     return d;
   }
@@ -2526,5 +2710,5 @@
       return { ok: false, error: "Request failed" };
     }
   }
-  globalThis.__MLD = { ROOMS_EL, SEARCH_EL, STATUS_EL, ALL_ON_BTN, ALL_OFF_BTN, ALL_ON_TRACK, ALL_OFF_TRACK, ALL_ON_RESTORE_BTN, ALL_OFF_SAVE_BTN, CENTRAL_TSTAT_BTN, CENTRAL_MUSIC_BTN, EXPAND_ALL_BTN, REORDER_DONE_BTN, REORDER_CANCEL_BTN, OVERFLOW_BTN, OVERFLOW_MENU, MENU_REORDER_BTN, MENU_HAPTICS_EL, MENU_TABS_EL, MENU_THEME_SEGMENT, HAPTICS_STORAGE_KEY, THEME_STORAGE_KEY, TABS_STORAGE_KEY, THEME_OPTIONS, APP_EL, REORDER_DRAG_THRESHOLD, DASHBOARD_TITLE_EL, POLL_DEFAULT, POLL_WS_FALLBACK, loadHapticsPref, saveHapticsPref, loadThemePref, saveThemePref, loadTabsPref, saveTabsPref, cfg, rooms, roomMap, devices, devicesByRoom, devMap, favDevMap, roomEls, lastDataSig, pollTimer, ws, wsConnected, wsRetry, reorderMode, reorderBusy, reorderSnapshot, reorderDraftOrder, colorPopup, colorSession, levelOptimistic, switchOptimistic, lockOptimistic, shadeOptimistic, musicOptimistic, setpointOptimistic, rgbWheelCache, thermostats, tempSensors, thermoByRoom, sensorByRoom, climateEls, tstatPopup, tstatSession, tstatDeviceModeLock, musicMasterPopup, MUSIC_VOL_STEP, hubModes, currentHubMode, scenes, locks, windowShades, music, favorites, snapshots, roomGestureLockCount, hubModeLockUntil, hsmStatus, hsmAlert, hsmAlertDesc, hsmEnabled, hsmPinRequired, thermostatsPopupEnabled, unlockPinEnabled, unlockPinRequired, hsmLockUntil, pinPadPopup, pinPadState, quickPopupOpenType, TAB_CATEGORIES, TAB_LABELS, tabMode, activeTab, tabViewEl, QUICK_LIGHTS_BTN, favTstatModeMenu, favTstatModeMenuCleanup, favTstatModeMenuId, favTstatModeMenuAnchor, favTstatMap, favPopupSig, tstatsPopupMap, tstatsPopupSig, setLevelOptimistic, setSwitchOptimistic, clearSwitchOptimistic, reapplySwitchOptimistic, effectiveSwitch, effectiveLevel, setLockOptimistic, clearLockOptimistic, reapplyLockOptimistic, effectiveLock, lockStatusLabel, setShadeOptimistic, clearShadeOptimistic, reapplyShadeOptimistic, effectiveShadeState, effectiveShadePosition, shadeIsMoving, shadeStatusLabel, isMusicPlaying, musicControls, effectiveMusicStatus, effectiveMusicVolume, musicStatusLabel, setMusicOptimistic, clearMusicOptimistic, reapplyMusicOptimistic, setSetpointOptimistic, clearSetpointOptimistic, reapplySetpointOptimistic, applyTstatSetpoints, drawRgbWheel, ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, supportedModes, supportedFanModes, deviceHasFanSpeed, supportedFanSpeeds, showFanSpeedControls, fanModeActive, tstatSectionLabel, tstatStateClass, formatRoomTemp, roomClimateInfo, roomHasClimate, roomTstatState, isFavorite, syncFavButton, updateTstatFavButton, postCall, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, ACCESS_TOKEN, withToken, getJson, fetchData, sendCmd, sendCmdBatch, publishMld, rebuildDevicesByRoom, applyTstatSessionModeLock, sensors, sensorCardMap, favSensorMap, sensorsPopupSig, sensorTypeFilter, sensorFilterOpen, sensorFilterChipsEl, sensorFilterBtnEl, sensorFilterEmptyEl, replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, getDisplayRoomIds, saveRoomOrder, postJson, postJsonSilent };
+  globalThis.__MLD = { ROOMS_EL, SEARCH_EL, STATUS_EL, ALL_ON_BTN, ALL_OFF_BTN, ALL_ON_TRACK, ALL_OFF_TRACK, ALL_ON_RESTORE_BTN, ALL_OFF_SAVE_BTN, CENTRAL_TSTAT_BTN, CENTRAL_MUSIC_BTN, EXPAND_ALL_BTN, REORDER_DONE_BTN, REORDER_CANCEL_BTN, OVERFLOW_BTN, OVERFLOW_MENU, MENU_REORDER_BTN, MENU_HAPTICS_EL, MENU_TABS_EL, MENU_THEME_SEGMENT, MENU_OPEN_LOCAL_BTN, MENU_OPEN_CLOUD_BTN, MENU_LOCAL_URL_EL, HAPTICS_STORAGE_KEY, THEME_STORAGE_KEY, TABS_STORAGE_KEY, LOCAL_URL_STORAGE_KEY, LOCAL_OK_STORAGE_KEY, LOCAL_OK_MAX_AGE_MS, THEME_OPTIONS, APP_EL, REORDER_DRAG_THRESHOLD, DASHBOARD_TITLE_EL, POLL_DEFAULT, POLL_WS_FALLBACK, loadHapticsPref, saveHapticsPref, loadThemePref, saveThemePref, loadTabsPref, saveTabsPref, cfg, localModeBannerEl, localBannerDismissed, rooms, roomMap, devices, devicesByRoom, devMap, favDevMap, roomEls, lastDataSig, pollTimer, ws, wsConnected, wsRetry, reorderMode, reorderBusy, reorderSnapshot, reorderDraftOrder, colorPopup, colorSession, levelOptimistic, switchOptimistic, lockOptimistic, shadeOptimistic, musicOptimistic, setpointOptimistic, rgbWheelCache, thermostats, tempSensors, thermoByRoom, sensorByRoom, climateEls, tstatPopup, tstatSession, tstatDeviceModeLock, musicMasterPopup, MUSIC_VOL_STEP, hubModes, currentHubMode, scenes, locks, windowShades, music, favorites, snapshots, roomGestureLockCount, hubModeLockUntil, hsmStatus, hsmAlert, hsmAlertDesc, hsmEnabled, hsmPinRequired, thermostatsPopupEnabled, unlockPinEnabled, unlockPinRequired, hsmLockUntil, pinPadPopup, pinPadState, quickPopupOpenType, TAB_CATEGORIES, TAB_LABELS, tabMode, activeTab, tabViewEl, QUICK_LIGHTS_BTN, favTstatModeMenu, favTstatModeMenuCleanup, favTstatModeMenuId, favTstatModeMenuAnchor, favTstatMap, favPopupSig, tstatsPopupMap, tstatsPopupSig, setLevelOptimistic, setSwitchOptimistic, clearSwitchOptimistic, reapplySwitchOptimistic, effectiveSwitch, effectiveLevel, setLockOptimistic, clearLockOptimistic, reapplyLockOptimistic, effectiveLock, lockStatusLabel, setShadeOptimistic, clearShadeOptimistic, reapplyShadeOptimistic, effectiveShadeState, effectiveShadePosition, shadeIsMoving, shadeStatusLabel, isMusicPlaying, musicControls, effectiveMusicStatus, effectiveMusicVolume, musicStatusLabel, setMusicOptimistic, clearMusicOptimistic, reapplyMusicOptimistic, setSetpointOptimistic, clearSetpointOptimistic, reapplySetpointOptimistic, applyTstatSetpoints, drawRgbWheel, ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, supportedModes, supportedFanModes, deviceHasFanSpeed, supportedFanSpeeds, showFanSpeedControls, fanModeActive, tstatSectionLabel, tstatStateClass, formatRoomTemp, roomClimateInfo, roomHasClimate, roomTstatState, isFavorite, syncFavButton, updateTstatFavButton, postCall, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, isCloudOrigin, isLocalOrigin, isAndroid, loadStoredLocalUrl, saveStoredLocalUrl, loadLocalOkTs, saveLocalOkTs, localOkFresh, refreshLocalUrlFromConfig, navigateToLocal, maybeRefreshLocalOkFromReferrer, navigateToCloud, updateLocalModeMenuUI, hideLocalModeBanner, showLocalModeBanner, applyLocalModeStrategy, ACCESS_TOKEN, withToken, getJson, fetchData, sendCmd, sendCmdBatch, publishMld, rebuildDevicesByRoom, applyTstatSessionModeLock, sensors, sensorCardMap, favSensorMap, sensorsPopupSig, sensorTypeFilter, sensorFilterOpen, sensorFilterChipsEl, sensorFilterBtnEl, sensorFilterEmptyEl, replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, getDisplayRoomIds, saveRoomOrder, postJson, postJsonSilent };
 })();

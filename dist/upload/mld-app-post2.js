@@ -699,6 +699,42 @@ function renderScenesPopup() {
     }
   }
 
+  if (M.MENU_OPEN_LOCAL_BTN) {
+    M.MENU_OPEN_LOCAL_BTN.addEventListener("click", () => {
+      M.closeTopbarOverflowMenu();
+      M.navigateToLocal();
+    });
+  }
+
+  if (M.MENU_OPEN_CLOUD_BTN) {
+    M.MENU_OPEN_CLOUD_BTN.addEventListener("click", () => {
+      M.closeTopbarOverflowMenu();
+      M.navigateToCloud();
+    });
+  }
+
+  if (M.MENU_LOCAL_URL_EL) {
+    M.MENU_LOCAL_URL_EL.addEventListener("click", (e) => e.stopPropagation());
+    M.MENU_LOCAL_URL_EL.addEventListener("change", () => {
+      const v = M.MENU_LOCAL_URL_EL.value.trim();
+      M.saveStoredLocalUrl(v);
+      M.cfg.localUrl = v;
+      if (!v) {
+        try { localStorage.removeItem(M.LOCAL_OK_STORAGE_KEY); } catch {}
+      }
+      M.updateLocalModeMenuUI();
+    });
+    M.MENU_LOCAL_URL_EL.addEventListener("blur", () => {
+      const v = M.MENU_LOCAL_URL_EL.value.trim();
+      M.saveStoredLocalUrl(v);
+      M.cfg.localUrl = v;
+      if (!v) {
+        try { localStorage.removeItem(M.LOCAL_OK_STORAGE_KEY); } catch {}
+      }
+      M.updateLocalModeMenuUI();
+    });
+  }
+
   try {
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (M.cfg.theme === "auto") M.applyTheme("auto");
@@ -711,6 +747,8 @@ function renderScenesPopup() {
   async function refresh() {
     try {
       const d = await M.fetchData();
+      M.refreshLocalUrlFromConfig();
+      M.updateLocalModeMenuUI();
       M.render(d);
       M.setStatus("");
     } catch (e) {
@@ -926,6 +964,7 @@ function renderScenesPopup() {
     M.loadingState();
     try {
       const d = await M.fetchData();
+      if (M.applyLocalModeStrategy()) return;
       M.render(d);
       startPolling();
       startWS();
