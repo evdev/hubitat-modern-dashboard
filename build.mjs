@@ -19,6 +19,7 @@ const staging = join(dist, "bundle-staging");
 const hubitat = join(root, "hubitat");
 
 const MLD_SPLIT = "// __MLD_SPLIT__";
+const MLD_SPLIT2 = "// __MLD_SPLIT2__";
 const HUB_MAX_JS = 128 * 1024;
 
 // Must match definition(namespace:, name:) in the Groovy template
@@ -57,6 +58,7 @@ const FILE_MANAGER_ASSETS = [
   { id: "d3c4e5f6-a7b8-9012-cdef-123456789012", name: "mld-app-pre.js" },
   { id: "e4d5f6a7-b8c9-0123-def0-234567890123", name: "mld-app.js" },
   { id: "f5e6a7b8-c9d0-1234-ef01-345678901234", name: "mld-app-post.js" },
+  { id: "e7f8a9b0-c1d2-3456-7890-abcdef123456", name: "mld-app-post2.js" },
   { id: "a6f7b8c9-d0e1-2345-f012-456789012345", name: "mld-manifest.webmanifest" },
   { id: "b7a8c9d0-e1f2-3456-0123-567890123456", name: "mld-sw.js" },
   { id: "c8b9d0e1-f2a3-4567-1234-678901234567", name: "mld-icon-192.b64" },
@@ -248,13 +250,28 @@ function rewritePart2(part2Lines, exportIds) {
   return rewritePart2PreservingStrings(part2Lines.join("\n"), replaceIds);
 }
 
+function wrapPostChunk(body, exportIds, priorMissingMsg) {
+  const localIds = new Set(parseTopLevelIds(body.split("\n")));
+  const replaceIds = exportIds.filter((id) => !localIds.has(id));
+  replaceIds.sort((a, b) => b.length - a.length);
+  const rewritten = rewritePart2PreservingStrings(body, replaceIds);
+  const chunkIds = parseTopLevelFunctions(body.split("\n")).filter((id) => !exportIds.includes(id));
+  const assign = chunkIds.length ? `\n  Object.assign(M, { ${chunkIds.join(", ")} });\n` : "";
+  return `(() => {\n  "use strict";\n  const M = globalThis.__MLD;\n  if (!M) {\n    console.error("Modern Dashboard: ${priorMissingMsg}");\n    return;\n  }\n${rewritten}${assign}})();\n`;
+}
+
 function splitAppJs(srcPath) {
   const raw = readFileSync(srcPath, "utf8");
-  const splitIdx = raw.indexOf(MLD_SPLIT);
-  if (splitIdx < 0) throw new Error(`Missing ${MLD_SPLIT} in src/app.js`);
+  const split1Idx = raw.indexOf(MLD_SPLIT);
+  if (split1Idx < 0) throw new Error(`Missing ${MLD_SPLIT} in src/app.js`);
+  const split2Idx = raw.indexOf(MLD_SPLIT2);
+  if (split2Idx < 0 || split2Idx <= split1Idx) {
+    throw new Error(`Missing ${MLD_SPLIT2} after ${MLD_SPLIT} in src/app.js`);
+  }
 
-  const part1Lines = raw.slice(0, splitIdx).trimEnd().split("\n");
-  let part2Lines = raw.slice(splitIdx + MLD_SPLIT.length).trimStart().split("\n");
+  const part1Lines = raw.slice(0, split1Idx).trimEnd().split("\n");
+  let part2Lines = raw.slice(split1Idx + MLD_SPLIT.length, split2Idx).trimStart().split("\n");
+  let part3Lines = raw.slice(split2Idx + MLD_SPLIT2.length).trimStart().split("\n");
 
   const trimTrailing = (lines) => {
     while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
@@ -263,21 +280,31 @@ function splitAppJs(srcPath) {
   };
   trimTrailing(part1Lines);
   trimTrailing(part2Lines);
+  trimTrailing(part3Lines);
 
-  assertNoPart1BarePart2Refs(part1Lines, part2Lines);
+  assertNoPart1BarePart2Refs(part1Lines, [...part2Lines, ...part3Lines]);
 
-  const exportIds = parseTopLevelIds(part1Lines.slice(1));
-  const exportBlock = `  globalThis.__MLD = { ${exportIds.join(", ")} };`;
+  const exportIds1 = parseTopLevelIds(part1Lines.slice(1));
+  const exportBlock = `  globalThis.__MLD = { ${exportIds1.join(", ")} };`;
   const part1Out = `${part1Lines.join("\n")}\n${exportBlock}\n})();\n`;
 
-  const part2Body = rewritePart2(part2Lines, exportIds);
-  const post2Ids = parseTopLevelFunctions(part2Lines).filter((id) => !exportIds.includes(id));
-  const postAssign = post2Ids.length
-    ? `\n  Object.assign(M, { ${post2Ids.join(", ")} });\n`
-    : "";
-  const part2Out = `(() => {\n  "use strict";\n  const M = globalThis.__MLD;\n  if (!M) {\n    console.error("Modern Dashboard: upload mld-app.js before mld-app-post.js");\n    return;\n  }\n${part2Body}${postAssign}})();\n`;
+  const exportIds2Set = new Set(parseTopLevelIds(part2Lines));
+  const exportIds3Set = new Set(parseTopLevelIds(part3Lines));
+  const exportIds3Only = [...exportIds3Set].filter((id) => !exportIds2Set.has(id));
+  const exportIds2Only = [...exportIds2Set].filter((id) => !exportIds1.includes(id));
 
-  return { part1Out, part2Out };
+  const part2Out = wrapPostChunk(
+    part2Lines.join("\n"),
+    [...exportIds1, ...exportIds3Only],
+    "upload mld-app.js before mld-app-post.js"
+  );
+  const part3Out = wrapPostChunk(
+    part3Lines.join("\n"),
+    [...exportIds1, ...exportIds2Only],
+    "upload mld-app-post.js before mld-app-post2.js"
+  );
+
+  return { part1Out, part2Out, part3Out };
 }
 
 function assertUnderHubLimit(label, content) {
@@ -337,11 +364,13 @@ writeFileSync(join(upload, "mld-icon-512.b64"), iconBase64(512) + "\n");
 writeFileSync(join(upload, "mld-icon-192.png"), createIconPng(192));
 writeFileSync(join(upload, "mld-icon-512.png"), createIconPng(512));
 
-const { part1Out, part2Out } = splitAppJs(join(root, "src", "app.js"));
+const { part1Out, part2Out, part3Out } = splitAppJs(join(root, "src", "app.js"));
 assertUnderHubLimit("mld-app.js", part1Out);
 assertUnderHubLimit("mld-app-post.js", part2Out);
+assertUnderHubLimit("mld-app-post2.js", part3Out);
 writeFileSync(join(upload, "mld-app.js"), part1Out);
 writeFileSync(join(upload, "mld-app-post.js"), part2Out);
+writeFileSync(join(upload, "mld-app-post2.js"), part3Out);
 
 for (const name of ["mld-app-pre.js", "mld-sw.js"]) {
   const content = readFileSync(join(upload, name), "utf8");
@@ -397,7 +426,7 @@ IMPORT (installs the Groovy app):
   Upload: ModernLightsDashboard.bundle.zip
 
 THEN (required — bundles cannot install File Manager files or enable OAuth):
-  Upload the files from the file-manager/ folder to Settings → File Manager
+  Upload these ten files to Settings → File Manager (root folder, exact names):
   Open Apps Code → ${APP_DISPLAY_NAME} → enable OAuth → Save
   Apps → Add User App → ${APP_DISPLAY_NAME} → select devices → Done
 
@@ -474,6 +503,7 @@ console.log(`  dist/ModernLightsDashboard.groovy       ${kb(join(dist, "ModernLi
 console.log(`  dist/ModernLightsDashboard.bundle.zip   ${kb(bundleZip)} KB  ← manual Bundles → Import`);
 console.log(`  dist/upload/mld-app.js                  ${kb(join(upload, "mld-app.js"))} KB`);
 console.log(`  dist/upload/mld-app-post.js             ${kb(join(upload, "mld-app-post.js"))} KB`);
+console.log(`  dist/upload/mld-app-post2.js            ${kb(join(upload, "mld-app-post2.js"))} KB`);
 console.log(`  dist/upload/                            (${FILE_MANAGER_ASSETS.length} File Manager assets)`);
 console.log(`  hubitat/packageManifest.json            (HPM: app + oauth + ${FILE_MANAGER_ASSETS.length} files)`);
 console.log(`  hubitat/repository.json                 (HPM custom repository listing)`);

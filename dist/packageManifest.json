@@ -47,6 +47,11 @@
 			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app-post.js"
 		},
 		{
+			"id": "e7f8a9b0-c1d2-3456-7890-abcdef123456",
+			"name": "mld-app-post2.js",
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app-post2.js"
+		},
+		{
 			"id": "a6f7b8c9-d0e1-2345-f012-456789012345",
 			"name": "mld-manifest.webmanifest",
 			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-manifest.webmanifest"

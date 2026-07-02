@@ -4935,6 +4935,8 @@
     body.appendChild(ruleSection);
   }
 
+  // __MLD_SPLIT2__
+
   function renderScenesPopup() {
     const popup = ensureQuickPopup();
     const body = popup._body;
@@ -5837,18 +5839,4 @@
     }
   })();
 
-  // Monolith dev: expose part-two handlers for postCall() in part one.
-  Object.assign(globalThis.__MLD ||= {}, {
-    updateStates,
-    refreshDevice,
-    reconcileDevice,
-    renderLocksPopup,
-    renderBlindsPopup,
-    renderMusicPopup,
-    renderFavoritesPopup,
-    refreshFavoritesPopup,
-    renderThermostatsPopup,
-    refreshThermostatsPopup,
-    toggleFavorite,
-  });
 })();
