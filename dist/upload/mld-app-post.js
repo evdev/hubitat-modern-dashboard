@@ -5,234 +5,8 @@
     console.error("Modern Dashboard: upload mld-app.js before mld-app-post.js");
     return;
   }
-// Sensors (other-sensor pickers): [{i,n,r,t,v,a,ex:[{k,v,u?}]}]
-  let sensors = [];
-  const sensorCardMap = new Map(); // id -> { el, heroEl, pillEl, pillTxt, dot, footEl, favBtn, t, i }
-  const favSensorMap = new Map(); // id -> sensor card rec (M.favorites popup)
-  let sensorsPopupSig = "";
-  const sensorTypeFilter = new Set(); // empty = show all types
-  let sensorFilterOpen = false;
-  let sensorFilterChipsEl = null;
-  let sensorFilterBtnEl = null;
-  let sensorFilterEmptyEl = null;
-
-  // Mutate exported arrays/maps in place so part1 closures stay in sync after the JS split.
-  function replaceList(list, next) {
-    list.length = 0;
-    const items = Array.isArray(next) ? next : [];
-    if (items.length) list.push(...items);
-  }
-
-  function repopulateThermoByRoom() {
-    M.thermoByRoom.clear();
-    for (const t of M.thermostats) {
-      const rid = normalizeRoomId(t.r);
-      if (!M.thermoByRoom.has(rid)) M.thermoByRoom.set(rid, []);
-      M.thermoByRoom.get(rid).push(t);
-    }
-  }
-
-  function repopulateSensorByRoom() {
-    M.sensorByRoom.clear();
-    for (const s of M.tempSensors) {
-      const rid = normalizeRoomId(s.r);
-      if (!M.sensorByRoom.has(rid)) M.sensorByRoom.set(rid, []);
-      M.sensorByRoom.get(rid).push(s);
-    }
-  }
-
-  function syncRoomMap() {
-    M.roomMap.clear();
-    for (const r of M.rooms) M.roomMap.set(r.id, r.name);
-  }
-
-  // ---------- render ----------
-  function emptyState(html) {
-    M.ROOMS_EL.innerHTML = html;
-    M.roomEls.clear(); M.devMap.clear();
-  }
-
-  function loadingState() {
-    emptyState('<div class="loading"><div class="spinner"></div>Loading lights…</div>');
-  }
-
-  function noDevicesState() {
-    emptyState(
-      '<div class="empty">' +
-      '<h2>No devices configured</h2>' +
-      'Open the Modern Dashboard app on your hub and select your lights or thermostats.' +
-      '</div>'
-    );
-  }
-
-  function sortRoomsByOrder(allRooms, order) {
-    const list = Array.isArray(allRooms) ? allRooms : [];
-    if (!order?.length) {
-      return list.slice().sort((a, b) =>
-        String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" })
-      );
-    }
-    const byId = new Map(list.map(r => [r.id, r]));
-    const sorted = [];
-    const seen = new Set();
-    for (const rawId of order) {
-      const id = normalizeRoomId(rawId);
-      if (id === -1) continue;
-      if (byId.has(id)) {
-        sorted.push(byId.get(id));
-        seen.add(id);
-      }
-    }
-    const newcomers = list.filter(r => !seen.has(r.id)).sort((a, b) =>
-      String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" })
-    );
-    sorted.push(...newcomers);
-    return sorted;
-  }
-
-  function ensureRoomsFromDevices() {
-    if (M.rooms.length) return;
-    const byId = new Map();
-    const addRef = (item) => {
-      const id = normalizeRoomId(item?.r);
-      if (id === -1) return;
-      if (!byId.has(id)) byId.set(id, { id, name: "Room " + id });
-    };
-    for (const dev of M.devices) addRef(dev);
-    for (const t of M.thermostats) addRef(t);
-    for (const s of M.tempSensors) addRef(s);
-    for (const lk of M.locks) addRef(lk);
-    if (!byId.size) return;
-    replaceList(M.rooms, [...byId.values()].sort((a, b) => a.id - b.id));
-    syncRoomMap();
-  }
-
-  function contentRoomIds() {
-    const ids = new Set();
-    for (const rid of M.devicesByRoom.keys()) ids.add(rid);
-    for (const rid of M.thermoByRoom.keys()) ids.add(rid);
-    for (const rid of M.sensorByRoom.keys()) ids.add(rid);
-    return ids;
-  }
-
-  function getDisplayRoomIds(groups, hasContent) {
-    const knownIds = new Set(M.rooms.map(r => r.id));
-    const allIds = new Set(knownIds);
-    for (const id of contentRoomIds()) allIds.add(id);
-    const hasUnassigned = groups.has(-1) || M.roomHasClimate(-1);
-    let order;
-    if (M.cfg.roomOrder?.length) {
-      order = M.cfg.roomOrder.map(normalizeRoomId).filter(id => {
-        if (id === -1) return hasUnassigned;
-        return allIds.has(id);
-      });
-      const inOrder = new Set(order.filter(id => id !== -1));
-      const newcomers = [...allIds].filter(id => !inOrder.has(id));
-      if (newcomers.length) {
-        newcomers.sort((a, b) => {
-          const an = M.roomMap.get(a) || "";
-          const bn = M.roomMap.get(b) || "";
-          return String(an).localeCompare(String(bn), undefined, { sensitivity: "base" }) || (a - b);
-        });
-        const uIdx = order.indexOf(-1);
-        if (uIdx >= 0) order = order.slice(0, uIdx).concat(newcomers, order.slice(uIdx));
-        else order = order.concat(newcomers);
-      }
-      if (hasUnassigned && !order.includes(-1)) order.push(-1);
-    } else {
-      order = M.rooms.map(r => r.id);
-      for (const id of allIds) {
-        if (id !== -1 && !order.includes(id)) order.push(id);
-      }
-      if (hasUnassigned && !order.includes(-1)) order.push(-1);
-    }
-    return order.filter(rid => hasContent(rid));
-  }
-
-  async function saveRoomOrder(order) {
-    if (!order?.length) {
-      M.flash("No rooms to save", true);
-      return false;
-    }
-    const headers = { "Accept": "application/json" };
-    const paths = ["room-order", "settings/room-order"];
-    let lastMsg = "Could not save room order";
-    for (const path of paths) {
-      try {
-        let r = await fetch(M.withToken(path), {
-          method: "POST",
-          cache: "no-store",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({ order }),
-        });
-        if (r.ok) return true;
-        try {
-          const body = await r.json();
-          if (body?.error) lastMsg = String(body.error);
-        } catch {}
-        if (r.status === 404) continue;
-        r = await fetch(M.withToken(path + "?order=" + encodeURIComponent(order.join(","))), {
-          method: "GET",
-          cache: "no-store",
-          headers,
-        });
-        if (r.ok) return true;
-        try {
-          const body = await r.json();
-          if (body?.error) lastMsg = String(body.error);
-        } catch {}
-      } catch {}
-    }
-    M.flash(lastMsg === "Could not save room order"
-      ? "Could not save room order — update the hub app code and try again"
-      : lastMsg, true);
-    return false;
-  }
-
-  async function postJson(path, body) {
-    try {
-      const r = await fetch(M.withToken(path), {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        let msg = "Request failed";
-        try {
-          const j = await r.json();
-          if (j?.error) msg = String(j.error);
-        } catch {}
-        M.flash(msg, true);
-        return { ok: false };
-      }
-      let data = {};
-      try { data = await r.json(); } catch {}
-      return { ok: true, data };
-    } catch {
-      M.flash("Request failed", true);
-      return { ok: false };
-    }
-  }
-
-  async function postJsonSilent(path, body) {
-    try {
-      const r = await fetch(M.withToken(path), {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(body),
-      });
-      let data = {};
-      try { data = await r.json(); } catch {}
-      return { ok: r.ok, status: r.status, data, error: data?.error };
-    } catch {
-      return { ok: false, error: "Request failed" };
-    }
-  }
-
-  async function setHsmApi(mode, pin, padApi) {
-    let result = await postJsonSilent("hsm", { mode, pin });
+async function setHsmApi(mode, pin, padApi) {
+    let result = await M.postJsonSilent("hsm", { mode, pin });
     if (!result.ok) {
       if (result.status === 403 || result.error === "wrong pin") {
         padApi?.shake();
@@ -263,7 +37,7 @@
   }
 
   async function setHubModeApi(mode) {
-    let result = await postJson("hub-mode", { mode });
+    let result = await M.postJson("hub-mode", { mode });
     if (result.ok) return true;
     try {
       const r = await fetch(M.withToken("hub-mode?mode=" + encodeURIComponent(mode)), {
@@ -280,7 +54,7 @@
   }
 
   async function activateSceneApi(id) {
-    let result = await postJson("scene/activate", { id });
+    let result = await M.postJson("scene/activate", { id });
     if (result.ok) return true;
     try {
       const r = await fetch(M.withToken("scene/activate?id=" + encodeURIComponent(id)), {
@@ -292,6 +66,69 @@
       M.flash(msg, true);
     } catch {
       M.flash("Could not activate scene", true);
+    }
+    return false;
+  }
+
+  async function bulkLightsApi(cmd, scope, roomId) {
+    const body = { cmd, scope };
+    if (scope === "room") body.roomId = roomId;
+    let result = await M.postJson("lights/bulk", body);
+    if (result.ok) return true;
+    try {
+      let url = "lights/bulk?cmd=" + encodeURIComponent(cmd) + "&scope=" + encodeURIComponent(scope);
+      if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
+      const r = await fetch(M.withToken(url), {
+        method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
+      });
+      if (r.ok) return true;
+      let msg = "Could not control lights";
+      try { const j = await r.json(); if (j?.error) msg = String(j.error); } catch {}
+      M.flash(msg, true);
+    } catch {
+      M.flash("Could not control lights", true);
+    }
+    return false;
+  }
+
+  async function snapshotSaveApi(scope, roomId) {
+    const body = { scope };
+    if (scope === "room") body.roomId = roomId;
+    let result = await M.postJson("snapshot/save", body);
+    if (result.ok) return true;
+    try {
+      let url = "snapshot/save?scope=" + encodeURIComponent(scope);
+      if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
+      const r = await fetch(M.withToken(url), {
+        method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
+      });
+      if (r.ok) return true;
+      let msg = "Could not save state";
+      try { const j = await r.json(); if (j?.error) msg = String(j.error); } catch {}
+      M.flash(msg, true);
+    } catch {
+      M.flash("Could not save state", true);
+    }
+    return false;
+  }
+
+  async function snapshotRestoreApi(scope, roomId) {
+    const body = { scope };
+    if (scope === "room") body.roomId = roomId;
+    let result = await M.postJson("snapshot/restore", body);
+    if (result.ok) return true;
+    try {
+      let url = "snapshot/restore?scope=" + encodeURIComponent(scope);
+      if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
+      const r = await fetch(M.withToken(url), {
+        method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
+      });
+      if (r.ok) return true;
+      let msg = "Could not restore state";
+      try { const j = await r.json(); if (j?.error) msg = String(j.error); } catch {}
+      M.flash(msg, true);
+    } catch {
+      M.flash("Could not restore state", true);
     }
     return false;
   }
@@ -340,6 +177,177 @@
     return M.roomMap.get(rid) || "Room";
   }
 
+  function snapshotRoomKey(roomKey) {
+    return "room:" + roomKey;
+  }
+
+  function setRoomGestureLock(on) {
+    if (on) {
+      M.roomGestureLockCount++;
+      M.APP_EL?.classList.add("room-gesture-lock");
+    } else {
+      M.roomGestureLockCount = Math.max(0, M.roomGestureLockCount - 1);
+      if (M.roomGestureLockCount === 0) M.APP_EL?.classList.remove("room-gesture-lock");
+    }
+  }
+
+  const SLIDE_HOLD_MS = 400;
+  const SLIDE_REVEAL_PX = 80;
+  const SLIDE_COMMIT_RATIO = 0.65;
+  const SLIDE_TAP_MOVE = 10;
+
+  function attachRoomSlideAction(track, primaryBtn, actionBtn, opts) {
+    const { direction, onTap, onCommit, canCommit } = opts;
+    let pointerId = null;
+    let downX = 0;
+    let downY = 0;
+    let downT = 0;
+    let holdTimer = null;
+    let holdActive = false;
+    let holdBlocked = false;
+    let sliding = false;
+    let slidePx = 0;
+    let gestureHandled = false;
+
+    track.addEventListener("contextmenu", (e) => e.preventDefault());
+    track.addEventListener("selectstart", (e) => e.preventDefault());
+
+    function reset() {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+      holdActive = false;
+      holdBlocked = false;
+      sliding = false;
+      slidePx = 0;
+      primaryBtn.style.transform = "";
+      track.classList.remove("room-slide-active");
+      setRoomGestureLock(false);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      pointerId = null;
+    }
+
+    function onMove(e) {
+      if (e.pointerId !== pointerId) return;
+      const dx = e.clientX - downX;
+      const dy = e.clientY - downY;
+      if (!holdActive) {
+        if (Math.abs(dx) > SLIDE_TAP_MOVE || Math.abs(dy) > SLIDE_TAP_MOVE) {
+          if (holdTimer) {
+            clearTimeout(holdTimer);
+            holdTimer = null;
+          }
+        }
+        return;
+      }
+      if (!sliding) {
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+          reset();
+          return;
+        }
+        sliding = true;
+      }
+      e.preventDefault();
+      if (direction === "left") {
+        slidePx = Math.max(0, Math.min(SLIDE_REVEAL_PX, -dx));
+      } else {
+        slidePx = Math.max(0, Math.min(SLIDE_REVEAL_PX, dx));
+      }
+      const tx = direction === "left" ? -slidePx : slidePx;
+      primaryBtn.style.transform = "translateX(" + tx + "px)";
+    }
+
+    function onUp(e) {
+      if (e.pointerId !== pointerId) return;
+      gestureHandled = true;
+      setTimeout(() => { gestureHandled = false; }, 0);
+      const elapsed = Date.now() - downT;
+      const dx = Math.abs(e.clientX - downX);
+      const dy = Math.abs(e.clientY - downY);
+      try { primaryBtn.releasePointerCapture(pointerId); } catch {}
+
+      if (holdBlocked) {
+        reset();
+        return;
+      }
+
+      if (!holdActive && elapsed <= SLIDE_HOLD_MS + 80 && dx <= SLIDE_TAP_MOVE && dy <= SLIDE_TAP_MOVE) {
+        reset();
+        onTap();
+        return;
+      }
+
+      const commitThreshold = SLIDE_REVEAL_PX * SLIDE_COMMIT_RATIO;
+      if (holdActive && slidePx >= commitThreshold && (!canCommit || canCommit())) {
+        reset();
+        onCommit();
+        return;
+      }
+
+      if (holdActive && slidePx > 0 && canCommit && !canCommit()) {
+        M.flash("No saved state", true);
+      }
+      reset();
+    }
+
+    primaryBtn.addEventListener("pointerdown", (e) => {
+      if (M.reorderMode) return;
+      if (e.button != null && e.button !== 0) return;
+      e.stopPropagation();
+      pointerId = e.pointerId;
+      downX = e.clientX;
+      downY = e.clientY;
+      downT = Date.now();
+      holdActive = false;
+      holdBlocked = false;
+      sliding = false;
+      slidePx = 0;
+      gestureHandled = false;
+      try { primaryBtn.setPointerCapture(pointerId); } catch {}
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (canCommit && !canCommit()) {
+          holdBlocked = true;
+          M.flash("No saved state", true);
+          return;
+        }
+        holdActive = true;
+        track.classList.add("room-slide-active");
+        setRoomGestureLock(true);
+        M.hapticTap();
+      }, SLIDE_HOLD_MS);
+      window.addEventListener("pointermove", onMove, { passive: false });
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    });
+
+    primaryBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (gestureHandled) {
+        e.preventDefault();
+      }
+    });
+
+    if (actionBtn) {
+      actionBtn.addEventListener("pointerdown", (e) => e.preventDefault());
+    }
+  }
+
+  function updateRoomSnapshotUi() {
+    for (const [rid, rec] of M.roomEls) {
+      const has = !!M.snapshots[snapshotRoomKey(rid)];
+      rec.card.classList.toggle("room-has-snapshot", has);
+      rec.card.classList.toggle("room-no-snapshot", !has);
+      if (rec.restoreBtn) {
+        rec.restoreBtn.disabled = !has;
+        rec.restoreBtn.setAttribute("aria-disabled", has ? "false" : "true");
+      }
+    }
+  }
+
   function getFavoriteEntries() {
     const out = [];
     for (const id of M.favorites) {
@@ -349,7 +357,7 @@
       if (t) { out.push({ type: "thermostat", dev: t }); continue; }
       const ts = M.tempSensors.find(x => x.i === id);
       if (ts) { out.push({ type: "sensor", dev: normalizeTempSensorForCard(ts) }); continue; }
-      const sen = sensors.find(x => x.i === id);
+      const sen = M.sensors.find(x => x.i === id);
       if (sen) out.push({ type: "sensor", dev: sen });
     }
     return out;
@@ -358,8 +366,8 @@
   function updateAllFavButtons() {
     for (const [, rec] of M.devMap) M.syncFavButton(rec.el.querySelector(".tile-fav"), rec.data.i);
     for (const [, rec] of M.favDevMap) M.syncFavButton(rec.el.querySelector(".tile-fav"), rec.data.i);
-    for (const [, rec] of sensorCardMap) M.syncFavButton(rec.favBtn, rec.i);
-    for (const [, rec] of favSensorMap) M.syncFavButton(rec.favBtn, rec.i);
+    for (const [, rec] of M.sensorCardMap) M.syncFavButton(rec.favBtn, rec.i);
+    for (const [, rec] of M.favSensorMap) M.syncFavButton(rec.favBtn, rec.i);
     M.updateTstatFavButton();
   }
 
@@ -462,7 +470,7 @@
 
   async function finishReorderMode() {
     const order = M.reorderDraftOrder ?? currentRoomOrderFromDom();
-    const saved = await saveRoomOrder(order);
+    const saved = await M.saveRoomOrder(order);
     if (!saved) return;
     M.cfg.roomOrder = order.length ? order.slice() : null;
     M.lastDataSig = "";
@@ -620,7 +628,7 @@
   }
 
   function render(d) {
-    replaceList(M.hubModes, d.hubModes);
+    M.replaceList(M.hubModes, d.hubModes);
     if (!hubModeLocked()) M.currentHubMode = d.currentHubMode || "";
     if (!hsmLocked()) {
       M.hsmStatus = d.hsmStatus || "";
@@ -632,31 +640,34 @@
     M.thermostatsPopupEnabled = d.thermostatsPopupEnabled !== false;
     M.unlockPinEnabled = !!d.unlockPinEnabled;
     M.unlockPinRequired = !!d.unlockPinRequired;
-    replaceList(M.scenes, d.scenes);
-    replaceList(M.locks, d.locks);
-    replaceList(M.music, d.music);
-    if (Array.isArray(d.config?.favorites)) replaceList(M.favorites, d.config.favorites.map(Number));
+    M.replaceList(M.scenes, d.scenes);
+    M.replaceList(M.locks, d.locks);
+    M.replaceList(M.windowShades, d.windowShades);
+    M.replaceList(M.music, d.music);
+    if (Array.isArray(d.config?.favorites)) M.replaceList(M.favorites, d.config.favorites.map(Number));
     M.reapplyLockOptimistic();
+    M.reapplyShadeOptimistic();
     M.reapplyMusicOptimistic();
     M.reapplySetpointOptimistic();
 
-    replaceList(M.rooms, sortRoomsByOrder(d.rooms || [], M.cfg.roomOrder));
-    syncRoomMap();
-    replaceList(M.devices, d.devices);
-    replaceList(M.thermostats, d.thermostats);
-    replaceList(M.tempSensors, d.tempSensors);
-    replaceList(sensors, d.sensors);
+    M.replaceList(M.rooms, M.sortRoomsByOrder(d.rooms || [], M.cfg.roomOrder));
+    M.syncRoomMap();
+    M.replaceList(M.devices, d.devices);
+    M.replaceList(M.thermostats, d.thermostats);
+    M.replaceList(M.tempSensors, d.tempSensors);
+    M.replaceList(M.sensors, d.sensors);
+    M.snapshots = d.snapshots && typeof d.snapshots === "object" ? d.snapshots : {};
     M.rebuildDevicesByRoom();
     M.reapplySwitchOptimistic();
     M.reapplyTstatDeviceModeLocks();
     M.applyTstatSessionModeLock();
 
-    repopulateThermoByRoom();
-    repopulateSensorByRoom();
-    ensureRoomsFromDevices();
+    M.repopulateThermoByRoom();
+    M.repopulateSensorByRoom();
+    M.ensureRoomsFromDevices();
     updateQuickNavVisibility();
 
-    if (!M.devices.length && !M.thermostats.length && !M.tempSensors.length) { noDevicesState(); return; }
+    if (!M.devices.length && !M.thermostats.length && !M.tempSensors.length) { M.noDevicesState(); return; }
 
     const groups = new Map();
     for (const dev of M.devices) {
@@ -665,7 +676,7 @@
       groups.get(rid).push(dev);
     }
     const hasContent = (rid) => (groups.get(normalizeRoomId(rid))?.length || M.roomHasClimate(rid));
-    const displayOrder = getDisplayRoomIds(groups, hasContent);
+    const displayOrder = M.getDisplayRoomIds(groups, hasContent);
 
     const sig = displayOrder.join(",") + "|" + M.devices.map(x => x.i).join(",")
       + "|" + M.thermostats.map(x => x.i).join(",") + "|" + M.tempSensors.map(x => x.i).join(",");
@@ -673,6 +684,7 @@
     M.lastDataSig = sig;
 
     if (fullRerender && !M.reorderMode) buildDom();
+    updateRoomSnapshotUi();
     updateStates();
     M.updateClimateWidgets();
     applySearch();
@@ -691,10 +703,10 @@
       groups.get(rid).push(dev);
     }
 
-    // a room is shown if it has lights, M.thermostats, or temp sensors
+    // a room is shown if it has lights, M.thermostats, or temp M.sensors
     const hasContent = (rid) => (groups.get(normalizeRoomId(rid))?.length || M.roomHasClimate(rid));
 
-    const orderedIds = getDisplayRoomIds(groups, hasContent);
+    const orderedIds = M.getDisplayRoomIds(groups, hasContent);
 
     for (const rid of orderedIds) {
       const roomKey = normalizeRoomId(rid);
@@ -760,12 +772,62 @@
       }
 
       const toggle = ce("div", "room-toggle");
-      const offBtn = ce("button", "btn-off"); offBtn.type = "button"; offBtn.textContent = "Off";
-      offBtn.addEventListener("click", (e) => { e.stopPropagation(); roomAll(roomKey, "off"); });
-      const onBtn = ce("button", "btn-on"); onBtn.type = "button"; onBtn.textContent = "On";
-      onBtn.addEventListener("click", (e) => { e.stopPropagation(); roomAll(roomKey, "on"); });
-      toggle.appendChild(offBtn); toggle.appendChild(onBtn);
+
+      const offTrack = ce("div", "room-slide-track room-slide-off");
+      const saveBtn = ce("button", "room-snap-action room-snap-save");
+      saveBtn.type = "button";
+      saveBtn.textContent = "Save";
+      saveBtn.setAttribute("aria-label", "Save current state");
+      saveBtn.tabIndex = -1;
+      const offBtn = ce("button", "btn-off");
+      offBtn.type = "button";
+      offBtn.textContent = "Off";
+      offTrack.appendChild(saveBtn);
+      offTrack.appendChild(offBtn);
+
+      const onTrack = ce("div", "room-slide-track room-slide-on");
+      const onBtn = ce("button", "btn-on");
+      onBtn.type = "button";
+      onBtn.textContent = "On";
+      const restoreBtn = ce("button", "room-snap-action room-snap-restore");
+      restoreBtn.type = "button";
+      restoreBtn.textContent = "Restore";
+      restoreBtn.setAttribute("aria-label", "Restore saved state");
+      restoreBtn.tabIndex = -1;
+      restoreBtn.disabled = true;
+      restoreBtn.setAttribute("aria-disabled", "true");
+      onTrack.appendChild(onBtn);
+      onTrack.appendChild(restoreBtn);
+
+      toggle.appendChild(offTrack);
+      toggle.appendChild(onTrack);
       head.appendChild(toggle);
+
+      attachRoomSlideAction(offTrack, offBtn, saveBtn, {
+        direction: "left",
+        onTap: () => roomAll(roomKey, "off"),
+        onCommit: () => {
+          snapshotSaveApi("room", roomKey).then((ok) => {
+            if (!ok) return;
+            const devs = M.devicesByRoom.get(roomKey) || [];
+            M.snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: devs.length };
+            updateRoomSnapshotUi();
+            M.flash(roomLabel(roomKey) + " saved");
+          });
+        },
+        canCommit: () => true,
+      });
+
+      attachRoomSlideAction(onTrack, onBtn, restoreBtn, {
+        direction: "right",
+        onTap: () => roomAll(roomKey, "on"),
+        onCommit: () => {
+          snapshotRestoreApi("room", roomKey).then((ok) => {
+            if (ok) M.flash("Restoring " + roomLabel(roomKey) + "…");
+          });
+        },
+        canCommit: () => !!M.snapshots[snapshotRoomKey(roomKey)],
+      });
 
       const col = ce("button", "room-collapse"); col.type = "button"; col.setAttribute("aria-label", "Collapse room");
       col.innerHTML = '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>';
@@ -783,13 +845,14 @@
       M.ROOMS_EL.appendChild(card);
 
       attachRoomReorder(card, dragHandle);
-      M.roomEls.set(roomKey, { card, body, meta, moveUp, moveDown });
+      M.roomEls.set(roomKey, { card, body, meta, moveUp, moveDown, offTrack, onTrack, saveBtn, restoreBtn });
 
       for (const dev of devs) body.appendChild(makeTile(dev));
     }
 
     restoreCollapsed();
     updateRoomMeta();
+    updateRoomSnapshotUi();
     M.updateClimateWidgets();
     updateMoveButtons();
   }
@@ -1097,6 +1160,101 @@
     slider.addEventListener("pointerdown", start);
   }
 
+  function attachShadeDrag(tile, slider, shadeId, onLevelChange) {
+    const INTENT = 8;
+    const TAP_MOVE = 10;
+    let dragging = false;
+    let aborted = false;
+    let startX = 0, startY = 0;
+    let lastCommit = 0;
+    let pendingLevel = null;
+    let downLevel = null;
+
+    function pctFromEvent(e) {
+      const rect = slider.getBoundingClientRect();
+      const usable = rect.width - SLIDER_THUMB_PX;
+      const x = (e.clientX != null ? e.clientX : 0) - rect.left - SLIDER_THUMB_PX / 2;
+      let p = usable > 0 ? Math.round((x / usable) * 100) : 0;
+      if (p < 0) p = 0; if (p > 100) p = 100;
+      return p;
+    }
+    function setVisual(p) {
+      const level = clampLevel(p);
+      setSliderLevel(slider, level);
+      if (onLevelChange) onLevelChange(level);
+    }
+    function commitLevel(p) {
+      setVisual(p);
+      sendShadeCmd(shadeId, "setPosition", p);
+    }
+    function cleanup() {
+      dragging = false;
+      aborted = false;
+      slider.classList.remove("dragging");
+      tile.classList.remove("dragging");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    }
+    function start(e) {
+      if (e.button != null && e.button !== 0) return;
+      dragging = false;
+      aborted = false;
+      startX = e.clientX; startY = e.clientY;
+      downLevel = pctFromEvent(e);
+      pendingLevel = downLevel;
+      window.addEventListener("pointermove", move, { passive: false });
+      window.addEventListener("pointerup", end, { passive: false });
+      window.addEventListener("pointercancel", end, { passive: false });
+    }
+    function move(e) {
+      if (aborted) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!dragging) {
+        if (Math.abs(dx) < INTENT && Math.abs(dy) < INTENT) return;
+        if (Math.abs(dy) > Math.abs(dx)) {
+          aborted = true;
+          cleanup();
+          return;
+        }
+        dragging = true;
+        slider.classList.add("dragging");
+        tile.classList.add("dragging");
+      }
+      e.preventDefault();
+      const p = pctFromEvent(e);
+      setVisual(p);
+      pendingLevel = p;
+      const now = Date.now();
+      if (now - lastCommit > 350) {
+        lastCommit = now;
+        sendShadeCmd(shadeId, "setPosition", p);
+      }
+    }
+    function end(e) {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      if (aborted) { cleanup(); return; }
+      if (dragging) {
+        const p = pendingLevel == null ? 0 : pendingLevel;
+        slider.classList.remove("dragging");
+        tile.classList.remove("dragging");
+        dragging = false;
+        commitLevel(p);
+        return;
+      }
+      if (e && e.clientX != null) {
+        const dx = Math.abs(e.clientX - startX);
+        const dy = Math.abs(e.clientY - startY);
+        if (dx <= TAP_MOVE && dy <= TAP_MOVE) commitLevel(downLevel);
+      }
+      cleanup();
+    }
+    slider.addEventListener("pointerdown", start);
+  }
+
   // ---------- commands ----------
   // Diagnostic shown when the user enables haptics, so we can tell exactly why
   // the device isn't buzzing (secure context, API presence, or call acceptance).
@@ -1208,6 +1366,20 @@
         if (currentCategory() === "locks") renderLocksPopup();
         return;
       }
+      const shade = M.windowShades.find(x => x.i === Number(d.i));
+      if (shade) {
+        if (d.st != null) shade.st = d.st;
+        if (d.pos != null) shade.pos = d.pos;
+        const opt = M.shadeOptimistic.get(Number(d.i));
+        if (opt) {
+          let matched = true;
+          if (opt.st != null && shade.st !== opt.st) matched = false;
+          if (opt.pos != null && shade.pos !== opt.pos) matched = false;
+          if (matched) M.clearShadeOptimistic(Number(d.i));
+        }
+        if (M.quickPopupOpenType === "blinds") renderBlindsPopup();
+        return;
+      }
       const mp = M.music.find(x => x.i === Number(d.i));
       if (mp) {
         if (d.st != null) mp.st = d.st;
@@ -1226,6 +1398,11 @@
 
   function reconcileLock(id) {
     setTimeout(() => refreshDevice(id), 7000);
+  }
+
+  function reconcileShade(id) {
+    setTimeout(() => refreshDevice(id), 700);
+    setTimeout(() => refreshDevice(id), 2200);
   }
 
   function reconcileMusic(id) {
@@ -1312,9 +1489,29 @@
     return result;
   }
 
-  function devicesNeedingCmd(devs, cmd) {
-    return devs.filter((d) => (cmd === "on" ? !M.effectiveSwitch(d) : M.effectiveSwitch(d)));
+  async function sendShadeCmd(id, cmd, val) {
+    const shade = M.windowShades.find(s => s.i === id);
+    if (!shade) return { ok: false };
+    M.hapticTap();
+    let patch = {};
+    if (cmd === "open") patch = { st: "opening" };
+    else if (cmd === "close") patch = { st: "closing" };
+    else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
+    if (patch.st != null || patch.pos != null) {
+      M.setShadeOptimistic(id, patch);
+      if (M.quickPopupOpenType === "blinds") renderBlindsPopup();
+    }
+    const result = await M.sendCmd(id, cmd, val);
+    if (!result.ok) {
+      M.clearShadeOptimistic(id);
+      reconcileShade(id);
+      if (M.quickPopupOpenType === "blinds") renderBlindsPopup();
+    } else {
+      reconcileShade(id);
+    }
+    return result;
   }
+
 
   function applySwitchCmdOptimistic(dev, cmd) {
     const id = dev.i;
@@ -1329,24 +1526,20 @@
   function roomAll(rid, cmd) {
     M.hapticTap();
     const devs = M.devicesByRoom.get(rid) || [];
-    const toChange = devicesNeedingCmd(devs, cmd);
-    if (!toChange.length) return;
-    const ids = toChange.map(d => d.i);
-    const hasDimmer = toChange.some(d => d.d);
-    for (const dev of toChange) applySwitchCmdOptimistic(dev, cmd);
+    if (!devs.length) return;
+    const hasDimmer = devs.some(d => d.d);
+    for (const dev of devs) applySwitchCmdOptimistic(dev, cmd);
     updateStates();
-    M.sendCmdBatch(ids.map(id => ({ id, cmd })));
+    bulkLightsApi(cmd, "room", rid);
     if (cmd === "on" && hasDimmer) setTimeout(refresh, 900); // reconcile restored levels
   }
 
   function allLights(cmd) {
-    const toChange = devicesNeedingCmd(M.devices, cmd);
-    if (!toChange.length) return;
-    const ids = toChange.map(d => d.i);
-    const hasDimmer = toChange.some(d => d.d);
-    for (const dev of toChange) applySwitchCmdOptimistic(dev, cmd);
+    if (!M.devices.length) return;
+    const hasDimmer = M.devices.some(d => d.d);
+    for (const dev of M.devices) applySwitchCmdOptimistic(dev, cmd);
     updateStates();
-    M.sendCmdBatch(ids.map(id => ({ id, cmd })));
+    bulkLightsApi(cmd, "house");
     if (cmd === "on" && hasDimmer) setTimeout(refresh, 900);
   }
 
@@ -1445,7 +1638,90 @@
     body.appendChild(list);
   }
 
-  // ---------- sensors popup ----------
+  function renderBlindsPopup() {
+    const popup = ensureQuickPopup();
+    const body = popup._body;
+    body.className = "quick-body quick-body-blinds";
+    body.innerHTML = "";
+    if (!M.windowShades.length) {
+      body.textContent = "No shades selected — add shades in the Hubitat app settings";
+      return;
+    }
+    const sorted = M.windowShades.slice().sort((a, b) => {
+      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
+      if (ra !== 0) return ra;
+      return String(a.n || "").localeCompare(String(b.n || ""));
+    });
+    const list = ce("div", "quick-list");
+    for (const shade of sorted) {
+      const tile = ce("div", "shade-tile");
+      const info = ce("div", "shade-info");
+      const name = ce("span", "quick-fav-name");
+      name.textContent = shade.n || ("Shade " + shade.i);
+      const meta = ce("span", "quick-fav-meta");
+      meta.textContent = roomLabel(shade.r) + " · " + M.shadeStatusLabel(shade);
+      info.appendChild(name);
+      info.appendChild(meta);
+      tile.appendChild(info);
+
+      const moving = M.shadeIsMoving(shade);
+      const pos = M.effectiveShadePosition(shade);
+      const hasPos = shade.pos != null;
+      if (hasPos) {
+        const sliderWrap = ce("div", "shade-slider-wrap");
+        const levelLabel = ce("span", "shade-level-label");
+        levelLabel.textContent = (pos != null ? pos : "—") + "%";
+        const slider = ce("div", "slider shade-slider");
+        slider.appendChild(ce("div", "slider-fill"));
+        slider.appendChild(ce("div", "slider-thumb"));
+        setSliderLevel(slider, pos != null ? pos : 0);
+        if (moving) slider.classList.add("disabled");
+        sliderWrap.appendChild(levelLabel);
+        sliderWrap.appendChild(slider);
+        tile.appendChild(sliderWrap);
+        if (!moving) {
+          attachShadeDrag(tile, slider, shade.i, (lvl) => { levelLabel.textContent = lvl + "%"; });
+        }
+      }
+
+      const actions = ce("div", "shade-actions");
+      const openBtn = ce("button", "quick-lock-btn shade-btn");
+      openBtn.type = "button";
+      openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
+      const closeBtn = ce("button", "quick-lock-btn shade-btn");
+      closeBtn.type = "button";
+      closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
+      const st = M.effectiveShadeState(shade);
+      if (st === "open") openBtn.classList.add("active");
+      else if (st === "closed") closeBtn.classList.add("active");
+      if (moving) {
+        openBtn.classList.add("moving");
+        closeBtn.classList.add("moving");
+        openBtn.disabled = true;
+        closeBtn.disabled = true;
+      }
+      openBtn.addEventListener("click", () => {
+        if (!M.shadeIsMoving(shade) && M.effectiveShadeState(shade) !== "open") sendShadeCmd(shade.i, "open");
+      });
+      closeBtn.addEventListener("click", () => {
+        if (!M.shadeIsMoving(shade) && M.effectiveShadeState(shade) !== "closed") sendShadeCmd(shade.i, "close");
+      });
+      actions.appendChild(openBtn);
+      actions.appendChild(closeBtn);
+      if (moving) {
+        const stopBtn = ce("button", "quick-lock-btn shade-btn shade-stop-btn");
+        stopBtn.type = "button";
+        stopBtn.innerHTML = SHADE_STOP_SVG + '<span class="quick-lock-btn-label">Stop</span>';
+        stopBtn.addEventListener("click", () => sendShadeCmd(shade.i, "stop"));
+        actions.appendChild(stopBtn);
+      }
+      tile.appendChild(actions);
+      list.appendChild(tile);
+    }
+    body.appendChild(list);
+  }
+
+  // ---------- M.sensors popup ----------
   function normalizeTempSensorForCard(s) {
     return { i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], _ref: s };
   }
@@ -1453,7 +1729,7 @@
   function mergedSensorList() {
     const out = [];
     for (const s of M.tempSensors) out.push({ i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], _ref: s });
-    for (const s of sensors) out.push({ i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
+    for (const s of M.sensors) out.push({ i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
     out.sort((a, b) => {
       const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
       if (ra !== 0) return ra;
@@ -1473,18 +1749,18 @@
   }
 
   function sensorMatchesFilter(dev) {
-    return !sensorTypeFilter.size || sensorTypeFilter.has(dev.t);
+    return !M.sensorTypeFilter.size || M.sensorTypeFilter.has(dev.t);
   }
 
   function syncSensorFilterBtn() {
-    if (!sensorFilterBtnEl) return;
-    const n = sensorTypeFilter.size;
-    sensorFilterBtnEl.classList.toggle("is-active", n > 0 || sensorFilterOpen);
-    let badge = sensorFilterBtnEl.querySelector(".sensor-filter-btn-badge");
+    if (!M.sensorFilterBtnEl) return;
+    const n = M.sensorTypeFilter.size;
+    M.sensorFilterBtnEl.classList.toggle("is-active", n > 0 || M.sensorFilterOpen);
+    let badge = M.sensorFilterBtnEl.querySelector(".sensor-filter-btn-badge");
     if (n > 0) {
       if (!badge) {
         badge = ce("span", "sensor-filter-btn-badge");
-        sensorFilterBtnEl.appendChild(badge);
+        M.sensorFilterBtnEl.appendChild(badge);
       }
       badge.textContent = String(n);
       badge.hidden = false;
@@ -1492,10 +1768,10 @@
   }
 
   function syncSensorFilterChips() {
-    if (!sensorFilterChipsEl) return;
-    for (const btn of sensorFilterChipsEl.querySelectorAll(".sensor-filter-chip")) {
+    if (!M.sensorFilterChipsEl) return;
+    for (const btn of M.sensorFilterChipsEl.querySelectorAll(".sensor-filter-chip")) {
       const t = btn.dataset.type;
-      const on = t === "all" ? !sensorTypeFilter.size : sensorTypeFilter.has(t);
+      const on = t === "all" ? !M.sensorTypeFilter.size : M.sensorTypeFilter.has(t);
       btn.classList.toggle("active", on);
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
@@ -1504,13 +1780,13 @@
   function applySensorTypeFilter() {
     let visible = 0;
     for (const dev of mergedSensorList()) {
-      const rec = sensorCardMap.get(dev.i);
+      const rec = M.sensorCardMap.get(dev.i);
       if (!rec) continue;
       const show = sensorMatchesFilter(dev);
       rec.el.hidden = !show;
       if (show) visible++;
     }
-    if (sensorFilterEmptyEl) sensorFilterEmptyEl.hidden = visible > 0;
+    if (M.sensorFilterEmptyEl) M.sensorFilterEmptyEl.hidden = visible > 0;
     syncSensorFilterBtn();
     syncSensorFilterChips();
   }
@@ -1520,23 +1796,23 @@
     const filterBtn = ce("button", "sensor-filter-btn");
     filterBtn.type = "button";
     filterBtn.innerHTML = FILTER_SVG + '<span class="sensor-filter-btn-label">Filter</span>';
-    filterBtn.setAttribute("aria-expanded", sensorFilterOpen ? "true" : "false");
+    filterBtn.setAttribute("aria-expanded", M.sensorFilterOpen ? "true" : "false");
     filterBtn.setAttribute("aria-label", "Filter sensors by type");
     toolbar.appendChild(filterBtn);
-    sensorFilterBtnEl = filterBtn;
+    M.sensorFilterBtnEl = filterBtn;
 
     const chips = ce("div", "sensor-filter-chips");
-    chips.hidden = !sensorFilterOpen;
-    chips.classList.toggle("is-open", sensorFilterOpen);
+    chips.hidden = !M.sensorFilterOpen;
+    chips.classList.toggle("is-open", M.sensorFilterOpen);
     const allBtn = ce("button", "sensor-filter-chip");
     allBtn.type = "button";
     allBtn.dataset.type = "all";
     allBtn.textContent = "All";
-    allBtn.setAttribute("aria-pressed", !sensorTypeFilter.size ? "true" : "false");
-    if (!sensorTypeFilter.size) allBtn.classList.add("active");
+    allBtn.setAttribute("aria-pressed", !M.sensorTypeFilter.size ? "true" : "false");
+    if (!M.sensorTypeFilter.size) allBtn.classList.add("active");
     allBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      sensorTypeFilter.clear();
+      M.sensorTypeFilter.clear();
       applySensorTypeFilter();
     });
     chips.appendChild(allBtn);
@@ -1545,23 +1821,23 @@
       btn.type = "button";
       btn.dataset.type = t;
       btn.textContent = sensorTypeLabel(t) + " " + n;
-      btn.setAttribute("aria-pressed", sensorTypeFilter.has(t) ? "true" : "false");
-      if (sensorTypeFilter.has(t)) btn.classList.add("active");
+      btn.setAttribute("aria-pressed", M.sensorTypeFilter.has(t) ? "true" : "false");
+      if (M.sensorTypeFilter.has(t)) btn.classList.add("active");
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (sensorTypeFilter.has(t)) sensorTypeFilter.delete(t);
-        else sensorTypeFilter.add(t);
+        if (M.sensorTypeFilter.has(t)) M.sensorTypeFilter.delete(t);
+        else M.sensorTypeFilter.add(t);
         applySensorTypeFilter();
       });
       chips.appendChild(btn);
     }
-    sensorFilterChipsEl = chips;
+    M.sensorFilterChipsEl = chips;
     filterBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      sensorFilterOpen = !sensorFilterOpen;
-      chips.hidden = !sensorFilterOpen;
-      chips.classList.toggle("is-open", sensorFilterOpen);
-      filterBtn.setAttribute("aria-expanded", sensorFilterOpen ? "true" : "false");
+      M.sensorFilterOpen = !M.sensorFilterOpen;
+      chips.hidden = !M.sensorFilterOpen;
+      chips.classList.toggle("is-open", M.sensorFilterOpen);
+      filterBtn.setAttribute("aria-expanded", M.sensorFilterOpen ? "true" : "false");
       syncSensorFilterBtn();
     });
     syncSensorFilterBtn();
@@ -1645,8 +1921,8 @@
     card.appendChild(fav);
     const rec = { el: card, heroEl: hero, pillEl: pill, pillTxt, dot, footEl: foot, favBtn: fav, t: dev.t, i: dev.i };
     applySensorCardState(card, dev, rec);
-    if (context === "favorites") favSensorMap.set(dev.i, rec);
-    else sensorCardMap.set(dev.i, rec);
+    if (context === "favorites") M.favSensorMap.set(dev.i, rec);
+    else M.sensorCardMap.set(dev.i, rec);
     return card;
   }
 
@@ -1655,7 +1931,7 @@
   }
 
   function updateSensorCard(dev) {
-    const rec = sensorCardMap.get(dev.i);
+    const rec = M.sensorCardMap.get(dev.i);
     if (rec) applySensorCardState(rec.el, dev, rec);
   }
 
@@ -1664,12 +1940,12 @@
     const body = currentBody();
     body.className = "quick-body quick-body-sensors" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";
-    sensorCardMap.clear();
-    sensorFilterChipsEl = null;
-    sensorFilterBtnEl = null;
-    sensorFilterEmptyEl = null;
+    M.sensorCardMap.clear();
+    M.sensorFilterChipsEl = null;
+    M.sensorFilterBtnEl = null;
+    M.sensorFilterEmptyEl = null;
     const merged = mergedSensorList();
-    sensorsPopupSig = sensorsPopupSignature();
+    M.sensorsPopupSig = sensorsPopupSignature();
     if (!merged.length) {
       body.textContent = "No sensors selected — add temperature or other sensors in Hubitat app settings";
       return;
@@ -1681,7 +1957,7 @@
     const empty = ce("div", "sensor-filter-empty");
     empty.textContent = "No sensors match this filter";
     empty.hidden = true;
-    sensorFilterEmptyEl = empty;
+    M.sensorFilterEmptyEl = empty;
     wrap.appendChild(toolbar);
     wrap.appendChild(chips);
     wrap.appendChild(grid);
@@ -1694,7 +1970,7 @@
     if (currentCategory() !== "sensors") return;
     const sig = sensorsPopupSignature();
     const body = currentBody();
-    if (!body.querySelector(".sensor-grid") || sig !== sensorsPopupSig) {
+    if (!body.querySelector(".sensor-grid") || sig !== M.sensorsPopupSig) {
       renderSensorsPopup();
       return;
     }
@@ -2298,7 +2574,7 @@
     body.innerHTML = "";
     M.favDevMap.clear();
     M.favTstatMap.clear();
-    favSensorMap.clear();
+    M.favSensorMap.clear();
     const entries = getFavoriteEntries();
     M.favPopupSig = favoritesPopupSignature();
     if (!entries.length) {
@@ -2364,7 +2640,7 @@
       case "scenes": return M.scenes.length > 0;
       case "hub-mode": return M.hubModes.length > 0;
       case "security": return M.hsmEnabled;
-      case "blinds":
+      case "blinds": return M.windowShades.length > 0;
       case "scheduling": return false;
       case "sensors": return mergedSensorList().length > 0;
       case "thermostats": return M.thermostatsPopupEnabled && M.thermostats.length > 0;
@@ -2405,6 +2681,7 @@
     switch (M.quickPopupOpenType) {
       case "hub-mode": renderHubModePopup(); break;
       case "locks": renderLocksPopup(); break;
+      case "blinds": renderBlindsPopup(); break;
       case "music": renderMusicPopup(); break;
       case "favorites": refreshFavoritesPopup(); break;
       case "thermostats": refreshThermostatsPopup(); break;
@@ -2418,7 +2695,7 @@
     if (M.tstatSession) M.closeTstatPopup();
     M.closeMusicMasterPopup();
     const popup = ensureQuickPopup();
-    popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats");
+    popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats" || id === "blinds");
     popup.classList.toggle("quick-popup-hub-mode", id === "hub-mode");
     popup._title.textContent = title;
     popup.setAttribute("aria-label", title);
@@ -2428,6 +2705,7 @@
       case "scenes": renderScenesPopup(); break;
       case "favorites": renderFavoritesPopup(); break;
       case "locks": renderLocksPopup(); break;
+      case "blinds": renderBlindsPopup(); break;
       case "music": renderMusicPopup(); break;
       case "security": renderSecurityPopup(); break;
       case "sensors": renderSensorsPopup(); break;
@@ -2451,17 +2729,17 @@
     M.quickPopupOpenType = null;
     M.favDevMap.clear();
     M.favTstatMap.clear();
-    favSensorMap.clear();
+    M.favSensorMap.clear();
     M.favPopupSig = "";
     M.tstatsPopupMap.clear();
     M.tstatsPopupSig = "";
-    sensorCardMap.clear();
-    sensorsPopupSig = "";
-    sensorTypeFilter.clear();
-    sensorFilterOpen = false;
-    sensorFilterChipsEl = null;
-    sensorFilterBtnEl = null;
-    sensorFilterEmptyEl = null;
+    M.sensorCardMap.clear();
+    M.sensorsPopupSig = "";
+    M.sensorTypeFilter.clear();
+    M.sensorFilterOpen = false;
+    M.sensorFilterChipsEl = null;
+    M.sensorFilterBtnEl = null;
+    M.sensorFilterEmptyEl = null;
   }
 
   // ---------- tab mode helpers ----------
@@ -2904,6 +3182,20 @@
           if (currentCategory() === "locks") renderLocksPopup();
           return;
         }
+        const shade = M.windowShades.find(x => x.i === Number(m.deviceId));
+        if (shade) {
+          const name = String(m.name || "");
+          const opt = M.shadeOptimistic.get(shade.i);
+          if (opt && opt.until > Date.now()) return;
+          if (name === "windowShade") {
+            shade.st = String(m.value || "");
+          } else if (name === "position") {
+            const pos = Math.round(Number(m.value));
+            if (!isNaN(pos)) shade.pos = pos;
+          } else return;
+          if (M.quickPopupOpenType === "blinds") renderBlindsPopup();
+          return;
+        }
         // thermostat / sensor events
         const t = M.thermostats.find(x => x.i === Number(m.deviceId));
         if (t) {
@@ -2933,7 +3225,7 @@
           }
           return;
         }
-        const sen = sensors.find(x => x.i === Number(m.deviceId));
+        const sen = M.sensors.find(x => x.i === Number(m.deviceId));
         if (sen) {
           const nm = String(m.name || "").toLowerCase();
           const val = m.value;
@@ -3006,7 +3298,7 @@
   }
 
   (async function init() {
-    loadingState();
+    M.loadingState();
     try {
       const d = await M.fetchData();
       render(d);
@@ -3016,7 +3308,7 @@
       console.error("Dashboard init failed:", e);
       const detail = e?.message ? String(e.message) : "";
       M.setStatus("Cannot reach hub. Make sure you opened the dashboard via the app URL.", true);
-      emptyState(
+      M.emptyState(
         '<div class="empty"><h2>Connection error</h2>' +
         'Could not load /data. Open this page through the Modern Dashboard app URL on your hub.' +
         (detail ? '<p class="empty-detail">' + detail.replace(/</g, "&lt;") + '</p>' : '') +
@@ -3031,6 +3323,7 @@
     refreshDevice,
     reconcileDevice,
     renderLocksPopup,
+    renderBlindsPopup,
     renderMusicPopup,
     renderFavoritesPopup,
     refreshFavoritesPopup,
@@ -3038,5 +3331,5 @@
     refreshThermostatsPopup,
     toggleFavorite,
   });
-  Object.assign(M, { replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, getDisplayRoomIds, saveRoomOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, render, buildDom, makeTile, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, testHaptics, toggleSwitch, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, devicesNeedingCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, renderLocksPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, closeConfirm, ensureConfirmPopup, confirmAction, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, startWS, scheduleReconnect });
+  Object.assign(M, { setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, render, buildDom, makeTile, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, renderLocksPopup, renderBlindsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, closeConfirm, ensureConfirmPopup, confirmAction, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, startWS, scheduleReconnect });
 })();

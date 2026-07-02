@@ -91,6 +91,7 @@
   const levelOptimistic = new Map(); // device id -> { level, until, timer }
   const switchOptimistic = new Map(); // device id -> { s, l?, until, timer }
   const lockOptimistic = new Map(); // lock id -> { lk, st, until, timer }
+  const shadeOptimistic = new Map(); // shade id -> { st?, pos?, until, timer }
   const musicOptimistic = new Map(); // music id -> { st, v?, until, timer }
   const setpointOptimistic = new Map(); // tstat id -> { hsp?, csp?, until, timer }
 
@@ -113,8 +114,11 @@
   let currentHubMode = "";
   let scenes = [];
   let locks = [];
+  let windowShades = [];
   let music = [];
   let favorites = [];
+  let snapshots = {};
+  let roomGestureLockCount = 0;
   let hubModeLockUntil = 0;
   let hsmStatus = "";
   let hsmAlert = "";
@@ -267,6 +271,85 @@
     if (st === "unknown") return "Unknown";
     if (st === "unavailable") return "Unavailable";
     return effectiveLock(lock) ? "Locked" : "Unlocked";
+  }
+
+  function setShadeOptimistic(id, patch) {
+    const prev = shadeOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    const shade = windowShades.find((s) => s.i === id);
+    if (shade) {
+      if (patch.st != null) shade.st = patch.st;
+      if (patch.pos != null) shade.pos = patch.pos;
+    }
+    const entry = {
+      st: patch.st != null ? patch.st : prev?.st,
+      pos: patch.pos != null ? patch.pos : prev?.pos,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      timer: null,
+    };
+    entry.timer = setTimeout(() => {
+      shadeOptimistic.delete(id);
+      if (quickPopupOpenType === "blinds") postCall("renderBlindsPopup");
+    }, LEVEL_OPTIMISTIC_MS);
+    shadeOptimistic.set(id, entry);
+  }
+
+  function clearShadeOptimistic(id) {
+    const prev = shadeOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    shadeOptimistic.delete(id);
+  }
+
+  function reapplyShadeOptimistic() {
+    for (const [id, opt] of shadeOptimistic) {
+      if (Date.now() >= opt.until) {
+        if (opt.timer) clearTimeout(opt.timer);
+        shadeOptimistic.delete(id);
+        continue;
+      }
+      const shade = windowShades.find((s) => s.i === id);
+      if (!shade) continue;
+      let matched = true;
+      if (opt.st != null && shade.st !== opt.st) matched = false;
+      if (opt.pos != null && shade.pos !== opt.pos) matched = false;
+      if (matched) {
+        if (opt.timer) clearTimeout(opt.timer);
+        shadeOptimistic.delete(id);
+        continue;
+      }
+      if (opt.st != null) shade.st = opt.st;
+      if (opt.pos != null) shade.pos = opt.pos;
+    }
+  }
+
+  function effectiveShadeState(shade) {
+    const opt = shadeOptimistic.get(shade.i);
+    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    return shade.st || "unknown";
+  }
+
+  function effectiveShadePosition(shade) {
+    const opt = shadeOptimistic.get(shade.i);
+    if (opt && Date.now() < opt.until && opt.pos != null) return opt.pos;
+    return shade.pos;
+  }
+
+  function shadeIsMoving(shade) {
+    const st = effectiveShadeState(shade);
+    return st === "opening" || st === "closing";
+  }
+
+  function shadeStatusLabel(shade) {
+    const st = effectiveShadeState(shade);
+    const pos = effectiveShadePosition(shade);
+    const posText = pos != null ? pos + "%" : null;
+    if (st === "opening") return "Opening…";
+    if (st === "closing") return "Closing…";
+    if (st === "open") return posText ? posText + " · Open" : "Open";
+    if (st === "closed") return posText ? posText + " · Closed" : "Closed";
+    if (st === "partially open") return posText ? posText + " · Partially open" : "Partially open";
+    if (st === "unknown" || st === "unavailable") return st.charAt(0).toUpperCase() + st.slice(1);
+    return posText || st || "—";
   }
 
   function isMusicPlaying(st) {
@@ -2214,8 +2297,6 @@
     }
   }
 
-  // __MLD_SPLIT__
-
   // Sensors (other-sensor pickers): [{i,n,r,t,v,a,ex:[{k,v,u?}]}]
   let sensors = [];
   const sensorCardMap = new Map(); // id -> { el, heroEl, pillEl, pillTxt, dot, footEl, favBtn, t, i }
@@ -2442,6 +2523,8 @@
     }
   }
 
+  // __MLD_SPLIT__
+
   async function setHsmApi(mode, pin, padApi) {
     let result = await postJsonSilent("hsm", { mode, pin });
     if (!result.ok) {
@@ -2507,6 +2590,69 @@
     return false;
   }
 
+  async function bulkLightsApi(cmd, scope, roomId) {
+    const body = { cmd, scope };
+    if (scope === "room") body.roomId = roomId;
+    let result = await postJson("lights/bulk", body);
+    if (result.ok) return true;
+    try {
+      let url = "lights/bulk?cmd=" + encodeURIComponent(cmd) + "&scope=" + encodeURIComponent(scope);
+      if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
+      const r = await fetch(withToken(url), {
+        method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
+      });
+      if (r.ok) return true;
+      let msg = "Could not control lights";
+      try { const j = await r.json(); if (j?.error) msg = String(j.error); } catch {}
+      flash(msg, true);
+    } catch {
+      flash("Could not control lights", true);
+    }
+    return false;
+  }
+
+  async function snapshotSaveApi(scope, roomId) {
+    const body = { scope };
+    if (scope === "room") body.roomId = roomId;
+    let result = await postJson("snapshot/save", body);
+    if (result.ok) return true;
+    try {
+      let url = "snapshot/save?scope=" + encodeURIComponent(scope);
+      if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
+      const r = await fetch(withToken(url), {
+        method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
+      });
+      if (r.ok) return true;
+      let msg = "Could not save state";
+      try { const j = await r.json(); if (j?.error) msg = String(j.error); } catch {}
+      flash(msg, true);
+    } catch {
+      flash("Could not save state", true);
+    }
+    return false;
+  }
+
+  async function snapshotRestoreApi(scope, roomId) {
+    const body = { scope };
+    if (scope === "room") body.roomId = roomId;
+    let result = await postJson("snapshot/restore", body);
+    if (result.ok) return true;
+    try {
+      let url = "snapshot/restore?scope=" + encodeURIComponent(scope);
+      if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
+      const r = await fetch(withToken(url), {
+        method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
+      });
+      if (r.ok) return true;
+      let msg = "Could not restore state";
+      try { const j = await r.json(); if (j?.error) msg = String(j.error); } catch {}
+      flash(msg, true);
+    } catch {
+      flash("Could not restore state", true);
+    }
+    return false;
+  }
+
   async function saveFavorites(ids) {
     const paths = ["favorites"];
     let lastMsg = "Could not save favorites";
@@ -2549,6 +2695,177 @@
   function roomLabel(rid) {
     if (rid == null || rid === -1) return "Unassigned";
     return roomMap.get(rid) || "Room";
+  }
+
+  function snapshotRoomKey(roomKey) {
+    return "room:" + roomKey;
+  }
+
+  function setRoomGestureLock(on) {
+    if (on) {
+      roomGestureLockCount++;
+      APP_EL?.classList.add("room-gesture-lock");
+    } else {
+      roomGestureLockCount = Math.max(0, roomGestureLockCount - 1);
+      if (roomGestureLockCount === 0) APP_EL?.classList.remove("room-gesture-lock");
+    }
+  }
+
+  const SLIDE_HOLD_MS = 400;
+  const SLIDE_REVEAL_PX = 80;
+  const SLIDE_COMMIT_RATIO = 0.65;
+  const SLIDE_TAP_MOVE = 10;
+
+  function attachRoomSlideAction(track, primaryBtn, actionBtn, opts) {
+    const { direction, onTap, onCommit, canCommit } = opts;
+    let pointerId = null;
+    let downX = 0;
+    let downY = 0;
+    let downT = 0;
+    let holdTimer = null;
+    let holdActive = false;
+    let holdBlocked = false;
+    let sliding = false;
+    let slidePx = 0;
+    let gestureHandled = false;
+
+    track.addEventListener("contextmenu", (e) => e.preventDefault());
+    track.addEventListener("selectstart", (e) => e.preventDefault());
+
+    function reset() {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+      holdActive = false;
+      holdBlocked = false;
+      sliding = false;
+      slidePx = 0;
+      primaryBtn.style.transform = "";
+      track.classList.remove("room-slide-active");
+      setRoomGestureLock(false);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      pointerId = null;
+    }
+
+    function onMove(e) {
+      if (e.pointerId !== pointerId) return;
+      const dx = e.clientX - downX;
+      const dy = e.clientY - downY;
+      if (!holdActive) {
+        if (Math.abs(dx) > SLIDE_TAP_MOVE || Math.abs(dy) > SLIDE_TAP_MOVE) {
+          if (holdTimer) {
+            clearTimeout(holdTimer);
+            holdTimer = null;
+          }
+        }
+        return;
+      }
+      if (!sliding) {
+        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+          reset();
+          return;
+        }
+        sliding = true;
+      }
+      e.preventDefault();
+      if (direction === "left") {
+        slidePx = Math.max(0, Math.min(SLIDE_REVEAL_PX, -dx));
+      } else {
+        slidePx = Math.max(0, Math.min(SLIDE_REVEAL_PX, dx));
+      }
+      const tx = direction === "left" ? -slidePx : slidePx;
+      primaryBtn.style.transform = "translateX(" + tx + "px)";
+    }
+
+    function onUp(e) {
+      if (e.pointerId !== pointerId) return;
+      gestureHandled = true;
+      setTimeout(() => { gestureHandled = false; }, 0);
+      const elapsed = Date.now() - downT;
+      const dx = Math.abs(e.clientX - downX);
+      const dy = Math.abs(e.clientY - downY);
+      try { primaryBtn.releasePointerCapture(pointerId); } catch {}
+
+      if (holdBlocked) {
+        reset();
+        return;
+      }
+
+      if (!holdActive && elapsed <= SLIDE_HOLD_MS + 80 && dx <= SLIDE_TAP_MOVE && dy <= SLIDE_TAP_MOVE) {
+        reset();
+        onTap();
+        return;
+      }
+
+      const commitThreshold = SLIDE_REVEAL_PX * SLIDE_COMMIT_RATIO;
+      if (holdActive && slidePx >= commitThreshold && (!canCommit || canCommit())) {
+        reset();
+        onCommit();
+        return;
+      }
+
+      if (holdActive && slidePx > 0 && canCommit && !canCommit()) {
+        flash("No saved state", true);
+      }
+      reset();
+    }
+
+    primaryBtn.addEventListener("pointerdown", (e) => {
+      if (reorderMode) return;
+      if (e.button != null && e.button !== 0) return;
+      e.stopPropagation();
+      pointerId = e.pointerId;
+      downX = e.clientX;
+      downY = e.clientY;
+      downT = Date.now();
+      holdActive = false;
+      holdBlocked = false;
+      sliding = false;
+      slidePx = 0;
+      gestureHandled = false;
+      try { primaryBtn.setPointerCapture(pointerId); } catch {}
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (canCommit && !canCommit()) {
+          holdBlocked = true;
+          flash("No saved state", true);
+          return;
+        }
+        holdActive = true;
+        track.classList.add("room-slide-active");
+        setRoomGestureLock(true);
+        hapticTap();
+      }, SLIDE_HOLD_MS);
+      window.addEventListener("pointermove", onMove, { passive: false });
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    });
+
+    primaryBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (gestureHandled) {
+        e.preventDefault();
+      }
+    });
+
+    if (actionBtn) {
+      actionBtn.addEventListener("pointerdown", (e) => e.preventDefault());
+    }
+  }
+
+  function updateRoomSnapshotUi() {
+    for (const [rid, rec] of roomEls) {
+      const has = !!snapshots[snapshotRoomKey(rid)];
+      rec.card.classList.toggle("room-has-snapshot", has);
+      rec.card.classList.toggle("room-no-snapshot", !has);
+      if (rec.restoreBtn) {
+        rec.restoreBtn.disabled = !has;
+        rec.restoreBtn.setAttribute("aria-disabled", has ? "false" : "true");
+      }
+    }
   }
 
   function getFavoriteEntries() {
@@ -2845,9 +3162,11 @@
     unlockPinRequired = !!d.unlockPinRequired;
     replaceList(scenes, d.scenes);
     replaceList(locks, d.locks);
+    replaceList(windowShades, d.windowShades);
     replaceList(music, d.music);
     if (Array.isArray(d.config?.favorites)) replaceList(favorites, d.config.favorites.map(Number));
     reapplyLockOptimistic();
+    reapplyShadeOptimistic();
     reapplyMusicOptimistic();
     reapplySetpointOptimistic();
 
@@ -2857,6 +3176,7 @@
     replaceList(thermostats, d.thermostats);
     replaceList(tempSensors, d.tempSensors);
     replaceList(sensors, d.sensors);
+    snapshots = d.snapshots && typeof d.snapshots === "object" ? d.snapshots : {};
     rebuildDevicesByRoom();
     reapplySwitchOptimistic();
     reapplyTstatDeviceModeLocks();
@@ -2884,6 +3204,7 @@
     lastDataSig = sig;
 
     if (fullRerender && !reorderMode) buildDom();
+    updateRoomSnapshotUi();
     updateStates();
     updateClimateWidgets();
     applySearch();
@@ -2971,12 +3292,62 @@
       }
 
       const toggle = ce("div", "room-toggle");
-      const offBtn = ce("button", "btn-off"); offBtn.type = "button"; offBtn.textContent = "Off";
-      offBtn.addEventListener("click", (e) => { e.stopPropagation(); roomAll(roomKey, "off"); });
-      const onBtn = ce("button", "btn-on"); onBtn.type = "button"; onBtn.textContent = "On";
-      onBtn.addEventListener("click", (e) => { e.stopPropagation(); roomAll(roomKey, "on"); });
-      toggle.appendChild(offBtn); toggle.appendChild(onBtn);
+
+      const offTrack = ce("div", "room-slide-track room-slide-off");
+      const saveBtn = ce("button", "room-snap-action room-snap-save");
+      saveBtn.type = "button";
+      saveBtn.textContent = "Save";
+      saveBtn.setAttribute("aria-label", "Save current state");
+      saveBtn.tabIndex = -1;
+      const offBtn = ce("button", "btn-off");
+      offBtn.type = "button";
+      offBtn.textContent = "Off";
+      offTrack.appendChild(saveBtn);
+      offTrack.appendChild(offBtn);
+
+      const onTrack = ce("div", "room-slide-track room-slide-on");
+      const onBtn = ce("button", "btn-on");
+      onBtn.type = "button";
+      onBtn.textContent = "On";
+      const restoreBtn = ce("button", "room-snap-action room-snap-restore");
+      restoreBtn.type = "button";
+      restoreBtn.textContent = "Restore";
+      restoreBtn.setAttribute("aria-label", "Restore saved state");
+      restoreBtn.tabIndex = -1;
+      restoreBtn.disabled = true;
+      restoreBtn.setAttribute("aria-disabled", "true");
+      onTrack.appendChild(onBtn);
+      onTrack.appendChild(restoreBtn);
+
+      toggle.appendChild(offTrack);
+      toggle.appendChild(onTrack);
       head.appendChild(toggle);
+
+      attachRoomSlideAction(offTrack, offBtn, saveBtn, {
+        direction: "left",
+        onTap: () => roomAll(roomKey, "off"),
+        onCommit: () => {
+          snapshotSaveApi("room", roomKey).then((ok) => {
+            if (!ok) return;
+            const devs = devicesByRoom.get(roomKey) || [];
+            snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: devs.length };
+            updateRoomSnapshotUi();
+            flash(roomLabel(roomKey) + " saved");
+          });
+        },
+        canCommit: () => true,
+      });
+
+      attachRoomSlideAction(onTrack, onBtn, restoreBtn, {
+        direction: "right",
+        onTap: () => roomAll(roomKey, "on"),
+        onCommit: () => {
+          snapshotRestoreApi("room", roomKey).then((ok) => {
+            if (ok) flash("Restoring " + roomLabel(roomKey) + "…");
+          });
+        },
+        canCommit: () => !!snapshots[snapshotRoomKey(roomKey)],
+      });
 
       const col = ce("button", "room-collapse"); col.type = "button"; col.setAttribute("aria-label", "Collapse room");
       col.innerHTML = '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>';
@@ -2994,13 +3365,14 @@
       ROOMS_EL.appendChild(card);
 
       attachRoomReorder(card, dragHandle);
-      roomEls.set(roomKey, { card, body, meta, moveUp, moveDown });
+      roomEls.set(roomKey, { card, body, meta, moveUp, moveDown, offTrack, onTrack, saveBtn, restoreBtn });
 
       for (const dev of devs) body.appendChild(makeTile(dev));
     }
 
     restoreCollapsed();
     updateRoomMeta();
+    updateRoomSnapshotUi();
     updateClimateWidgets();
     updateMoveButtons();
   }
@@ -3308,6 +3680,101 @@
     slider.addEventListener("pointerdown", start);
   }
 
+  function attachShadeDrag(tile, slider, shadeId, onLevelChange) {
+    const INTENT = 8;
+    const TAP_MOVE = 10;
+    let dragging = false;
+    let aborted = false;
+    let startX = 0, startY = 0;
+    let lastCommit = 0;
+    let pendingLevel = null;
+    let downLevel = null;
+
+    function pctFromEvent(e) {
+      const rect = slider.getBoundingClientRect();
+      const usable = rect.width - SLIDER_THUMB_PX;
+      const x = (e.clientX != null ? e.clientX : 0) - rect.left - SLIDER_THUMB_PX / 2;
+      let p = usable > 0 ? Math.round((x / usable) * 100) : 0;
+      if (p < 0) p = 0; if (p > 100) p = 100;
+      return p;
+    }
+    function setVisual(p) {
+      const level = clampLevel(p);
+      setSliderLevel(slider, level);
+      if (onLevelChange) onLevelChange(level);
+    }
+    function commitLevel(p) {
+      setVisual(p);
+      sendShadeCmd(shadeId, "setPosition", p);
+    }
+    function cleanup() {
+      dragging = false;
+      aborted = false;
+      slider.classList.remove("dragging");
+      tile.classList.remove("dragging");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    }
+    function start(e) {
+      if (e.button != null && e.button !== 0) return;
+      dragging = false;
+      aborted = false;
+      startX = e.clientX; startY = e.clientY;
+      downLevel = pctFromEvent(e);
+      pendingLevel = downLevel;
+      window.addEventListener("pointermove", move, { passive: false });
+      window.addEventListener("pointerup", end, { passive: false });
+      window.addEventListener("pointercancel", end, { passive: false });
+    }
+    function move(e) {
+      if (aborted) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!dragging) {
+        if (Math.abs(dx) < INTENT && Math.abs(dy) < INTENT) return;
+        if (Math.abs(dy) > Math.abs(dx)) {
+          aborted = true;
+          cleanup();
+          return;
+        }
+        dragging = true;
+        slider.classList.add("dragging");
+        tile.classList.add("dragging");
+      }
+      e.preventDefault();
+      const p = pctFromEvent(e);
+      setVisual(p);
+      pendingLevel = p;
+      const now = Date.now();
+      if (now - lastCommit > 350) {
+        lastCommit = now;
+        sendShadeCmd(shadeId, "setPosition", p);
+      }
+    }
+    function end(e) {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      if (aborted) { cleanup(); return; }
+      if (dragging) {
+        const p = pendingLevel == null ? 0 : pendingLevel;
+        slider.classList.remove("dragging");
+        tile.classList.remove("dragging");
+        dragging = false;
+        commitLevel(p);
+        return;
+      }
+      if (e && e.clientX != null) {
+        const dx = Math.abs(e.clientX - startX);
+        const dy = Math.abs(e.clientY - startY);
+        if (dx <= TAP_MOVE && dy <= TAP_MOVE) commitLevel(downLevel);
+      }
+      cleanup();
+    }
+    slider.addEventListener("pointerdown", start);
+  }
+
   // ---------- commands ----------
   // Diagnostic shown when the user enables haptics, so we can tell exactly why
   // the device isn't buzzing (secure context, API presence, or call acceptance).
@@ -3419,6 +3886,20 @@
         if (currentCategory() === "locks") renderLocksPopup();
         return;
       }
+      const shade = windowShades.find(x => x.i === Number(d.i));
+      if (shade) {
+        if (d.st != null) shade.st = d.st;
+        if (d.pos != null) shade.pos = d.pos;
+        const opt = shadeOptimistic.get(Number(d.i));
+        if (opt) {
+          let matched = true;
+          if (opt.st != null && shade.st !== opt.st) matched = false;
+          if (opt.pos != null && shade.pos !== opt.pos) matched = false;
+          if (matched) clearShadeOptimistic(Number(d.i));
+        }
+        if (quickPopupOpenType === "blinds") renderBlindsPopup();
+        return;
+      }
       const mp = music.find(x => x.i === Number(d.i));
       if (mp) {
         if (d.st != null) mp.st = d.st;
@@ -3437,6 +3918,11 @@
 
   function reconcileLock(id) {
     setTimeout(() => refreshDevice(id), 7000);
+  }
+
+  function reconcileShade(id) {
+    setTimeout(() => refreshDevice(id), 700);
+    setTimeout(() => refreshDevice(id), 2200);
   }
 
   function reconcileMusic(id) {
@@ -3523,9 +4009,29 @@
     return result;
   }
 
-  function devicesNeedingCmd(devs, cmd) {
-    return devs.filter((d) => (cmd === "on" ? !effectiveSwitch(d) : effectiveSwitch(d)));
+  async function sendShadeCmd(id, cmd, val) {
+    const shade = windowShades.find(s => s.i === id);
+    if (!shade) return { ok: false };
+    hapticTap();
+    let patch = {};
+    if (cmd === "open") patch = { st: "opening" };
+    else if (cmd === "close") patch = { st: "closing" };
+    else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
+    if (patch.st != null || patch.pos != null) {
+      setShadeOptimistic(id, patch);
+      if (quickPopupOpenType === "blinds") renderBlindsPopup();
+    }
+    const result = await sendCmd(id, cmd, val);
+    if (!result.ok) {
+      clearShadeOptimistic(id);
+      reconcileShade(id);
+      if (quickPopupOpenType === "blinds") renderBlindsPopup();
+    } else {
+      reconcileShade(id);
+    }
+    return result;
   }
+
 
   function applySwitchCmdOptimistic(dev, cmd) {
     const id = dev.i;
@@ -3540,24 +4046,20 @@
   function roomAll(rid, cmd) {
     hapticTap();
     const devs = devicesByRoom.get(rid) || [];
-    const toChange = devicesNeedingCmd(devs, cmd);
-    if (!toChange.length) return;
-    const ids = toChange.map(d => d.i);
-    const hasDimmer = toChange.some(d => d.d);
-    for (const dev of toChange) applySwitchCmdOptimistic(dev, cmd);
+    if (!devs.length) return;
+    const hasDimmer = devs.some(d => d.d);
+    for (const dev of devs) applySwitchCmdOptimistic(dev, cmd);
     updateStates();
-    sendCmdBatch(ids.map(id => ({ id, cmd })));
+    bulkLightsApi(cmd, "room", rid);
     if (cmd === "on" && hasDimmer) setTimeout(refresh, 900); // reconcile restored levels
   }
 
   function allLights(cmd) {
-    const toChange = devicesNeedingCmd(devices, cmd);
-    if (!toChange.length) return;
-    const ids = toChange.map(d => d.i);
-    const hasDimmer = toChange.some(d => d.d);
-    for (const dev of toChange) applySwitchCmdOptimistic(dev, cmd);
+    if (!devices.length) return;
+    const hasDimmer = devices.some(d => d.d);
+    for (const dev of devices) applySwitchCmdOptimistic(dev, cmd);
     updateStates();
-    sendCmdBatch(ids.map(id => ({ id, cmd })));
+    bulkLightsApi(cmd, "house");
     if (cmd === "on" && hasDimmer) setTimeout(refresh, 900);
   }
 
@@ -3652,6 +4154,89 @@
       row.appendChild(info);
       row.appendChild(actions);
       list.appendChild(row);
+    }
+    body.appendChild(list);
+  }
+
+  function renderBlindsPopup() {
+    const popup = ensureQuickPopup();
+    const body = popup._body;
+    body.className = "quick-body quick-body-blinds";
+    body.innerHTML = "";
+    if (!windowShades.length) {
+      body.textContent = "No shades selected — add shades in the Hubitat app settings";
+      return;
+    }
+    const sorted = windowShades.slice().sort((a, b) => {
+      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
+      if (ra !== 0) return ra;
+      return String(a.n || "").localeCompare(String(b.n || ""));
+    });
+    const list = ce("div", "quick-list");
+    for (const shade of sorted) {
+      const tile = ce("div", "shade-tile");
+      const info = ce("div", "shade-info");
+      const name = ce("span", "quick-fav-name");
+      name.textContent = shade.n || ("Shade " + shade.i);
+      const meta = ce("span", "quick-fav-meta");
+      meta.textContent = roomLabel(shade.r) + " · " + shadeStatusLabel(shade);
+      info.appendChild(name);
+      info.appendChild(meta);
+      tile.appendChild(info);
+
+      const moving = shadeIsMoving(shade);
+      const pos = effectiveShadePosition(shade);
+      const hasPos = shade.pos != null;
+      if (hasPos) {
+        const sliderWrap = ce("div", "shade-slider-wrap");
+        const levelLabel = ce("span", "shade-level-label");
+        levelLabel.textContent = (pos != null ? pos : "—") + "%";
+        const slider = ce("div", "slider shade-slider");
+        slider.appendChild(ce("div", "slider-fill"));
+        slider.appendChild(ce("div", "slider-thumb"));
+        setSliderLevel(slider, pos != null ? pos : 0);
+        if (moving) slider.classList.add("disabled");
+        sliderWrap.appendChild(levelLabel);
+        sliderWrap.appendChild(slider);
+        tile.appendChild(sliderWrap);
+        if (!moving) {
+          attachShadeDrag(tile, slider, shade.i, (lvl) => { levelLabel.textContent = lvl + "%"; });
+        }
+      }
+
+      const actions = ce("div", "shade-actions");
+      const openBtn = ce("button", "quick-lock-btn shade-btn");
+      openBtn.type = "button";
+      openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
+      const closeBtn = ce("button", "quick-lock-btn shade-btn");
+      closeBtn.type = "button";
+      closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
+      const st = effectiveShadeState(shade);
+      if (st === "open") openBtn.classList.add("active");
+      else if (st === "closed") closeBtn.classList.add("active");
+      if (moving) {
+        openBtn.classList.add("moving");
+        closeBtn.classList.add("moving");
+        openBtn.disabled = true;
+        closeBtn.disabled = true;
+      }
+      openBtn.addEventListener("click", () => {
+        if (!shadeIsMoving(shade) && effectiveShadeState(shade) !== "open") sendShadeCmd(shade.i, "open");
+      });
+      closeBtn.addEventListener("click", () => {
+        if (!shadeIsMoving(shade) && effectiveShadeState(shade) !== "closed") sendShadeCmd(shade.i, "close");
+      });
+      actions.appendChild(openBtn);
+      actions.appendChild(closeBtn);
+      if (moving) {
+        const stopBtn = ce("button", "quick-lock-btn shade-btn shade-stop-btn");
+        stopBtn.type = "button";
+        stopBtn.innerHTML = SHADE_STOP_SVG + '<span class="quick-lock-btn-label">Stop</span>';
+        stopBtn.addEventListener("click", () => sendShadeCmd(shade.i, "stop"));
+        actions.appendChild(stopBtn);
+      }
+      tile.appendChild(actions);
+      list.appendChild(tile);
     }
     body.appendChild(list);
   }
@@ -4575,7 +5160,7 @@
       case "scenes": return scenes.length > 0;
       case "hub-mode": return hubModes.length > 0;
       case "security": return hsmEnabled;
-      case "blinds":
+      case "blinds": return windowShades.length > 0;
       case "scheduling": return false;
       case "sensors": return mergedSensorList().length > 0;
       case "thermostats": return thermostatsPopupEnabled && thermostats.length > 0;
@@ -4616,6 +5201,7 @@
     switch (quickPopupOpenType) {
       case "hub-mode": renderHubModePopup(); break;
       case "locks": renderLocksPopup(); break;
+      case "blinds": renderBlindsPopup(); break;
       case "music": renderMusicPopup(); break;
       case "favorites": refreshFavoritesPopup(); break;
       case "thermostats": refreshThermostatsPopup(); break;
@@ -4629,7 +5215,7 @@
     if (tstatSession) closeTstatPopup();
     closeMusicMasterPopup();
     const popup = ensureQuickPopup();
-    popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats");
+    popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats" || id === "blinds");
     popup.classList.toggle("quick-popup-hub-mode", id === "hub-mode");
     popup._title.textContent = title;
     popup.setAttribute("aria-label", title);
@@ -4639,6 +5225,7 @@
       case "scenes": renderScenesPopup(); break;
       case "favorites": renderFavoritesPopup(); break;
       case "locks": renderLocksPopup(); break;
+      case "blinds": renderBlindsPopup(); break;
       case "music": renderMusicPopup(); break;
       case "security": renderSecurityPopup(); break;
       case "sensors": renderSensorsPopup(); break;
@@ -5115,6 +5702,20 @@
           if (currentCategory() === "locks") renderLocksPopup();
           return;
         }
+        const shade = windowShades.find(x => x.i === Number(m.deviceId));
+        if (shade) {
+          const name = String(m.name || "");
+          const opt = shadeOptimistic.get(shade.i);
+          if (opt && opt.until > Date.now()) return;
+          if (name === "windowShade") {
+            shade.st = String(m.value || "");
+          } else if (name === "position") {
+            const pos = Math.round(Number(m.value));
+            if (!isNaN(pos)) shade.pos = pos;
+          } else return;
+          if (quickPopupOpenType === "blinds") renderBlindsPopup();
+          return;
+        }
         // thermostat / sensor events
         const t = thermostats.find(x => x.i === Number(m.deviceId));
         if (t) {
@@ -5242,6 +5843,7 @@
     refreshDevice,
     reconcileDevice,
     renderLocksPopup,
+    renderBlindsPopup,
     renderMusicPopup,
     renderFavoritesPopup,
     refreshFavoritesPopup,

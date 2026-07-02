@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8
+
+- Motorized shades & blinds: device picker, room tiles, quick popup with open/close/pause and drag-to-position.
+- Light snapshots: slide-to-save and slide-to-restore per room or whole house.
+- Bulk room/house light on/off; configurable metering, on/off optimization, and activation optimization for snapshots.
+- Build-time size checks for `mld-app-pre.js` and `mld-sw.js`.
+
 ## 0.1.7
 
 - Default dashboard and PWA title renamed to **mDash**.

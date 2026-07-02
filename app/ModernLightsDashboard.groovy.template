@@ -49,6 +49,8 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "locks", "capability.lock", title: "Select your locks",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "windowShades", "capability.windowShade", title: "Select motorized shades & blinds",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
             input "musicPlayers", "capability.musicPlayer", title: "Music / media players (Sonos, Echo Speaks, AirPlay, …)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, …)",
@@ -75,6 +77,22 @@ def mainPage() {
             input "dashboardName", "string", title: "Dashboard name", defaultValue: "mDash", required: false
             input "pollSec", "number", title: "Refresh interval (seconds)", defaultValue: 5, required: false, range: "2..60"
             input "enableWs", "bool", title: "Enable real-time updates on local network (eventsocket)", defaultValue: true, required: false
+        }
+        section("Light control") {
+            paragraph "<small>Applies to snapshot restore, All on/off, and room on/off. Metering is on by default.</small>"
+            input "lightControlDisableMetering", "bool",
+                title: "Disable metering", defaultValue: false, submitOnChange: true
+            if (lightControlDisableMetering != true) {
+                input "lightControlMeterDelayMs", "number",
+                    title: "Metering delay (milliseconds)", defaultValue: 75, required: false, range: "0..2000"
+                paragraph "<small>Metering delay: wait between commands to each device. May help avoid problems if devices respond poorly due to too many successive commands on the network.</small>"
+            }
+            input "lightControlOnOffOptimization", "bool",
+                title: "Enable on/off optimization", defaultValue: false
+            paragraph "<small>Enable on/off optimization: will not send on or off commands to devices that already report being in the desired state. May reduce network traffic, but may cause unexpected results if devices do not accurately report state to the hub.</small>"
+            input "lightControlActivationOptimization", "bool",
+                title: "Enable activation optimization", defaultValue: false
+            paragraph "<small>Enable activation optimization (snapshot restore only): skip level, color, and color temperature commands when the device already reports the expected state.</small>"
         }
         section("Locks") {
             input "unlockPinEnabled", "bool", title: "Require PIN to unlock doors from dashboard", defaultValue: false, submitOnChange: true
@@ -149,6 +167,7 @@ def logInit() {
     if (sensorCount) { log.info "Modern Dashboard: ${sensorCount} other sensor(s) authorized" }
     def audioCount = allAudioDevices()?.size() ?: 0
     if (audioCount) { log.info "Modern Dashboard: ${audioCount} audio device(s) authorized" }
+    if (windowShades) { log.info "Modern Dashboard: ${windowShades.size()} shade(s) authorized" }
     if (state.accessToken == null) { state.accessToken = createAccessToken() }
     if (!assetsPresent()) { log.warn "Modern Dashboard: upload all mld-* dashboard files to File Manager (see app setup page)" }
 }
@@ -503,6 +522,10 @@ mappings {
     path("/hsm") { action: [GET: "setHsmGet", POST: "setHsm"] }
     path("/scene/activate") { action: [GET: "activateSceneGet", POST: "activateScene"] }
     path("/favorites") { action: [GET: "saveFavoritesGet", POST: "saveFavorites"] }
+    path("/snapshot/save") { action: [GET: "snapshotSaveGet", POST: "snapshotSave"] }
+    path("/snapshot/restore") { action: [GET: "snapshotRestoreGet", POST: "snapshotRestore"] }
+    path("/snapshot/status") { action: [GET: "snapshotStatus"] }
+    path("/lights/bulk") { action: [GET: "lightsBulkGet", POST: "lightsBulk"] }
 }
 
 def readIconDataUri(String b64FileName) {
@@ -610,6 +633,7 @@ def renderData() {
     out << ",\"dashboardName\":" << jsonStr((dashboardName?.trim()) ?: "mDash")
     out << roomOrderJsonFragment()
     out << favoritesJsonFragment()
+    out << lightControlConfigJsonFragment()
     out << "},\"rooms\":["
     def roomsList = app.getRooms() ?: []
     boolean first = true
@@ -736,6 +760,7 @@ def renderData() {
     if (thermostats) for (d in thermostats) excludeIds << d.id.toString()
     if (tempSensors) for (d in tempSensors) excludeIds << d.id.toString()
     if (locks) for (d in locks) excludeIds << d.id.toString()
+    if (windowShades) for (d in windowShades) excludeIds << d.id.toString()
     for (d in allAudioDevices()) excludeIds << d.id.toString()
     def sensorDevs = allSensorDevices()
     if (sensorDevs) {
@@ -823,6 +848,28 @@ def renderData() {
             out << "}"
         }
     }
+    out << "],\"windowShades\":["
+    first = true
+    if (windowShades) {
+        for (d in windowShades) {
+            if (!first) out << ","; first = false
+            def roomName = null
+            try { roomName = d.getRoomName() } catch (e) { roomName = null }
+            def rid = null
+            if (roomName) {
+                def rm = roomsList.find { it.name == roomName }
+                if (rm) rid = rm.id
+            }
+            def shadeSt = safeCurrent(d, "windowShade")
+            def shadePos = safeCurrent(d, "position")
+            out << "{\"i\":" << d.id
+            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+            out << ",\"st\":" << jsonStr(shadeSt)
+            out << ",\"pos\":" << numOrNull(shadePos)
+            out << "}"
+        }
+    }
     out << "],\"hubModes\":["
     def hubModesList = []
     try { hubModesList = location.modes ?: [] } catch (e) {}
@@ -865,7 +912,10 @@ def renderData() {
         if (!first) out << ","; first = false
         out << "{\"id\":" << sc.id << ",\"n\":" << jsonStr(sc.name) << "}"
     }
-    out << "]}"
+    out << "]"
+    out << snapshotsJsonFragment()
+    out << lightJobJsonFragment()
+    out << "}"
     render contentType: "application/json", data: out.toString(), status: 200
 }
 
@@ -1027,6 +1077,17 @@ def renderDevice() {
         out << ",\"st\":" << jsonStr(lockSt) << "}"
         return render(contentType: "application/json", data: out.toString(), status: 200)
     }
+    def shade = windowShades?.find { it.id.toString() == id.toString() }
+    if (shade != null) {
+        try { shade.refresh() } catch (e) {}
+        def shadeSt = safeCurrent(shade, "windowShade")
+        def shadePos = safeCurrent(shade, "position")
+        def out = new StringBuilder()
+        out << "{\"i\":" << shade.id
+        out << ",\"st\":" << jsonStr(shadeSt)
+        out << ",\"pos\":" << numOrNull(shadePos) << "}"
+        return render(contentType: "application/json", data: out.toString(), status: 200)
+    }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
     if (mp != null) {
         try { mp.refresh() } catch (e) {}
@@ -1107,6 +1168,23 @@ def runLockCmd(dev, c, v) {
     }
 }
 
+def runShadeCmd(dev, c, v) {
+    switch (c) {
+        case "open":  dev.open(); break
+        case "close": dev.close(); break
+        case "setPosition":
+            int pos = (v != null) ? Math.max(0, Math.min(100, v.toInteger())) : 0
+            dev.setPosition(pos)
+            break
+        case "stop":
+            if (!dev.hasCommand("stopPositionChange")) throw new IllegalArgumentException("unsupported command")
+            dev.stopPositionChange()
+            break
+        default:
+            throw new IllegalArgumentException("unknown command")
+    }
+}
+
 def runAudioCmd(dev, c, v) {
     switch (c) {
         case "play":
@@ -1165,8 +1243,9 @@ def executeOneCmd(id, c, v, pin) {
     def dev = lights?.find { it.id.toString() == id.toString() }
     def t = thermostats?.find { it.id.toString() == id.toString() }
     def lk = locks?.find { it.id.toString() == id.toString() }
+    def shade = windowShades?.find { it.id.toString() == id.toString() }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
-    if (dev == null && t == null && lk == null && mp == null) {
+    if (dev == null && t == null && lk == null && shade == null && mp == null) {
         return [ok: false, error: "device not found"]
     }
     try {
@@ -1180,6 +1259,8 @@ def executeOneCmd(id, c, v, pin) {
                 if (!pinResult.ok) return pinResult
             }
             runLockCmd(lk, c, v)
+        } else if (shade != null) {
+            runShadeCmd(shade, c, v)
         } else {
             runAudioCmd(mp, c, v)
         }
@@ -1240,6 +1321,481 @@ def doCmdBatch() {
     out << "]}"
     def status = 200
     return render(contentType: "application/json", data: out.toString(), status: status)
+}
+
+// ---------------------------------------------------------------------------
+// Light control: snapshots, bulk on/off, async command queue
+// ---------------------------------------------------------------------------
+def parseRequestJson() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    return body
+}
+
+def lightControlMeterDelayMsValue() {
+    if (lightControlDisableMetering == true) return 0
+    def ms = lightControlMeterDelayMs
+    if (ms == null) return 75
+    try {
+        ms = ms.toInteger()
+    } catch (e) {
+        ms = 75
+    }
+    return Math.max(0, Math.min(2000, ms))
+}
+
+def lightControlConfigJsonFragment() {
+    def out = new StringBuilder()
+    out << ",\"lightControlDisableMetering\":" << (lightControlDisableMetering == true ? "true" : "false")
+    out << ",\"lightControlMeterDelayMs\":" << lightControlMeterDelayMsValue()
+    out << ",\"lightControlOnOffOptimization\":" << (lightControlOnOffOptimization == true ? "true" : "false")
+    out << ",\"lightControlActivationOptimization\":" << (lightControlActivationOptimization == true ? "true" : "false")
+    return out.toString()
+}
+
+def snapshotScopeKey(scope, roomId) {
+    if (scope == "house") return "house"
+    if (scope == "room") {
+        def rid = roomId?.toString()?.trim()
+        if (!rid) return null
+        return "room:${rid}"
+    }
+    return null
+}
+
+def lightsInScope(scope, roomId) {
+    if (!lights) return []
+    def roomsList = app.getRooms() ?: []
+    if (scope == "house") return lights.collect()
+    if (scope != "room") return []
+    def rid = roomId?.toString()?.trim()
+    if (rid == "-1") {
+        return lights.findAll { d ->
+            def roomName = null
+            try { roomName = d.getRoomName() } catch (e) { roomName = null }
+            if (!roomName) return true
+            return !roomsList.find { it.name == roomName }
+        }
+    }
+    def room = null
+    try {
+        def ridLong = rid.toLong()
+        room = roomsList.find { it.id == ridLong }
+    } catch (e) {
+        room = roomsList.find { it.id.toString() == rid }
+    }
+    if (!room) return []
+    return lights.findAll { d ->
+        def roomName = null
+        try { roomName = d.getRoomName() } catch (e) { roomName = null }
+        return roomName == room.name
+    }
+}
+
+def captureLightState(d) {
+    def m = [:]
+    def sw = safeCurrent(d, "switch")
+    m.s = (sw == "on") ? 1 : 0
+    if (d.hasCapability("SwitchLevel")) {
+        def lvl = safeCurrent(d, "level")
+        if (lvl != null) {
+            try { m.l = lvl.toInteger() } catch (e) {}
+        }
+    }
+    if (d.hasCapability("ColorTemperature")) {
+        def k = safeCurrent(d, "colorTemperature")
+        if (k != null) {
+            try { m.k = k.toInteger() } catch (e) {}
+        }
+    }
+    if (d.hasCapability("ColorControl")) {
+        def hue = safeCurrent(d, "hue")
+        def sat = safeCurrent(d, "saturation")
+        if (hue != null) {
+            try { m.h = hue.toInteger() } catch (e) {}
+        }
+        if (sat != null) {
+            try { m.sat = sat.toInteger() } catch (e) {}
+        }
+    }
+    if (d.hasCapability("ColorTemperature") && d.hasCapability("ColorControl")) {
+        def cm = safeCurrent(d, "colorMode")
+        if (cm) m.cm = cm.toString()
+    }
+    return m
+}
+
+def parseSnapshotsMap() {
+    if (!state.snapshotsJson) return [:]
+    try {
+        return new groovy.json.JsonSlurper().parseText(state.snapshotsJson.toString()) ?: [:]
+    } catch (e) {
+        return [:]
+    }
+}
+
+def saveSnapshotsMap(map) {
+    state.snapshotsJson = groovy.json.JsonOutput.toJson(map ?: [:])
+}
+
+def parseLightCommandJob() {
+    if (!state.lightCommandJobJson) return null
+    try {
+        return new groovy.json.JsonSlurper().parseText(state.lightCommandJobJson.toString())
+    } catch (e) {
+        return null
+    }
+}
+
+def saveLightCommandJob(job) {
+    state.lightCommandJobJson = groovy.json.JsonOutput.toJson(job)
+}
+
+def clearLightCommandJob() {
+    state.remove("lightCommandJobJson")
+    try { unschedule("lightCommandNextStep") } catch (e) {}
+}
+
+def lightJobActive() {
+    def job = parseLightCommandJob()
+    return job != null && job.index != null && job.total != null && job.index < job.total
+}
+
+def snapshotsJsonFragment() {
+    def map = parseSnapshotsMap()
+    def out = new StringBuilder()
+    out << ",\"snapshots\":{"
+    boolean first = true
+    map.each { key, snap ->
+        if (!first) out << ","; first = false
+        out << jsonStr(key.toString()) << ":{"
+        out << "\"ts\":" << (snap?.ts ?: 0)
+        def ids = snap?.deviceIds
+        def count = (ids instanceof List) ? ids.size() : 0
+        out << ",\"count\":" << count
+        out << "}"
+    }
+    out << "}"
+    return out.toString()
+}
+
+def lightJobJsonFragment() {
+    def job = parseLightCommandJob()
+    def out = new StringBuilder()
+    out << ",\"lightJob\":{"
+    if (job && job.index != null && job.total != null && job.index < job.total) {
+        out << "\"active\":true"
+        out << ",\"kind\":" << jsonStr(job.kind?.toString() ?: "")
+        out << ",\"done\":" << job.index
+        out << ",\"total\":" << job.total
+        out << ",\"failed\":" << (job.failed ?: 0)
+        if (job.scope) out << ",\"scope\":" << jsonStr(job.scope.toString())
+        if (job.cmd) out << ",\"cmd\":" << jsonStr(job.cmd.toString())
+    } else {
+        out << "\"active\":false,\"kind\":null,\"done\":0,\"total\":0,\"failed\":0"
+    }
+    out << "}"
+    return out.toString()
+}
+
+def shouldSkipOnOffCmd(dev, cmd) {
+    if (lightControlOnOffOptimization != true) return false
+    def sw = safeCurrent(dev, "switch")?.toString()
+    if (cmd == "on" && sw == "on") return true
+    if (cmd == "off" && sw == "off") return true
+    return false
+}
+
+def shouldSkipActivationCmd(dev, cmd, v, snap) {
+    if (lightControlActivationOptimization != true || !snap) return false
+    switch (cmd) {
+        case "setLevel":
+            if (snap.l == null) return false
+            def lvl = safeCurrent(dev, "level")
+            if (lvl == null) return false
+            try {
+                return Math.abs(lvl.toInteger() - snap.l.toInteger()) <= 1
+            } catch (e) { return false }
+        case "setCT":
+            if (snap.k == null) return false
+            def k = safeCurrent(dev, "colorTemperature")
+            if (k == null) return false
+            try {
+                return Math.abs(k.toInteger() - snap.k.toInteger()) <= 25
+            } catch (e) { return false }
+        case "setColor":
+            if (snap.h == null || snap.sat == null) return false
+            def hue = safeCurrent(dev, "hue")
+            def sat = safeCurrent(dev, "saturation")
+            if (hue == null || sat == null) return false
+            try {
+                return Math.abs(hue.toInteger() - snap.h.toInteger()) <= 2 &&
+                    Math.abs(sat.toInteger() - snap.sat.toInteger()) <= 2
+            } catch (e) { return false }
+        default:
+            return false
+    }
+}
+
+def shouldSkipLightCmd(dev, cmd, v, snap) {
+    if (cmd == "on" || cmd == "off") return shouldSkipOnOffCmd(dev, cmd)
+    return shouldSkipActivationCmd(dev, cmd, v, snap)
+}
+
+def buildBulkSteps(cmd, scopeDevices) {
+    def steps = []
+    for (d in scopeDevices) {
+        if (shouldSkipOnOffCmd(d, cmd)) continue
+        steps << [id: d.id, cmds: [[cmd, null]]]
+    }
+    return steps
+}
+
+def buildRestoreSteps(devicesMap, deviceIds) {
+    def offSteps = []
+    def onSteps = []
+    for (id in deviceIds) {
+        def key = id.toString()
+        def snap = devicesMap[key]
+        if (!snap) continue
+        def dev = lights?.find { it.id.toString() == key }
+        if (!dev) continue
+        def step = buildRestoreDeviceStep(dev, snap)
+        if (step) {
+            if (snap.s == 0) offSteps << step
+            else onSteps << step
+        }
+    }
+    return offSteps + onSteps
+}
+
+def buildRestoreDeviceStep(dev, snap) {
+    def cmds = []
+    def snapCopy = [
+        s: snap.s, l: snap.l, k: snap.k, h: snap.h, sat: snap.sat, cm: snap.cm
+    ]
+    if (snap.s == 0) {
+        if (!shouldSkipOnOffCmd(dev, "off")) cmds << ["off", null]
+        if (cmds.isEmpty()) return null
+        return [id: dev.id, cmds: cmds, snap: snapCopy]
+    }
+    if (!shouldSkipOnOffCmd(dev, "on")) cmds << ["on", null]
+    if (snap.l != null && dev.hasCapability("SwitchLevel")) {
+        cmds << ["setLevel", snap.l]
+    }
+    def cm = snap.cm?.toString()
+    if (snap.k != null && dev.hasCapability("ColorTemperature") && (!cm || cm.equalsIgnoreCase("CT"))) {
+        cmds << ["setCT", snap.k]
+    }
+    if (snap.h != null && snap.sat != null && dev.hasCapability("ColorControl") && (!cm || cm.equalsIgnoreCase("RGB"))) {
+        cmds << ["setColor", "${snap.h},${snap.sat}"]
+    }
+    if (cmds.isEmpty()) return null
+    // Drop activation-only cmds that optimization would skip; keep on if present
+    def filtered = []
+    for (pair in cmds) {
+        def c = pair[0]
+        def v = pair.size() > 1 ? pair[1] : null
+        if (!shouldSkipLightCmd(dev, c, v, snapCopy)) filtered << pair
+    }
+    if (filtered.isEmpty()) return null
+    return [id: dev.id, cmds: filtered, snap: snapCopy]
+}
+
+def enqueueLightCommandJob(kind, steps, meta) {
+    clearLightCommandJob()
+    if (!steps || steps.isEmpty()) {
+        return [ok: true, async: false, total: 0]
+    }
+    def job = [
+        kind: kind,
+        index: 0,
+        total: steps.size(),
+        failed: 0,
+        steps: steps
+    ]
+    if (meta) job.putAll(meta)
+    saveLightCommandJob(job)
+    runIn(0, "lightCommandNextStep")
+    return [ok: true, async: true, total: steps.size()]
+}
+
+def lightCommandNextStep() {
+    def job = parseLightCommandJob()
+    if (!job || job.steps == null) {
+        clearLightCommandJob()
+        return
+    }
+    def idx = job.index ?: 0
+    if (idx >= job.steps.size()) {
+        clearLightCommandJob()
+        return
+    }
+    def step = job.steps[idx]
+    def dev = lights?.find { it.id.toString() == step.id.toString() }
+    if (dev && step.cmds) {
+        def snap = step.snap
+        for (pair in step.cmds) {
+            def c = pair[0]
+            def v = pair.size() > 1 ? pair[1] : null
+            if (shouldSkipLightCmd(dev, c, v, snap)) continue
+            try {
+                runLightCmd(dev, c, v)
+            } catch (e) {
+                job.failed = (job.failed ?: 0) + 1
+            }
+        }
+    }
+    job.index = idx + 1
+    if (job.index >= job.steps.size()) {
+        clearLightCommandJob()
+        return
+    }
+    saveLightCommandJob(job)
+    def delayMs = lightControlMeterDelayMsValue()
+    if (delayMs > 0) {
+        runIn(delayMs / 1000.0, "lightCommandNextStep")
+    } else {
+        runIn(0, "lightCommandNextStep")
+    }
+}
+
+def renderAsyncEnqueueResult(result, extra) {
+    def out = new StringBuilder()
+    out << "{\"ok\":" << (result.ok ? "true" : "false")
+    out << ",\"async\":" << (result.async ? "true" : "false")
+    out << ",\"total\":" << (result.total ?: 0)
+    if (extra) {
+        extra.each { k, v ->
+            if (v == null) out << ",\"${k}\":null"
+            else if (v instanceof Number) out << ",\"${k}\":" << v
+            else out << ",\"${k}\":" << jsonStr(v.toString())
+        }
+    }
+    out << "}"
+    return render(contentType: "application/json", data: out.toString(), status: 200)
+}
+
+def parseScopeParams(body) {
+    def scope = body?.scope ?: params?.scope
+    def roomId = body?.containsKey("roomId") ? body.roomId : params?.roomId
+    scope = scope?.toString()?.trim()
+    if (!scope) return [error: "missing scope"]
+    if (scope != "house" && scope != "room") return [error: "invalid scope"]
+    if (scope == "room" && roomId == null) return [error: "missing roomId"]
+    return [scope: scope, roomId: roomId]
+}
+
+def snapshotSaveGet() {
+    def body = [scope: params?.scope, roomId: params?.roomId]
+    return snapshotSaveFromParams(body)
+}
+
+def snapshotSave() {
+    return snapshotSaveFromParams(parseRequestJson())
+}
+
+def snapshotSaveFromParams(body) {
+    def parsed = parseScopeParams(body ?: [:])
+    if (parsed.error) {
+        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", status: 400)
+    }
+    def key = snapshotScopeKey(parsed.scope, parsed.roomId)
+    if (!key) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"invalid scope"}', status: 400)
+    }
+    def scopeDevices = lightsInScope(parsed.scope, parsed.roomId)
+    def deviceIds = []
+    def devicesMap = [:]
+    for (d in scopeDevices) {
+        deviceIds << d.id
+        devicesMap[d.id.toString()] = captureLightState(d)
+    }
+    def ts = System.currentTimeMillis()
+    def snap = [ts: ts, deviceIds: deviceIds, devices: devicesMap]
+    def all = parseSnapshotsMap()
+    all[key] = snap
+    saveSnapshotsMap(all)
+    return render(contentType: "application/json",
+        data: "{\"ok\":true,\"ts\":${ts},\"count\":${deviceIds.size()},\"scope\":${jsonStr(key)}}", status: 200)
+}
+
+def snapshotRestoreGet() {
+    def body = [scope: params?.scope, roomId: params?.roomId]
+    return snapshotRestoreFromParams(body)
+}
+
+def snapshotRestore() {
+    return snapshotRestoreFromParams(parseRequestJson())
+}
+
+def snapshotRestoreFromParams(body) {
+    def parsed = parseScopeParams(body ?: [:])
+    if (parsed.error) {
+        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", status: 400)
+    }
+    def key = snapshotScopeKey(parsed.scope, parsed.roomId)
+    if (!key) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"invalid scope"}', status: 400)
+    }
+    def all = parseSnapshotsMap()
+    def snap = all[key]
+    if (!snap) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"no snapshot"}', status: 404)
+    }
+    def deviceIds = snap.deviceIds ?: []
+    def devicesMap = snap.devices ?: [:]
+    def steps = buildRestoreSteps(devicesMap, deviceIds)
+    def result = enqueueLightCommandJob("restore", steps, [scope: key])
+    return renderAsyncEnqueueResult(result, [scope: key])
+}
+
+def snapshotStatus() {
+    def job = parseLightCommandJob()
+    def out = new StringBuilder()
+    out << "{\"ok\":true"
+    if (job && job.index != null && job.total != null && job.index < job.total) {
+        out << ",\"restoring\":true"
+        out << ",\"kind\":" << jsonStr(job.kind?.toString() ?: "")
+        out << ",\"done\":" << job.index
+        out << ",\"total\":" << job.total
+        out << ",\"failed\":" << (job.failed ?: 0)
+        if (job.scope) out << ",\"scope\":" << jsonStr(job.scope.toString())
+    } else {
+        out << ",\"restoring\":false,\"done\":0,\"total\":0,\"failed\":0"
+    }
+    out << "}"
+    return render(contentType: "application/json", data: out.toString(), status: 200)
+}
+
+def lightsBulkGet() {
+    def body = [cmd: params?.cmd, scope: params?.scope, roomId: params?.roomId]
+    return lightsBulkFromParams(body)
+}
+
+def lightsBulk() {
+    return lightsBulkFromParams(parseRequestJson())
+}
+
+def lightsBulkFromParams(body) {
+    def cmd = body?.cmd ?: params?.cmd
+    cmd = cmd?.toString()?.trim()
+    if (cmd != "on" && cmd != "off") {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"invalid cmd"}', status: 400)
+    }
+    def parsed = parseScopeParams(body ?: [:])
+    if (parsed.error) {
+        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", status: 400)
+    }
+    def scopeDevices = lightsInScope(parsed.scope, parsed.roomId)
+    def steps = buildBulkSteps(cmd, scopeDevices)
+    def result = enqueueLightCommandJob("bulk", steps, [scope: parsed.scope, cmd: cmd, roomId: parsed.roomId])
+    return renderAsyncEnqueueResult(result, [cmd: cmd, scope: parsed.scope])
 }
 
 // ---------------------------------------------------------------------------

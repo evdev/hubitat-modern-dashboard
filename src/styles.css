@@ -339,12 +339,51 @@ body {
 .room-name { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
 .room-meta { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
 .room-toggle { display: flex; gap: 8px; flex-shrink: 0; }
+.room-slide-track {
+  position: relative; overflow: hidden; border-radius: 14px; flex-shrink: 0;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.room-slide-track.room-slide-active { touch-action: none; }
+.room-gesture-lock .room-head { touch-action: none; }
+.room-snap-action {
+  appearance: none; border: 1px solid var(--stroke-2); cursor: pointer;
+  font-size: 12px; font-weight: 700; padding: 12px 10px; border-radius: 14px;
+  min-height: 48px; width: 80px; letter-spacing: -0.01em;
+  background: color-mix(in srgb, var(--panel-2) 85%, var(--accent) 15%);
+  color: var(--text-dim);
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation; pointer-events: none;
+}
+.room-slide-off .room-snap-save {
+  position: absolute; left: 0; top: 0; bottom: 0; z-index: 0;
+}
+.room-slide-off .btn-off { position: relative; z-index: 1; }
+.room-slide-on .room-snap-restore {
+  position: absolute; right: 0; top: 0; bottom: 0; z-index: 0;
+}
+.room-slide-on .btn-on { position: relative; z-index: 1; }
+.room-slide-track .btn-on,
+.room-slide-track .btn-off {
+  transition: transform .22s var(--ease);
+}
+.room-slide-track.room-slide-active .btn-on,
+.room-slide-track.room-slide-active .btn-off {
+  transition: none; will-change: transform;
+}
+.room-no-snapshot .room-snap-restore {
+  opacity: 0.45;
+}
 .btn-on, .btn-off {
   appearance: none; border: 1px solid var(--stroke-2); cursor: pointer;
   font-size: 14px; font-weight: 700; padding: 12px 18px; border-radius: 14px;
   transition: transform .14s var(--ease), background .18s var(--ease), border-color .18s var(--ease), box-shadow .18s var(--ease), color .18s var(--ease);
   min-height: 48px; min-width: 64px; letter-spacing: -0.01em;
   touch-action: manipulation; -webkit-touch-callout: none;
+  user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
   background: var(--panel-2); color: var(--text-dim); box-shadow: none;
 }
 .btn-on:active, .btn-off:active { transform: scale(.95); }
@@ -1208,6 +1247,21 @@ body {
 }
 .quick-lock-btn:active { transform: scale(.96); }
 
+.quick-body-blinds .quick-list { gap: 12px; }
+.shade-tile {
+  display: flex; flex-direction: column; gap: 10px;
+  border: 1px solid var(--stroke); background: var(--panel-2);
+  padding: 12px 14px; border-radius: 14px;
+}
+.shade-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.shade-slider-wrap { display: flex; flex-direction: column; gap: 6px; }
+.shade-level-label { font-size: 13px; font-weight: 700; color: var(--text-dim); }
+.shade-slider { height: 40px; }
+.shade-slider.disabled { opacity: 0.45; pointer-events: none; }
+.shade-actions { display: flex; gap: 8px; }
+.shade-btn.moving { opacity: 0.55; }
+.shade-stop-btn { flex: 0.8; }
+
 /* ---- Music popup ---- */
 .quick-body-music { padding-bottom: 4px; }
 .music-list { gap: 10px; max-height: none; overflow: visible; }
@@ -1576,6 +1630,10 @@ body {
   .topbar-actions { width: 100%; justify-content: flex-end; }
   .room-head { flex-wrap: wrap; padding: 12px 12px 10px; gap: 10px; }
   .room-toggle { width: 100%; justify-content: stretch; }
+  .room-slide-track { flex: 1; min-width: 0; }
+  .room-slide-track .btn-on,
+  .room-slide-track .btn-off { flex: 1; min-width: 0; padding: 10px 12px; width: 100%; }
+  .room-snap-action { font-size: 11px; width: 72px; padding: 10px 6px; }
   .btn-on, .btn-off { flex: 1; min-width: 0; padding: 10px 12px; }
   .room-body { grid-template-columns: 1fr; padding: 4px 12px 14px; }
   .tile { padding: 12px; }

@@ -91,6 +91,7 @@
   const levelOptimistic = new Map(); // device id -> { level, until, timer }
   const switchOptimistic = new Map(); // device id -> { s, l?, until, timer }
   const lockOptimistic = new Map(); // lock id -> { lk, st, until, timer }
+  const shadeOptimistic = new Map(); // shade id -> { st?, pos?, until, timer }
   const musicOptimistic = new Map(); // music id -> { st, v?, until, timer }
   const setpointOptimistic = new Map(); // tstat id -> { hsp?, csp?, until, timer }
 
@@ -113,8 +114,11 @@
   let currentHubMode = "";
   let scenes = [];
   let locks = [];
+  let windowShades = [];
   let music = [];
   let favorites = [];
+  let snapshots = {};
+  let roomGestureLockCount = 0;
   let hubModeLockUntil = 0;
   let hsmStatus = "";
   let hsmAlert = "";
@@ -267,6 +271,85 @@
     if (st === "unknown") return "Unknown";
     if (st === "unavailable") return "Unavailable";
     return effectiveLock(lock) ? "Locked" : "Unlocked";
+  }
+
+  function setShadeOptimistic(id, patch) {
+    const prev = shadeOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    const shade = windowShades.find((s) => s.i === id);
+    if (shade) {
+      if (patch.st != null) shade.st = patch.st;
+      if (patch.pos != null) shade.pos = patch.pos;
+    }
+    const entry = {
+      st: patch.st != null ? patch.st : prev?.st,
+      pos: patch.pos != null ? patch.pos : prev?.pos,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      timer: null,
+    };
+    entry.timer = setTimeout(() => {
+      shadeOptimistic.delete(id);
+      if (quickPopupOpenType === "blinds") postCall("renderBlindsPopup");
+    }, LEVEL_OPTIMISTIC_MS);
+    shadeOptimistic.set(id, entry);
+  }
+
+  function clearShadeOptimistic(id) {
+    const prev = shadeOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    shadeOptimistic.delete(id);
+  }
+
+  function reapplyShadeOptimistic() {
+    for (const [id, opt] of shadeOptimistic) {
+      if (Date.now() >= opt.until) {
+        if (opt.timer) clearTimeout(opt.timer);
+        shadeOptimistic.delete(id);
+        continue;
+      }
+      const shade = windowShades.find((s) => s.i === id);
+      if (!shade) continue;
+      let matched = true;
+      if (opt.st != null && shade.st !== opt.st) matched = false;
+      if (opt.pos != null && shade.pos !== opt.pos) matched = false;
+      if (matched) {
+        if (opt.timer) clearTimeout(opt.timer);
+        shadeOptimistic.delete(id);
+        continue;
+      }
+      if (opt.st != null) shade.st = opt.st;
+      if (opt.pos != null) shade.pos = opt.pos;
+    }
+  }
+
+  function effectiveShadeState(shade) {
+    const opt = shadeOptimistic.get(shade.i);
+    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    return shade.st || "unknown";
+  }
+
+  function effectiveShadePosition(shade) {
+    const opt = shadeOptimistic.get(shade.i);
+    if (opt && Date.now() < opt.until && opt.pos != null) return opt.pos;
+    return shade.pos;
+  }
+
+  function shadeIsMoving(shade) {
+    const st = effectiveShadeState(shade);
+    return st === "opening" || st === "closing";
+  }
+
+  function shadeStatusLabel(shade) {
+    const st = effectiveShadeState(shade);
+    const pos = effectiveShadePosition(shade);
+    const posText = pos != null ? pos + "%" : null;
+    if (st === "opening") return "Opening…";
+    if (st === "closing") return "Closing…";
+    if (st === "open") return posText ? posText + " · Open" : "Open";
+    if (st === "closed") return posText ? posText + " · Closed" : "Closed";
+    if (st === "partially open") return posText ? posText + " · Partially open" : "Partially open";
+    if (st === "unknown" || st === "unavailable") return st.charAt(0).toUpperCase() + st.slice(1);
+    return posText || st || "—";
   }
 
   function isMusicPlaying(st) {
@@ -2213,5 +2296,231 @@
       }
     }
   }
-  globalThis.__MLD = { ROOMS_EL, SEARCH_EL, STATUS_EL, ALL_ON_BTN, ALL_OFF_BTN, CENTRAL_TSTAT_BTN, CENTRAL_MUSIC_BTN, EXPAND_ALL_BTN, REORDER_DONE_BTN, REORDER_CANCEL_BTN, OVERFLOW_BTN, OVERFLOW_MENU, MENU_REORDER_BTN, MENU_HAPTICS_EL, MENU_TABS_EL, MENU_THEME_SEGMENT, HAPTICS_STORAGE_KEY, THEME_STORAGE_KEY, TABS_STORAGE_KEY, THEME_OPTIONS, APP_EL, REORDER_DRAG_THRESHOLD, DASHBOARD_TITLE_EL, POLL_DEFAULT, POLL_WS_FALLBACK, loadHapticsPref, saveHapticsPref, loadThemePref, saveThemePref, loadTabsPref, saveTabsPref, cfg, rooms, roomMap, devices, devicesByRoom, devMap, favDevMap, roomEls, lastDataSig, pollTimer, ws, wsConnected, wsRetry, reorderMode, reorderBusy, reorderSnapshot, reorderDraftOrder, colorPopup, colorSession, levelOptimistic, switchOptimistic, lockOptimistic, musicOptimistic, setpointOptimistic, rgbWheelCache, thermostats, tempSensors, thermoByRoom, sensorByRoom, climateEls, tstatPopup, tstatSession, tstatDeviceModeLock, musicMasterPopup, MUSIC_VOL_STEP, hubModes, currentHubMode, scenes, locks, music, favorites, hubModeLockUntil, hsmStatus, hsmAlert, hsmAlertDesc, hsmEnabled, hsmPinRequired, thermostatsPopupEnabled, unlockPinEnabled, unlockPinRequired, hsmLockUntil, pinPadPopup, pinPadState, quickPopupOpenType, TAB_CATEGORIES, TAB_LABELS, tabMode, activeTab, tabViewEl, QUICK_LIGHTS_BTN, favTstatModeMenu, favTstatModeMenuCleanup, favTstatModeMenuId, favTstatModeMenuAnchor, favTstatMap, favPopupSig, tstatsPopupMap, tstatsPopupSig, setLevelOptimistic, setSwitchOptimistic, clearSwitchOptimistic, reapplySwitchOptimistic, effectiveSwitch, effectiveLevel, setLockOptimistic, clearLockOptimistic, reapplyLockOptimistic, effectiveLock, lockStatusLabel, isMusicPlaying, musicControls, effectiveMusicStatus, effectiveMusicVolume, musicStatusLabel, setMusicOptimistic, clearMusicOptimistic, reapplyMusicOptimistic, setSetpointOptimistic, clearSetpointOptimistic, reapplySetpointOptimistic, applyTstatSetpoints, drawRgbWheel, ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, supportedModes, supportedFanModes, deviceHasFanSpeed, supportedFanSpeeds, showFanSpeedControls, fanModeActive, tstatSectionLabel, tstatStateClass, formatRoomTemp, roomClimateInfo, roomHasClimate, roomTstatState, isFavorite, syncFavButton, updateTstatFavButton, postCall, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, ACCESS_TOKEN, withToken, getJson, fetchData, sendCmd, sendCmdBatch, publishMld, rebuildDevicesByRoom, applyTstatSessionModeLock };
+
+  // Sensors (other-sensor pickers): [{i,n,r,t,v,a,ex:[{k,v,u?}]}]
+  let sensors = [];
+  const sensorCardMap = new Map(); // id -> { el, heroEl, pillEl, pillTxt, dot, footEl, favBtn, t, i }
+  const favSensorMap = new Map(); // id -> sensor card rec (favorites popup)
+  let sensorsPopupSig = "";
+  const sensorTypeFilter = new Set(); // empty = show all types
+  let sensorFilterOpen = false;
+  let sensorFilterChipsEl = null;
+  let sensorFilterBtnEl = null;
+  let sensorFilterEmptyEl = null;
+
+  // Mutate exported arrays/maps in place so part1 closures stay in sync after the JS split.
+  function replaceList(list, next) {
+    list.length = 0;
+    const items = Array.isArray(next) ? next : [];
+    if (items.length) list.push(...items);
+  }
+
+  function repopulateThermoByRoom() {
+    thermoByRoom.clear();
+    for (const t of thermostats) {
+      const rid = normalizeRoomId(t.r);
+      if (!thermoByRoom.has(rid)) thermoByRoom.set(rid, []);
+      thermoByRoom.get(rid).push(t);
+    }
+  }
+
+  function repopulateSensorByRoom() {
+    sensorByRoom.clear();
+    for (const s of tempSensors) {
+      const rid = normalizeRoomId(s.r);
+      if (!sensorByRoom.has(rid)) sensorByRoom.set(rid, []);
+      sensorByRoom.get(rid).push(s);
+    }
+  }
+
+  function syncRoomMap() {
+    roomMap.clear();
+    for (const r of rooms) roomMap.set(r.id, r.name);
+  }
+
+  // ---------- render ----------
+  function emptyState(html) {
+    ROOMS_EL.innerHTML = html;
+    roomEls.clear(); devMap.clear();
+  }
+
+  function loadingState() {
+    emptyState('<div class="loading"><div class="spinner"></div>Loading lights…</div>');
+  }
+
+  function noDevicesState() {
+    emptyState(
+      '<div class="empty">' +
+      '<h2>No devices configured</h2>' +
+      'Open the Modern Dashboard app on your hub and select your lights or thermostats.' +
+      '</div>'
+    );
+  }
+
+  function sortRoomsByOrder(allRooms, order) {
+    const list = Array.isArray(allRooms) ? allRooms : [];
+    if (!order?.length) {
+      return list.slice().sort((a, b) =>
+        String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" })
+      );
+    }
+    const byId = new Map(list.map(r => [r.id, r]));
+    const sorted = [];
+    const seen = new Set();
+    for (const rawId of order) {
+      const id = normalizeRoomId(rawId);
+      if (id === -1) continue;
+      if (byId.has(id)) {
+        sorted.push(byId.get(id));
+        seen.add(id);
+      }
+    }
+    const newcomers = list.filter(r => !seen.has(r.id)).sort((a, b) =>
+      String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" })
+    );
+    sorted.push(...newcomers);
+    return sorted;
+  }
+
+  function ensureRoomsFromDevices() {
+    if (rooms.length) return;
+    const byId = new Map();
+    const addRef = (item) => {
+      const id = normalizeRoomId(item?.r);
+      if (id === -1) return;
+      if (!byId.has(id)) byId.set(id, { id, name: "Room " + id });
+    };
+    for (const dev of devices) addRef(dev);
+    for (const t of thermostats) addRef(t);
+    for (const s of tempSensors) addRef(s);
+    for (const lk of locks) addRef(lk);
+    if (!byId.size) return;
+    replaceList(rooms, [...byId.values()].sort((a, b) => a.id - b.id));
+    syncRoomMap();
+  }
+
+  function contentRoomIds() {
+    const ids = new Set();
+    for (const rid of devicesByRoom.keys()) ids.add(rid);
+    for (const rid of thermoByRoom.keys()) ids.add(rid);
+    for (const rid of sensorByRoom.keys()) ids.add(rid);
+    return ids;
+  }
+
+  function getDisplayRoomIds(groups, hasContent) {
+    const knownIds = new Set(rooms.map(r => r.id));
+    const allIds = new Set(knownIds);
+    for (const id of contentRoomIds()) allIds.add(id);
+    const hasUnassigned = groups.has(-1) || roomHasClimate(-1);
+    let order;
+    if (cfg.roomOrder?.length) {
+      order = cfg.roomOrder.map(normalizeRoomId).filter(id => {
+        if (id === -1) return hasUnassigned;
+        return allIds.has(id);
+      });
+      const inOrder = new Set(order.filter(id => id !== -1));
+      const newcomers = [...allIds].filter(id => !inOrder.has(id));
+      if (newcomers.length) {
+        newcomers.sort((a, b) => {
+          const an = roomMap.get(a) || "";
+          const bn = roomMap.get(b) || "";
+          return String(an).localeCompare(String(bn), undefined, { sensitivity: "base" }) || (a - b);
+        });
+        const uIdx = order.indexOf(-1);
+        if (uIdx >= 0) order = order.slice(0, uIdx).concat(newcomers, order.slice(uIdx));
+        else order = order.concat(newcomers);
+      }
+      if (hasUnassigned && !order.includes(-1)) order.push(-1);
+    } else {
+      order = rooms.map(r => r.id);
+      for (const id of allIds) {
+        if (id !== -1 && !order.includes(id)) order.push(id);
+      }
+      if (hasUnassigned && !order.includes(-1)) order.push(-1);
+    }
+    return order.filter(rid => hasContent(rid));
+  }
+
+  async function saveRoomOrder(order) {
+    if (!order?.length) {
+      flash("No rooms to save", true);
+      return false;
+    }
+    const headers = { "Accept": "application/json" };
+    const paths = ["room-order", "settings/room-order"];
+    let lastMsg = "Could not save room order";
+    for (const path of paths) {
+      try {
+        let r = await fetch(withToken(path), {
+          method: "POST",
+          cache: "no-store",
+          headers: { ...headers, "Content-Type": "application/json" },
+          body: JSON.stringify({ order }),
+        });
+        if (r.ok) return true;
+        try {
+          const body = await r.json();
+          if (body?.error) lastMsg = String(body.error);
+        } catch {}
+        if (r.status === 404) continue;
+        r = await fetch(withToken(path + "?order=" + encodeURIComponent(order.join(","))), {
+          method: "GET",
+          cache: "no-store",
+          headers,
+        });
+        if (r.ok) return true;
+        try {
+          const body = await r.json();
+          if (body?.error) lastMsg = String(body.error);
+        } catch {}
+      } catch {}
+    }
+    flash(lastMsg === "Could not save room order"
+      ? "Could not save room order — update the hub app code and try again"
+      : lastMsg, true);
+    return false;
+  }
+
+  async function postJson(path, body) {
+    try {
+      const r = await fetch(withToken(path), {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        let msg = "Request failed";
+        try {
+          const j = await r.json();
+          if (j?.error) msg = String(j.error);
+        } catch {}
+        flash(msg, true);
+        return { ok: false };
+      }
+      let data = {};
+      try { data = await r.json(); } catch {}
+      return { ok: true, data };
+    } catch {
+      flash("Request failed", true);
+      return { ok: false };
+    }
+  }
+
+  async function postJsonSilent(path, body) {
+    try {
+      const r = await fetch(withToken(path), {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      return { ok: r.ok, status: r.status, data, error: data?.error };
+    } catch {
+      return { ok: false, error: "Request failed" };
+    }
+  }
+  globalThis.__MLD = { ROOMS_EL, SEARCH_EL, STATUS_EL, ALL_ON_BTN, ALL_OFF_BTN, CENTRAL_TSTAT_BTN, CENTRAL_MUSIC_BTN, EXPAND_ALL_BTN, REORDER_DONE_BTN, REORDER_CANCEL_BTN, OVERFLOW_BTN, OVERFLOW_MENU, MENU_REORDER_BTN, MENU_HAPTICS_EL, MENU_TABS_EL, MENU_THEME_SEGMENT, HAPTICS_STORAGE_KEY, THEME_STORAGE_KEY, TABS_STORAGE_KEY, THEME_OPTIONS, APP_EL, REORDER_DRAG_THRESHOLD, DASHBOARD_TITLE_EL, POLL_DEFAULT, POLL_WS_FALLBACK, loadHapticsPref, saveHapticsPref, loadThemePref, saveThemePref, loadTabsPref, saveTabsPref, cfg, rooms, roomMap, devices, devicesByRoom, devMap, favDevMap, roomEls, lastDataSig, pollTimer, ws, wsConnected, wsRetry, reorderMode, reorderBusy, reorderSnapshot, reorderDraftOrder, colorPopup, colorSession, levelOptimistic, switchOptimistic, lockOptimistic, shadeOptimistic, musicOptimistic, setpointOptimistic, rgbWheelCache, thermostats, tempSensors, thermoByRoom, sensorByRoom, climateEls, tstatPopup, tstatSession, tstatDeviceModeLock, musicMasterPopup, MUSIC_VOL_STEP, hubModes, currentHubMode, scenes, locks, windowShades, music, favorites, snapshots, roomGestureLockCount, hubModeLockUntil, hsmStatus, hsmAlert, hsmAlertDesc, hsmEnabled, hsmPinRequired, thermostatsPopupEnabled, unlockPinEnabled, unlockPinRequired, hsmLockUntil, pinPadPopup, pinPadState, quickPopupOpenType, TAB_CATEGORIES, TAB_LABELS, tabMode, activeTab, tabViewEl, QUICK_LIGHTS_BTN, favTstatModeMenu, favTstatModeMenuCleanup, favTstatModeMenuId, favTstatModeMenuAnchor, favTstatMap, favPopupSig, tstatsPopupMap, tstatsPopupSig, setLevelOptimistic, setSwitchOptimistic, clearSwitchOptimistic, reapplySwitchOptimistic, effectiveSwitch, effectiveLevel, setLockOptimistic, clearLockOptimistic, reapplyLockOptimistic, effectiveLock, lockStatusLabel, setShadeOptimistic, clearShadeOptimistic, reapplyShadeOptimistic, effectiveShadeState, effectiveShadePosition, shadeIsMoving, shadeStatusLabel, isMusicPlaying, musicControls, effectiveMusicStatus, effectiveMusicVolume, musicStatusLabel, setMusicOptimistic, clearMusicOptimistic, reapplyMusicOptimistic, setSetpointOptimistic, clearSetpointOptimistic, reapplySetpointOptimistic, applyTstatSetpoints, drawRgbWheel, ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, supportedModes, supportedFanModes, deviceHasFanSpeed, supportedFanSpeeds, showFanSpeedControls, fanModeActive, tstatSectionLabel, tstatStateClass, formatRoomTemp, roomClimateInfo, roomHasClimate, roomTstatState, isFavorite, syncFavButton, updateTstatFavButton, postCall, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, ACCESS_TOKEN, withToken, getJson, fetchData, sendCmd, sendCmdBatch, publishMld, rebuildDevicesByRoom, applyTstatSessionModeLock, sensors, sensorCardMap, favSensorMap, sensorsPopupSig, sensorTypeFilter, sensorFilterOpen, sensorFilterChipsEl, sensorFilterBtnEl, sensorFilterEmptyEl, replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, getDisplayRoomIds, saveRoomOrder, postJson, postJsonSilent };
 })();

@@ -343,6 +343,11 @@ assertUnderHubLimit("mld-app-post.js", part2Out);
 writeFileSync(join(upload, "mld-app.js"), part1Out);
 writeFileSync(join(upload, "mld-app-post.js"), part2Out);
 
+for (const name of ["mld-app-pre.js", "mld-sw.js"]) {
+  const content = readFileSync(join(upload, name), "utf8");
+  assertUnderHubLimit(name, content);
+}
+
 const groovyRaw = readFileSync(join(root, "app", "ModernLightsDashboard.groovy.template"), "utf8");
 const groovy = substituteGroovyTemplate(groovyRaw);
 writeFileSync(join(dist, "ModernLightsDashboard.groovy"), groovy);
