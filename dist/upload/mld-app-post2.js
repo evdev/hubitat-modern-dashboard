@@ -961,6 +961,7 @@ function renderScenesPopup() {
   }
 
   (async function init() {
+    M.consumePreferCloudParam();
     M.loadingState();
     try {
       const d = await M.fetchData();
@@ -970,14 +971,28 @@ function renderScenesPopup() {
       startWS();
     } catch (e) {
       console.error("Dashboard init failed:", e);
+      const cloud = String(M.cfg.cloudUrl || M.loadStoredCloudUrl() || "").trim();
+      if (M.isLocalOrigin() && cloud) {
+        M.cfg.cloudUrl = cloud;
+        M.navigateToCloud();
+        return;
+      }
       const detail = e?.message ? String(e.message) : "";
       M.setStatus("Cannot reach hub. Make sure you opened the dashboard via the app URL.", true);
       M.emptyState(
         '<div class="empty"><h2>Connection error</h2>' +
         'Could not load /data. Open this page through the Modern Dashboard app URL on your hub.' +
         (detail ? '<p class="empty-detail">' + detail.replace(/</g, "&lt;") + '</p>' : '') +
+        (cloud ? '<p class="empty-detail"><button type="button" class="ghost-btn" id="fallback-cloud-btn">Open cloud mode</button></p>' : '') +
         '</div>'
       );
+      const fallbackBtn = document.getElementById("fallback-cloud-btn");
+      if (fallbackBtn) {
+        fallbackBtn.addEventListener("click", () => {
+          M.cfg.cloudUrl = cloud;
+          M.navigateToCloud();
+        });
+      }
     }
   })();
 

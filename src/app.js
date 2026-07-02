@@ -29,6 +29,8 @@
   const TABS_STORAGE_KEY = "mld_tabs";
   const LOCAL_URL_STORAGE_KEY = "mld_localUrl";
   const LOCAL_OK_STORAGE_KEY = "mld_localOk";
+  const CLOUD_URL_STORAGE_KEY = "mld_cloudUrl";
+  const PREFER_CLOUD_STORAGE_KEY = "mld_preferCloud";
   const LOCAL_OK_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
   const THEME_OPTIONS = ["dark", "light", "auto"];
   const APP_EL = document.getElementById("app");
@@ -2228,6 +2230,40 @@
     } catch {}
   }
 
+  function loadStoredCloudUrl() {
+    try { return localStorage.getItem(CLOUD_URL_STORAGE_KEY) || ""; } catch { return ""; }
+  }
+
+  function saveStoredCloudUrl(url) {
+    try {
+      const v = String(url || "").trim();
+      if (v) localStorage.setItem(CLOUD_URL_STORAGE_KEY, v);
+      else localStorage.removeItem(CLOUD_URL_STORAGE_KEY);
+    } catch {}
+  }
+
+  function preferCloudMode() {
+    try { return localStorage.getItem(PREFER_CLOUD_STORAGE_KEY) === "1"; } catch { return false; }
+  }
+
+  function setPreferCloudMode(on) {
+    try {
+      if (on) localStorage.setItem(PREFER_CLOUD_STORAGE_KEY, "1");
+      else localStorage.removeItem(PREFER_CLOUD_STORAGE_KEY);
+    } catch {}
+  }
+
+  function consumePreferCloudParam() {
+    try {
+      const params = new URLSearchParams(location.search);
+      if (params.get("mld_prefer_cloud") !== "1") return;
+      setPreferCloudMode(true);
+      params.delete("mld_prefer_cloud");
+      const qs = params.toString();
+      history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+    } catch {}
+  }
+
   function loadLocalOkTs() {
     try {
       const n = Number(localStorage.getItem(LOCAL_OK_STORAGE_KEY));
@@ -2251,11 +2287,13 @@
         MENU_LOCAL_URL_EL.value = cfg.localUrl;
       }
     }
+    if (cfg.cloudUrl) saveStoredCloudUrl(cfg.cloudUrl);
   }
 
   function navigateToLocal(url, remember) {
     const target = String(url || loadStoredLocalUrl() || "").trim();
     if (!target) return false;
+    setPreferCloudMode(false);
     if (remember !== false && isCloudOrigin()) saveLocalOkTs(Date.now());
     location.replace(target);
     return true;
@@ -2274,8 +2312,11 @@
   }
 
   function navigateToCloud() {
-    const target = String(cfg.cloudUrl || "").trim();
+    let target = String(cfg.cloudUrl || loadStoredCloudUrl() || "").trim();
     if (!target) return false;
+    setPreferCloudMode(true);
+    const sep = target.includes("?") ? "&" : "?";
+    target = target + sep + "mld_prefer_cloud=1";
     location.replace(target);
     return true;
   }
@@ -2344,6 +2385,7 @@
 
   // Returns true when navigating away (caller should stop init).
   function applyLocalModeStrategy() {
+    consumePreferCloudParam();
     refreshLocalUrlFromConfig();
 
     if (isLocalOrigin()) {
@@ -2352,6 +2394,11 @@
     }
 
     if (!isCloudOrigin()) {
+      updateLocalModeMenuUI();
+      return false;
+    }
+
+    if (preferCloudMode()) {
       updateLocalModeMenuUI();
       return false;
     }
@@ -6141,6 +6188,7 @@
   }
 
   (async function init() {
+    consumePreferCloudParam();
     loadingState();
     try {
       const d = await fetchData();
@@ -6150,14 +6198,28 @@
       startWS();
     } catch (e) {
       console.error("Dashboard init failed:", e);
+      const cloud = String(cfg.cloudUrl || loadStoredCloudUrl() || "").trim();
+      if (isLocalOrigin() && cloud) {
+        cfg.cloudUrl = cloud;
+        navigateToCloud();
+        return;
+      }
       const detail = e?.message ? String(e.message) : "";
       setStatus("Cannot reach hub. Make sure you opened the dashboard via the app URL.", true);
       emptyState(
         '<div class="empty"><h2>Connection error</h2>' +
         'Could not load /data. Open this page through the Modern Dashboard app URL on your hub.' +
         (detail ? '<p class="empty-detail">' + detail.replace(/</g, "&lt;") + '</p>' : '') +
+        (cloud ? '<p class="empty-detail"><button type="button" class="ghost-btn" id="fallback-cloud-btn">Open cloud mode</button></p>' : '') +
         '</div>'
       );
+      const fallbackBtn = document.getElementById("fallback-cloud-btn");
+      if (fallbackBtn) {
+        fallbackBtn.addEventListener("click", () => {
+          cfg.cloudUrl = cloud;
+          navigateToCloud();
+        });
+      }
     }
   })();
 
