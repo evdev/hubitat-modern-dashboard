@@ -338,12 +338,12 @@ body {
 .room-title { flex: 1; min-width: 0; }
 .room-name { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
 .room-meta { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
-.room-toggle { display: flex; gap: 8px; flex-shrink: 0; }
+.room-toggle { display: flex; gap: 8px; flex-shrink: 0; touch-action: none; }
 .room-slide-track {
   display: inline-flex; align-items: stretch; flex-shrink: 0;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
+  touch-action: none;
 }
 .room-slide-track.room-slide-active { touch-action: none; }
 .room-gesture-lock .room-head { touch-action: none; }
@@ -356,7 +356,7 @@ body {
   color: var(--text-dim);
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation; pointer-events: none;
+  touch-action: none; pointer-events: none;
   transition:
     width .22s var(--ease), min-width .22s var(--ease), max-width .22s var(--ease),
     opacity .18s var(--ease), padding .22s var(--ease), border-color .18s var(--ease),
@@ -380,6 +380,7 @@ body {
 .room-slide-track .btn-on,
 .room-slide-track .btn-off {
   flex: 0 0 auto;
+  touch-action: none;
 }
 .room-no-snapshot .room-snap-restore {
   opacity: 0;

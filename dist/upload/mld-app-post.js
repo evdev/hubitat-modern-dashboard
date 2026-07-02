@@ -211,6 +211,11 @@ async function setHsmApi(mode, pin, padApi) {
     track.addEventListener("contextmenu", (e) => e.preventDefault());
     track.addEventListener("selectstart", (e) => e.preventDefault());
 
+    function commitDistance() {
+      const w = actionBtn?.getBoundingClientRect?.().width || SLIDE_COMMIT_PX;
+      return Math.max(24, Math.min(SLIDE_COMMIT_PX, Math.round(w * 0.55)));
+    }
+
     function reset() {
       if (holdTimer) {
         clearTimeout(holdTimer);
@@ -222,6 +227,8 @@ async function setHsmApi(mode, pin, padApi) {
       slidePx = 0;
       track.classList.remove("room-slide-active", "room-slide-revealed", "room-slide-target");
       setRoomGestureLock(false);
+      try { track.releasePointerCapture(pointerId); } catch {}
+      try { primaryBtn.releasePointerCapture(pointerId); } catch {}
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -242,7 +249,7 @@ async function setHsmApi(mode, pin, padApi) {
         return;
       }
       if (!sliding) {
-        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+        if (Math.abs(dy) > Math.abs(dx) * 1.6 && Math.abs(dy) > 28) {
           reset();
           return;
         }
@@ -254,7 +261,7 @@ async function setHsmApi(mode, pin, padApi) {
       } else {
         slidePx = Math.max(0, dx);
       }
-      track.classList.toggle("room-slide-target", slidePx >= SLIDE_COMMIT_PX * 0.55);
+      track.classList.toggle("room-slide-target", slidePx >= commitDistance());
     }
 
     function onUp(e) {
@@ -264,7 +271,6 @@ async function setHsmApi(mode, pin, padApi) {
       const elapsed = Date.now() - downT;
       const dx = Math.abs(e.clientX - downX);
       const dy = Math.abs(e.clientY - downY);
-      try { primaryBtn.releasePointerCapture(pointerId); } catch {}
 
       if (holdBlocked) {
         reset();
@@ -277,7 +283,7 @@ async function setHsmApi(mode, pin, padApi) {
         return;
       }
 
-      if (holdActive && slidePx >= SLIDE_COMMIT_PX && (!canCommit || canCommit())) {
+      if (holdActive && slidePx >= commitDistance() && (!canCommit || canCommit())) {
         reset();
         onCommit();
         return;
@@ -292,6 +298,7 @@ async function setHsmApi(mode, pin, padApi) {
     primaryBtn.addEventListener("pointerdown", (e) => {
       if (M.reorderMode) return;
       if (e.button != null && e.button !== 0) return;
+      e.preventDefault();
       e.stopPropagation();
       pointerId = e.pointerId;
       downX = e.clientX;
@@ -302,7 +309,9 @@ async function setHsmApi(mode, pin, padApi) {
       sliding = false;
       slidePx = 0;
       gestureHandled = false;
-      try { primaryBtn.setPointerCapture(pointerId); } catch {}
+      try { track.setPointerCapture(pointerId); } catch {
+        try { primaryBtn.setPointerCapture(pointerId); } catch {}
+      }
       holdTimer = setTimeout(() => {
         holdTimer = null;
         if (canCommit && !canCommit()) {
