@@ -2712,7 +2712,8 @@
   }
 
   const SLIDE_HOLD_MS = 400;
-  const SLIDE_COMMIT_PX = 48;
+  const SLIDE_FALLBACK_COMMIT_PX = 72;
+  const SLIDE_MIN_COMMIT_PX = 48;
   const SLIDE_TAP_MOVE = 10;
 
   function attachRoomSlideAction(track, primaryBtn, actionBtn, opts) {
@@ -2732,8 +2733,16 @@
     track.addEventListener("selectstart", (e) => e.preventDefault());
 
     function commitDistance() {
-      const w = actionBtn?.getBoundingClientRect?.().width || SLIDE_COMMIT_PX;
-      return Math.max(24, Math.min(SLIDE_COMMIT_PX, Math.round(w * 0.55)));
+      const rectW = actionBtn?.getBoundingClientRect?.().width || 0;
+      const styleW = actionBtn ? parseFloat(getComputedStyle(actionBtn).maxWidth) || 0 : 0;
+      const w = Math.max(rectW, styleW, SLIDE_FALLBACK_COMMIT_PX);
+      return Math.max(SLIDE_MIN_COMMIT_PX, Math.round(w * 0.9));
+    }
+
+    function applySlide() {
+      const signed = direction === "left" ? -slidePx : slidePx;
+      track.style.setProperty("--room-slide-x", signed + "px");
+      track.style.setProperty("--room-slide-progress", Math.min(1, slidePx / commitDistance()).toFixed(3));
     }
 
     function reset() {
@@ -2745,6 +2754,8 @@
       holdBlocked = false;
       sliding = false;
       slidePx = 0;
+      track.style.removeProperty("--room-slide-x");
+      track.style.removeProperty("--room-slide-progress");
       track.classList.remove("room-slide-active", "room-slide-revealed", "room-slide-target");
       setRoomGestureLock(false);
       try { track.releasePointerCapture(pointerId); } catch {}
@@ -2776,12 +2787,14 @@
         sliding = true;
       }
       e.preventDefault();
+      const maxSlide = commitDistance();
       if (direction === "left") {
-        slidePx = Math.max(0, -dx);
+        slidePx = Math.min(maxSlide, Math.max(0, -dx));
       } else {
-        slidePx = Math.max(0, dx);
+        slidePx = Math.min(maxSlide, Math.max(0, dx));
       }
-      track.classList.toggle("room-slide-target", slidePx >= commitDistance());
+      applySlide();
+      track.classList.toggle("room-slide-target", slidePx >= maxSlide);
     }
 
     function onUp(e) {
