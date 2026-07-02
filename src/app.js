@@ -563,6 +563,29 @@
     ctx.drawImage(off, 0, 0);
   }
 
+  const activeSlideGestures = [];
+
+  function cancelAllSlideGestures() {
+    while (activeSlideGestures.length) activeSlideGestures[0]();
+  }
+
+  function appendPopup(el) {
+    document.documentElement.appendChild(el);
+  }
+
+  function bindPopupDismiss(overlay, panel, closeBtn, onClose) {
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) onClose();
+    });
+    if (panel) panel.addEventListener("click", (e) => e.stopPropagation());
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onClose();
+      });
+    }
+  }
+
   function ensureColorPopup() {
     if (colorPopup) return colorPopup;
     colorPopup = ce("div", "ct-popup");
@@ -577,10 +600,6 @@
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close light settings");
     closeBtn.textContent = "×";
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      closeColorPopup(true);
-    });
     head.appendChild(value);
     head.appendChild(closeBtn);
 
@@ -667,7 +686,7 @@
     panel.appendChild(paneRgb);
     panel.appendChild(paneLevel);
     colorPopup.appendChild(panel);
-    document.body.appendChild(colorPopup);
+    appendPopup(colorPopup);
 
     colorPopup._valueEl = value;
     colorPopup._tabsEl = tabs;
@@ -698,10 +717,7 @@
     tabRgb.addEventListener("click", (e) => { e.stopPropagation(); setColorTab("rgb"); });
     tabLevel.addEventListener("click", (e) => { e.stopPropagation(); setColorTab("level"); });
 
-    panel.addEventListener("click", (e) => e.stopPropagation());
-    colorPopup.addEventListener("click", (e) => {
-      if (e.target === colorPopup) closeColorPopup(true);
-    });
+    bindPopupDismiss(colorPopup, panel, closeBtn, () => closeColorPopup(true));
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && colorSession) closeColorPopup(false);
     });
@@ -1015,6 +1031,7 @@
   }
 
   function openColorPopup(id, anchorEl, dev) {
+    cancelAllSlideGestures();
     closeColorPopup(false);
     const hasCt = !!dev.ct;
     const hasRgb = !!dev.rgb;
@@ -1210,7 +1227,6 @@
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close thermostat");
     closeBtn.textContent = "×";
-    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); closeTstatPopup(); });
     leading.appendChild(title); leading.appendChild(favBtn);
     head.appendChild(leading); head.appendChild(closeBtn);
 
@@ -1380,12 +1396,9 @@
     panel.appendChild(fanModeSection);
     panel.appendChild(fanSpeedSection);
     tstatPopup.appendChild(panel);
-    document.body.appendChild(tstatPopup);
+    appendPopup(tstatPopup);
 
-    panel.addEventListener("click", (e) => e.stopPropagation());
-    tstatPopup.addEventListener("click", (e) => {
-      if (e.target === tstatPopup) closeTstatPopup();
-    });
+    bindPopupDismiss(tstatPopup, panel, closeBtn, closeTstatPopup);
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && tstatSession) closeTstatPopup();
     });
@@ -1955,6 +1968,7 @@
   }
 
   function openCentralTstatPopup() {
+    cancelAllSlideGestures();
     closeTstatPopup();
     if (colorSession) closeColorPopup(false);
     closeMusicMasterPopup();
@@ -1984,6 +1998,7 @@
   }
 
   function openTstatPopup(rid, anchorEl) {
+    cancelAllSlideGestures();
     closeTstatPopup();
     if (colorSession) closeColorPopup(false);
     closeMusicMasterPopup();
@@ -2027,7 +2042,6 @@
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close");
     closeBtn.textContent = "\u00d7";
-    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); closeMusicMasterPopup(); });
     head.appendChild(title);
     head.appendChild(closeBtn);
 
@@ -2035,10 +2049,9 @@
     panel.appendChild(head);
     panel.appendChild(body);
     popup.appendChild(panel);
-    document.body.appendChild(popup);
+    appendPopup(popup);
 
-    popup.addEventListener("click", (e) => { if (e.target === popup) closeMusicMasterPopup(); });
-    panel.addEventListener("click", (e) => e.stopPropagation());
+    bindPopupDismiss(popup, panel, closeBtn, closeMusicMasterPopup);
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && popup.classList.contains("open")) closeMusicMasterPopup();
     });
@@ -2104,6 +2117,7 @@
   }
 
   function openMusicMasterPopup() {
+    cancelAllSlideGestures();
     closeTstatPopup();
     if (colorSession) closeColorPopup(false);
     postCall("closeQuickPopup");
@@ -2232,7 +2246,14 @@
 
     document.documentElement.classList.add("android-browser-local");
 
+    function isModalOpen() {
+      return !!document.querySelector(
+        ".quick-popup.open, .ct-popup.open, .tstat-popup.open, .music-master-popup.open, .confirm-popup.open, .pin-pad-popup.open"
+      );
+    }
+
     function nudgeScroll() {
+      if (isModalOpen()) return;
       if (window.scrollY <= 1) {
         try { window.scrollTo(0, 1); } catch {}
       }
@@ -3008,9 +3029,13 @@
     let slidePx = 0;
     let slideMaxPx = SLIDE_FALLBACK_COMMIT_PX;
     let gestureHandled = false;
+    let gestureRegistered = false;
 
     track.addEventListener("contextmenu", (e) => e.preventDefault());
     track.addEventListener("selectstart", (e) => e.preventDefault());
+    track.addEventListener("lostpointercapture", (e) => {
+      if (e.pointerId === pointerId) reset();
+    });
 
     function actionWidth() {
       const rectW = actionBtn?.getBoundingClientRect?.().width || 0;
@@ -3066,6 +3091,11 @@
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
       pointerId = null;
+      if (gestureRegistered) {
+        gestureRegistered = false;
+        const idx = activeSlideGestures.indexOf(reset);
+        if (idx >= 0) activeSlideGestures.splice(idx, 1);
+      }
     }
 
     function onMove(e) {
@@ -3135,6 +3165,7 @@
     primaryBtn.addEventListener("pointerdown", (e) => {
       if (reorderMode) return;
       if (e.button != null && e.button !== 0) return;
+      if (pointerId != null) reset();
       e.preventDefault();
       e.stopPropagation();
       pointerId = e.pointerId;
@@ -3146,11 +3177,16 @@
       sliding = false;
       slidePx = 0;
       gestureHandled = false;
+      if (!gestureRegistered) {
+        gestureRegistered = true;
+        activeSlideGestures.push(reset);
+      }
       try { track.setPointerCapture(pointerId); } catch {
         try { primaryBtn.setPointerCapture(pointerId); } catch {}
       }
       holdTimer = setTimeout(() => {
         holdTimer = null;
+        if (pointerId == null) return;
         if (canCommit && !canCommit()) {
           holdBlocked = true;
           flash("No saved state", true);
@@ -4421,13 +4457,9 @@
     panel.appendChild(head);
     panel.appendChild(body);
     quickPopup.appendChild(panel);
-    document.body.appendChild(quickPopup);
+    appendPopup(quickPopup);
 
-    quickPopup.addEventListener("click", (e) => {
-      if (e.target === quickPopup) closeQuickPopup();
-    });
-    panel.addEventListener("click", (e) => e.stopPropagation());
-    close.addEventListener("click", (e) => { e.stopPropagation(); closeQuickPopup(); });
+    bindPopupDismiss(quickPopup, panel, close, closeQuickPopup);
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && quickPopup.classList.contains("open")) closeQuickPopup();
     });
@@ -5026,12 +5058,12 @@
     panel.appendChild(keys);
     panel.appendChild(actions);
     pinPadPopup.appendChild(panel);
-    document.body.appendChild(pinPadPopup);
+    appendPopup(pinPadPopup);
 
-    pinPadPopup.addEventListener("click", (e) => {
-      if (e.target === pinPadPopup) closePinPad();
+    bindPopupDismiss(pinPadPopup, panel, null, () => {
+      pinPadState?.onCancel?.();
+      closePinPad();
     });
-    panel.addEventListener("click", (e) => e.stopPropagation());
     cancel.addEventListener("click", (e) => {
       e.stopPropagation();
       pinPadState?.onCancel?.();
@@ -5104,6 +5136,7 @@
   }
 
   function openPinPad({ title, onSubmit, onCancel }) {
+    cancelAllSlideGestures();
     const popup = ensurePinPadPopup();
     pinPadState = { pin: "", onSubmit, onCancel };
     popup._title.textContent = title;
@@ -5548,6 +5581,7 @@
   }
 
   function openQuickPopup(id, title) {
+    cancelAllSlideGestures();
     if (colorSession) closeColorPopup(true);
     if (tstatSession) closeTstatPopup();
     closeMusicMasterPopup();
@@ -5718,12 +5752,9 @@
     actions.appendChild(ok);
     panel.appendChild(actions);
     confirmPopup.appendChild(panel);
-    document.body.appendChild(confirmPopup);
+    appendPopup(confirmPopup);
 
-    confirmPopup.addEventListener("click", (e) => {
-      if (e.target === confirmPopup) closeConfirm(false);
-    });
-    panel.addEventListener("click", (e) => e.stopPropagation());
+    bindPopupDismiss(confirmPopup, null, null, () => closeConfirm(false));
     cancel.addEventListener("click", (e) => { e.stopPropagation(); closeConfirm(false); });
     ok.addEventListener("click", (e) => { e.stopPropagation(); hapticTap(); closeConfirm(true); });
     document.addEventListener("keydown", (e) => {
@@ -5737,6 +5768,7 @@
 
   function confirmAction({ message, confirmLabel, danger = false }) {
     return new Promise((resolve) => {
+      cancelAllSlideGestures();
       const popup = ensureConfirmPopup();
       popup._msg.textContent = message;
       popup._ok.textContent = confirmLabel;

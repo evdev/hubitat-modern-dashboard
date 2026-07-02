@@ -213,9 +213,13 @@ async function setHsmApi(mode, pin, padApi) {
     let slidePx = 0;
     let slideMaxPx = SLIDE_FALLBACK_COMMIT_PX;
     let gestureHandled = false;
+    let gestureRegistered = false;
 
     track.addEventListener("contextmenu", (e) => e.preventDefault());
     track.addEventListener("selectstart", (e) => e.preventDefault());
+    track.addEventListener("lostpointercapture", (e) => {
+      if (e.pointerId === pointerId) reset();
+    });
 
     function actionWidth() {
       const rectW = actionBtn?.getBoundingClientRect?.().width || 0;
@@ -271,6 +275,11 @@ async function setHsmApi(mode, pin, padApi) {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
       pointerId = null;
+      if (gestureRegistered) {
+        gestureRegistered = false;
+        const idx = M.activeSlideGestures.indexOf(reset);
+        if (idx >= 0) M.activeSlideGestures.splice(idx, 1);
+      }
     }
 
     function onMove(e) {
@@ -340,6 +349,7 @@ async function setHsmApi(mode, pin, padApi) {
     primaryBtn.addEventListener("pointerdown", (e) => {
       if (M.reorderMode) return;
       if (e.button != null && e.button !== 0) return;
+      if (pointerId != null) reset();
       e.preventDefault();
       e.stopPropagation();
       pointerId = e.pointerId;
@@ -351,11 +361,16 @@ async function setHsmApi(mode, pin, padApi) {
       sliding = false;
       slidePx = 0;
       gestureHandled = false;
+      if (!gestureRegistered) {
+        gestureRegistered = true;
+        M.activeSlideGestures.push(reset);
+      }
       try { track.setPointerCapture(pointerId); } catch {
         try { primaryBtn.setPointerCapture(pointerId); } catch {}
       }
       holdTimer = setTimeout(() => {
         holdTimer = null;
+        if (pointerId == null) return;
         if (canCommit && !canCommit()) {
           holdBlocked = true;
           M.flash("No saved state", true);
@@ -1626,13 +1641,9 @@ async function setHsmApi(mode, pin, padApi) {
     panel.appendChild(head);
     panel.appendChild(body);
     quickPopup.appendChild(panel);
-    document.body.appendChild(quickPopup);
+    M.appendPopup(quickPopup);
 
-    quickPopup.addEventListener("click", (e) => {
-      if (e.target === quickPopup) M.closeQuickPopup();
-    });
-    panel.addEventListener("click", (e) => e.stopPropagation());
-    close.addEventListener("click", (e) => { e.stopPropagation(); M.closeQuickPopup(); });
+    M.bindPopupDismiss(quickPopup, panel, close, M.closeQuickPopup);
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && quickPopup.classList.contains("open")) M.closeQuickPopup();
     });
@@ -2231,12 +2242,12 @@ async function setHsmApi(mode, pin, padApi) {
     panel.appendChild(keys);
     panel.appendChild(actions);
     M.pinPadPopup.appendChild(panel);
-    document.body.appendChild(M.pinPadPopup);
+    M.appendPopup(M.pinPadPopup);
 
-    M.pinPadPopup.addEventListener("click", (e) => {
-      if (e.target === M.pinPadPopup) closePinPad();
+    M.bindPopupDismiss(M.pinPadPopup, panel, null, () => {
+      M.pinPadState?.onCancel?.();
+      closePinPad();
     });
-    panel.addEventListener("click", (e) => e.stopPropagation());
     cancel.addEventListener("click", (e) => {
       e.stopPropagation();
       M.pinPadState?.onCancel?.();
@@ -2309,6 +2320,7 @@ async function setHsmApi(mode, pin, padApi) {
   }
 
   function openPinPad({ title, onSubmit, onCancel }) {
+    M.cancelAllSlideGestures();
     const popup = ensurePinPadPopup();
     M.pinPadState = { pin: "", onSubmit, onCancel };
     popup._title.textContent = title;

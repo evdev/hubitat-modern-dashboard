@@ -281,6 +281,7 @@ function renderScenesPopup() {
   }
 
   function openQuickPopup(id, title) {
+    M.cancelAllSlideGestures();
     if (M.colorSession) M.closeColorPopup(true);
     if (M.tstatSession) M.closeTstatPopup();
     M.closeMusicMasterPopup();
@@ -451,12 +452,9 @@ function renderScenesPopup() {
     actions.appendChild(ok);
     panel.appendChild(actions);
     M.confirmPopup.appendChild(panel);
-    document.body.appendChild(M.confirmPopup);
+    M.appendPopup(M.confirmPopup);
 
-    M.confirmPopup.addEventListener("click", (e) => {
-      if (e.target === M.confirmPopup) closeConfirm(false);
-    });
-    panel.addEventListener("click", (e) => e.stopPropagation());
+    M.bindPopupDismiss(M.confirmPopup, null, null, () => closeConfirm(false));
     cancel.addEventListener("click", (e) => { e.stopPropagation(); closeConfirm(false); });
     ok.addEventListener("click", (e) => { e.stopPropagation(); M.hapticTap(); closeConfirm(true); });
     document.addEventListener("keydown", (e) => {
@@ -470,6 +468,7 @@ function renderScenesPopup() {
 
   function confirmAction({ message, confirmLabel, danger = false }) {
     return new Promise((resolve) => {
+      M.cancelAllSlideGestures();
       const popup = ensureConfirmPopup();
       popup._msg.textContent = message;
       popup._ok.textContent = confirmLabel;
