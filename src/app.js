@@ -151,6 +151,11 @@
   let quickPopup = null;
   let quickPopupOpenType = null;
 
+  function syncQuickPopupRef(el) {
+    quickPopup = el;
+    if (globalThis.__MLD) globalThis.__MLD.quickPopup = el;
+  }
+
   // ---------- tab mode (inline tabs instead of popups) ----------
   const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music"]);
   const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music" };
@@ -4438,11 +4443,15 @@
   }
 
   function ensureQuickPopup() {
-    if (quickPopup) return quickPopup;
-    quickPopup = ce("div", "quick-popup");
-    quickPopup.hidden = true;
-    quickPopup.setAttribute("role", "dialog");
-    quickPopup.setAttribute("aria-modal", "true");
+    if (quickPopup) {
+      syncQuickPopupRef(quickPopup);
+      return quickPopup;
+    }
+    const el = ce("div", "quick-popup");
+    syncQuickPopupRef(el);
+    el.hidden = true;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
     const panel = ce("div", "quick-panel");
     const head = ce("div", "quick-head");
     const title = ce("h2", "quick-title");
@@ -4455,17 +4464,17 @@
     head.appendChild(close);
     panel.appendChild(head);
     panel.appendChild(body);
-    quickPopup.appendChild(panel);
-    appendPopup(quickPopup);
+    el.appendChild(panel);
+    appendPopup(el);
 
-    bindPopupDismiss(quickPopup, panel, close, closeQuickPopup);
+    bindPopupDismiss(el, panel, close, closeQuickPopup);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && quickPopup.classList.contains("open")) closeQuickPopup();
+      if (e.key === "Escape" && el.classList.contains("open")) closeQuickPopup();
     });
 
-    quickPopup._title = title;
-    quickPopup._body = body;
-    return quickPopup;
+    el._title = title;
+    el._body = body;
+    return el;
   }
 
   function renderLocksPopup() {
@@ -5585,6 +5594,7 @@
     if (tstatSession) closeTstatPopup();
     closeMusicMasterPopup();
     const popup = ensureQuickPopup();
+    syncQuickPopupRef(popup);
     popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats" || id === "blinds");
     popup.classList.toggle("quick-popup-hub-mode", id === "hub-mode");
     popup._title.textContent = title;
@@ -5611,11 +5621,13 @@
 
   function closeQuickPopup() {
     closeFavoriteTstatModeMenu();
-    if (!quickPopup) return;
-    quickPopup.hidden = true;
-    quickPopup.classList.remove("open");
-    quickPopup.classList.remove("quick-popup-wide");
-    quickPopup.classList.remove("quick-popup-hub-mode");
+    const popup = quickPopup || (globalThis.__MLD && globalThis.__MLD.quickPopup) || document.querySelector(".quick-popup");
+    if (!popup) return;
+    syncQuickPopupRef(popup);
+    popup.hidden = true;
+    popup.classList.remove("open");
+    popup.classList.remove("quick-popup-wide");
+    popup.classList.remove("quick-popup-hub-mode");
     quickPopupOpenType = null;
     favDevMap.clear();
     favTstatMap.clear();
@@ -5724,9 +5736,10 @@
   }
 
   function closeConfirm(result) {
-    if (!confirmPopup) return;
-    confirmPopup.hidden = true;
-    confirmPopup.classList.remove("open");
+    const popup = confirmPopup || document.querySelector(".confirm-popup");
+    if (!popup) return;
+    popup.hidden = true;
+    popup.classList.remove("open");
     const resolve = confirmPending;
     confirmPending = null;
     if (resolve) resolve(result);
@@ -5734,10 +5747,11 @@
 
   function ensureConfirmPopup() {
     if (confirmPopup) return confirmPopup;
-    confirmPopup = ce("div", "confirm-popup");
-    confirmPopup.hidden = true;
-    confirmPopup.setAttribute("role", "dialog");
-    confirmPopup.setAttribute("aria-modal", "true");
+    const el = ce("div", "confirm-popup");
+    confirmPopup = el;
+    el.hidden = true;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
     const panel = ce("div", "confirm-panel");
     const msg = ce("div", "confirm-msg");
     const actions = ce("div", "confirm-actions");
@@ -5750,19 +5764,19 @@
     actions.appendChild(cancel);
     actions.appendChild(ok);
     panel.appendChild(actions);
-    confirmPopup.appendChild(panel);
-    appendPopup(confirmPopup);
+    el.appendChild(panel);
+    appendPopup(el);
 
-    bindPopupDismiss(confirmPopup, null, null, () => closeConfirm(false));
+    bindPopupDismiss(el, null, null, () => closeConfirm(false));
     cancel.addEventListener("click", (e) => { e.stopPropagation(); closeConfirm(false); });
     ok.addEventListener("click", (e) => { e.stopPropagation(); hapticTap(); closeConfirm(true); });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && confirmPopup.classList.contains("open")) closeConfirm(false);
+      if (e.key === "Escape" && el.classList.contains("open")) closeConfirm(false);
     });
 
-    confirmPopup._msg = msg;
-    confirmPopup._ok = ok;
-    return confirmPopup;
+    el._msg = msg;
+    el._ok = ok;
+    return el;
   }
 
   function confirmAction({ message, confirmLabel, danger = false }) {

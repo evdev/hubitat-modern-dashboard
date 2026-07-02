@@ -1619,11 +1619,15 @@ async function setHsmApi(mode, pin, padApi) {
   }
 
   function ensureQuickPopup() {
-    if (M.quickPopup) return M.quickPopup;
-    M.quickPopup = ce("div", "quick-popup");
-    M.quickPopup.hidden = true;
-    M.quickPopup.setAttribute("role", "dialog");
-    M.quickPopup.setAttribute("aria-modal", "true");
+    if (M.quickPopup) {
+      M.syncQuickPopupRef(M.quickPopup);
+      return M.quickPopup;
+    }
+    const el = ce("div", "quick-popup");
+    M.syncQuickPopupRef(el);
+    el.hidden = true;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
     const panel = ce("div", "quick-panel");
     const head = ce("div", "quick-head");
     const title = ce("h2", "quick-title");
@@ -1636,17 +1640,17 @@ async function setHsmApi(mode, pin, padApi) {
     head.appendChild(close);
     panel.appendChild(head);
     panel.appendChild(body);
-    M.quickPopup.appendChild(panel);
-    M.appendPopup(M.quickPopup);
+    el.appendChild(panel);
+    M.appendPopup(el);
 
-    M.bindPopupDismiss(M.quickPopup, panel, close, M.closeQuickPopup);
+    M.bindPopupDismiss(el, panel, close, M.closeQuickPopup);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && M.quickPopup.classList.contains("open")) M.closeQuickPopup();
+      if (e.key === "Escape" && el.classList.contains("open")) M.closeQuickPopup();
     });
 
-    M.quickPopup._title = title;
-    M.quickPopup._body = body;
-    return M.quickPopup;
+    el._title = title;
+    el._body = body;
+    return el;
   }
 
   function renderLocksPopup() {

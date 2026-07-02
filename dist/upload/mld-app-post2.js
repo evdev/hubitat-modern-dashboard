@@ -286,6 +286,7 @@ function renderScenesPopup() {
     if (M.tstatSession) M.closeTstatPopup();
     M.closeMusicMasterPopup();
     const popup = M.ensureQuickPopup();
+    M.syncQuickPopupRef(popup);
     popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats" || id === "blinds");
     popup.classList.toggle("quick-popup-hub-mode", id === "hub-mode");
     popup._title.textContent = title;
@@ -312,11 +313,13 @@ function renderScenesPopup() {
 
   function closeQuickPopup() {
     M.closeFavoriteTstatModeMenu();
-    if (!M.quickPopup) return;
-    M.quickPopup.hidden = true;
-    M.quickPopup.classList.remove("open");
-    M.quickPopup.classList.remove("quick-popup-wide");
-    M.quickPopup.classList.remove("quick-popup-hub-mode");
+    const popup = M.quickPopup || (globalThis.__MLD && globalThis.__MLD.quickPopup) || document.querySelector(".quick-popup");
+    if (!popup) return;
+    M.syncQuickPopupRef(popup);
+    popup.hidden = true;
+    popup.classList.remove("open");
+    popup.classList.remove("quick-popup-wide");
+    popup.classList.remove("quick-popup-hub-mode");
     M.quickPopupOpenType = null;
     M.favDevMap.clear();
     M.favTstatMap.clear();
@@ -425,9 +428,10 @@ function renderScenesPopup() {
   }
 
   function closeConfirm(result) {
-    if (!M.confirmPopup) return;
-    M.confirmPopup.hidden = true;
-    M.confirmPopup.classList.remove("open");
+    const popup = M.confirmPopup || document.querySelector(".confirm-popup");
+    if (!popup) return;
+    popup.hidden = true;
+    popup.classList.remove("open");
     const resolve = M.confirmPending;
     M.confirmPending = null;
     if (resolve) resolve(result);
@@ -435,10 +439,11 @@ function renderScenesPopup() {
 
   function ensureConfirmPopup() {
     if (M.confirmPopup) return M.confirmPopup;
-    M.confirmPopup = ce("div", "confirm-popup");
-    M.confirmPopup.hidden = true;
-    M.confirmPopup.setAttribute("role", "dialog");
-    M.confirmPopup.setAttribute("aria-modal", "true");
+    const el = ce("div", "confirm-popup");
+    M.confirmPopup = el;
+    el.hidden = true;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
     const panel = ce("div", "confirm-panel");
     const msg = ce("div", "confirm-msg");
     const actions = ce("div", "confirm-actions");
@@ -451,19 +456,19 @@ function renderScenesPopup() {
     actions.appendChild(cancel);
     actions.appendChild(ok);
     panel.appendChild(actions);
-    M.confirmPopup.appendChild(panel);
-    M.appendPopup(M.confirmPopup);
+    el.appendChild(panel);
+    M.appendPopup(el);
 
-    M.bindPopupDismiss(M.confirmPopup, null, null, () => closeConfirm(false));
+    M.bindPopupDismiss(el, null, null, () => closeConfirm(false));
     cancel.addEventListener("click", (e) => { e.stopPropagation(); closeConfirm(false); });
     ok.addEventListener("click", (e) => { e.stopPropagation(); M.hapticTap(); closeConfirm(true); });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && M.confirmPopup.classList.contains("open")) closeConfirm(false);
+      if (e.key === "Escape" && el.classList.contains("open")) closeConfirm(false);
     });
 
-    M.confirmPopup._msg = msg;
-    M.confirmPopup._ok = ok;
-    return M.confirmPopup;
+    el._msg = msg;
+    el._ok = ok;
+    return el;
   }
 
   function confirmAction({ message, confirmLabel, danger = false }) {
