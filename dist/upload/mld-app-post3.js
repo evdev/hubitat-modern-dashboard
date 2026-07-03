@@ -1139,6 +1139,7 @@
   }
 
   Object.assign(globalThis.__MLD, { applySchedulesFromData, schedulerHasContent, renderSchedulerView });
+  globalThis.__MLD.updateQuickNavVisibility?.();
 
   Object.assign(M, { applySchedulesFromData, schedulerHasContent, fmtSchedTime, newSchedDraft, schedApi, renderSchedulerView, renderSchedulerActive, renderSchedList, renderSchedRow, renderSchedWorkflow, schedNavRow, renderSchedStep1, validateStep1, renderSchedModeTriggerPicker, renderSchedModeCondition, schedOffsetLabel, renderSchedWhenPicker, renderSchedOffsetPicker, renderSchedSunPreview, renderSchedTimePicker, renderSchedDayPicker, defaultOnceAt, renderSchedOncePicker, renderSchedStep2, renderSchedStep3, renderSchedOnOffDeviceAction, renderSchedLightAction, renderSchedThermostatAction, renderSchedHubModeAction, autoSchedName, saveSchedule });
 })();

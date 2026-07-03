@@ -5547,10 +5547,7 @@
       case "hub-mode": return hubModes.length > 0;
       case "security": return hsmEnabled;
       case "blinds": return windowShades.length > 0;
-      case "scheduling": {
-        const schedM = globalThis.__MLD;
-        return typeof schedM?.schedulerHasContent === "function" ? schedM.schedulerHasContent() : false;
-      }
+      case "scheduling": return true;
       case "sensors": return mergedSensorList().length > 0;
       case "thermostats": return thermostatsPopupEnabled && thermostats.length > 0;
       case "music": return music.length > 0;
@@ -5583,6 +5580,9 @@
         case "favorites": refreshFavoritesPopup(); break;
         case "thermostats": refreshThermostatsPopup(); break;
         case "sensors": refreshSensorsPopup(); break;
+        case "scheduling":
+          if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
+          break;
       }
       return;
     }
@@ -5596,6 +5596,9 @@
       case "thermostats": refreshThermostatsPopup(); break;
       case "security": renderSecurityPopup(); break;
       case "sensors": refreshSensorsPopup(); break;
+      case "scheduling":
+        if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
+        break;
     }
   }
 
@@ -6329,6 +6332,8 @@
       }
     }
   })();
+
+  if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
 
   // __MLD_SPLIT3__
 
@@ -7466,5 +7471,6 @@
   }
 
   Object.assign(globalThis.__MLD, { applySchedulesFromData, schedulerHasContent, renderSchedulerView });
+  globalThis.__MLD.updateQuickNavVisibility?.();
 
 })();
