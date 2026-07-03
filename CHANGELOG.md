@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Scheduler UI touch optimization: larger tap targets, improved typography, and row/room-header tap-to-toggle on device pickers.
+- Fix scheduler nav flicker by decoupling visibility from post3 chunk load.
+
 ## 0.2.0
 
 - Scheduler MVP (Phase 1): create, edit, enable/disable, delete, and test schedules from the dashboard.

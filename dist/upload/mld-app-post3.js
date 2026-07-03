@@ -260,6 +260,22 @@
     return nav;
   }
 
+  function schedBindPickRow(row, toggle) {
+    row.classList.add("sched-pick-row");
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      toggle();
+    });
+  }
+
+  function schedBindPickRoom(hdr, checkBtn) {
+    hdr.classList.add("sched-pick-room");
+    hdr.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      checkBtn.click();
+    });
+  }
+
   // Step 1: When
   function renderSchedStep1() {
     const wrap = ce("div", "sched-step");
@@ -686,6 +702,7 @@
         const nm = ce("div", "sched-room-name");
         nm.textContent = r.name || "Room";
         hdr.appendChild(nm);
+        schedBindPickRoom(hdr, check);
         next.appendChild(hdr);
         for (const d of roomDevs) {
           const row = ce("div", "sched-light-toggle-row");
@@ -693,7 +710,7 @@
           const cbtn = ce("button", "sched-check " + (sel ? "is-on" : ""));
           cbtn.type = "button";
           cbtn.textContent = sel ? "\u2713" : "";
-          cbtn.addEventListener("click", () => {
+          const toggle = () => {
             M.hapticTap();
             if (sel) {
               selectedIds.delete(String(d.i));
@@ -703,7 +720,9 @@
               schedDraft.action.states.push({ id: d.i, on: true });
             }
             refreshOnOffAction();
-          });
+          };
+          cbtn.addEventListener("click", toggle);
+          schedBindPickRow(row, toggle);
           row.appendChild(cbtn);
           const dnm = ce("div", "sched-light-name");
           dnm.textContent = d.n || ("Device " + d.i);
@@ -724,7 +743,7 @@
           const cbtn = ce("button", "sched-check " + (sel ? "is-on" : ""));
           cbtn.type = "button";
           cbtn.textContent = sel ? "\u2713" : "";
-          cbtn.addEventListener("click", () => {
+          const toggle = () => {
             M.hapticTap();
             if (sel) {
               selectedIds.delete(String(d.i));
@@ -734,7 +753,9 @@
               schedDraft.action.states.push({ id: d.i, on: true });
             }
             refreshOnOffAction();
-          });
+          };
+          cbtn.addEventListener("click", toggle);
+          schedBindPickRow(row, toggle);
           row.appendChild(cbtn);
           const dnm = ce("div", "sched-light-name");
           dnm.textContent = d.n || ("Device " + d.i);
@@ -814,6 +835,7 @@
       const nm = ce("div", "sched-room-name");
       nm.textContent = r.name || "Room";
       hdr.appendChild(nm);
+      schedBindPickRoom(hdr, check);
       return hdr;
     }
 
@@ -823,7 +845,7 @@
       const check = ce("button", "sched-check " + (sel ? "is-on" : ""));
       check.type = "button";
       check.textContent = sel ? "\u2713" : "";
-      check.addEventListener("click", () => {
+      const toggle = () => {
         M.hapticTap();
         if (sel) {
           selectedIds.delete(String(d.i));
@@ -833,7 +855,9 @@
           schedDraft.action.states.push({ id: d.i, on: true, level: d.d ? 100 : null, ct: d.ct ? 3000 : null });
         }
         refreshLightAction();
-      });
+      };
+      check.addEventListener("click", toggle);
+      schedBindPickRow(row, toggle);
       row.appendChild(check);
       const nm = ce("div", "sched-light-name");
       nm.textContent = d.n || ("Device " + d.i);
@@ -984,13 +1008,15 @@
       const check = ce("button", "sched-check " + (sel ? "is-on" : ""));
       check.type = "button";
       check.textContent = sel ? "\u2713" : "";
-      check.addEventListener("click", () => {
+      const toggle = () => {
         M.hapticTap();
         if (sel) selectedIds.delete(String(t.i));
         else selectedIds.add(String(t.i));
         schedDraft.action.devices = [...selectedIds];
         renderSchedulerActive();
-      });
+      };
+      check.addEventListener("click", toggle);
+      schedBindPickRow(row, toggle);
       row.appendChild(check);
       const nm = ce("div", "sched-light-name");
       nm.textContent = t.n || ("Thermostat " + t.i);
@@ -1141,5 +1167,5 @@
   Object.assign(globalThis.__MLD, { applySchedulesFromData, schedulerHasContent, renderSchedulerView });
   globalThis.__MLD.updateQuickNavVisibility?.();
 
-  Object.assign(M, { applySchedulesFromData, schedulerHasContent, fmtSchedTime, newSchedDraft, schedApi, renderSchedulerView, renderSchedulerActive, renderSchedList, renderSchedRow, renderSchedWorkflow, schedNavRow, renderSchedStep1, validateStep1, renderSchedModeTriggerPicker, renderSchedModeCondition, schedOffsetLabel, renderSchedWhenPicker, renderSchedOffsetPicker, renderSchedSunPreview, renderSchedTimePicker, renderSchedDayPicker, defaultOnceAt, renderSchedOncePicker, renderSchedStep2, renderSchedStep3, renderSchedOnOffDeviceAction, renderSchedLightAction, renderSchedThermostatAction, renderSchedHubModeAction, autoSchedName, saveSchedule });
+  Object.assign(M, { applySchedulesFromData, schedulerHasContent, fmtSchedTime, newSchedDraft, schedApi, renderSchedulerView, renderSchedulerActive, renderSchedList, renderSchedRow, renderSchedWorkflow, schedNavRow, schedBindPickRow, schedBindPickRoom, renderSchedStep1, validateStep1, renderSchedModeTriggerPicker, renderSchedModeCondition, schedOffsetLabel, renderSchedWhenPicker, renderSchedOffsetPicker, renderSchedSunPreview, renderSchedTimePicker, renderSchedDayPicker, defaultOnceAt, renderSchedOncePicker, renderSchedStep2, renderSchedStep3, renderSchedOnOffDeviceAction, renderSchedLightAction, renderSchedThermostatAction, renderSchedHubModeAction, autoSchedName, saveSchedule });
 })();
