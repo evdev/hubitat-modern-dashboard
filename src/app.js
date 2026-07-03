@@ -157,8 +157,8 @@
   }
 
   // ---------- tab mode (inline tabs instead of popups) ----------
-  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music"]);
-  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music" };
+  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "scheduling"]);
+  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", scheduling: "Scheduler" };
   let tabMode = cfg.enableTabs;
   let activeTab = "lights";
   let tabViewEl = null;
@@ -2518,6 +2518,10 @@
       }
       if (d.config.localUrl != null) cfg.localUrl = String(d.config.localUrl || "");
       if (d.config.cloudUrl != null) cfg.cloudUrl = String(d.config.cloudUrl || "");
+    }
+    if (globalThis.__MLD) {
+      const schedHook = globalThis.__MLD["applySchedules" + "FromData"];
+      if (typeof schedHook === "function") schedHook(d);
     }
     return d;
   }
@@ -5539,7 +5543,10 @@
       case "hub-mode": return hubModes.length > 0;
       case "security": return hsmEnabled;
       case "blinds": return windowShades.length > 0;
-      case "scheduling": return false;
+      case "scheduling": {
+        const schedM = globalThis.__MLD;
+        return typeof schedM?.schedulerHasContent === "function" ? schedM.schedulerHasContent() : false;
+      }
       case "sensors": return mergedSensorList().length > 0;
       case "thermostats": return thermostatsPopupEnabled && thermostats.length > 0;
       case "music": return music.length > 0;
@@ -5610,6 +5617,13 @@
       case "security": renderSecurityPopup(); break;
       case "sensors": renderSensorsPopup(); break;
       case "thermostats": renderThermostatsPopup(); break;
+      case "scheduling":
+        if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
+        else {
+          popup._body.className = "quick-body";
+          popup._body.textContent = "Coming soon";
+        }
+        break;
       default:
         popup._body.className = "quick-body";
         popup._body.textContent = "Coming soon";
@@ -5701,6 +5715,9 @@
         case "sensors": renderSensorsPopup(); break;
         case "thermostats": renderThermostatsPopup(); break;
         case "music": renderMusicPopup(); break;
+        case "scheduling":
+          if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
+          break;
       }
     }
     applySearch();
@@ -6308,5 +6325,31 @@
       }
     }
   })();
+
+  // __MLD_SPLIT3__
+
+  // ---------- scheduler module (ships as mld-app-post3.js) ----------
+  let schedules = [];
+
+  function applySchedulesFromData(data) {
+    if (!data || !Array.isArray(data.schedules)) return;
+    schedules = data.schedules;
+  }
+
+  function schedulerHasContent() {
+    return false;
+  }
+
+  function renderSchedulerView() {
+    const popup = ensureQuickPopup();
+    syncQuickPopupRef(popup);
+    popup.classList.remove("quick-popup-wide", "quick-popup-hub-mode");
+    const body = currentBody();
+    body.className = "quick-body quick-body-scheduler" + (inTabView() ? " tab-body" : "");
+    body.innerHTML = "";
+    const msg = ce("p", "scheduler-placeholder");
+    msg.textContent = "Scheduler coming soon.";
+    body.appendChild(msg);
+  }
 
 })();

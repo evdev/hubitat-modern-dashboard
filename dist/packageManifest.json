@@ -2,10 +2,10 @@
 	"packageName": "Modern Dashboard",
 	"minimumHEVersion": "2.3.0",
 	"author": "Ephrayim (evdev)",
-	"version": "0.1.9",
-	"dateReleased": "2026-07-02",
+	"version": "0.2.0",
+	"dateReleased": "2026-07-03",
 	"licenseFile": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/LICENSE",
-	"releaseNotes": "0.1.9: Local/cloud mode switching: overflow menu links, editable local URL, Android cloud banner, and remembered local access.; House snapshot slides on **All on** / **All off** with slide-confirm thumb UI; refined room snapshot gesture and animation.; App JS split into three File Manager chunks (`mld-app-post2.js`) to stay under hub size limits.; Light command metering uses `runInMillis`; snapshot timestamps use Hubitat `now()`.\nModern, mobile-first Hubitat dashboard for lights (switches, dimmers, color temperature, RGB), thermostats (setpoint dial, mode, fan), temperature sensors, and music/media players (Sonos, Echo Speaks, AirPlay, Chromecast). Room-grouped layout with per-room on/off, drag-to-dim sliders, sticky search, and collapsible rooms. Works on local and cloud URLs with no Maker API; installable as a PWA from the cloud link. Dark, light, and auto themes; instant LAN updates via WebSocket when available.",
+	"releaseNotes": "0.2.0: Scheduler infrastructure: fourth JS chunk (`mld-app-post3.js`) for upcoming scheduler UI; build enforces 128 KB limit on all four app chunks.; Scheduler tab wiring (hidden until Phase 1); minimal hooks for schedule data from `/data`.\nModern, mobile-first Hubitat dashboard for lights (switches, dimmers, color temperature, RGB), thermostats (setpoint dial, mode, fan), temperature sensors, and music/media players (Sonos, Echo Speaks, AirPlay, Chromecast). Room-grouped layout with per-room on/off, drag-to-dim sliders, sticky search, and collapsible rooms. Works on local and cloud URLs with no Maker API; installable as a PWA from the cloud link. Dark, light, and auto themes; instant LAN updates via WebSocket when available.",
 	"documentationLink": "https://github.com/evdev/hubitat-modern-dashboard#readme",
 	"communityLink": "https://github.com/evdev/hubitat-modern-dashboard/discussions",
 	"gitHubUrl": "https://github.com/evdev/hubitat-modern-dashboard",
@@ -50,6 +50,11 @@
 			"id": "e7f8a9b0-c1d2-3456-7890-abcdef123456",
 			"name": "mld-app-post2.js",
 			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app-post2.js"
+		},
+		{
+			"id": "f8a9b0c1-d2e3-4567-8901-bcdef1234567",
+			"name": "mld-app-post3.js",
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app-post3.js"
 		},
 		{
 			"id": "a6f7b8c9-d0e1-2345-f012-456789012345",

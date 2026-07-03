@@ -993,6 +993,8 @@ body {
 .quick-body-scenes, .quick-body-favorites, .quick-body-locks { text-align: left; padding: 0; }
 .quick-body-sensors { text-align: left; padding: 0; }
 .quick-body-thermostats { text-align: left; padding: 0; }
+.quick-body-scheduler { text-align: left; padding: 0; }
+.scheduler-placeholder { margin: 12px 4px; color: var(--muted); font-size: 0.95rem; }
 
 .sensor-popup-wrap { display: flex; flex-direction: column; gap: 8px; }
 .sensor-toolbar { display: flex; justify-content: flex-end; padding: 0 2px; }

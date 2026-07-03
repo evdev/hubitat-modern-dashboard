@@ -231,7 +231,10 @@ function renderScenesPopup() {
       case "hub-mode": return M.hubModes.length > 0;
       case "security": return M.hsmEnabled;
       case "blinds": return M.windowShades.length > 0;
-      case "scheduling": return false;
+      case "scheduling": {
+        const schedM = globalThis.__MLD;
+        return typeof schedM?.schedulerHasContent === "function" ? schedM.schedulerHasContent() : false;
+      }
       case "sensors": return M.mergedSensorList().length > 0;
       case "thermostats": return M.thermostatsPopupEnabled && M.thermostats.length > 0;
       case "music": return M.music.length > 0;
@@ -302,6 +305,13 @@ function renderScenesPopup() {
       case "security": M.renderSecurityPopup(); break;
       case "sensors": M.renderSensorsPopup(); break;
       case "thermostats": renderThermostatsPopup(); break;
+      case "scheduling":
+        if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
+        else {
+          popup._body.className = "quick-body";
+          popup._body.textContent = "Coming soon";
+        }
+        break;
       default:
         popup._body.className = "quick-body";
         popup._body.textContent = "Coming soon";
@@ -393,6 +403,9 @@ function renderScenesPopup() {
         case "sensors": M.renderSensorsPopup(); break;
         case "thermostats": renderThermostatsPopup(); break;
         case "music": M.renderMusicPopup(); break;
+        case "scheduling":
+          if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
+          break;
       }
     }
     applySearch();
@@ -1000,6 +1013,5 @@ function renderScenesPopup() {
       }
     }
   })();
-
   Object.assign(M, { favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, closeConfirm, ensureConfirmPopup, confirmAction, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, startWS, scheduleReconnect });
 })();

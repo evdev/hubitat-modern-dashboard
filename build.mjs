@@ -20,6 +20,7 @@ const hubitat = join(root, "hubitat");
 
 const MLD_SPLIT = "// __MLD_SPLIT__";
 const MLD_SPLIT2 = "// __MLD_SPLIT2__";
+const MLD_SPLIT3 = "// __MLD_SPLIT3__";
 const HUB_MAX_JS = 128 * 1024;
 
 // Must match definition(namespace:, name:) in the Groovy template
@@ -59,6 +60,7 @@ const FILE_MANAGER_ASSETS = [
   { id: "e4d5f6a7-b8c9-0123-def0-234567890123", name: "mld-app.js" },
   { id: "f5e6a7b8-c9d0-1234-ef01-345678901234", name: "mld-app-post.js" },
   { id: "e7f8a9b0-c1d2-3456-7890-abcdef123456", name: "mld-app-post2.js" },
+  { id: "f8a9b0c1-d2e3-4567-8901-bcdef1234567", name: "mld-app-post3.js" },
   { id: "a6f7b8c9-d0e1-2345-f012-456789012345", name: "mld-manifest.webmanifest" },
   { id: "b7a8c9d0-e1f2-3456-0123-567890123456", name: "mld-sw.js" },
   { id: "c8b9d0e1-f2a3-4567-1234-678901234567", name: "mld-icon-192.b64" },
@@ -268,10 +270,15 @@ function splitAppJs(srcPath) {
   if (split2Idx < 0 || split2Idx <= split1Idx) {
     throw new Error(`Missing ${MLD_SPLIT2} after ${MLD_SPLIT} in src/app.js`);
   }
+  const split3Idx = raw.indexOf(MLD_SPLIT3);
+  if (split3Idx < 0 || split3Idx <= split2Idx) {
+    throw new Error(`Missing ${MLD_SPLIT3} after ${MLD_SPLIT2} in src/app.js`);
+  }
 
   const part1Lines = raw.slice(0, split1Idx).trimEnd().split("\n");
   let part2Lines = raw.slice(split1Idx + MLD_SPLIT.length, split2Idx).trimStart().split("\n");
-  let part3Lines = raw.slice(split2Idx + MLD_SPLIT2.length).trimStart().split("\n");
+  let part3Lines = raw.slice(split2Idx + MLD_SPLIT2.length, split3Idx).trimStart().split("\n");
+  let part4Lines = raw.slice(split3Idx + MLD_SPLIT3.length).trimStart().split("\n");
 
   const trimTrailing = (lines) => {
     while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
@@ -281,8 +288,9 @@ function splitAppJs(srcPath) {
   trimTrailing(part1Lines);
   trimTrailing(part2Lines);
   trimTrailing(part3Lines);
+  trimTrailing(part4Lines);
 
-  assertNoPart1BarePart2Refs(part1Lines, [...part2Lines, ...part3Lines]);
+  assertNoPart1BarePart2Refs(part1Lines, [...part2Lines, ...part3Lines, ...part4Lines]);
 
   const exportIds1 = parseTopLevelIds(part1Lines.slice(1));
   const exportBlock = `  globalThis.__MLD = { ${exportIds1.join(", ")} };`;
@@ -290,21 +298,38 @@ function splitAppJs(srcPath) {
 
   const exportIds2Set = new Set(parseTopLevelIds(part2Lines));
   const exportIds3Set = new Set(parseTopLevelIds(part3Lines));
+  const exportIds4Set = new Set(parseTopLevelIds(part4Lines));
   const exportIds3Only = [...exportIds3Set].filter((id) => !exportIds2Set.has(id));
-  const exportIds2Only = [...exportIds2Set].filter((id) => !exportIds1.includes(id));
+  const exportIds4Only = [...exportIds4Set].filter((id) => !exportIds2Set.has(id));
+  const exportIdsForPart2 = [...exportIds1, ...exportIds3Only, ...exportIds4Only];
+  const exportIdsForPart3 = [
+    ...exportIds1,
+    ...[...exportIds2Set].filter((id) => !exportIds3Set.has(id)),
+    ...[...exportIds4Set].filter((id) => !exportIds3Set.has(id)),
+  ];
+  const exportIdsForPart4 = [
+    ...exportIds1,
+    ...[...exportIds2Set].filter((id) => !exportIds4Set.has(id)),
+    ...[...exportIds3Set].filter((id) => !exportIds4Set.has(id)),
+  ];
 
   const part2Out = wrapPostChunk(
     part2Lines.join("\n"),
-    [...exportIds1, ...exportIds3Only],
+    exportIdsForPart2,
     "upload mld-app.js before mld-app-post.js"
   );
   const part3Out = wrapPostChunk(
     part3Lines.join("\n"),
-    [...exportIds1, ...exportIds2Only],
+    exportIdsForPart3,
     "upload mld-app-post.js before mld-app-post2.js"
   );
+  const part4Out = wrapPostChunk(
+    part4Lines.join("\n"),
+    exportIdsForPart4,
+    "upload mld-app-post2.js before mld-app-post3.js"
+  );
 
-  return { part1Out, part2Out, part3Out };
+  return { part1Out, part2Out, part3Out, part4Out };
 }
 
 function assertUnderHubLimit(label, content) {
@@ -364,13 +389,15 @@ writeFileSync(join(upload, "mld-icon-512.b64"), iconBase64(512) + "\n");
 writeFileSync(join(upload, "mld-icon-192.png"), createIconPng(192));
 writeFileSync(join(upload, "mld-icon-512.png"), createIconPng(512));
 
-const { part1Out, part2Out, part3Out } = splitAppJs(join(root, "src", "app.js"));
+const { part1Out, part2Out, part3Out, part4Out } = splitAppJs(join(root, "src", "app.js"));
 assertUnderHubLimit("mld-app.js", part1Out);
 assertUnderHubLimit("mld-app-post.js", part2Out);
 assertUnderHubLimit("mld-app-post2.js", part3Out);
+assertUnderHubLimit("mld-app-post3.js", part4Out);
 writeFileSync(join(upload, "mld-app.js"), part1Out);
 writeFileSync(join(upload, "mld-app-post.js"), part2Out);
 writeFileSync(join(upload, "mld-app-post2.js"), part3Out);
+writeFileSync(join(upload, "mld-app-post3.js"), part4Out);
 
 for (const name of ["mld-app-pre.js", "mld-sw.js"]) {
   const content = readFileSync(join(upload, name), "utf8");
@@ -504,6 +531,7 @@ console.log(`  dist/ModernLightsDashboard.bundle.zip   ${kb(bundleZip)} KB  ← 
 console.log(`  dist/upload/mld-app.js                  ${kb(join(upload, "mld-app.js"))} KB`);
 console.log(`  dist/upload/mld-app-post.js             ${kb(join(upload, "mld-app-post.js"))} KB`);
 console.log(`  dist/upload/mld-app-post2.js            ${kb(join(upload, "mld-app-post2.js"))} KB`);
+console.log(`  dist/upload/mld-app-post3.js            ${kb(join(upload, "mld-app-post3.js"))} KB`);
 console.log(`  dist/upload/                            (${FILE_MANAGER_ASSETS.length} File Manager assets)`);
 console.log(`  hubitat/packageManifest.json            (HPM: app + oauth + ${FILE_MANAGER_ASSETS.length} files)`);
 console.log(`  hubitat/repository.json                 (HPM custom repository listing)`);

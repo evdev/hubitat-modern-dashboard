@@ -157,8 +157,8 @@
   }
 
   // ---------- tab mode (inline tabs instead of popups) ----------
-  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music"]);
-  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music" };
+  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "scheduling"]);
+  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", scheduling: "Scheduler" };
   let tabMode = cfg.enableTabs;
   let activeTab = "lights";
   let tabViewEl = null;
@@ -2518,6 +2518,10 @@
       }
       if (d.config.localUrl != null) cfg.localUrl = String(d.config.localUrl || "");
       if (d.config.cloudUrl != null) cfg.cloudUrl = String(d.config.cloudUrl || "");
+    }
+    if (globalThis.__MLD) {
+      const schedHook = globalThis.__MLD["applySchedules" + "FromData"];
+      if (typeof schedHook === "function") schedHook(d);
     }
     return d;
   }

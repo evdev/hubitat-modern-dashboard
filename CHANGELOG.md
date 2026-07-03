@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Scheduler infrastructure: fourth JS chunk (`mld-app-post3.js`) for upcoming scheduler UI; build enforces 128 KB limit on all four app chunks.
+- Scheduler tab wiring (hidden until Phase 1); minimal hooks for schedule data from `/data`.
+
 ## 0.1.9
 
 - Local/cloud mode switching: overflow menu links, editable local URL, Android cloud banner, and remembered local access.

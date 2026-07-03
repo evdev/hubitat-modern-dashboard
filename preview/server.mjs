@@ -260,6 +260,10 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "application/javascript" });
     return res.end(readDist("mld-app-post2.js"));
   }
+  if (p === "/app-post3.js") {
+    res.writeHead(200, { "Content-Type": "application/javascript" });
+    return res.end(readDist("mld-app-post3.js"));
+  }
   if (p === "/manifest.webmanifest") {
     res.writeHead(200, { "Content-Type": "application/manifest+json" });
     return res.end(read("src/manifest.webmanifest"));
