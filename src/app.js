@@ -20,6 +20,7 @@
   const MENU_REORDER_BTN = document.getElementById("menu-reorder");
   const MENU_HAPTICS_EL = document.getElementById("menu-haptics");
   const MENU_TABS_EL = document.getElementById("menu-tabs");
+  const MENU_DRAWER_EL = document.getElementById("menu-drawer");
   const MENU_THEME_SEGMENT = document.getElementById("menu-theme-segment");
   const MENU_OPEN_LOCAL_BTN = document.getElementById("menu-open-local");
   const MENU_OPEN_CLOUD_BTN = document.getElementById("menu-open-cloud");
@@ -27,6 +28,7 @@
   const HAPTICS_STORAGE_KEY = "mld_haptics";
   const THEME_STORAGE_KEY = "mld_theme";
   const TABS_STORAGE_KEY = "mld_tabs";
+  const DRAWER_STORAGE_KEY = "mld_drawer";
   const LOCAL_URL_STORAGE_KEY = "mld_localUrl";
   const LOCAL_OK_STORAGE_KEY = "mld_localOk";
   const CLOUD_URL_STORAGE_KEY = "mld_cloudUrl";
@@ -36,6 +38,7 @@
   const APP_EL = document.getElementById("app");
   const REORDER_DRAG_THRESHOLD = 8;
   const DASHBOARD_TITLE_EL = document.getElementById("dashboard-title");
+  const CURRENT_CATEGORY_TITLE_EL = document.getElementById("current-category-title");
 
   const POLL_DEFAULT = 5000;
   const POLL_WS_FALLBACK = 45000;
@@ -78,7 +81,20 @@
     try { localStorage.setItem(TABS_STORAGE_KEY, on ? "1" : "0"); } catch {}
   }
 
-  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", roomOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref(), localUrl: "", cloudUrl: "" };
+  function loadDrawerPref() {
+    try {
+      const raw = localStorage.getItem(DRAWER_STORAGE_KEY);
+      if (raw === "0") return false;
+      if (raw === "1") return true;
+    } catch {}
+    return false;
+  }
+
+  function saveDrawerPref(on) {
+    try { localStorage.setItem(DRAWER_STORAGE_KEY, on ? "1" : "0"); } catch {}
+  }
+
+  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", roomOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref(), enableDrawer: loadDrawerPref(), localUrl: "", cloudUrl: "" };
 
   let localModeBannerEl = null;
   let localBannerDismissed = false;
@@ -5638,6 +5654,7 @@
     popup.hidden = false;
     popup.classList.add("open");
     popup.querySelector(".quick-close").focus();
+    updateCurrentCategoryTitle();
   }
 
   function closeQuickPopup() {
@@ -5663,6 +5680,7 @@
     sensorFilterChipsEl = null;
     sensorFilterBtnEl = null;
     sensorFilterEmptyEl = null;
+    updateCurrentCategoryTitle();
   }
 
   // ---------- tab mode helpers ----------
@@ -5683,6 +5701,19 @@
   function currentCategory() {
     if (tabMode && activeTab !== "lights") return activeTab;
     return quickPopupOpenType;
+  }
+
+  const POPUP_LABELS = {};
+  for (const { popup, title } of QUICK_NAV) POPUP_LABELS[popup] = title;
+
+  function currentCategoryLabel() {
+    const cat = quickPopupOpenType || (tabMode && activeTab !== "lights" ? activeTab : null);
+    if (!cat) return "Lights";
+    return POPUP_LABELS[cat] || TAB_LABELS[cat] || cat;
+  }
+
+  function updateCurrentCategoryTitle() {
+    if (CURRENT_CATEGORY_TITLE_EL) CURRENT_CATEGORY_TITLE_EL.textContent = currentCategoryLabel();
   }
 
   function inTabView() {
@@ -5728,6 +5759,7 @@
       }
     }
     applySearch();
+    updateCurrentCategoryTitle();
   }
 
   function closeCurrentView() {
@@ -5736,6 +5768,7 @@
   }
 
   function setTabMode(on) {
+    if (cfg.enableDrawer && !on) return; // drawer mode forces tab mode on
     cfg.enableTabs = on;
     tabMode = on;
     saveTabsPref(on);
@@ -5756,6 +5789,117 @@
       showTab("lights");
     }
     updateTabActiveStates();
+    updateQuickNavVisibility();
+    updateCurrentCategoryTitle();
+  }
+
+  // ---------- navigation drawer ----------
+  let drawerOpen = false;
+  let drawerClosing = false;
+  let priorTabsPref = cfg.enableTabs;
+  let drawerDom = null;
+
+  function resolveDrawerDom() {
+    if (drawerDom) return drawerDom;
+    const toggle = document.getElementById("drawer-toggle");
+    const aside = document.getElementById("app-drawer");
+    const backdrop = document.getElementById("drawer-backdrop");
+    const searchSlot = aside?.querySelector(".drawer-search-slot");
+    const navSlot = aside?.querySelector(".drawer-nav-slot");
+    const topbar = document.querySelector(".topbar");
+    if (!toggle || !aside || !backdrop || !searchSlot || !navSlot || !topbar) return null;
+    drawerDom = { toggle, aside, backdrop, searchSlot, navSlot, topbar };
+    return drawerDom;
+  }
+
+  function setDrawerLabels() {
+    const nav = document.querySelector(".quick-nav");
+    if (!nav) return;
+    for (const btn of nav.querySelectorAll(".ghost-btn.icon-btn")) {
+      const label = btn.getAttribute("title") || btn.getAttribute("aria-label") || "";
+      if (label) btn.setAttribute("data-drawer-label", label);
+    }
+  }
+
+  function openDrawer() {
+    const d = resolveDrawerDom();
+    if (!d || drawerOpen || drawerClosing) return;
+    drawerOpen = true;
+    d.aside.hidden = false;
+    d.backdrop.hidden = false;
+    d.toggle.setAttribute("aria-expanded", "true");
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      d.aside.classList.add("open");
+      d.backdrop.classList.add("open");
+    }));
+  }
+
+  function closeDrawer() {
+    const d = resolveDrawerDom();
+    if (!d || !drawerOpen) return;
+    drawerOpen = false;
+    drawerClosing = true;
+    d.toggle.setAttribute("aria-expanded", "false");
+    d.aside.classList.remove("open");
+    d.backdrop.classList.remove("open");
+    const finish = () => {
+      if (drawerOpen) { drawerClosing = false; return; }
+      d.aside.hidden = true;
+      d.backdrop.hidden = true;
+      drawerClosing = false;
+    };
+    d.aside.addEventListener("transitionend", finish, { once: true });
+    setTimeout(finish, 280);
+  }
+
+  function toggleDrawer() {
+    if (drawerOpen) closeDrawer();
+    else { closeTopbarOverflowMenu(); openDrawer(); }
+  }
+
+  function setDrawerMode(on) {
+    const d = resolveDrawerDom();
+    if (!d) return;
+    cfg.enableDrawer = on;
+    saveDrawerPref(on);
+    if (on) {
+      priorTabsPref = cfg.enableTabs;
+      // Relocate search + quick-nav into the drawer (listeners preserved).
+      d.searchSlot.appendChild(document.querySelector(".search-wrap"));
+      d.navSlot.appendChild(document.querySelector(".quick-nav"));
+      setDrawerLabels();
+      APP_EL?.classList.add("drawer-mode");
+      d.toggle.hidden = false;
+      // Force tab mode on; disable the tabs checkbox while drawer is active.
+      setTabMode(true);
+      if (MENU_TABS_EL) {
+        MENU_TABS_EL.disabled = true;
+        const label = MENU_TABS_EL.closest(".topbar-overflow-check");
+        if (label) { label.setAttribute("aria-disabled", "true"); label.style.opacity = "0.5"; label.style.pointerEvents = "none"; }
+      }
+    } else {
+      APP_EL?.classList.remove("drawer-mode");
+      if (drawerOpen || drawerClosing) closeDrawer();
+      d.toggle.hidden = true;
+      // Move search + quick-nav back to the topbar (original order: topbar-row, quick-nav, search-wrap).
+      const nav = document.querySelector(".quick-nav");
+      const search = document.querySelector(".search-wrap");
+      if (nav) d.topbar.appendChild(nav);
+      if (search) d.topbar.appendChild(search);
+      if (nav) for (const btn of nav.querySelectorAll(".ghost-btn.icon-btn")) btn.removeAttribute("data-drawer-label");
+      // Restore prior tab preference.
+      if (MENU_TABS_EL) {
+        MENU_TABS_EL.disabled = false;
+        const label = MENU_TABS_EL.closest(".topbar-overflow-check");
+        if (label) { label.removeAttribute("aria-disabled"); label.style.opacity = ""; label.style.pointerEvents = ""; }
+      }
+      setTabMode(priorTabsPref);
+    }
+    if (MENU_DRAWER_EL) {
+      MENU_DRAWER_EL.checked = on;
+      const label = MENU_DRAWER_EL.closest(".topbar-overflow-check");
+      if (label) label.setAttribute("aria-checked", on ? "true" : "false");
+    }
     updateQuickNavVisibility();
   }
 
@@ -5988,6 +6132,7 @@
   if (OVERFLOW_BTN) {
     OVERFLOW_BTN.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (cfg.enableDrawer) closeDrawer();
       toggleTopbarOverflowMenu();
     });
   }
@@ -6022,6 +6167,31 @@
       if (tabsLabel) tabsLabel.setAttribute("aria-checked", cfg.enableTabs ? "true" : "false");
     });
   }
+
+  if (MENU_DRAWER_EL) {
+    const drawerLabel = MENU_DRAWER_EL.closest(".topbar-overflow-check");
+    MENU_DRAWER_EL.checked = cfg.enableDrawer;
+    if (drawerLabel) drawerLabel.setAttribute("aria-checked", cfg.enableDrawer ? "true" : "false");
+    MENU_DRAWER_EL.addEventListener("click", (e) => e.stopPropagation());
+    MENU_DRAWER_EL.addEventListener("change", () => {
+      setDrawerMode(MENU_DRAWER_EL.checked);
+    });
+  }
+
+  const DRAWER_TOGGLE_BTN_REF = document.getElementById("drawer-toggle");
+  const DRAWER_BACKDROP_REF = document.getElementById("drawer-backdrop");
+  if (DRAWER_TOGGLE_BTN_REF) {
+    DRAWER_TOGGLE_BTN_REF.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleDrawer();
+    });
+  }
+  if (DRAWER_BACKDROP_REF) {
+    DRAWER_BACKDROP_REF.addEventListener("click", closeDrawer);
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && drawerOpen) closeDrawer();
+  });
 
   if (MENU_THEME_SEGMENT) {
     for (const btn of MENU_THEME_SEGMENT.querySelectorAll(".topbar-overflow-seg")) {
@@ -6267,6 +6437,7 @@
       hapticTap();
       if (tabMode && TAB_CATEGORIES.has(popup)) showTab(popup);
       else openQuickPopup(popup, title);
+      if (cfg.enableDrawer) closeDrawer();
     });
   });
   if (QUICK_LIGHTS_BTN) {
@@ -6274,6 +6445,7 @@
     QUICK_LIGHTS_BTN.addEventListener("click", () => {
       hapticTap();
       if (tabMode) showTab("lights");
+      if (cfg.enableDrawer) closeDrawer();
     });
     QUICK_LIGHTS_BTN.hidden = !tabMode;
   }
@@ -6292,6 +6464,8 @@
     });
   }
   if (tabMode) { ensureTabView(); updateTabActiveStates(); }
+  if (cfg.enableDrawer) setDrawerMode(true);
+  updateCurrentCategoryTitle();
   if (location.protocol === "https:" && "serviceWorker" in navigator) {
     navigator.serviceWorker.register(withToken("sw.js"), { scope: "./" }).catch(() => {});
   }
@@ -6343,6 +6517,7 @@
   const SCHED_OFFSET_PRESETS = [-60, -45, -30, -15, 0, 15, 30, 45, 60];
   let schedules = [];
   let sunTimes = { sunrise: null, sunset: null };
+  let schedUse24Hour = false;
   let schedViewOpen = false;
   let schedDraft = null;     // in-progress create/edit draft
   let schedStep = 1;         // 1 | 2 | 3
@@ -6354,6 +6529,7 @@
     if (data.sunTimes && typeof data.sunTimes === "object") {
       sunTimes = { sunrise: data.sunTimes.sunrise ?? null, sunset: data.sunTimes.sunset ?? null };
     }
+    schedUse24Hour = data.schedUse24Hour === true;
     if (schedViewOpen) renderSchedulerActive();
   }
 
@@ -6361,12 +6537,133 @@
     return true;
   }
 
+  function schedParseTime24(str) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(str || "").trim());
+    if (!m) return null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+    return { h, min };
+  }
+
+  function schedFormatTime24(h, min) {
+    return String(h).padStart(2, "0") + ":" + String(min).padStart(2, "0");
+  }
+
+  function schedTime24To12(str) {
+    const t = schedParseTime24(str);
+    if (!t) return str || "";
+    let h12 = t.h % 12;
+    if (h12 === 0) h12 = 12;
+    const ap = t.h < 12 ? "AM" : "PM";
+    return h12 + ":" + String(t.min).padStart(2, "0") + " " + ap;
+  }
+
+  function schedTime12To24(h12, min, ap) {
+    let h = Number(h12);
+    const m = Number(min);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return "";
+    const mer = String(ap || "").toUpperCase();
+    if (mer !== "AM" && mer !== "PM") return "";
+    h = Math.round(h);
+    const mm = Math.round(m);
+    if (h < 1 || h > 12 || mm < 0 || mm > 59) return "";
+    if (mer === "AM") { if (h === 12) h = 0; }
+    else { if (h !== 12) h += 12; }
+    return schedFormatTime24(h, mm);
+  }
+
+  function schedFmtClockTime(str24) {
+    if (!str24) return "";
+    return schedUse24Hour ? str24 : schedTime24To12(str24);
+  }
+
+  function schedFmtDateTimeLocal(iso) {
+    if (!iso) return "";
+    if (schedUse24Hour) return iso;
+    try {
+      const d = new Date(iso.length >= 16 ? iso.substring(0, 16) : iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+    } catch { return iso; }
+  }
+
+  function schedAppendClockPicker(parent, time24, onTime24) {
+    if (schedUse24Hour) {
+      const inp = ce("input", "sched-input");
+      inp.type = "time";
+      inp.value = schedParseTime24(time24) ? time24 : "19:30";
+      inp.addEventListener("input", () => { if (inp.value) onTime24(inp.value); });
+      parent.appendChild(inp);
+      return;
+    }
+    const parsed = schedParseTime24(time24) || { h: 19, min: 30 };
+    let h12 = parsed.h % 12;
+    if (h12 === 0) h12 = 12;
+    let ap = parsed.h < 12 ? "AM" : "PM";
+    const row = ce("div", "sched-time-12h");
+    const hourIn = ce("input", "sched-input sched-time-part");
+    hourIn.type = "number";
+    hourIn.min = "1";
+    hourIn.max = "12";
+    hourIn.inputMode = "numeric";
+    hourIn.value = String(h12);
+    const colon = ce("span", "sched-time-colon");
+    colon.textContent = ":";
+    const minIn = ce("input", "sched-input sched-time-part");
+    minIn.type = "number";
+    minIn.min = "0";
+    minIn.max = "59";
+    minIn.inputMode = "numeric";
+    minIn.value = String(parsed.min).padStart(2, "0");
+    const apSeg = ce("div", "sched-segment sched-time-ap");
+    const sync = () => {
+      const t = schedTime12To24(hourIn.value, minIn.value, ap);
+      if (t) onTime24(t);
+    };
+    const clampHour = () => {
+      let v = Number(hourIn.value);
+      if (!Number.isFinite(v)) v = 12;
+      hourIn.value = String(Math.max(1, Math.min(12, Math.round(v))));
+      sync();
+    };
+    const clampMin = () => {
+      let v = Number(minIn.value);
+      if (!Number.isFinite(v)) v = 0;
+      minIn.value = String(Math.max(0, Math.min(59, Math.round(v)))).padStart(2, "0");
+      sync();
+    };
+    hourIn.addEventListener("change", clampHour);
+    minIn.addEventListener("change", clampMin);
+    for (const p of ["AM", "PM"]) {
+      const b = ce("button", "sched-seg " + (ap === p ? "is-active" : ""));
+      b.type = "button";
+      b.textContent = p;
+      b.addEventListener("click", () => {
+        hapticTap();
+        ap = p;
+        apSeg.querySelectorAll(".sched-seg").forEach((btn) => {
+          btn.classList.toggle("is-active", btn.textContent === ap);
+        });
+        sync();
+      });
+      apSeg.appendChild(b);
+    }
+    row.appendChild(hourIn);
+    row.appendChild(colon);
+    row.appendChild(minIn);
+    row.appendChild(apSeg);
+    parent.appendChild(row);
+  }
+
   function fmtSchedTime(ms) {
     if (ms == null) return "\u2014";
     try {
       const d = new Date(Number(ms));
       if (isNaN(d.getTime())) return "\u2014";
-      return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      return d.toLocaleString([], schedUse24Hour
+        ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
+        : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
     } catch { return "\u2014"; }
   }
 
@@ -6573,8 +6870,8 @@
     return wrap;
   }
 
-  function schedNavRow(backLabel, backCb, fwdLabel, fwdCb) {
-    const nav = ce("div", "sched-nav");
+  function schedNavRow(backLabel, backCb, fwdLabel, fwdCb, extraClass) {
+    const nav = ce("div", "sched-nav" + (extraClass ? " " + extraClass : ""));
     if (backLabel) {
       const b = ce("button", "ghost-btn");
       b.type = "button";
@@ -6679,7 +6976,7 @@
       if (!validateStep1()) return;
       schedStep = 2;
       renderSchedulerActive();
-    }));
+    }, "sched-nav-hero"));
     return wrap;
   }
 
@@ -6688,7 +6985,7 @@
     const when = tr.when || "clock";
     if (tr.kind === "daily" || tr.kind === "weekly") {
       if (when === "clock") {
-        if (!/^\d{1,2}:\d{2}$/.test(tr.time || "")) { flash("Enter a valid time (HH:MM)", true); return false; }
+        if (!/^\d{1,2}:\d{2}$/.test(tr.time || "")) { flash("Enter a valid time", true); return false; }
       } else {
         const off = Number(tr.offsetMin);
         if (!Number.isFinite(off) || off < -720 || off > 720) { flash("Offset must be between -720 and 720 minutes", true); return false; }
@@ -6845,11 +7142,7 @@
     const lbl = ce("label", "sched-field-label");
     lbl.textContent = "Time";
     field.appendChild(lbl);
-    const inp = ce("input", "sched-input");
-    inp.type = "time";
-    inp.value = tr.time || "19:30";
-    inp.addEventListener("input", () => { tr.time = inp.value; });
-    field.appendChild(inp);
+    schedAppendClockPicker(field, tr.time || "19:30", (t) => { tr.time = t; });
     return field;
   }
 
@@ -6883,21 +7176,34 @@
   }
 
   function renderSchedOncePicker(tr) {
-    const field = ce("div", "sched-field");
-    const lbl = ce("label", "sched-field-label");
-    lbl.textContent = "Date and time";
-    field.appendChild(lbl);
-    const dt = ce("input", "sched-input sched-datetime");
-    dt.type = "datetime-local";
-    if (tr.at && tr.at.length >= 16) {
-      dt.value = tr.at.substring(0, 16);
-    } else {
-      dt.value = defaultOnceAt();
-      tr.at = dt.value;
-    }
-    dt.addEventListener("input", () => { tr.at = dt.value; });
-    field.appendChild(dt);
-    return field;
+    const wrap = ce("div", "sched-once-fields");
+    if (!tr.at || tr.at.length < 16) tr.at = defaultOnceAt();
+
+    const dateField = ce("div", "sched-field");
+    const dlbl = ce("label", "sched-field-label");
+    dlbl.textContent = "Date";
+    dateField.appendChild(dlbl);
+    const dateIn = ce("input", "sched-input");
+    dateIn.type = "date";
+    dateIn.value = tr.at.substring(0, 10);
+    dateIn.addEventListener("input", () => {
+      const timePart = tr.at.length >= 16 ? tr.at.substring(11, 16) : "19:30";
+      tr.at = dateIn.value + "T" + timePart;
+    });
+    dateField.appendChild(dateIn);
+    wrap.appendChild(dateField);
+
+    const timeField = ce("div", "sched-field");
+    const tlbl = ce("label", "sched-field-label");
+    tlbl.textContent = "Time";
+    timeField.appendChild(tlbl);
+    const timePart = tr.at.length >= 16 ? tr.at.substring(11, 16) : "19:30";
+    schedAppendClockPicker(timeField, timePart, (t) => {
+      const datePart = tr.at.length >= 10 ? tr.at.substring(0, 10) : defaultOnceAt().substring(0, 10);
+      tr.at = datePart + "T" + t;
+    });
+    wrap.appendChild(timeField);
+    return wrap;
   }
 
   // Step 2: device type
@@ -7368,34 +7674,44 @@
       modeField.appendChild(mlbl);
       const modes = ["auto", "heat", "cool", "off"];
       const seg = ce("div", "sched-segment");
+      const sysMode = schedDraft.action.mode || "auto";
       for (const m of modes) {
-        const b = ce("button", "sched-seg " + (schedDraft.action.mode === m ? "is-active" : ""));
+        const b = ce("button", "sched-seg " + (sysMode === m ? "is-active" : ""));
         b.type = "button"; b.textContent = m;
-        b.addEventListener("click", () => { schedDraft.action.mode = m; renderSchedulerActive(); });
+        b.addEventListener("click", () => {
+          schedDraft.action.mode = m;
+          if (m === "heat") schedDraft.action.cool = null;
+          else if (m === "cool") schedDraft.action.heat = null;
+          renderSchedulerActive();
+        });
         seg.appendChild(b);
       }
       modeField.appendChild(seg);
       wrap.appendChild(modeField);
 
-      const heatField = ce("div", "sched-field");
-      const hlbl = ce("label", "sched-field-label");
-      hlbl.textContent = "Heat setpoint (\u00b0F)";
-      heatField.appendChild(hlbl);
-      const hin = ce("input", "sched-input");
-      hin.type = "number"; hin.min = "40"; hin.max = "90"; hin.value = String(schedDraft.action.heat ?? 68);
-      hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); });
-      heatField.appendChild(hin);
-      wrap.appendChild(heatField);
+      if (sysMode !== "cool") {
+        const heatField = ce("div", "sched-field");
+        const hlbl = ce("label", "sched-field-label");
+        hlbl.textContent = "Heat setpoint (\u00b0F)";
+        heatField.appendChild(hlbl);
+        const hin = ce("input", "sched-input");
+        hin.type = "number"; hin.min = "40"; hin.max = "90"; hin.value = String(schedDraft.action.heat ?? 68);
+        hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); });
+        heatField.appendChild(hin);
+        wrap.appendChild(heatField);
+      }
 
-      const coolField = ce("div", "sched-field");
-      const clbl = ce("label", "sched-field-label");
-      clbl.textContent = "Cool setpoint (\u00b0F)";
-      coolField.appendChild(clbl);
-      const cin = ce("input", "sched-input");
-      cin.type = "number"; cin.min = "50"; cin.max = "100"; cin.value = String(schedDraft.action.cool ?? 72);
-      cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); });
-      coolField.appendChild(cin);
-      wrap.appendChild(coolField);
+      if (sysMode !== "heat") {
+        const coolField = ce("div", "sched-field");
+        const clbl = ce("label", "sched-field-label");
+        clbl.textContent = "Cool setpoint (\u00b0F)";
+        coolField.appendChild(clbl);
+        const cin = ce("input", "sched-input");
+        cin.type = "number"; cin.min = "50"; cin.max = "100"; cin.value = String(schedDraft.action.cool ?? 72);
+        cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); });
+        coolField.appendChild(cin);
+        wrap.appendChild(coolField);
+      }
 
       const fanField = ce("div", "sched-field");
       const flbl = ce("label", "sched-field-label");
@@ -7443,7 +7759,7 @@
     let when = "Schedule";
     const trWhen = tr?.when || "clock";
     if (tr?.kind === "daily") {
-      if (trWhen === "clock") when = "Daily " + (tr.time || "");
+      if (trWhen === "clock") when = "Daily " + schedFmtClockTime(tr.time || "");
       else {
         const sun = trWhen === "sunset" ? "Sunset" : "Sunrise";
         const off = Number(tr.offsetMin) || 0;
@@ -7451,13 +7767,13 @@
       }
     } else if (tr?.kind === "weekly") {
       const days = (tr.days || []).join(",");
-      if (trWhen === "clock") when = "Weekly " + days + " " + (tr.time || "");
+      if (trWhen === "clock") when = "Weekly " + days + " " + schedFmtClockTime(tr.time || "");
       else {
         const sun = trWhen === "sunset" ? "Sunset" : "Sunrise";
         const off = Number(tr.offsetMin) || 0;
         when = off === 0 ? ("Weekly " + days + " " + sun) : ("Weekly " + days + " " + sun + " " + schedOffsetLabel(off));
       }
-    } else if (tr?.kind === "once") when = "Once " + (tr.at || "");
+    } else if (tr?.kind === "once") when = "Once " + schedFmtDateTimeLocal(tr.at || "");
     else if (tr?.kind === "mode") when = "When mode is " + (tr.mode || "");
     let what = "";
     if (ac?.target === "lights") what = " lights";

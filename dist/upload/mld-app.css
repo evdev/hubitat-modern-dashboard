@@ -105,9 +105,22 @@ body {
   border-bottom: 1px solid var(--stroke);
 }
 .topbar-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.brand {
+.brand-stack {
+  display: flex; flex-direction: column; gap: 1px;
+  line-height: 1.05; min-width: 0;
+}
+.brand-name {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-faint);
+  padding-left: 19px;
+}
+.brand-current {
   margin: 0; font-size: 22px; font-weight: 750; letter-spacing: -0.02em;
   display: flex; align-items: center; gap: 9px;
+  min-width: 0;
+}
+.brand-current #current-category-title {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .brand-dot {
   width: 10px; height: 10px; border-radius: 50%;
@@ -389,6 +402,54 @@ body {
 .topbar-overflow-seg:active { transform: scale(.98); }
 .reorder-mode .topbar-overflow { display: none; }
 #search:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Navigation drawer */
+.drawer-toggle { display: none; }
+#app.drawer-mode .drawer-toggle { display: grid; }
+#app.drawer-mode .topbar > .quick-nav,
+#app.drawer-mode .topbar > .search-wrap { display: none !important; }
+.reorder-mode #app.drawer-mode .drawer-toggle { display: none; }
+.drawer-backdrop {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(0, 0, 0, 0.45); opacity: 0; pointer-events: none;
+  transition: opacity .25s var(--ease);
+}
+.drawer-backdrop[hidden] { display: none; }
+.drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
+  width: min(288px, 84vw);
+  display: flex; flex-direction: column;
+  background: var(--panel-solid); border-right: 1px solid var(--stroke-2);
+  box-shadow: var(--shadow);
+  transform: translateX(-100%);
+  transition: transform .25s var(--ease);
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  overflow-y: auto;
+}
+.drawer[hidden] { display: none; }
+.drawer.open { transform: translateX(0); }
+.drawer-search-slot { padding: 12px 14px 6px; }
+.drawer-nav-slot { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 12px; }
+.drawer .quick-nav {
+  display: flex; flex-direction: column; gap: 2px;
+  width: auto; margin: 0; overflow: visible; padding: 0;
+  justify-content: flex-start;
+}
+.drawer .quick-nav::-webkit-scrollbar { display: block; }
+.drawer .quick-nav .ghost-btn.icon-btn {
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 12px;
+  width: 100%; min-height: 48px; padding: 10px 12px; border-radius: 12px;
+  flex-shrink: 0; place-items: stretch;
+}
+.drawer .quick-nav .ghost-btn.icon-btn::after {
+  content: attr(data-drawer-label);
+  font-size: 14px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.drawer .quick-nav .ghost-btn.icon-btn svg { width: 22px; height: 22px; flex-shrink: 0; }
+.drawer .quick-nav .ghost-btn.icon-btn[hidden] { display: none; }
+.drawer .search-wrap { margin-top: 0; }
 .room-title { flex: 1; min-width: 0; }
 .room-name { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
 .room-meta { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
@@ -994,6 +1055,7 @@ body {
 .quick-body-sensors { text-align: left; padding: 0; }
 .quick-body-thermostats { text-align: left; padding: 0; }
 .quick-body-scheduler { text-align: left; padding: 0; font-size: 16px; }
+.tab-view .quick-body-scheduler { padding-bottom: calc(4px + env(safe-area-inset-bottom)); }
 .scheduler-placeholder { margin: 12px 4px; color: var(--muted); font-size: 1rem; }
 
 /* ---------- scheduler (touch-optimized) ---------- */
@@ -1078,8 +1140,21 @@ body {
 }
 .sched-type-card.is-active { background: var(--accent, #7b5cff); border-color: var(--accent, #7b5cff); color: #fff; }
 .sched-mode-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
-.sched-nav { display: flex; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.sched-nav {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  margin-top: 20px;
+  padding:
+    10px
+    max(16px, env(safe-area-inset-right))
+    calc(16px + env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+}
 .sched-nav .ghost-btn { min-height: var(--tap); padding: 10px 18px; font-size: 1rem; font-weight: 600; }
+.sched-nav-hero { justify-content: center; }
+.sched-nav-hero .sched-primary-btn {
+  width: min(100%, 300px); min-height: 52px; padding: 14px 24px;
+  font-size: 1.125rem; font-weight: 700; border-radius: 14px;
+}
 .sched-primary-btn { background: var(--accent, #7b5cff); border-color: var(--accent, #7b5cff); color: #fff; }
 .sched-offset-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .sched-offset {
@@ -1090,6 +1165,13 @@ body {
 }
 .sched-offset.is-on { background: var(--accent, #7b5cff); border-color: var(--accent, #7b5cff); color: #fff; }
 .sched-offset-custom { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.sched-once-fields { display: flex; flex-direction: column; gap: 14px; }
+.sched-time-12h {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.sched-time-part { width: 4.5rem; min-height: var(--tap); flex: 0 0 auto; text-align: center; }
+.sched-time-colon { font-size: 1.25rem; font-weight: 700; color: var(--text-dim); line-height: 1; }
+.sched-time-ap { flex: 1; min-width: 140px; }
 .sched-sun-preview-val { font-size: 1.05rem; font-weight: 600; color: var(--text, #e6e6e6); }
 .sched-hint { margin: 0 0 6px; font-size: 0.95rem; color: var(--muted); line-height: 1.4; }
 .sched-slider { width: 100%; min-height: 36px; }
@@ -1893,7 +1975,7 @@ body {
 /* Small phones (320-360px) */
 @media (max-width: 359px) {
   .topbar { padding: 10px 10px 8px; }
-  .brand { font-size: 18px; }
+  .brand-current { font-size: 18px; }
   .ghost-btn { font-size: 12px; padding: 6px 10px; min-height: 40px; }
   .topbar-row { flex-wrap: wrap; }
   .topbar-actions { width: 100%; justify-content: flex-end; }
@@ -1924,7 +2006,7 @@ body {
 @media (min-width: 640px) {
   .rooms { padding: 18px; gap: 20px; }
   .room-body { gap: 14px; }
-  .brand { font-size: 26px; }
+  .brand-current { font-size: 26px; }
   .tstat-panel { width: 460px; padding: 24px 28px 28px; gap: 18px; }
   .tstat-dial-wrap { width: 340px; height: 340px; }
   .tstat-step-btn { width: 52px; height: 52px; font-size: 28px; }

@@ -11,6 +11,7 @@
   const SCHED_OFFSET_PRESETS = [-60, -45, -30, -15, 0, 15, 30, 45, 60];
   let schedules = [];
   let sunTimes = { sunrise: null, sunset: null };
+  let schedUse24Hour = false;
   let schedViewOpen = false;
   let schedDraft = null;     // in-progress create/edit draft
   let schedStep = 1;         // 1 | 2 | 3
@@ -22,6 +23,7 @@
     if (data.sunTimes && typeof data.sunTimes === "object") {
       sunTimes = { sunrise: data.sunTimes.sunrise ?? null, sunset: data.sunTimes.sunset ?? null };
     }
+    schedUse24Hour = data.schedUse24Hour === true;
     if (schedViewOpen) renderSchedulerActive();
   }
 
@@ -29,12 +31,133 @@
     return true;
   }
 
+  function schedParseTime24(str) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(str || "").trim());
+    if (!m) return null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+    return { h, min };
+  }
+
+  function schedFormatTime24(h, min) {
+    return String(h).padStart(2, "0") + ":" + String(min).padStart(2, "0");
+  }
+
+  function schedTime24To12(str) {
+    const t = schedParseTime24(str);
+    if (!t) return str || "";
+    let h12 = t.h % 12;
+    if (h12 === 0) h12 = 12;
+    const ap = t.h < 12 ? "AM" : "PM";
+    return h12 + ":" + String(t.min).padStart(2, "0") + " " + ap;
+  }
+
+  function schedTime12To24(h12, min, ap) {
+    let h = Number(h12);
+    const m = Number(min);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return "";
+    const mer = String(ap || "").toUpperCase();
+    if (mer !== "AM" && mer !== "PM") return "";
+    h = Math.round(h);
+    const mm = Math.round(m);
+    if (h < 1 || h > 12 || mm < 0 || mm > 59) return "";
+    if (mer === "AM") { if (h === 12) h = 0; }
+    else { if (h !== 12) h += 12; }
+    return schedFormatTime24(h, mm);
+  }
+
+  function schedFmtClockTime(str24) {
+    if (!str24) return "";
+    return schedUse24Hour ? str24 : schedTime24To12(str24);
+  }
+
+  function schedFmtDateTimeLocal(iso) {
+    if (!iso) return "";
+    if (schedUse24Hour) return iso;
+    try {
+      const d = new Date(iso.length >= 16 ? iso.substring(0, 16) : iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+    } catch { return iso; }
+  }
+
+  function schedAppendClockPicker(parent, time24, onTime24) {
+    if (schedUse24Hour) {
+      const inp = ce("input", "sched-input");
+      inp.type = "time";
+      inp.value = schedParseTime24(time24) ? time24 : "19:30";
+      inp.addEventListener("input", () => { if (inp.value) onTime24(inp.value); });
+      parent.appendChild(inp);
+      return;
+    }
+    const parsed = schedParseTime24(time24) || { h: 19, min: 30 };
+    let h12 = parsed.h % 12;
+    if (h12 === 0) h12 = 12;
+    let ap = parsed.h < 12 ? "AM" : "PM";
+    const row = ce("div", "sched-time-12h");
+    const hourIn = ce("input", "sched-input sched-time-part");
+    hourIn.type = "number";
+    hourIn.min = "1";
+    hourIn.max = "12";
+    hourIn.inputMode = "numeric";
+    hourIn.value = String(h12);
+    const colon = ce("span", "sched-time-colon");
+    colon.textContent = ":";
+    const minIn = ce("input", "sched-input sched-time-part");
+    minIn.type = "number";
+    minIn.min = "0";
+    minIn.max = "59";
+    minIn.inputMode = "numeric";
+    minIn.value = String(parsed.min).padStart(2, "0");
+    const apSeg = ce("div", "sched-segment sched-time-ap");
+    const sync = () => {
+      const t = schedTime12To24(hourIn.value, minIn.value, ap);
+      if (t) onTime24(t);
+    };
+    const clampHour = () => {
+      let v = Number(hourIn.value);
+      if (!Number.isFinite(v)) v = 12;
+      hourIn.value = String(Math.max(1, Math.min(12, Math.round(v))));
+      sync();
+    };
+    const clampMin = () => {
+      let v = Number(minIn.value);
+      if (!Number.isFinite(v)) v = 0;
+      minIn.value = String(Math.max(0, Math.min(59, Math.round(v)))).padStart(2, "0");
+      sync();
+    };
+    hourIn.addEventListener("change", clampHour);
+    minIn.addEventListener("change", clampMin);
+    for (const p of ["AM", "PM"]) {
+      const b = ce("button", "sched-seg " + (ap === p ? "is-active" : ""));
+      b.type = "button";
+      b.textContent = p;
+      b.addEventListener("click", () => {
+        M.hapticTap();
+        ap = p;
+        apSeg.querySelectorAll(".sched-seg").forEach((btn) => {
+          btn.classList.toggle("is-active", btn.textContent === ap);
+        });
+        sync();
+      });
+      apSeg.appendChild(b);
+    }
+    row.appendChild(hourIn);
+    row.appendChild(colon);
+    row.appendChild(minIn);
+    row.appendChild(apSeg);
+    parent.appendChild(row);
+  }
+
   function fmtSchedTime(ms) {
     if (ms == null) return "\u2014";
     try {
       const d = new Date(Number(ms));
       if (isNaN(d.getTime())) return "\u2014";
-      return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      return d.toLocaleString([], schedUse24Hour
+        ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
+        : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
     } catch { return "\u2014"; }
   }
 
@@ -241,8 +364,8 @@
     return wrap;
   }
 
-  function schedNavRow(backLabel, backCb, fwdLabel, fwdCb) {
-    const nav = ce("div", "sched-nav");
+  function schedNavRow(backLabel, backCb, fwdLabel, fwdCb, extraClass) {
+    const nav = ce("div", "sched-nav" + (extraClass ? " " + extraClass : ""));
     if (backLabel) {
       const b = ce("button", "ghost-btn");
       b.type = "button";
@@ -347,7 +470,7 @@
       if (!validateStep1()) return;
       schedStep = 2;
       renderSchedulerActive();
-    }));
+    }, "sched-nav-hero"));
     return wrap;
   }
 
@@ -356,7 +479,7 @@
     const when = tr.when || "clock";
     if (tr.kind === "daily" || tr.kind === "weekly") {
       if (when === "clock") {
-        if (!/^\d{1,2}:\d{2}$/.test(tr.time || "")) { M.flash("Enter a valid time (HH:MM)", true); return false; }
+        if (!/^\d{1,2}:\d{2}$/.test(tr.time || "")) { M.flash("Enter a valid time", true); return false; }
       } else {
         const off = Number(tr.offsetMin);
         if (!Number.isFinite(off) || off < -720 || off > 720) { M.flash("Offset must be between -720 and 720 minutes", true); return false; }
@@ -513,11 +636,7 @@
     const lbl = ce("label", "sched-field-label");
     lbl.textContent = "Time";
     field.appendChild(lbl);
-    const inp = ce("input", "sched-input");
-    inp.type = "time";
-    inp.value = tr.time || "19:30";
-    inp.addEventListener("input", () => { tr.time = inp.value; });
-    field.appendChild(inp);
+    schedAppendClockPicker(field, tr.time || "19:30", (t) => { tr.time = t; });
     return field;
   }
 
@@ -551,21 +670,34 @@
   }
 
   function renderSchedOncePicker(tr) {
-    const field = ce("div", "sched-field");
-    const lbl = ce("label", "sched-field-label");
-    lbl.textContent = "Date and time";
-    field.appendChild(lbl);
-    const dt = ce("input", "sched-input sched-datetime");
-    dt.type = "datetime-local";
-    if (tr.at && tr.at.length >= 16) {
-      dt.value = tr.at.substring(0, 16);
-    } else {
-      dt.value = defaultOnceAt();
-      tr.at = dt.value;
-    }
-    dt.addEventListener("input", () => { tr.at = dt.value; });
-    field.appendChild(dt);
-    return field;
+    const wrap = ce("div", "sched-once-fields");
+    if (!tr.at || tr.at.length < 16) tr.at = defaultOnceAt();
+
+    const dateField = ce("div", "sched-field");
+    const dlbl = ce("label", "sched-field-label");
+    dlbl.textContent = "Date";
+    dateField.appendChild(dlbl);
+    const dateIn = ce("input", "sched-input");
+    dateIn.type = "date";
+    dateIn.value = tr.at.substring(0, 10);
+    dateIn.addEventListener("input", () => {
+      const timePart = tr.at.length >= 16 ? tr.at.substring(11, 16) : "19:30";
+      tr.at = dateIn.value + "T" + timePart;
+    });
+    dateField.appendChild(dateIn);
+    wrap.appendChild(dateField);
+
+    const timeField = ce("div", "sched-field");
+    const tlbl = ce("label", "sched-field-label");
+    tlbl.textContent = "Time";
+    timeField.appendChild(tlbl);
+    const timePart = tr.at.length >= 16 ? tr.at.substring(11, 16) : "19:30";
+    schedAppendClockPicker(timeField, timePart, (t) => {
+      const datePart = tr.at.length >= 10 ? tr.at.substring(0, 10) : defaultOnceAt().substring(0, 10);
+      tr.at = datePart + "T" + t;
+    });
+    wrap.appendChild(timeField);
+    return wrap;
   }
 
   // Step 2: device type
@@ -1036,34 +1168,44 @@
       modeField.appendChild(mlbl);
       const modes = ["auto", "heat", "cool", "off"];
       const seg = ce("div", "sched-segment");
+      const sysMode = schedDraft.action.mode || "auto";
       for (const m of modes) {
-        const b = ce("button", "sched-seg " + (schedDraft.action.mode === m ? "is-active" : ""));
+        const b = ce("button", "sched-seg " + (sysMode === m ? "is-active" : ""));
         b.type = "button"; b.textContent = m;
-        b.addEventListener("click", () => { schedDraft.action.mode = m; renderSchedulerActive(); });
+        b.addEventListener("click", () => {
+          schedDraft.action.mode = m;
+          if (m === "heat") schedDraft.action.cool = null;
+          else if (m === "cool") schedDraft.action.heat = null;
+          renderSchedulerActive();
+        });
         seg.appendChild(b);
       }
       modeField.appendChild(seg);
       wrap.appendChild(modeField);
 
-      const heatField = ce("div", "sched-field");
-      const hlbl = ce("label", "sched-field-label");
-      hlbl.textContent = "Heat setpoint (\u00b0F)";
-      heatField.appendChild(hlbl);
-      const hin = ce("input", "sched-input");
-      hin.type = "number"; hin.min = "40"; hin.max = "90"; hin.value = String(schedDraft.action.heat ?? 68);
-      hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); });
-      heatField.appendChild(hin);
-      wrap.appendChild(heatField);
+      if (sysMode !== "cool") {
+        const heatField = ce("div", "sched-field");
+        const hlbl = ce("label", "sched-field-label");
+        hlbl.textContent = "Heat setpoint (\u00b0F)";
+        heatField.appendChild(hlbl);
+        const hin = ce("input", "sched-input");
+        hin.type = "number"; hin.min = "40"; hin.max = "90"; hin.value = String(schedDraft.action.heat ?? 68);
+        hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); });
+        heatField.appendChild(hin);
+        wrap.appendChild(heatField);
+      }
 
-      const coolField = ce("div", "sched-field");
-      const clbl = ce("label", "sched-field-label");
-      clbl.textContent = "Cool setpoint (\u00b0F)";
-      coolField.appendChild(clbl);
-      const cin = ce("input", "sched-input");
-      cin.type = "number"; cin.min = "50"; cin.max = "100"; cin.value = String(schedDraft.action.cool ?? 72);
-      cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); });
-      coolField.appendChild(cin);
-      wrap.appendChild(coolField);
+      if (sysMode !== "heat") {
+        const coolField = ce("div", "sched-field");
+        const clbl = ce("label", "sched-field-label");
+        clbl.textContent = "Cool setpoint (\u00b0F)";
+        coolField.appendChild(clbl);
+        const cin = ce("input", "sched-input");
+        cin.type = "number"; cin.min = "50"; cin.max = "100"; cin.value = String(schedDraft.action.cool ?? 72);
+        cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); });
+        coolField.appendChild(cin);
+        wrap.appendChild(coolField);
+      }
 
       const fanField = ce("div", "sched-field");
       const flbl = ce("label", "sched-field-label");
@@ -1111,7 +1253,7 @@
     let when = "Schedule";
     const trWhen = tr?.when || "clock";
     if (tr?.kind === "daily") {
-      if (trWhen === "clock") when = "Daily " + (tr.time || "");
+      if (trWhen === "clock") when = "Daily " + schedFmtClockTime(tr.time || "");
       else {
         const sun = trWhen === "sunset" ? "Sunset" : "Sunrise";
         const off = Number(tr.offsetMin) || 0;
@@ -1119,13 +1261,13 @@
       }
     } else if (tr?.kind === "weekly") {
       const days = (tr.days || []).join(",");
-      if (trWhen === "clock") when = "Weekly " + days + " " + (tr.time || "");
+      if (trWhen === "clock") when = "Weekly " + days + " " + schedFmtClockTime(tr.time || "");
       else {
         const sun = trWhen === "sunset" ? "Sunset" : "Sunrise";
         const off = Number(tr.offsetMin) || 0;
         when = off === 0 ? ("Weekly " + days + " " + sun) : ("Weekly " + days + " " + sun + " " + schedOffsetLabel(off));
       }
-    } else if (tr?.kind === "once") when = "Once " + (tr.at || "");
+    } else if (tr?.kind === "once") when = "Once " + schedFmtDateTimeLocal(tr.at || "");
     else if (tr?.kind === "mode") when = "When mode is " + (tr.mode || "");
     let what = "";
     if (ac?.target === "lights") what = " lights";
@@ -1167,5 +1309,5 @@
   Object.assign(globalThis.__MLD, { applySchedulesFromData, schedulerHasContent, renderSchedulerView });
   globalThis.__MLD.updateQuickNavVisibility?.();
 
-  Object.assign(M, { applySchedulesFromData, schedulerHasContent, fmtSchedTime, newSchedDraft, schedApi, renderSchedulerView, renderSchedulerActive, renderSchedList, renderSchedRow, renderSchedWorkflow, schedNavRow, schedBindPickRow, schedBindPickRoom, renderSchedStep1, validateStep1, renderSchedModeTriggerPicker, renderSchedModeCondition, schedOffsetLabel, renderSchedWhenPicker, renderSchedOffsetPicker, renderSchedSunPreview, renderSchedTimePicker, renderSchedDayPicker, defaultOnceAt, renderSchedOncePicker, renderSchedStep2, renderSchedStep3, renderSchedOnOffDeviceAction, renderSchedLightAction, renderSchedThermostatAction, renderSchedHubModeAction, autoSchedName, saveSchedule });
+  Object.assign(M, { applySchedulesFromData, schedulerHasContent, schedParseTime24, schedFormatTime24, schedTime24To12, schedTime12To24, schedFmtClockTime, schedFmtDateTimeLocal, schedAppendClockPicker, fmtSchedTime, newSchedDraft, schedApi, renderSchedulerView, renderSchedulerActive, renderSchedList, renderSchedRow, renderSchedWorkflow, schedNavRow, schedBindPickRow, schedBindPickRoom, renderSchedStep1, validateStep1, renderSchedModeTriggerPicker, renderSchedModeCondition, schedOffsetLabel, renderSchedWhenPicker, renderSchedOffsetPicker, renderSchedSunPreview, renderSchedTimePicker, renderSchedDayPicker, defaultOnceAt, renderSchedOncePicker, renderSchedStep2, renderSchedStep3, renderSchedOnOffDeviceAction, renderSchedLightAction, renderSchedThermostatAction, renderSchedHubModeAction, autoSchedName, saveSchedule });
 })();

@@ -322,6 +322,7 @@ function renderScenesPopup() {
     popup.hidden = false;
     popup.classList.add("open");
     popup.querySelector(".quick-close").focus();
+    updateCurrentCategoryTitle();
   }
 
   function closeQuickPopup() {
@@ -347,6 +348,7 @@ function renderScenesPopup() {
     M.sensorFilterChipsEl = null;
     M.sensorFilterBtnEl = null;
     M.sensorFilterEmptyEl = null;
+    updateCurrentCategoryTitle();
   }
 
   // ---------- tab mode helpers ----------
@@ -367,6 +369,19 @@ function renderScenesPopup() {
   function currentCategory() {
     if (M.tabMode && M.activeTab !== "lights") return M.activeTab;
     return M.quickPopupOpenType;
+  }
+
+  const POPUP_LABELS = {};
+  for (const { popup, title } of QUICK_NAV) POPUP_LABELS[popup] = title;
+
+  function currentCategoryLabel() {
+    const cat = M.quickPopupOpenType || (M.tabMode && M.activeTab !== "lights" ? M.activeTab : null);
+    if (!cat) return "Lights";
+    return POPUP_LABELS[cat] || M.TAB_LABELS[cat] || cat;
+  }
+
+  function updateCurrentCategoryTitle() {
+    if (M.CURRENT_CATEGORY_TITLE_EL) M.CURRENT_CATEGORY_TITLE_EL.textContent = currentCategoryLabel();
   }
 
   function inTabView() {
@@ -412,6 +427,7 @@ function renderScenesPopup() {
       }
     }
     applySearch();
+    updateCurrentCategoryTitle();
   }
 
   function closeCurrentView() {
@@ -420,6 +436,7 @@ function renderScenesPopup() {
   }
 
   function setTabMode(on) {
+    if (M.cfg.enableDrawer && !on) return; // drawer mode forces tab mode on
     M.cfg.enableTabs = on;
     M.tabMode = on;
     M.saveTabsPref(on);
@@ -440,6 +457,117 @@ function renderScenesPopup() {
       showTab("lights");
     }
     updateTabActiveStates();
+    updateQuickNavVisibility();
+    updateCurrentCategoryTitle();
+  }
+
+  // ---------- navigation drawer ----------
+  let drawerOpen = false;
+  let drawerClosing = false;
+  let priorTabsPref = M.cfg.enableTabs;
+  let drawerDom = null;
+
+  function resolveDrawerDom() {
+    if (drawerDom) return drawerDom;
+    const toggle = document.getElementById("drawer-toggle");
+    const aside = document.getElementById("app-drawer");
+    const backdrop = document.getElementById("drawer-backdrop");
+    const searchSlot = aside?.querySelector(".drawer-search-slot");
+    const navSlot = aside?.querySelector(".drawer-nav-slot");
+    const topbar = document.querySelector(".topbar");
+    if (!toggle || !aside || !backdrop || !searchSlot || !navSlot || !topbar) return null;
+    drawerDom = { toggle, aside, backdrop, searchSlot, navSlot, topbar };
+    return drawerDom;
+  }
+
+  function setDrawerLabels() {
+    const nav = document.querySelector(".quick-nav");
+    if (!nav) return;
+    for (const btn of nav.querySelectorAll(".ghost-btn.icon-btn")) {
+      const label = btn.getAttribute("title") || btn.getAttribute("aria-label") || "";
+      if (label) btn.setAttribute("data-drawer-label", label);
+    }
+  }
+
+  function openDrawer() {
+    const d = resolveDrawerDom();
+    if (!d || drawerOpen || drawerClosing) return;
+    drawerOpen = true;
+    d.aside.hidden = false;
+    d.backdrop.hidden = false;
+    d.toggle.setAttribute("aria-expanded", "true");
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      d.aside.classList.add("open");
+      d.backdrop.classList.add("open");
+    }));
+  }
+
+  function closeDrawer() {
+    const d = resolveDrawerDom();
+    if (!d || !drawerOpen) return;
+    drawerOpen = false;
+    drawerClosing = true;
+    d.toggle.setAttribute("aria-expanded", "false");
+    d.aside.classList.remove("open");
+    d.backdrop.classList.remove("open");
+    const finish = () => {
+      if (drawerOpen) { drawerClosing = false; return; }
+      d.aside.hidden = true;
+      d.backdrop.hidden = true;
+      drawerClosing = false;
+    };
+    d.aside.addEventListener("transitionend", finish, { once: true });
+    setTimeout(finish, 280);
+  }
+
+  function toggleDrawer() {
+    if (drawerOpen) closeDrawer();
+    else { M.closeTopbarOverflowMenu(); openDrawer(); }
+  }
+
+  function setDrawerMode(on) {
+    const d = resolveDrawerDom();
+    if (!d) return;
+    M.cfg.enableDrawer = on;
+    M.saveDrawerPref(on);
+    if (on) {
+      priorTabsPref = M.cfg.enableTabs;
+      // Relocate search + quick-nav into the drawer (listeners preserved).
+      d.searchSlot.appendChild(document.querySelector(".search-wrap"));
+      d.navSlot.appendChild(document.querySelector(".quick-nav"));
+      setDrawerLabels();
+      M.APP_EL?.classList.add("drawer-mode");
+      d.toggle.hidden = false;
+      // Force tab mode on; disable the tabs checkbox while drawer is active.
+      setTabMode(true);
+      if (M.MENU_TABS_EL) {
+        M.MENU_TABS_EL.disabled = true;
+        const label = M.MENU_TABS_EL.closest(".topbar-overflow-check");
+        if (label) { label.setAttribute("aria-disabled", "true"); label.style.opacity = "0.5"; label.style.pointerEvents = "none"; }
+      }
+    } else {
+      M.APP_EL?.classList.remove("drawer-mode");
+      if (drawerOpen || drawerClosing) closeDrawer();
+      d.toggle.hidden = true;
+      // Move search + quick-nav back to the topbar (original order: topbar-row, quick-nav, search-wrap).
+      const nav = document.querySelector(".quick-nav");
+      const search = document.querySelector(".search-wrap");
+      if (nav) d.topbar.appendChild(nav);
+      if (search) d.topbar.appendChild(search);
+      if (nav) for (const btn of nav.querySelectorAll(".ghost-btn.icon-btn")) btn.removeAttribute("data-drawer-label");
+      // Restore prior tab preference.
+      if (M.MENU_TABS_EL) {
+        M.MENU_TABS_EL.disabled = false;
+        const label = M.MENU_TABS_EL.closest(".topbar-overflow-check");
+        if (label) { label.removeAttribute("aria-disabled"); label.style.opacity = ""; label.style.pointerEvents = ""; }
+      }
+      setTabMode(priorTabsPref);
+    }
+    if (M.MENU_DRAWER_EL) {
+      M.MENU_DRAWER_EL.checked = on;
+      const label = M.MENU_DRAWER_EL.closest(".topbar-overflow-check");
+      if (label) label.setAttribute("aria-checked", on ? "true" : "false");
+    }
     updateQuickNavVisibility();
   }
 
@@ -672,6 +800,7 @@ function renderScenesPopup() {
   if (M.OVERFLOW_BTN) {
     M.OVERFLOW_BTN.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (M.cfg.enableDrawer) closeDrawer();
       M.toggleTopbarOverflowMenu();
     });
   }
@@ -706,6 +835,31 @@ function renderScenesPopup() {
       if (tabsLabel) tabsLabel.setAttribute("aria-checked", M.cfg.enableTabs ? "true" : "false");
     });
   }
+
+  if (M.MENU_DRAWER_EL) {
+    const drawerLabel = M.MENU_DRAWER_EL.closest(".topbar-overflow-check");
+    M.MENU_DRAWER_EL.checked = M.cfg.enableDrawer;
+    if (drawerLabel) drawerLabel.setAttribute("aria-checked", M.cfg.enableDrawer ? "true" : "false");
+    M.MENU_DRAWER_EL.addEventListener("click", (e) => e.stopPropagation());
+    M.MENU_DRAWER_EL.addEventListener("change", () => {
+      setDrawerMode(M.MENU_DRAWER_EL.checked);
+    });
+  }
+
+  const DRAWER_TOGGLE_BTN_REF = document.getElementById("drawer-toggle");
+  const DRAWER_BACKDROP_REF = document.getElementById("drawer-backdrop");
+  if (DRAWER_TOGGLE_BTN_REF) {
+    DRAWER_TOGGLE_BTN_REF.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleDrawer();
+    });
+  }
+  if (DRAWER_BACKDROP_REF) {
+    DRAWER_BACKDROP_REF.addEventListener("click", closeDrawer);
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && drawerOpen) closeDrawer();
+  });
 
   if (M.MENU_THEME_SEGMENT) {
     for (const btn of M.MENU_THEME_SEGMENT.querySelectorAll(".topbar-overflow-seg")) {
@@ -951,6 +1105,7 @@ function renderScenesPopup() {
       M.hapticTap();
       if (M.tabMode && M.TAB_CATEGORIES.has(popup)) showTab(popup);
       else openQuickPopup(popup, title);
+      if (M.cfg.enableDrawer) closeDrawer();
     });
   });
   if (M.QUICK_LIGHTS_BTN) {
@@ -958,6 +1113,7 @@ function renderScenesPopup() {
     M.QUICK_LIGHTS_BTN.addEventListener("click", () => {
       M.hapticTap();
       if (M.tabMode) showTab("lights");
+      if (M.cfg.enableDrawer) closeDrawer();
     });
     M.QUICK_LIGHTS_BTN.hidden = !M.tabMode;
   }
@@ -976,6 +1132,8 @@ function renderScenesPopup() {
     });
   }
   if (M.tabMode) { ensureTabView(); updateTabActiveStates(); }
+  if (M.cfg.enableDrawer) setDrawerMode(true);
+  updateCurrentCategoryTitle();
   if (location.protocol === "https:" && "serviceWorker" in navigator) {
     navigator.serviceWorker.register(M.withToken("sw.js"), { scope: "./" }).catch(() => {});
   }
@@ -1018,5 +1176,5 @@ function renderScenesPopup() {
   })();
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
-  Object.assign(M, { favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, closeConfirm, ensureConfirmPopup, confirmAction, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, startWS, scheduleReconnect });
+  Object.assign(M, { favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, startWS, scheduleReconnect });
 })();

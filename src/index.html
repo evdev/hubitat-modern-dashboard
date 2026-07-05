@@ -15,9 +15,20 @@
 </head>
 <body>
 <div id="app">
+  <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+  <aside id="app-drawer" class="drawer" aria-label="Navigation" hidden>
+    <div class="drawer-search-slot"></div>
+    <nav class="drawer-nav-slot" aria-label="Categories"></nav>
+  </aside>
   <header class="topbar">
     <div class="topbar-row">
-      <h1 class="brand"><span class="brand-dot"></span><span id="dashboard-title">mDash</span></h1>
+      <button id="drawer-toggle" class="ghost-btn icon-btn drawer-toggle" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="app-drawer" title="Navigation" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="brand-stack">
+        <span class="brand-name" id="dashboard-title">mDash</span>
+        <h1 class="brand-current"><span class="brand-dot"></span><span id="current-category-title">Lights</span></h1>
+      </div>
       <div class="topbar-actions">
         <button id="reorder-cancel" class="ghost-btn" type="button" hidden aria-label="Cancel reordering" title="Cancel reordering">Cancel</button>
         <button id="reorder-done" class="ghost-btn reorder-done-btn" type="button" hidden aria-label="Save room order" title="Save room order">Done</button>
@@ -56,6 +67,10 @@
             <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="false">
               <input type="checkbox" id="menu-tabs" />
               <span>Show favorites, sensors, thermostats, music as tabs</span>
+            </label>
+            <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="false">
+              <input type="checkbox" id="menu-drawer" />
+              <span>Use navigation drawer (hides icons &amp; search in a side menu)</span>
             </label>
             <div class="topbar-overflow-label">Theme</div>
             <div id="menu-theme-segment" class="topbar-overflow-segment" role="group" aria-label="Theme">

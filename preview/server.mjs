@@ -177,7 +177,7 @@ function buildMockData(count) {
   ], outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, locks, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, unlockPinEnabled: true, unlockPinRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
+  ], thermostats, tempSensors, sensors, locks, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
 }
 
 function tstatOstateForMode(tm) {
@@ -715,19 +715,39 @@ const server = createServer(async (req, res) => {
 });
 
 // ---------- scheduler mock helpers ----------
+function mockFmtClockTime(time24) {
+  const t = String(time24 || "").trim();
+  if (!t || state.schedUse24Hour) return t;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t);
+  if (!m) return t;
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return h12 + ":" + String(min).padStart(2, "0") + " " + (h < 12 ? "AM" : "PM");
+}
+
+function mockFmtDateTimeLocal(at) {
+  const s = String(at || "").trim();
+  if (!s || state.schedUse24Hour) return s;
+  const d = new Date(s.length >= 16 ? s.substring(0, 16) : s);
+  if (isNaN(d.getTime())) return s;
+  return d.toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+}
+
 function mockScheduleSummary(s) {
   const tr = s?.trigger || {};
   const when = tr.when || "clock";
   if (tr.kind === "daily") {
     if (when !== "clock") return "Daily " + mockSunLabel(when, tr.offsetMin);
-    return "Daily " + (tr.time || "");
+    return "Daily " + mockFmtClockTime(tr.time || "");
   }
   if (tr.kind === "weekly") {
     const days = (tr.days || []).join(",");
     if (when !== "clock") return "Weekly " + days + " " + mockSunLabel(when, tr.offsetMin);
-    return "Weekly " + days + " " + (tr.time || "");
+    return "Weekly " + days + " " + mockFmtClockTime(tr.time || "");
   }
-  if (tr.kind === "once") return "Once " + (tr.at || "");
+  if (tr.kind === "once") return "Once " + mockFmtDateTimeLocal(tr.at || "");
   if (tr.kind === "mode") return "When mode is " + (tr.mode || "");
   return tr.kind || "";
 }

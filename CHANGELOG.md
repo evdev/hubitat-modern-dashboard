@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- Optional navigation drawer: overflow menu toggle moves search and category icons into a side menu; topbar shows the active category (Lights, Scheduler, etc.).
+- Scheduler 12/24-hour display preference in app settings; times stay stored in 24-hour form for reliable firing.
+
 ## 0.2.1
 
 - Scheduler UI touch optimization: larger tap targets, improved typography, and row/room-header tap-to-toggle on device pickers.

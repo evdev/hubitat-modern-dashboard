@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.1
+// Modern Dashboard v0.2.2
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -37,7 +37,7 @@ def mainPage() {
             paragraph "<small><b>Smart names:</b> room names are stripped from device labels so you don't see redundant text like \"Kitchen Kitchen Light\".</small>"
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen.</small>"
             paragraph "<small><b>Hub-only:</b> the UI and API are served entirely from your Hubitat hub — no Maker API or external cloud services.</small>"
-            paragraph "<small>Version 0.2.1 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.2 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -82,6 +82,10 @@ def mainPage() {
             input "dashboardName", "string", title: "Dashboard name", defaultValue: "mDash", required: false
             input "pollSec", "number", title: "Refresh interval (seconds)", defaultValue: 5, required: false, range: "2..60"
             input "enableWs", "bool", title: "Enable real-time updates on local network (eventsocket)", defaultValue: true, required: false
+        }
+        section("Scheduler") {
+            input "schedulerUse24Hour", "bool", title: "Use 24-hour time in scheduler", defaultValue: false
+            paragraph "<small>When off, scheduler times display with AM/PM. Times are always stored in 24-hour form for reliable scheduling.</small>"
         }
         section("Light control") {
             paragraph "<small>Applies to snapshot restore, All on/off, and room on/off. Metering is on by default.</small>"
@@ -948,6 +952,7 @@ def renderData() {
     out << ",\"hsmEnabled\":" << (hsmEnabled == true ? "true" : "false")
     out << ",\"hsmPinRequired\":" << (hsmEnabled == true && hsmPinEnabled == true && hsmPin?.toString()?.trim() ? "true" : "false")
     out << ",\"thermostatsPopupEnabled\":" << (thermostatsPopupEnabled == true ? "true" : "false")
+    out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
     out << ",\"unlockPinEnabled\":" << (unlockPinEnabled == true ? "true" : "false")
     out << ",\"unlockPinRequired\":" << (unlockPinEnabled == true && unlockPin?.toString()?.trim() ? "true" : "false")
     out << ",\"scenes\":["
@@ -2363,6 +2368,39 @@ def sunTimesJsonFragment() {
     return out.toString()
 }
 
+def formatSchedClockTime(time24) {
+    def t = time24?.toString()?.trim()
+    if (!t) return ""
+    if (schedulerUse24Hour == true) return t
+    try {
+        def parts = t.split(":")
+        if (parts.size() < 2) return t
+        int h = parts[0].toInteger()
+        int m = parts[1].toInteger()
+        def ap = h < 12 ? "AM" : "PM"
+        int h12 = h % 12
+        if (h12 == 0) h12 = 12
+        return String.format("%d:%02d %s", h12, m, ap)
+    } catch (e) {
+        return t
+    }
+}
+
+def formatSchedDateTimeLocal(at) {
+    def s = at?.toString()?.trim()
+    if (!s) return ""
+    if (schedulerUse24Hour == true) return s
+    try {
+        def iso = s.length() >= 16 ? s.substring(0, 16) : s
+        def inFmt = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm")
+        def dt = inFmt.parse(iso)
+        def outFmt = new java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.US)
+        return outFmt.format(dt)
+    } catch (e) {
+        return s
+    }
+}
+
 def scheduleSummary(s) {
     if (!s) return ""
     def tr = s.trigger ?: [:]
@@ -2372,15 +2410,15 @@ def scheduleSummary(s) {
             if (scheduleTriggerWhen(tr) != "clock") {
                 return "Daily " + scheduleSunLabel(scheduleTriggerWhen(tr), scheduleOffsetMin(tr))
             }
-            return "Daily " + (tr?.time ?: "")
+            return "Daily " + formatSchedClockTime(tr?.time ?: "")
         case "weekly":
             def d = (tr?.days instanceof List ? tr.days : []).join(",")
             if (scheduleTriggerWhen(tr) != "clock") {
                 return "Weekly " + (d ?: "") + " " + scheduleSunLabel(scheduleTriggerWhen(tr), scheduleOffsetMin(tr))
             }
-            return "Weekly " + (d ?: "") + " " + (tr?.time ?: "")
+            return "Weekly " + (d ?: "") + " " + formatSchedClockTime(tr?.time ?: "")
         case "once":
-            return "Once " + (tr?.at ?: "")
+            return "Once " + formatSchedDateTimeLocal(tr?.at ?: "")
         case "mode":
             def m = tr?.mode?.toString() ?: ""
             if (m) return "When mode is " + m
