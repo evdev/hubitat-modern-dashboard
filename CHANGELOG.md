@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6
+
+- Dimmer sliders and color-popup level track use a warm brightness gradient with a dim overlay (matches tile drag-to-dim behavior).
+- Scheduler brightness and white-balance controls use the same drag tracks instead of native range inputs.
+
 ## 0.2.5
 
 - Sensor cards show battery percentage in the bottom-left corner (temperature sensors and other sensors with a battery attribute).

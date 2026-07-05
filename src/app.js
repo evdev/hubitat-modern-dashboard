@@ -688,9 +688,9 @@
 
     const paneLevel = ce("div", "ct-pane ct-pane-level");
     const levelTrack = ce("div", "level-track");
-    const levelFill = ce("div", "level-fill");
+    const levelDim = ce("div", "level-dim");
     const levelThumb = ce("div", "level-thumb");
-    levelTrack.appendChild(levelFill);
+    levelTrack.appendChild(levelDim);
     levelTrack.appendChild(levelThumb);
     paneLevel.appendChild(levelTrack);
     const levelPresets = ce("div", "level-presets");
@@ -725,7 +725,7 @@
     colorPopup._trackEl = track;
     colorPopup._thumbEl = thumb;
     colorPopup._levelTrackEl = levelTrack;
-    colorPopup._levelFillEl = levelFill;
+    colorPopup._levelDimEl = levelDim;
     colorPopup._levelThumbEl = levelThumb;
     colorPopup._wheelCanvas = canvas;
     colorPopup._wheelCursor = cursor;
@@ -840,29 +840,37 @@
     });
   }
 
-  function attachLevelTrackDrag(track) {
+  function levelFromTrackEvent(track, e) {
+    const rect = track.getBoundingClientRect();
+    const x = (e.clientX != null ? e.clientX : 0) - rect.left;
+    let pct = Math.round((x / rect.width) * 100);
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    return pct;
+  }
+
+  function updateLevelTrackVisual(track, thumbEl, dimEl, level) {
+    const l = Math.max(0, Math.min(100, Math.round(level)));
+    track.style.setProperty("--level", String(l));
+    if (thumbEl) thumbEl.style.left = l + "%";
+    if (dimEl) dimEl.style.left = l + "%";
+    return l;
+  }
+
+  function bindLevelTrackDrag(track, opts) {
+    const { canAdjust, levelFromEvent, onAdjust, onCommit, throttleMs = 0 } = opts;
     let lastCommit = 0;
 
-    function levelFromEvent(e) {
-      const rect = track.getBoundingClientRect();
-      const x = (e.clientX != null ? e.clientX : 0) - rect.left;
-      let pct = Math.round((x / rect.width) * 100);
-      if (pct < 0) pct = 0;
-      if (pct > 100) pct = 100;
-      return pct;
-    }
-
     function adjust(e) {
-      if (!colorSession || colorSession.tab !== "level") return;
+      if (!canAdjust()) return;
       const level = levelFromEvent(e);
-      colorSession.level = level;
-      colorSession.changed = true;
-      applyLevelChange(colorSession.id, level);
-      const now = Date.now();
-      if (now - lastCommit > 300) {
-        lastCommit = now;
-        setLevelOptimistic(colorSession.id, level);
-        sendCmd(colorSession.id, "setLevel", level);
+      onAdjust(level);
+      if (onCommit && throttleMs > 0) {
+        const now = Date.now();
+        if (now - lastCommit > throttleMs) {
+          lastCommit = now;
+          onCommit(level);
+        }
       }
       e.preventDefault();
     }
@@ -872,14 +880,11 @@
       track.removeEventListener("pointerup", stop);
       track.removeEventListener("pointercancel", stop);
       try { if (e?.pointerId != null) track.releasePointerCapture(e.pointerId); } catch {}
-      if (colorSession && colorSession.tab === "level") {
-        setLevelOptimistic(colorSession.id, colorSession.level);
-        sendCmd(colorSession.id, "setLevel", colorSession.level);
-      }
+      if (canAdjust() && onCommit) onCommit(levelFromEvent(e));
     }
 
     function start(e) {
-      if (!colorSession || colorSession.tab !== "level") return;
+      if (!canAdjust()) return;
       if (e.button != null && e.button !== 0) return;
       lastCommit = 0;
       adjust(e);
@@ -890,6 +895,119 @@
     }
 
     track.addEventListener("pointerdown", start);
+  }
+
+  function makeLevelTrackSlider({ value = 100, min = 1, max = 100, onChange }) {
+    const track = ce("div", "level-track");
+    const dim = ce("div", "level-dim");
+    const thumb = ce("div", "level-thumb");
+    track.appendChild(dim);
+    track.appendChild(thumb);
+
+    function clampLevel(level) {
+      return Math.max(min, Math.min(max, Math.round(level)));
+    }
+
+    function setLevel(level) {
+      const l = clampLevel(level);
+      updateLevelTrackVisual(track, thumb, dim, l);
+      return l;
+    }
+
+    setLevel(value);
+
+    bindLevelTrackDrag(track, {
+      canAdjust: () => true,
+      levelFromEvent: (e) => clampLevel(levelFromTrackEvent(track, e)),
+      onAdjust: (level) => { onChange(setLevel(level)); },
+    });
+
+    return { el: track, setValue: setLevel };
+  }
+
+  function updateCtTrackVisual(thumbEl, k) {
+    const clamped = Math.max(CT_K_MIN, Math.min(CT_K_MAX, Math.round(k)));
+    const pct = ((clamped - CT_K_MIN) / (CT_K_MAX - CT_K_MIN)) * 100;
+    if (thumbEl) thumbEl.style.left = pct + "%";
+    return clamped;
+  }
+
+  function bindCtTrackDrag(track, opts) {
+    const { canAdjust, kFromEvent, onAdjust, onCommit, throttleMs = 0 } = opts;
+    let lastCommit = 0;
+
+    function adjust(e) {
+      if (!canAdjust()) return;
+      const k = kFromEvent(e);
+      onAdjust(k);
+      if (onCommit && throttleMs > 0) {
+        const now = Date.now();
+        if (now - lastCommit > throttleMs) {
+          lastCommit = now;
+          onCommit(k);
+        }
+      }
+      e.preventDefault();
+    }
+
+    function stop(e) {
+      track.removeEventListener("pointermove", adjust);
+      track.removeEventListener("pointerup", stop);
+      track.removeEventListener("pointercancel", stop);
+      try { if (e?.pointerId != null) track.releasePointerCapture(e.pointerId); } catch {}
+      if (canAdjust() && onCommit) onCommit(kFromEvent(e));
+    }
+
+    function start(e) {
+      if (!canAdjust()) return;
+      if (e.button != null && e.button !== 0) return;
+      lastCommit = 0;
+      adjust(e);
+      try { track.setPointerCapture(e.pointerId); } catch {}
+      track.addEventListener("pointermove", adjust);
+      track.addEventListener("pointerup", stop);
+      track.addEventListener("pointercancel", stop);
+    }
+
+    track.addEventListener("pointerdown", start);
+  }
+
+  function makeCtTrackSlider({ value = CT_K_DEFAULT, onChange }) {
+    const track = ce("div", "ct-track");
+    const thumb = ce("div", "ct-thumb");
+    track.appendChild(thumb);
+
+    function setK(k) {
+      const clamped = updateCtTrackVisual(thumb, k);
+      return clamped;
+    }
+
+    setK(value);
+
+    bindCtTrackDrag(track, {
+      canAdjust: () => true,
+      kFromEvent: (e) => kFromEvent(track, e),
+      onAdjust: (k) => { onChange(setK(k)); },
+    });
+
+    return { el: track, setValue: setK };
+  }
+
+  function attachLevelTrackDrag(track) {
+    bindLevelTrackDrag(track, {
+      canAdjust: () => colorSession && colorSession.tab === "level",
+      levelFromEvent: (e) => levelFromTrackEvent(track, e),
+      onAdjust: (level) => {
+        colorSession.level = level;
+        colorSession.changed = true;
+        applyLevelChange(colorSession.id, level);
+      },
+      onCommit: (level) => {
+        setLevelOptimistic(colorSession.id, level);
+        sendCmd(colorSession.id, "setLevel", level);
+      },
+      throttleMs: 300,
+    });
   }
 
   function attachRgbPresets(presetsEl) {
@@ -965,43 +1083,20 @@
   }
 
   function attachCtTrackDrag(track) {
-    let lastCommit = 0;
-
-    function adjust(e) {
-      if (!colorSession || colorSession.tab !== "ct") return;
-      const k = kFromEvent(track, e);
-      colorSession.k = k;
-      colorSession.changed = true;
-      applyCtChange(colorSession.id, k);
-      const now = Date.now();
-      if (now - lastCommit > 300) {
-        lastCommit = now;
+    bindCtTrackDrag(track, {
+      canAdjust: () => colorSession && colorSession.tab === "ct",
+      kFromEvent: (e) => kFromEvent(track, e),
+      onAdjust: (k) => {
+        colorSession.k = k;
+        colorSession.changed = true;
+        applyCtChange(colorSession.id, k);
+      },
+      onCommit: (k) => {
         sendCmd(colorSession.id, "setCT", k);
         ensureLightOn(colorSession.id);
-      }
-      e.preventDefault();
-    }
-
-    function stop(e) {
-      track.removeEventListener("pointermove", adjust);
-      track.removeEventListener("pointerup", stop);
-      track.removeEventListener("pointercancel", stop);
-      try { if (e?.pointerId != null) track.releasePointerCapture(e.pointerId); } catch {}
-      if (colorSession && colorSession.tab === "ct") sendCmd(colorSession.id, "setCT", colorSession.k);
-    }
-
-    function start(e) {
-      if (!colorSession || colorSession.tab !== "ct") return;
-      if (e.button != null && e.button !== 0) return;
-      lastCommit = 0;
-      adjust(e);
-      try { track.setPointerCapture(e.pointerId); } catch {}
-      track.addEventListener("pointermove", adjust);
-      track.addEventListener("pointerup", stop);
-      track.addEventListener("pointercancel", stop);
-    }
-
-    track.addEventListener("pointerdown", start);
+      },
+      throttleMs: 300,
+    });
   }
 
   function kToPct(k) {
@@ -1049,8 +1144,7 @@
     const popup = ensureColorPopup();
     const l = Math.max(0, Math.min(100, Math.round(level)));
     popup._valueEl.textContent = l + "%";
-    popup._levelFillEl.style.width = l + "%";
-    popup._levelThumbEl.style.left = l + "%";
+    updateLevelTrackVisual(popup._levelTrackEl, popup._levelThumbEl, popup._levelDimEl, l);
     popup.querySelectorAll(".level-preset").forEach((btn) => {
       btn.classList.toggle("active", Number(btn.dataset.l) === l);
     });
@@ -3807,7 +3901,7 @@
 
     if (isDim) {
       const slider = ce("div", "slider");
-      slider.appendChild(ce("div", "slider-fill"));
+      slider.appendChild(ce("div", "slider-dim"));
       const thumb = ce("div", "slider-thumb"); slider.appendChild(thumb);
       tile.appendChild(slider);
       attachDrag(tile, slider);
@@ -7599,28 +7693,38 @@
 
       if (d.d && st.on) {
         const field = ce("div", "sched-field");
+        const fieldHead = ce("div", "sched-field-head");
         const lbl = ce("label", "sched-field-label");
         lbl.textContent = "Brightness";
-        field.appendChild(lbl);
-        const sl = ce("input", "sched-input sched-slider");
-        sl.type = "range"; sl.min = "1"; sl.max = "100"; sl.value = String(st.level ?? 100);
         const val = ce("span", "sched-slider-val");
         val.textContent = (st.level ?? 100) + "%";
-        sl.addEventListener("input", () => { st.level = Number(sl.value); val.textContent = sl.value + "%"; });
-        field.appendChild(sl); field.appendChild(val);
+        fieldHead.appendChild(lbl);
+        fieldHead.appendChild(val);
+        field.appendChild(fieldHead);
+        const { el: levelTrack } = makeLevelTrackSlider({
+          value: st.level ?? 100,
+          min: 1,
+          max: 100,
+          onChange: (l) => { st.level = l; val.textContent = l + "%"; },
+        });
+        field.appendChild(levelTrack);
         row.appendChild(field);
       }
       if (d.ct && st.on) {
         const field = ce("div", "sched-field");
+        const fieldHead = ce("div", "sched-field-head");
         const lbl = ce("label", "sched-field-label");
         lbl.textContent = "White balance (K)";
-        field.appendChild(lbl);
-        const sl = ce("input", "sched-input sched-slider");
-        sl.type = "range"; sl.min = "2500"; sl.max = "6000"; sl.step = "100"; sl.value = String(st.ct ?? 3000);
         const val = ce("span", "sched-slider-val");
         val.textContent = (st.ct ?? 3000) + "K";
-        sl.addEventListener("input", () => { st.ct = Number(sl.value); val.textContent = sl.value + "K"; });
-        field.appendChild(sl); field.appendChild(val);
+        fieldHead.appendChild(lbl);
+        fieldHead.appendChild(val);
+        field.appendChild(fieldHead);
+        const { el: ctTrack } = makeCtTrackSlider({
+          value: st.ct ?? 3000,
+          onChange: (k) => { st.ct = k; val.textContent = k + "K"; },
+        });
+        field.appendChild(ctTrack);
         row.appendChild(field);
       }
       return row;

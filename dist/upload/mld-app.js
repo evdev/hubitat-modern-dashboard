@@ -688,9 +688,9 @@
 
     const paneLevel = ce("div", "ct-pane ct-pane-level");
     const levelTrack = ce("div", "level-track");
-    const levelFill = ce("div", "level-fill");
+    const levelDim = ce("div", "level-dim");
     const levelThumb = ce("div", "level-thumb");
-    levelTrack.appendChild(levelFill);
+    levelTrack.appendChild(levelDim);
     levelTrack.appendChild(levelThumb);
     paneLevel.appendChild(levelTrack);
     const levelPresets = ce("div", "level-presets");
@@ -725,7 +725,7 @@
     colorPopup._trackEl = track;
     colorPopup._thumbEl = thumb;
     colorPopup._levelTrackEl = levelTrack;
-    colorPopup._levelFillEl = levelFill;
+    colorPopup._levelDimEl = levelDim;
     colorPopup._levelThumbEl = levelThumb;
     colorPopup._wheelCanvas = canvas;
     colorPopup._wheelCursor = cursor;
@@ -840,29 +840,37 @@
     });
   }
 
-  function attachLevelTrackDrag(track) {
+  function levelFromTrackEvent(track, e) {
+    const rect = track.getBoundingClientRect();
+    const x = (e.clientX != null ? e.clientX : 0) - rect.left;
+    let pct = Math.round((x / rect.width) * 100);
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    return pct;
+  }
+
+  function updateLevelTrackVisual(track, thumbEl, dimEl, level) {
+    const l = Math.max(0, Math.min(100, Math.round(level)));
+    track.style.setProperty("--level", String(l));
+    if (thumbEl) thumbEl.style.left = l + "%";
+    if (dimEl) dimEl.style.left = l + "%";
+    return l;
+  }
+
+  function bindLevelTrackDrag(track, opts) {
+    const { canAdjust, levelFromEvent, onAdjust, onCommit, throttleMs = 0 } = opts;
     let lastCommit = 0;
 
-    function levelFromEvent(e) {
-      const rect = track.getBoundingClientRect();
-      const x = (e.clientX != null ? e.clientX : 0) - rect.left;
-      let pct = Math.round((x / rect.width) * 100);
-      if (pct < 0) pct = 0;
-      if (pct > 100) pct = 100;
-      return pct;
-    }
-
     function adjust(e) {
-      if (!colorSession || colorSession.tab !== "level") return;
+      if (!canAdjust()) return;
       const level = levelFromEvent(e);
-      colorSession.level = level;
-      colorSession.changed = true;
-      applyLevelChange(colorSession.id, level);
-      const now = Date.now();
-      if (now - lastCommit > 300) {
-        lastCommit = now;
-        setLevelOptimistic(colorSession.id, level);
-        sendCmd(colorSession.id, "setLevel", level);
+      onAdjust(level);
+      if (onCommit && throttleMs > 0) {
+        const now = Date.now();
+        if (now - lastCommit > throttleMs) {
+          lastCommit = now;
+          onCommit(level);
+        }
       }
       e.preventDefault();
     }
@@ -872,14 +880,11 @@
       track.removeEventListener("pointerup", stop);
       track.removeEventListener("pointercancel", stop);
       try { if (e?.pointerId != null) track.releasePointerCapture(e.pointerId); } catch {}
-      if (colorSession && colorSession.tab === "level") {
-        setLevelOptimistic(colorSession.id, colorSession.level);
-        sendCmd(colorSession.id, "setLevel", colorSession.level);
-      }
+      if (canAdjust() && onCommit) onCommit(levelFromEvent(e));
     }
 
     function start(e) {
-      if (!colorSession || colorSession.tab !== "level") return;
+      if (!canAdjust()) return;
       if (e.button != null && e.button !== 0) return;
       lastCommit = 0;
       adjust(e);
@@ -890,6 +895,119 @@
     }
 
     track.addEventListener("pointerdown", start);
+  }
+
+  function makeLevelTrackSlider({ value = 100, min = 1, max = 100, onChange }) {
+    const track = ce("div", "level-track");
+    const dim = ce("div", "level-dim");
+    const thumb = ce("div", "level-thumb");
+    track.appendChild(dim);
+    track.appendChild(thumb);
+
+    function clampLevel(level) {
+      return Math.max(min, Math.min(max, Math.round(level)));
+    }
+
+    function setLevel(level) {
+      const l = clampLevel(level);
+      updateLevelTrackVisual(track, thumb, dim, l);
+      return l;
+    }
+
+    setLevel(value);
+
+    bindLevelTrackDrag(track, {
+      canAdjust: () => true,
+      levelFromEvent: (e) => clampLevel(levelFromTrackEvent(track, e)),
+      onAdjust: (level) => { onChange(setLevel(level)); },
+    });
+
+    return { el: track, setValue: setLevel };
+  }
+
+  function updateCtTrackVisual(thumbEl, k) {
+    const clamped = Math.max(CT_K_MIN, Math.min(CT_K_MAX, Math.round(k)));
+    const pct = ((clamped - CT_K_MIN) / (CT_K_MAX - CT_K_MIN)) * 100;
+    if (thumbEl) thumbEl.style.left = pct + "%";
+    return clamped;
+  }
+
+  function bindCtTrackDrag(track, opts) {
+    const { canAdjust, kFromEvent, onAdjust, onCommit, throttleMs = 0 } = opts;
+    let lastCommit = 0;
+
+    function adjust(e) {
+      if (!canAdjust()) return;
+      const k = kFromEvent(e);
+      onAdjust(k);
+      if (onCommit && throttleMs > 0) {
+        const now = Date.now();
+        if (now - lastCommit > throttleMs) {
+          lastCommit = now;
+          onCommit(k);
+        }
+      }
+      e.preventDefault();
+    }
+
+    function stop(e) {
+      track.removeEventListener("pointermove", adjust);
+      track.removeEventListener("pointerup", stop);
+      track.removeEventListener("pointercancel", stop);
+      try { if (e?.pointerId != null) track.releasePointerCapture(e.pointerId); } catch {}
+      if (canAdjust() && onCommit) onCommit(kFromEvent(e));
+    }
+
+    function start(e) {
+      if (!canAdjust()) return;
+      if (e.button != null && e.button !== 0) return;
+      lastCommit = 0;
+      adjust(e);
+      try { track.setPointerCapture(e.pointerId); } catch {}
+      track.addEventListener("pointermove", adjust);
+      track.addEventListener("pointerup", stop);
+      track.addEventListener("pointercancel", stop);
+    }
+
+    track.addEventListener("pointerdown", start);
+  }
+
+  function makeCtTrackSlider({ value = CT_K_DEFAULT, onChange }) {
+    const track = ce("div", "ct-track");
+    const thumb = ce("div", "ct-thumb");
+    track.appendChild(thumb);
+
+    function setK(k) {
+      const clamped = updateCtTrackVisual(thumb, k);
+      return clamped;
+    }
+
+    setK(value);
+
+    bindCtTrackDrag(track, {
+      canAdjust: () => true,
+      kFromEvent: (e) => kFromEvent(track, e),
+      onAdjust: (k) => { onChange(setK(k)); },
+    });
+
+    return { el: track, setValue: setK };
+  }
+
+  function attachLevelTrackDrag(track) {
+    bindLevelTrackDrag(track, {
+      canAdjust: () => colorSession && colorSession.tab === "level",
+      levelFromEvent: (e) => levelFromTrackEvent(track, e),
+      onAdjust: (level) => {
+        colorSession.level = level;
+        colorSession.changed = true;
+        applyLevelChange(colorSession.id, level);
+      },
+      onCommit: (level) => {
+        setLevelOptimistic(colorSession.id, level);
+        sendCmd(colorSession.id, "setLevel", level);
+      },
+      throttleMs: 300,
+    });
   }
 
   function attachRgbPresets(presetsEl) {
@@ -965,43 +1083,20 @@
   }
 
   function attachCtTrackDrag(track) {
-    let lastCommit = 0;
-
-    function adjust(e) {
-      if (!colorSession || colorSession.tab !== "ct") return;
-      const k = kFromEvent(track, e);
-      colorSession.k = k;
-      colorSession.changed = true;
-      applyCtChange(colorSession.id, k);
-      const now = Date.now();
-      if (now - lastCommit > 300) {
-        lastCommit = now;
+    bindCtTrackDrag(track, {
+      canAdjust: () => colorSession && colorSession.tab === "ct",
+      kFromEvent: (e) => kFromEvent(track, e),
+      onAdjust: (k) => {
+        colorSession.k = k;
+        colorSession.changed = true;
+        applyCtChange(colorSession.id, k);
+      },
+      onCommit: (k) => {
         sendCmd(colorSession.id, "setCT", k);
         ensureLightOn(colorSession.id);
-      }
-      e.preventDefault();
-    }
-
-    function stop(e) {
-      track.removeEventListener("pointermove", adjust);
-      track.removeEventListener("pointerup", stop);
-      track.removeEventListener("pointercancel", stop);
-      try { if (e?.pointerId != null) track.releasePointerCapture(e.pointerId); } catch {}
-      if (colorSession && colorSession.tab === "ct") sendCmd(colorSession.id, "setCT", colorSession.k);
-    }
-
-    function start(e) {
-      if (!colorSession || colorSession.tab !== "ct") return;
-      if (e.button != null && e.button !== 0) return;
-      lastCommit = 0;
-      adjust(e);
-      try { track.setPointerCapture(e.pointerId); } catch {}
-      track.addEventListener("pointermove", adjust);
-      track.addEventListener("pointerup", stop);
-      track.addEventListener("pointercancel", stop);
-    }
-
-    track.addEventListener("pointerdown", start);
+      },
+      throttleMs: 300,
+    });
   }
 
   function kToPct(k) {
@@ -1049,8 +1144,7 @@
     const popup = ensureColorPopup();
     const l = Math.max(0, Math.min(100, Math.round(level)));
     popup._valueEl.textContent = l + "%";
-    popup._levelFillEl.style.width = l + "%";
-    popup._levelThumbEl.style.left = l + "%";
+    updateLevelTrackVisual(popup._levelTrackEl, popup._levelThumbEl, popup._levelDimEl, l);
     popup.querySelectorAll(".level-preset").forEach((btn) => {
       btn.classList.toggle("active", Number(btn.dataset.l) === l);
     });
@@ -2848,5 +2942,5 @@
       return { ok: false, error: "Request failed" };
     }
   }
-  globalThis.__MLD = { ROOMS_EL, SEARCH_EL, STATUS_EL, ALL_ON_BTN, ALL_OFF_BTN, ALL_ON_TRACK, ALL_OFF_TRACK, ALL_ON_RESTORE_BTN, ALL_OFF_SAVE_BTN, CENTRAL_TSTAT_BTN, CENTRAL_MUSIC_BTN, EXPAND_ALL_BTN, REORDER_DONE_BTN, REORDER_CANCEL_BTN, OVERFLOW_BTN, OVERFLOW_MENU, MENU_REORDER_BTN, MENU_HAPTICS_EL, MENU_TABS_EL, MENU_DRAWER_EL, MENU_THEME_SEGMENT, MENU_OPEN_LOCAL_BTN, MENU_OPEN_CLOUD_BTN, MENU_LOCAL_URL_EL, HAPTICS_STORAGE_KEY, THEME_STORAGE_KEY, TABS_STORAGE_KEY, DRAWER_STORAGE_KEY, LOCAL_URL_STORAGE_KEY, LOCAL_OK_STORAGE_KEY, CLOUD_URL_STORAGE_KEY, PREFER_CLOUD_STORAGE_KEY, LOCAL_OK_MAX_AGE_MS, THEME_OPTIONS, APP_EL, REORDER_DRAG_THRESHOLD, DASHBOARD_TITLE_EL, CURRENT_CATEGORY_TITLE_EL, POLL_DEFAULT, POLL_WS_FALLBACK, loadHapticsPref, saveHapticsPref, loadThemePref, saveThemePref, loadTabsPref, saveTabsPref, loadDrawerPref, saveDrawerPref, cfg, localModeBannerEl, localBannerDismissed, rooms, roomMap, devices, devicesByRoom, devMap, favDevMap, roomEls, lastDataSig, pollTimer, ws, wsConnected, wsRetry, reorderMode, reorderBusy, reorderSnapshot, reorderDraftOrder, colorPopup, colorSession, levelOptimistic, switchOptimistic, lockOptimistic, shadeOptimistic, musicOptimistic, setpointOptimistic, rgbWheelCache, thermostats, tempSensors, thermoByRoom, sensorByRoom, climateEls, tstatPopup, tstatSession, tstatDeviceModeLock, musicMasterPopup, MUSIC_VOL_STEP, hubModes, currentHubMode, scenes, locks, windowShades, plainSwitches, outlets, music, favorites, snapshots, roomGestureLockCount, hubModeLockUntil, hsmStatus, hsmAlert, hsmAlertDesc, hsmEnabled, hsmPinRequired, thermostatsPopupEnabled, unlockPinEnabled, unlockPinRequired, hsmLockUntil, pinPadPopup, pinPadState, confirmPopup, confirmPending, quickPopup, quickPopupOpenType, syncQuickPopupRef, TAB_CATEGORIES, TAB_LABELS, tabMode, activeTab, tabViewEl, QUICK_LIGHTS_BTN, favTstatModeMenu, favTstatModeMenuCleanup, favTstatModeMenuId, favTstatModeMenuAnchor, favTstatMap, favPopupSig, tstatsPopupMap, tstatsPopupSig, setLevelOptimistic, setSwitchOptimistic, clearSwitchOptimistic, reapplySwitchOptimistic, effectiveSwitch, effectiveLevel, setLockOptimistic, clearLockOptimistic, reapplyLockOptimistic, effectiveLock, lockStatusLabel, setShadeOptimistic, clearShadeOptimistic, reapplyShadeOptimistic, effectiveShadeState, effectiveShadePosition, shadeIsMoving, shadeStatusLabel, isMusicPlaying, musicControls, effectiveMusicStatus, effectiveMusicVolume, musicStatusLabel, setMusicOptimistic, clearMusicOptimistic, reapplyMusicOptimistic, setSetpointOptimistic, clearSetpointOptimistic, reapplySetpointOptimistic, applyTstatSetpoints, drawRgbWheel, activeSlideGestures, cancelAllSlideGestures, appendPopup, bindPopupDismiss, ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, supportedModes, supportedFanModes, deviceHasFanSpeed, supportedFanSpeeds, showFanSpeedControls, fanModeActive, tstatSectionLabel, tstatStateClass, formatRoomTemp, roomClimateInfo, roomHasClimate, roomTstatState, isFavorite, syncFavButton, updateTstatFavButton, postCall, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, isCloudOrigin, isLocalOrigin, isAndroid, isStandaloneDisplay, initAndroidLocalImmersive, loadStoredLocalUrl, saveStoredLocalUrl, loadStoredCloudUrl, saveStoredCloudUrl, preferCloudMode, setPreferCloudMode, consumePreferCloudParam, loadLocalOkTs, saveLocalOkTs, localOkFresh, refreshLocalUrlFromConfig, navigateToLocal, maybeRefreshLocalOkFromReferrer, navigateToCloud, updateLocalModeMenuUI, hideLocalModeBanner, showLocalModeBanner, applyLocalModeStrategy, ACCESS_TOKEN, withToken, getJson, fetchData, sendCmd, sendCmdBatch, publishMld, rebuildDevicesByRoom, applyTstatSessionModeLock, sensors, sensorCardMap, favSensorMap, sensorsPopupSig, sensorTypeFilter, sensorFilterOpen, sensorFilterChipsEl, sensorFilterBtnEl, sensorFilterEmptyEl, replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, getDisplayRoomIds, saveRoomOrder, postJson, postJsonSilent };
+  globalThis.__MLD = { ROOMS_EL, SEARCH_EL, STATUS_EL, ALL_ON_BTN, ALL_OFF_BTN, ALL_ON_TRACK, ALL_OFF_TRACK, ALL_ON_RESTORE_BTN, ALL_OFF_SAVE_BTN, CENTRAL_TSTAT_BTN, CENTRAL_MUSIC_BTN, EXPAND_ALL_BTN, REORDER_DONE_BTN, REORDER_CANCEL_BTN, OVERFLOW_BTN, OVERFLOW_MENU, MENU_REORDER_BTN, MENU_HAPTICS_EL, MENU_TABS_EL, MENU_DRAWER_EL, MENU_THEME_SEGMENT, MENU_OPEN_LOCAL_BTN, MENU_OPEN_CLOUD_BTN, MENU_LOCAL_URL_EL, HAPTICS_STORAGE_KEY, THEME_STORAGE_KEY, TABS_STORAGE_KEY, DRAWER_STORAGE_KEY, LOCAL_URL_STORAGE_KEY, LOCAL_OK_STORAGE_KEY, CLOUD_URL_STORAGE_KEY, PREFER_CLOUD_STORAGE_KEY, LOCAL_OK_MAX_AGE_MS, THEME_OPTIONS, APP_EL, REORDER_DRAG_THRESHOLD, DASHBOARD_TITLE_EL, CURRENT_CATEGORY_TITLE_EL, POLL_DEFAULT, POLL_WS_FALLBACK, loadHapticsPref, saveHapticsPref, loadThemePref, saveThemePref, loadTabsPref, saveTabsPref, loadDrawerPref, saveDrawerPref, cfg, localModeBannerEl, localBannerDismissed, rooms, roomMap, devices, devicesByRoom, devMap, favDevMap, roomEls, lastDataSig, pollTimer, ws, wsConnected, wsRetry, reorderMode, reorderBusy, reorderSnapshot, reorderDraftOrder, colorPopup, colorSession, levelOptimistic, switchOptimistic, lockOptimistic, shadeOptimistic, musicOptimistic, setpointOptimistic, rgbWheelCache, thermostats, tempSensors, thermoByRoom, sensorByRoom, climateEls, tstatPopup, tstatSession, tstatDeviceModeLock, musicMasterPopup, MUSIC_VOL_STEP, hubModes, currentHubMode, scenes, locks, windowShades, plainSwitches, outlets, music, favorites, snapshots, roomGestureLockCount, hubModeLockUntil, hsmStatus, hsmAlert, hsmAlertDesc, hsmEnabled, hsmPinRequired, thermostatsPopupEnabled, unlockPinEnabled, unlockPinRequired, hsmLockUntil, pinPadPopup, pinPadState, confirmPopup, confirmPending, quickPopup, quickPopupOpenType, syncQuickPopupRef, TAB_CATEGORIES, TAB_LABELS, tabMode, activeTab, tabViewEl, QUICK_LIGHTS_BTN, favTstatModeMenu, favTstatModeMenuCleanup, favTstatModeMenuId, favTstatModeMenuAnchor, favTstatMap, favPopupSig, tstatsPopupMap, tstatsPopupSig, setLevelOptimistic, setSwitchOptimistic, clearSwitchOptimistic, reapplySwitchOptimistic, effectiveSwitch, effectiveLevel, setLockOptimistic, clearLockOptimistic, reapplyLockOptimistic, effectiveLock, lockStatusLabel, setShadeOptimistic, clearShadeOptimistic, reapplyShadeOptimistic, effectiveShadeState, effectiveShadePosition, shadeIsMoving, shadeStatusLabel, isMusicPlaying, musicControls, effectiveMusicStatus, effectiveMusicVolume, musicStatusLabel, setMusicOptimistic, clearMusicOptimistic, reapplyMusicOptimistic, setSetpointOptimistic, clearSetpointOptimistic, reapplySetpointOptimistic, applyTstatSetpoints, drawRgbWheel, activeSlideGestures, cancelAllSlideGestures, appendPopup, bindPopupDismiss, ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, levelFromTrackEvent, updateLevelTrackVisual, bindLevelTrackDrag, makeLevelTrackSlider, updateCtTrackVisual, bindCtTrackDrag, makeCtTrackSlider, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, supportedModes, supportedFanModes, deviceHasFanSpeed, supportedFanSpeeds, showFanSpeedControls, fanModeActive, tstatSectionLabel, tstatStateClass, formatRoomTemp, roomClimateInfo, roomHasClimate, roomTstatState, isFavorite, syncFavButton, updateTstatFavButton, postCall, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, isCloudOrigin, isLocalOrigin, isAndroid, isStandaloneDisplay, initAndroidLocalImmersive, loadStoredLocalUrl, saveStoredLocalUrl, loadStoredCloudUrl, saveStoredCloudUrl, preferCloudMode, setPreferCloudMode, consumePreferCloudParam, loadLocalOkTs, saveLocalOkTs, localOkFresh, refreshLocalUrlFromConfig, navigateToLocal, maybeRefreshLocalOkFromReferrer, navigateToCloud, updateLocalModeMenuUI, hideLocalModeBanner, showLocalModeBanner, applyLocalModeStrategy, ACCESS_TOKEN, withToken, getJson, fetchData, sendCmd, sendCmdBatch, publishMld, rebuildDevicesByRoom, applyTstatSessionModeLock, sensors, sensorCardMap, favSensorMap, sensorsPopupSig, sensorTypeFilter, sensorFilterOpen, sensorFilterChipsEl, sensorFilterBtnEl, sensorFilterEmptyEl, replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, getDisplayRoomIds, saveRoomOrder, postJson, postJsonSilent };
 })();

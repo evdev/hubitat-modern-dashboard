@@ -754,20 +754,22 @@ body {
 }
 
 .level-track {
-  position: relative; height: 52px; border-radius: 999px; overflow: hidden;
-  background: var(--panel-2); border: 1px solid var(--stroke);
+  --level: 0; position: relative; height: 52px; border-radius: 999px; overflow: hidden;
+  background: linear-gradient(90deg, #1c1408 0%, #6b4f1a 28%, #f5b82e 68%, #fff7e0 100%);
+  border: 1px solid var(--stroke);
   touch-action: none;
 }
-.level-fill {
-  position: absolute; inset: 0 auto 0 0; width: 0%;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--on) 75%, var(--accent)), var(--on));
-  border-radius: 999px;
+.level-dim {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  left: calc(var(--level) * 1%);
+  background: var(--panel-2);
+  border-radius: 0 999px 999px 0;
 }
 .level-thumb {
   position: absolute; top: 50%; left: 0%; width: 34px; height: 34px;
   margin-left: -17px; transform: translateY(-50%);
   border-radius: 50%; background: #fff;
-  box-shadow: 0 3px 10px rgba(0,0,0,0.4); border: 2px solid var(--on);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.4); border: 2px solid #f5b82e;
   pointer-events: none;
 }
 .level-presets {
@@ -1214,8 +1216,8 @@ body {
 .sched-time-ap { flex: 1; min-width: 140px; }
 .sched-sun-preview-val { font-size: 1.05rem; font-weight: 600; color: var(--text, #e6e6e6); }
 .sched-hint { margin: 0 0 6px; font-size: 0.95rem; color: var(--muted); line-height: 1.4; }
-.sched-slider { width: 100%; min-height: 36px; }
-.sched-slider-val { font-size: 0.95rem; color: var(--muted); align-self: flex-end; }
+.sched-field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.sched-slider-val { font-size: 0.95rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* Step 3 device picker */
 .sched-action { display: flex; flex-direction: column; gap: 14px; }
@@ -1766,12 +1768,31 @@ body {
 .tile.switch:active { transform: scale(.98); }
 
 /* Dimmer slider */
-.slider { --level: 0; position: relative; height: 44px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--stroke); overflow: hidden; touch-action: pan-y; }
-.slider-fill { position: absolute; inset: 0 auto 0 0; width: calc(15px + (100% - 30px) * var(--level) / 100); background: linear-gradient(90deg, color-mix(in srgb, var(--on) 75%, var(--accent)), var(--on)); border-radius: 999px; transition: width .08s linear; }
-.slider-thumb { position: absolute; top: 50%; left: calc(15px + (100% - 30px) * var(--level) / 100); width: 30px; height: 30px; transform: translate(-50%, -50%) scale(1); border-radius: 50%; background: #fff; box-shadow: 0 3px 10px rgba(0,0,0,0.4); transition: transform .12s var(--ease); border: 2px solid var(--on); }
+.slider { --level: 0; position: relative; height: 44px; border-radius: 999px; border: 1px solid var(--stroke); overflow: hidden; touch-action: pan-y; }
+.slider:not(.shade-slider) {
+  background: linear-gradient(90deg, #1c1408 0%, #6b4f1a 28%, #f5b82e 68%, #fff7e0 100%);
+}
+.shade-slider { background: var(--panel-2); }
+.slider-dim {
+  position: absolute; inset: 0 0 0 auto;
+  left: calc(15px + (100% - 30px) * var(--level) / 100);
+  background: var(--panel-2);
+  border-radius: 0 999px 999px 0;
+  transition: left .08s linear;
+}
+.slider-fill {
+  position: absolute; inset: 0 auto 0 0;
+  width: calc(15px + (100% - 30px) * var(--level) / 100);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 40%, var(--panel-2)), var(--accent));
+  border-radius: 999px;
+  transition: width .08s linear;
+}
+.slider-thumb { position: absolute; top: 50%; left: calc(15px + (100% - 30px) * var(--level) / 100); width: 30px; height: 30px; transform: translate(-50%, -50%) scale(1); border-radius: 50%; background: #fff; box-shadow: 0 3px 10px rgba(0,0,0,0.4); transition: transform .12s var(--ease); border: 2px solid #f5b82e; }
 .slider.dragging .slider-thumb { transform: translate(-50%, -50%) scale(1.18); }
+.slider.dragging .slider-dim,
 .slider.dragging .slider-fill { transition: none; }
-.tile.off .slider-fill { background: var(--stroke-2); }
+.tile.off .slider:not(.shade-slider) { background: var(--panel-2); }
+.tile.off .slider:not(.shade-slider) .slider-dim { display: none; }
 .tile.off .slider-thumb { border-color: var(--text-faint); }
 
 /* Status / states */

@@ -1027,28 +1027,38 @@
 
       if (d.d && st.on) {
         const field = ce("div", "sched-field");
+        const fieldHead = ce("div", "sched-field-head");
         const lbl = ce("label", "sched-field-label");
         lbl.textContent = "Brightness";
-        field.appendChild(lbl);
-        const sl = ce("input", "sched-input sched-slider");
-        sl.type = "range"; sl.min = "1"; sl.max = "100"; sl.value = String(st.level ?? 100);
         const val = ce("span", "sched-slider-val");
         val.textContent = (st.level ?? 100) + "%";
-        sl.addEventListener("input", () => { st.level = Number(sl.value); val.textContent = sl.value + "%"; });
-        field.appendChild(sl); field.appendChild(val);
+        fieldHead.appendChild(lbl);
+        fieldHead.appendChild(val);
+        field.appendChild(fieldHead);
+        const { el: levelTrack } = M.makeLevelTrackSlider({
+          value: st.level ?? 100,
+          min: 1,
+          max: 100,
+          onChange: (l) => { st.level = l; val.textContent = l + "%"; },
+        });
+        field.appendChild(levelTrack);
         row.appendChild(field);
       }
       if (d.ct && st.on) {
         const field = ce("div", "sched-field");
+        const fieldHead = ce("div", "sched-field-head");
         const lbl = ce("label", "sched-field-label");
         lbl.textContent = "White balance (K)";
-        field.appendChild(lbl);
-        const sl = ce("input", "sched-input sched-slider");
-        sl.type = "range"; sl.min = "2500"; sl.max = "6000"; sl.step = "100"; sl.value = String(st.ct ?? 3000);
         const val = ce("span", "sched-slider-val");
         val.textContent = (st.ct ?? 3000) + "K";
-        sl.addEventListener("input", () => { st.ct = Number(sl.value); val.textContent = sl.value + "K"; });
-        field.appendChild(sl); field.appendChild(val);
+        fieldHead.appendChild(lbl);
+        fieldHead.appendChild(val);
+        field.appendChild(fieldHead);
+        const { el: ctTrack } = M.makeCtTrackSlider({
+          value: st.ct ?? 3000,
+          onChange: (k) => { st.ct = k; val.textContent = k + "K"; },
+        });
+        field.appendChild(ctTrack);
         row.appendChild(field);
       }
       return row;

@@ -961,7 +961,7 @@ async function setHsmApi(mode, pin, padApi) {
 
     if (isDim) {
       const slider = ce("div", "slider");
-      slider.appendChild(ce("div", "slider-fill"));
+      slider.appendChild(ce("div", "slider-dim"));
       const thumb = ce("div", "slider-thumb"); slider.appendChild(thumb);
       tile.appendChild(slider);
       attachDrag(tile, slider);
