@@ -976,8 +976,11 @@ async function setHsmApi(mode, pin, padApi) {
 
     if (isDim) {
       const slider = ce("div", "slider");
-      slider.appendChild(ce("div", "slider-dim"));
-      const thumb = ce("div", "slider-thumb"); slider.appendChild(thumb);
+      const inner = ce("div", "slider-inner");
+      inner.appendChild(ce("div", "slider-dim"));
+      slider.appendChild(inner);
+      const thumb = ce("div", "slider-thumb");
+      slider.appendChild(thumb);
       tile.appendChild(slider);
       attachDrag(tile, slider);
     }
@@ -1070,8 +1073,6 @@ async function setHsmApi(mode, pin, padApi) {
     });
   }
 
-  const SLIDER_THUMB_PX = 30;
-
   function clampLevel(level) {
     const n = Number(level);
     if (isNaN(n)) return 0;
@@ -1159,12 +1160,7 @@ async function setHsmApi(mode, pin, padApi) {
     let downLevel = null;
 
     function pctFromEvent(e) {
-      const rect = slider.getBoundingClientRect();
-      const usable = rect.width - SLIDER_THUMB_PX;
-      const x = (e.clientX != null ? e.clientX : 0) - rect.left - SLIDER_THUMB_PX / 2;
-      let p = usable > 0 ? Math.round((x / usable) * 100) : 0;
-      if (p < 0) p = 0; if (p > 100) p = 100;
-      return p;
+      return M.trackPctFromEvent(slider, e);
     }
     function setVisual(p) {
       const level = clampLevel(p);
@@ -1263,12 +1259,7 @@ async function setHsmApi(mode, pin, padApi) {
     let downLevel = null;
 
     function pctFromEvent(e) {
-      const rect = slider.getBoundingClientRect();
-      const usable = rect.width - SLIDER_THUMB_PX;
-      const x = (e.clientX != null ? e.clientX : 0) - rect.left - SLIDER_THUMB_PX / 2;
-      let p = usable > 0 ? Math.round((x / usable) * 100) : 0;
-      if (p < 0) p = 0; if (p > 100) p = 100;
-      return p;
+      return M.trackPctFromEvent(slider, e);
     }
     function setVisual(p) {
       const level = clampLevel(p);
@@ -1790,7 +1781,9 @@ async function setHsmApi(mode, pin, padApi) {
       levelLabel = ce("span", "shade-level-label");
       levelLabel.textContent = (pos != null ? pos : "—") + "%";
       slider = ce("div", "slider shade-slider");
-      slider.appendChild(ce("div", "slider-fill"));
+      const inner = ce("div", "slider-inner");
+      inner.appendChild(ce("div", "slider-fill"));
+      slider.appendChild(inner);
       slider.appendChild(ce("div", "slider-thumb"));
       setSliderLevel(slider, pos != null ? pos : 0);
       if (moving) slider.classList.add("disabled");

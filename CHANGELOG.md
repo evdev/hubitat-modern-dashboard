@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.9
+
+- Unified slider thumb positioning across tile dimmers, shade sliders, level tracks, and color-temperature controls (shared inset math and edge gutters).
+- Tile dimmer sliders use an inner clip layer so the warm gradient and dim overlay match popup/scheduler tracks.
+
 ## 0.2.8
 
 - Scheduler time picker: tap hour or minute to open a scroll-wheel sheet (12h and 24h).
