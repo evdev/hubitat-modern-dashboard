@@ -3165,7 +3165,7 @@
   const SLIDE_TAP_MOVE = 10;
 
   function attachRoomSlideAction(track, primaryBtn, actionBtn, opts) {
-    const { direction, onTap, onCommit, canCommit } = opts;
+    const { direction, onTap, onCommit, canCommit, clickFallback } = opts;
     let pointerId = null;
     let downX = 0;
     let downY = 0;
@@ -3177,6 +3177,7 @@
     let slidePx = 0;
     let slideMaxPx = SLIDE_FALLBACK_COMMIT_PX;
     let gestureHandled = false;
+    let suppressClick = false;
     let gestureRegistered = false;
 
     track.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -3228,6 +3229,7 @@
       sliding = false;
       slidePx = 0;
       slideMaxPx = SLIDE_FALLBACK_COMMIT_PX;
+      suppressClick = false;
       track.style.removeProperty("--slide-thumb-x");
       track.style.removeProperty("--slide-thumb-left");
       track.style.removeProperty("--slide-progress");
@@ -3281,8 +3283,6 @@
 
     function onUp(e) {
       if (e.pointerId !== pointerId) return;
-      gestureHandled = true;
-      setTimeout(() => { gestureHandled = false; }, 0);
       const elapsed = Date.now() - downT;
       const dx = Math.abs(e.clientX - downX);
       const dy = Math.abs(e.clientY - downY);
@@ -3294,11 +3294,17 @@
 
       if (!holdActive && elapsed <= SLIDE_HOLD_MS + 80 && dx <= SLIDE_TAP_MOVE && dy <= SLIDE_TAP_MOVE) {
         reset();
+        if (clickFallback) return;
+        gestureHandled = true;
+        setTimeout(() => { gestureHandled = false; }, 0);
         onTap();
         return;
       }
 
       if (holdActive && slidePx >= commitDistance() && (!canCommit || canCommit())) {
+        suppressClick = true;
+        gestureHandled = true;
+        setTimeout(() => { gestureHandled = false; suppressClick = false; }, 0);
         reset();
         onCommit();
         return;
@@ -3307,6 +3313,11 @@
       if (holdActive && slidePx > 0 && canCommit && !canCommit()) {
         flash("No saved state", true);
       }
+      if (holdActive) {
+        suppressClick = true;
+        gestureHandled = true;
+        setTimeout(() => { gestureHandled = false; suppressClick = false; }, 0);
+      }
       reset();
     }
 
@@ -3314,7 +3325,7 @@
       if (reorderMode) return;
       if (e.button != null && e.button !== 0) return;
       if (pointerId != null) reset();
-      e.preventDefault();
+      if (!clickFallback) e.preventDefault();
       e.stopPropagation();
       pointerId = e.pointerId;
       downX = e.clientX;
@@ -3325,6 +3336,7 @@
       sliding = false;
       slidePx = 0;
       gestureHandled = false;
+      suppressClick = false;
       if (!gestureRegistered) {
         gestureRegistered = true;
         activeSlideGestures.push(reset);
@@ -3341,6 +3353,7 @@
           return;
         }
         holdActive = true;
+        suppressClick = true;
         track.classList.add("slide-confirm-active", "slide-confirm-revealed", "room-slide-active", "room-slide-revealed");
         setupSlideMetrics();
         setRoomGestureLock(true);
@@ -3353,11 +3366,11 @@
 
     primaryBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (gestureHandled) {
+      if (suppressClick || gestureHandled) {
         e.preventDefault();
         return;
       }
-      if (opts.clickFallback) onTap();
+      if (clickFallback) onTap();
     });
 
     if (actionBtn) {

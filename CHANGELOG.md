@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.10
+
+- All-lights and room slide buttons: tap works reliably; incomplete slides no longer fire a ghost click.
+- App resume refreshes data without resetting open popups unless the page was hidden.
+
 ## 0.2.9
 
 - Unified slider thumb positioning across tile dimmers, shade sliders, level tracks, and color-temperature controls (shared inset math and edge gutters).
