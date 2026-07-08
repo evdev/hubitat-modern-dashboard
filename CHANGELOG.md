@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.8
+
+- Scheduler time picker: tap hour or minute to open a scroll-wheel sheet (12h and 24h).
+- Level/dimmer track uses an inner clip layer so the warm gradient and dim overlay align at the edges.
+
 ## 0.2.7
 
 - Scheduler time picker uses +/- stepper buttons with hold-to-repeat (12h and 24h).

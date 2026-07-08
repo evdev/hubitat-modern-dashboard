@@ -690,9 +690,11 @@
 
     const paneLevel = ce("div", "ct-pane ct-pane-level");
     const levelTrack = ce("div", "level-track");
+    const levelInner = ce("div", "level-track-inner");
     const levelDim = ce("div", "level-dim");
     const levelThumb = ce("div", "level-thumb");
-    levelTrack.appendChild(levelDim);
+    levelInner.appendChild(levelDim);
+    levelTrack.appendChild(levelInner);
     levelTrack.appendChild(levelThumb);
     paneLevel.appendChild(levelTrack);
     const levelPresets = ce("div", "level-presets");
@@ -899,9 +901,11 @@
 
   function makeLevelTrackSlider({ value = 100, min = 1, max = 100, onChange }) {
     const track = ce("div", "level-track");
+    const inner = ce("div", "level-track-inner");
     const dim = ce("div", "level-dim");
     const thumb = ce("div", "level-thumb");
-    track.appendChild(dim);
+    inner.appendChild(dim);
+    track.appendChild(inner);
     track.appendChild(thumb);
 
     function clampLevel(level) {

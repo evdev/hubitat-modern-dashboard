@@ -82,6 +82,137 @@
     } catch { return iso; }
   }
 
+  const SCHED_WHEEL_ITEM_H = 44;
+
+  function schedCreateScrollWheel(min, max, fmtVal, initial, onSelect) {
+    const col = ce("div", "sched-wheel-col");
+    const viewport = ce("div", "sched-wheel-viewport");
+    viewport.setAttribute("tabindex", "0");
+    const list = ce("div", "sched-wheel-list");
+    const pad = ce("div", "sched-wheel-pad");
+    list.appendChild(pad);
+    const values = [];
+    const itemEls = [];
+    for (let v = min; v <= max; v++) {
+      values.push(v);
+      const item = ce("div", "sched-wheel-item");
+      item.textContent = fmtVal(v);
+      list.appendChild(item);
+      itemEls.push(item);
+    }
+    list.appendChild(pad.cloneNode());
+    viewport.appendChild(list);
+    col.appendChild(viewport);
+
+    let lastVal = initial;
+    let snapTimer = null;
+    const paintCenter = () => {
+      const idx = Math.max(0, Math.min(values.length - 1, Math.round(viewport.scrollTop / SCHED_WHEEL_ITEM_H)));
+      itemEls.forEach((el, i) => el.classList.toggle("is-centered", i === idx));
+    };
+    const snap = () => {
+      const idx = Math.max(0, Math.min(values.length - 1, Math.round(viewport.scrollTop / SCHED_WHEEL_ITEM_H)));
+      const top = idx * SCHED_WHEEL_ITEM_H;
+      if (Math.abs(viewport.scrollTop - top) > 1) viewport.scrollTo({ top, behavior: "smooth" });
+      paintCenter();
+      const v = values[idx];
+      if (v !== lastVal) {
+        lastVal = v;
+        M.hapticTap(8);
+        onSelect(v);
+      }
+    };
+    const onScroll = () => {
+      paintCenter();
+      clearTimeout(snapTimer);
+      snapTimer = setTimeout(snap, 90);
+    };
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    viewport.addEventListener("scrollend", snap);
+
+    const scrollTo = (v, smooth) => {
+      const idx = values.indexOf(v);
+      if (idx < 0) return;
+      lastVal = v;
+      viewport.scrollTo({ top: idx * SCHED_WHEEL_ITEM_H, behavior: smooth ? "smooth" : "auto" });
+    };
+
+    requestAnimationFrame(() => scrollTo(initial, false));
+    return { col, scrollTo, destroy: () => { clearTimeout(snapTimer); viewport.removeEventListener("scroll", onScroll); viewport.removeEventListener("scrollend", snap); } };
+  }
+
+  function schedOpenTimeWheelSheet(state, onDone) {
+    const overlay = ce("div", "sched-time-sheet open");
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Select time");
+    const panel = ce("div", "sched-time-sheet-panel");
+    const head = ce("div", "sched-time-sheet-head");
+    const title = ce("div", "sched-time-sheet-title");
+    title.textContent = "Select time";
+    const doneBtn = ce("button", "sched-time-sheet-done");
+    doneBtn.type = "button";
+    doneBtn.textContent = "Done";
+    head.appendChild(title);
+    head.appendChild(doneBtn);
+    panel.appendChild(head);
+
+    const wheels = ce("div", "sched-time-wheels");
+    let draftH24 = state.h24;
+    let draftMin = state.min;
+    let draftAp = state.ap;
+    const wheelsCleanup = [];
+
+    const applyHour12 = (h12) => {
+      const mer = draftAp === "PM";
+      draftH24 = h12 === 12 ? (mer ? 12 : 0) : (mer ? h12 + 12 : h12);
+    };
+
+    const hourWheel = schedCreateScrollWheel(
+      state.use24h ? 0 : 1,
+      state.use24h ? 23 : 12,
+      (v) => state.use24h ? String(v).padStart(2, "0") : String(v),
+      state.use24h ? draftH24 : (draftH24 % 12 || 12),
+      (v) => { if (state.use24h) draftH24 = v; else applyHour12(v); }
+    );
+    wheels.appendChild(hourWheel.col);
+    wheelsCleanup.push(hourWheel);
+
+    const sep = ce("span", "sched-time-wheels-sep");
+    sep.textContent = ":";
+    sep.setAttribute("aria-hidden", "true");
+    wheels.appendChild(sep);
+
+    const minWheel = schedCreateScrollWheel(0, 59, (v) => String(v).padStart(2, "0"), draftMin, (v) => { draftMin = v; });
+    wheels.appendChild(minWheel.col);
+    wheelsCleanup.push(minWheel);
+
+    if (!state.use24h) {
+      const apWheel = schedCreateScrollWheel(0, 1, (v) => (v === 0 ? "AM" : "PM"), draftAp === "AM" ? 0 : 1, (v) => {
+        draftAp = v === 0 ? "AM" : "PM";
+        const h12 = draftH24 % 12 || 12;
+        draftH24 = draftAp === "AM" ? (h12 === 12 ? 0 : h12) : (h12 === 12 ? 12 : h12 + 12);
+        hourWheel.scrollTo(h12, true);
+      });
+      wheels.appendChild(apWheel.col);
+      wheelsCleanup.push(apWheel);
+    }
+
+    panel.appendChild(wheels);
+    overlay.appendChild(panel);
+
+    const close = (apply) => {
+      wheelsCleanup.forEach((w) => w.destroy());
+      overlay.remove();
+      if (apply) onDone({ h24: draftH24, min: draftMin, ap: draftAp });
+    };
+    doneBtn.addEventListener("click", () => { M.hapticTap(); close(true); });
+    M.bindPopupDismiss(overlay, panel, null, () => close(false));
+    M.appendPopup(overlay);
+    if (state.focusCol === "minute") requestAnimationFrame(() => minWheel.col.querySelector(".sched-wheel-viewport")?.focus());
+    else requestAnimationFrame(() => hourWheel.col.querySelector(".sched-wheel-viewport")?.focus());
+  }
+
   function schedBindStepHold(btn, stepFn) {
     let delayTimer = null;
     let repeatTimer = null;
@@ -112,16 +243,22 @@
     btnRow.appendChild(b);
   }
 
-  function schedAppendTimeColumn(parent, label, getVal, setVal, min, max, fmtVal) {
+  function schedAppendTimeColumn(parent, label, getVal, setVal, min, max, fmtVal, onTapVal) {
     const col = ce("div", "sched-time-col");
     const lbl = ce("span", "sched-time-col-label");
     lbl.textContent = label;
     col.appendChild(lbl);
-    const valEl = ce("div", "sched-time-val");
-    valEl.setAttribute("aria-live", "polite");
-    const refreshVal = () => { valEl.textContent = fmtVal(getVal()); };
+    const valBtn = ce("button", "sched-time-val sched-time-val-btn");
+    valBtn.type = "button";
+    valBtn.setAttribute("aria-label", "Select " + label.toLowerCase());
+    valBtn.setAttribute("aria-live", "polite");
+    const refreshVal = () => { valBtn.textContent = fmtVal(getVal()); };
     refreshVal();
-    col.appendChild(valEl);
+    valBtn.addEventListener("click", () => {
+      M.hapticTap();
+      onTapVal?.();
+    });
+    col.appendChild(valBtn);
     const btnRow = ce("div", "sched-time-step-row");
     schedAppendTimeStep(btnRow, "\u2212", "Decrease " + label.toLowerCase(), () => {
       const v = getVal();
@@ -150,6 +287,24 @@
         : schedTime12To24(h24 % 12 || 12, min, ap);
       if (t) onTime24(t);
     };
+    const openSheet = (focusCol) => {
+      schedOpenTimeWheelSheet(
+        { h24, min, ap, use24h: schedUse24Hour, focusCol },
+        ({ h24: h, min: m, ap: a }) => {
+          h24 = h;
+          min = m;
+          if (!schedUse24Hour) ap = a;
+          hourCol.refreshVal();
+          minCol.refreshVal();
+          if (!schedUse24Hour) {
+            apSeg.querySelectorAll(".sched-seg").forEach((btn) => {
+              btn.classList.toggle("is-active", btn.textContent === ap);
+            });
+          }
+          sync();
+        }
+      );
+    };
     const hourCol = schedAppendTimeColumn(
       wrap,
       "Hour",
@@ -164,27 +319,30 @@
       },
       schedUse24Hour ? 0 : 1,
       schedUse24Hour ? 23 : 12,
-      (v) => schedUse24Hour ? String(v).padStart(2, "0") : String(v)
+      (v) => schedUse24Hour ? String(v).padStart(2, "0") : String(v),
+      () => openSheet("hour")
     );
     const sep = ce("span", "sched-time-sep");
     sep.textContent = ":";
     sep.setAttribute("aria-hidden", "true");
     wrap.appendChild(sep);
-    schedAppendTimeColumn(
+    const minCol = schedAppendTimeColumn(
       wrap,
       "Minute",
       () => min,
       (v) => { min = v; sync(); },
       0,
       59,
-      (v) => String(v).padStart(2, "0")
+      (v) => String(v).padStart(2, "0"),
+      () => openSheet("minute")
     );
+    let apSeg = null;
     if (!schedUse24Hour) {
       const apCol = ce("div", "sched-time-col sched-time-ap-col");
       const apLbl = ce("span", "sched-time-col-label");
       apLbl.textContent = "AM / PM";
       apCol.appendChild(apLbl);
-      const apSeg = ce("div", "sched-segment sched-time-ap");
+      apSeg = ce("div", "sched-segment sched-time-ap");
       for (const p of ["AM", "PM"]) {
         const b = ce("button", "sched-seg " + (ap === p ? "is-active" : ""));
         b.type = "button";
@@ -1396,5 +1554,5 @@
   Object.assign(globalThis.__MLD, { applySchedulesFromData, schedulerHasContent, renderSchedulerView });
   globalThis.__MLD.updateQuickNavVisibility?.();
 
-  Object.assign(M, { applySchedulesFromData, schedulerHasContent, schedParseTime24, schedFormatTime24, schedTime24To12, schedTime12To24, schedFmtClockTime, schedFmtDateTimeLocal, schedBindStepHold, schedAppendTimeStep, schedAppendTimeColumn, schedAppendClockPicker, fmtSchedTime, newSchedDraft, schedApi, renderSchedulerView, renderSchedulerActive, renderSchedList, renderSchedRow, renderSchedWorkflow, schedNavRow, schedBindPickRow, schedBindPickRoom, renderSchedStep1, validateStep1, renderSchedModeTriggerPicker, renderSchedModeCondition, schedOffsetLabel, renderSchedWhenPicker, renderSchedOffsetPicker, renderSchedSunPreview, renderSchedTimePicker, renderSchedDayPicker, defaultOnceAt, renderSchedOncePicker, renderSchedStep2, schedMountDeviceActionsSection, renderSchedStep3, renderSchedOnOffDeviceAction, renderSchedLightAction, renderSchedThermostatAction, renderSchedHubModeAction, autoSchedName, saveSchedule });
+  Object.assign(M, { applySchedulesFromData, schedulerHasContent, schedParseTime24, schedFormatTime24, schedTime24To12, schedTime12To24, schedFmtClockTime, schedFmtDateTimeLocal, schedCreateScrollWheel, schedOpenTimeWheelSheet, schedBindStepHold, schedAppendTimeStep, schedAppendTimeColumn, schedAppendClockPicker, fmtSchedTime, newSchedDraft, schedApi, renderSchedulerView, renderSchedulerActive, renderSchedList, renderSchedRow, renderSchedWorkflow, schedNavRow, schedBindPickRow, schedBindPickRoom, renderSchedStep1, validateStep1, renderSchedModeTriggerPicker, renderSchedModeCondition, schedOffsetLabel, renderSchedWhenPicker, renderSchedOffsetPicker, renderSchedSunPreview, renderSchedTimePicker, renderSchedDayPicker, defaultOnceAt, renderSchedOncePicker, renderSchedStep2, schedMountDeviceActionsSection, renderSchedStep3, renderSchedOnOffDeviceAction, renderSchedLightAction, renderSchedThermostatAction, renderSchedHubModeAction, autoSchedName, saveSchedule });
 })();
