@@ -113,6 +113,7 @@
   let wsConnected = false;
   let wsRetry = 0;
   let wsReconnectTimer = null;
+  let pageWasHidden = false;
   let reorderMode = false;
   let reorderBusy = false;
   let reorderSnapshot = null;
@@ -3354,7 +3355,9 @@
       e.stopPropagation();
       if (gestureHandled) {
         e.preventDefault();
+        return;
       }
+      if (opts.clickFallback) onTap();
     });
 
     if (actionBtn) {
@@ -6302,13 +6305,21 @@
     });
   }
 
+  async function tapAllOn() {
+    if (!devices.length) { flash("No lights configured", true); return; }
+    if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) allLights("on");
+  }
+
+  async function tapAllOff() {
+    if (!devices.length) { flash("No lights configured", true); return; }
+    if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) allLights("off");
+  }
+
   if (ALL_ON_BTN && ALL_ON_TRACK && ALL_ON_RESTORE_BTN) {
     attachRoomSlideAction(ALL_ON_TRACK, ALL_ON_BTN, ALL_ON_RESTORE_BTN, {
       direction: "right",
-      onTap: async () => {
-        if (!devices.length) return;
-        if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) allLights("on");
-      },
+      clickFallback: true,
+      onTap: () => { void tapAllOn(); },
       onCommit: () => {
         snapshotRestoreApi("house").then((ok) => {
           if (ok) flash("Restoring home…");
@@ -6317,18 +6328,13 @@
       canCommit: () => !!snapshots[snapshotHouseKey()],
     });
   } else if (ALL_ON_BTN) {
-    ALL_ON_BTN.addEventListener("click", async () => {
-      if (!devices.length) return;
-      if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) allLights("on");
-    });
+    ALL_ON_BTN.addEventListener("click", () => { void tapAllOn(); });
   }
   if (ALL_OFF_BTN && ALL_OFF_TRACK && ALL_OFF_SAVE_BTN) {
     attachRoomSlideAction(ALL_OFF_TRACK, ALL_OFF_BTN, ALL_OFF_SAVE_BTN, {
       direction: "left",
-      onTap: async () => {
-        if (!devices.length) return;
-        if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) allLights("off");
-      },
+      clickFallback: true,
+      onTap: () => { void tapAllOff(); },
       onCommit: () => {
         snapshotSaveApi("house").then((ok) => {
           if (!ok) return;
@@ -6340,10 +6346,7 @@
       canCommit: () => true,
     });
   } else if (ALL_OFF_BTN) {
-    ALL_OFF_BTN.addEventListener("click", async () => {
-      if (!devices.length) return;
-      if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) allLights("off");
-    });
+    ALL_OFF_BTN.addEventListener("click", () => { void tapAllOff(); });
   }
 
   // ---------- filter ----------
@@ -6639,16 +6642,25 @@
     stopWS();
   }
 
-  function resumeApp() {
-    if (document.hidden) return;
+  function resetUiOnResume() {
     cancelAllSlideGestures();
     closeConfirm(false);
     if (drawerOpen) closeDrawer();
     if (quickPopupOpenType) closeQuickPopup();
     if (colorSession) closeColorPopup(false);
+  }
+
+  function syncApp() {
+    if (document.hidden) return;
     refresh();
     if (!reorderMode) startPolling();
     startWS();
+  }
+
+  function resumeApp() {
+    if (document.hidden) return;
+    resetUiOnResume();
+    syncApp();
   }
 
   // ---------- websocket (local only) ----------
@@ -6819,20 +6831,20 @@
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) pauseApp();
-    else resumeApp();
-  });
-  window.addEventListener("pageshow", () => {
-    if (!document.hidden) resumeApp();
-  });
-  let focusResumeTimer = null;
-  window.addEventListener("focus", () => {
-    if (document.hidden) return;
-    if (focusResumeTimer) clearTimeout(focusResumeTimer);
-    focusResumeTimer = setTimeout(() => {
-      focusResumeTimer = null;
+    if (document.hidden) {
+      pageWasHidden = true;
+      pauseApp();
+    } else if (pageWasHidden) {
+      pageWasHidden = false;
       resumeApp();
-    }, 300);
+    } else {
+      syncApp();
+    }
+  });
+  window.addEventListener("pageshow", (e) => {
+    if (document.hidden) return;
+    if (e.persisted) resumeApp();
+    else syncApp();
   });
 
   // ---------- init ----------

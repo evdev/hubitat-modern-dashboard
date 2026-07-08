@@ -656,13 +656,21 @@ function renderScenesPopup() {
     });
   }
 
+  async function tapAllOn() {
+    if (!M.devices.length) { M.flash("No lights configured", true); return; }
+    if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) M.allLights("on");
+  }
+
+  async function tapAllOff() {
+    if (!M.devices.length) { M.flash("No lights configured", true); return; }
+    if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) M.allLights("off");
+  }
+
   if (M.ALL_ON_BTN && M.ALL_ON_TRACK && M.ALL_ON_RESTORE_BTN) {
     M.attachRoomSlideAction(M.ALL_ON_TRACK, M.ALL_ON_BTN, M.ALL_ON_RESTORE_BTN, {
       direction: "right",
-      onTap: async () => {
-        if (!M.devices.length) return;
-        if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) M.allLights("on");
-      },
+      clickFallback: true,
+      onTap: () => { void tapAllOn(); },
       onCommit: () => {
         M.snapshotRestoreApi("house").then((ok) => {
           if (ok) M.flash("Restoring home…");
@@ -671,18 +679,13 @@ function renderScenesPopup() {
       canCommit: () => !!M.snapshots[M.snapshotHouseKey()],
     });
   } else if (M.ALL_ON_BTN) {
-    M.ALL_ON_BTN.addEventListener("click", async () => {
-      if (!M.devices.length) return;
-      if (await confirmAction({ message: "Turn on all lights?", confirmLabel: "All on" })) M.allLights("on");
-    });
+    M.ALL_ON_BTN.addEventListener("click", () => { void tapAllOn(); });
   }
   if (M.ALL_OFF_BTN && M.ALL_OFF_TRACK && M.ALL_OFF_SAVE_BTN) {
     M.attachRoomSlideAction(M.ALL_OFF_TRACK, M.ALL_OFF_BTN, M.ALL_OFF_SAVE_BTN, {
       direction: "left",
-      onTap: async () => {
-        if (!M.devices.length) return;
-        if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) M.allLights("off");
-      },
+      clickFallback: true,
+      onTap: () => { void tapAllOff(); },
       onCommit: () => {
         M.snapshotSaveApi("house").then((ok) => {
           if (!ok) return;
@@ -694,10 +697,7 @@ function renderScenesPopup() {
       canCommit: () => true,
     });
   } else if (M.ALL_OFF_BTN) {
-    M.ALL_OFF_BTN.addEventListener("click", async () => {
-      if (!M.devices.length) return;
-      if (await confirmAction({ message: "Turn off all lights?", confirmLabel: "All off", danger: true })) M.allLights("off");
-    });
+    M.ALL_OFF_BTN.addEventListener("click", () => { void tapAllOff(); });
   }
 
   // ---------- filter ----------
@@ -993,16 +993,25 @@ function renderScenesPopup() {
     stopWS();
   }
 
-  function resumeApp() {
-    if (document.hidden) return;
+  function resetUiOnResume() {
     M.cancelAllSlideGestures();
     closeConfirm(false);
     if (drawerOpen) closeDrawer();
     if (M.quickPopupOpenType) closeQuickPopup();
     if (M.colorSession) M.closeColorPopup(false);
+  }
+
+  function syncApp() {
+    if (document.hidden) return;
     refresh();
     if (!M.reorderMode) startPolling();
     startWS();
+  }
+
+  function resumeApp() {
+    if (document.hidden) return;
+    resetUiOnResume();
+    syncApp();
   }
 
   // ---------- websocket (local only) ----------
@@ -1173,20 +1182,20 @@ function renderScenesPopup() {
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) pauseApp();
-    else resumeApp();
-  });
-  window.addEventListener("pageshow", () => {
-    if (!document.hidden) resumeApp();
-  });
-  let focusResumeTimer = null;
-  window.addEventListener("focus", () => {
-    if (document.hidden) return;
-    if (focusResumeTimer) clearTimeout(focusResumeTimer);
-    focusResumeTimer = setTimeout(() => {
-      focusResumeTimer = null;
+    if (document.hidden) {
+      M.pageWasHidden = true;
+      pauseApp();
+    } else if (M.pageWasHidden) {
+      M.pageWasHidden = false;
       resumeApp();
-    }, 300);
+    } else {
+      syncApp();
+    }
+  });
+  window.addEventListener("pageshow", (e) => {
+    if (document.hidden) return;
+    if (e.persisted) resumeApp();
+    else syncApp();
   });
 
   // ---------- init ----------
@@ -1270,5 +1279,5 @@ function renderScenesPopup() {
   })();
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
-  Object.assign(M, { favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resumeApp, startWS, scheduleReconnect });
+  Object.assign(M, { favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect });
 })();

@@ -391,7 +391,9 @@ async function setHsmApi(mode, pin, padApi) {
       e.stopPropagation();
       if (gestureHandled) {
         e.preventDefault();
+        return;
       }
+      if (opts.clickFallback) onTap();
     });
 
     if (actionBtn) {
