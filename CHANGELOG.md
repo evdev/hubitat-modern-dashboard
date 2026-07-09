@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.11
+
+- All-thermostats popup: choose which thermostats to control via a multi-select target menu.
+- Favorites star only appears for devices that support favorites.
+
 ## 0.2.10
 
 - All-lights and room slide buttons: tap works reliably; incomplete slides no longer fire a ghost click.

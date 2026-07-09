@@ -171,7 +171,7 @@ function renderScenesPopup() {
   function renderFavoritesPopup() {
     M.closeFavoriteTstatModeMenu();
     const popup = M.ensureQuickPopup();
-    popup.classList.toggle("quick-popup-wide", !inTabView());
+    M.syncQuickPopupWidth(popup, "favorites");
     const body = currentBody();
     body.className = "quick-body quick-body-favorites" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";
@@ -226,7 +226,7 @@ function renderScenesPopup() {
   function renderThermostatsPopup() {
     M.closeFavoriteTstatModeMenu();
     const popup = M.ensureQuickPopup();
-    popup.classList.toggle("quick-popup-wide", !inTabView());
+    M.syncQuickPopupWidth(popup, "thermostats");
     const body = currentBody();
     body.className = "quick-body quick-body-thermostats" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";
@@ -316,8 +316,7 @@ function renderScenesPopup() {
     M.closeMusicMasterPopup();
     const popup = M.ensureQuickPopup();
     M.syncQuickPopupRef(popup);
-    popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats" || id === "blinds");
-    popup.classList.toggle("quick-popup-hub-mode", id === "hub-mode");
+    M.syncQuickPopupWidth(popup, id);
     popup._title.textContent = title;
     popup.setAttribute("aria-label", title);
     M.quickPopupOpenType = id;

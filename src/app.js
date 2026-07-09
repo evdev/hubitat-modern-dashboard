@@ -187,6 +187,9 @@
   let favTstatModeMenuCleanup = null;
   let favTstatModeMenuId = null;
   let favTstatModeMenuAnchor = null;
+  let centralTstatTargetMenu = null;
+  let centralTstatTargetMenuCleanup = null;
+  let centralTstatTargetMenuAnchor = null;
   let favTstatMap = new Map(); // tstat id -> { el, card, spEl, stateEl, stateTxt, modeLabel, modeBtn, minus, plus }
   let favPopupSig = "";
   let tstatsPopupMap = new Map();
@@ -1320,11 +1323,92 @@
     btn.setAttribute("aria-label", on ? "Remove from favorites" : "Add to favorites");
   }
 
+  function isFavoriteableDeviceId(id) {
+    const numId = Number(id);
+    if (!Number.isFinite(numId) || numId < 0) return false;
+    return devices.some((d) => d.i === numId)
+      || thermostats.some((t) => t.i === numId)
+      || tempSensors.some((t) => t.i === numId)
+      || sensors.some((s) => s.i === numId)
+      || music.some((m) => m.i === numId)
+      || locks.some((l) => l.i === numId)
+      || windowShades.some((s) => s.i === numId);
+  }
+
+  function centralThermostatsSorted() {
+    return thermostats.slice().sort((a, b) => {
+      const labelA = postCall("roomLabel", a.r) || String(a.r ?? "");
+      const labelB = postCall("roomLabel", b.r) || String(b.r ?? "");
+      const ra = labelA.localeCompare(labelB);
+      if (ra !== 0) return ra;
+      return String(a.n || "").localeCompare(String(b.n || ""));
+    });
+  }
+
+  function buildCentralTstat(selectedThermostats) {
+    const first = selectedThermostats[0];
+    const union = (arr) => [...new Set(arr.flat())];
+    return {
+      i: -1, n: "All Thermostats", r: null,
+      tm: "", os: "", hsp: null, csp: null, temp: null, u: first?.u,
+      hasFm: selectedThermostats.some((t) => t.hasFm), fm: "",
+      hasFs: selectedThermostats.some(deviceHasFanSpeed), fs: "",
+      fsLev: union(selectedThermostats.map(supportedFanSpeeds)).join(","),
+      supM: union(selectedThermostats.map(supportedModes)).join(","),
+      supFM: union(selectedThermostats.map(supportedFanModes)).join(","),
+      _central: true,
+    };
+  }
+
+  function applyCentralTstatSelection(selectedIds) {
+    if (!tstatSession?.central) return;
+    const allIds = tstatSession.allIds || thermostats.map((t) => t.i);
+    const ids = selectedIds.filter((id) => allIds.includes(id));
+    if (!ids.length) return;
+    tstatSession.ids = ids;
+    const selected = ids.map((id) => thermostats.find((t) => t.i === id)).filter(Boolean);
+    tstatSession.centralTstat = buildCentralTstat(selected);
+    updateTstatHeadExtras();
+    renderTstatDial();
+    renderTstatControls();
+    syncCentralTstatTargetMenu();
+  }
+
+  function updateCentralTstatTargetButton() {
+    const btn = tstatPopup?._targetBtn;
+    if (!btn) return;
+    if (!tstatSession?.central) {
+      btn.hidden = true;
+      return;
+    }
+    btn.hidden = false;
+    const labelEl = btn.querySelector(".tstat-target-btn-label");
+    const allCount = (tstatSession.allIds || []).length;
+    const selCount = tstatSession.ids.length;
+    let label;
+    if (selCount === allCount) label = "All thermostats (" + allCount + ")";
+    else if (selCount === 1) {
+      const t = thermostats.find((x) => x.i === tstatSession.ids[0]);
+      label = t?.n || "1 thermostat";
+    } else label = selCount + " of " + allCount + " thermostats";
+    if (labelEl) labelEl.textContent = label;
+    btn.setAttribute("aria-label", "Choose thermostats to control: " + label);
+  }
+
+  function updateTstatHeadExtras() {
+    updateCentralTstatTargetButton();
+    const favBtn = tstatPopup?._favBtn;
+    if (!favBtn || !tstatSession?.ids?.length) return;
+    if (tstatSession.central || !isFavoriteableDeviceId(tstatSession.ids[0])) {
+      favBtn.hidden = true;
+      return;
+    }
+    favBtn.hidden = false;
+    syncFavButton(favBtn, tstatSession.ids[0]);
+  }
+
   function updateTstatFavButton() {
-    if (!tstatPopup?._favBtn || !tstatSession?.ids?.length) return;
-    if (tstatSession.central) { tstatPopup._favBtn.hidden = true; return; }
-    tstatPopup._favBtn.hidden = false;
-    syncFavButton(tstatPopup._favBtn, tstatSession.ids[0]);
+    updateTstatHeadExtras();
   }
 
   function postCall(name, ...args) {
@@ -1344,13 +1428,31 @@
     const head = ce("div", "tstat-head");
     const leading = ce("div", "tstat-head-leading");
     const title = ce("div", "tstat-title");
+    const targetBtn = ce("button", "tstat-target-btn");
+    targetBtn.type = "button";
+    targetBtn.hidden = true;
+    targetBtn.setAttribute("aria-haspopup", "listbox");
+    targetBtn.setAttribute("aria-expanded", "false");
+    const targetLabel = ce("span", "tstat-target-btn-label");
+    const targetCaret = ce("span", "tstat-target-btn-caret");
+    targetCaret.setAttribute("aria-hidden", "true");
+    targetCaret.textContent = "▾";
+    targetBtn.appendChild(targetLabel);
+    targetBtn.appendChild(targetCaret);
+    targetBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hapticTap();
+      if (centralTstatTargetMenu) closeCentralTstatTargetMenu();
+      else openCentralTstatTargetMenu(targetBtn);
+    });
     const favBtn = ce("button", "tstat-fav");
     favBtn.type = "button";
     favBtn.innerHTML = FAVORITES_SVG;
     favBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (tstatSession?.central) return;
       const id = tstatSession?.ids?.[0];
-      if (id == null) return;
+      if (id == null || !isFavoriteableDeviceId(id)) return;
       hapticTap();
       postCall("toggleFavorite", id);
     });
@@ -1358,7 +1460,9 @@
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close thermostat");
     closeBtn.textContent = "×";
-    leading.appendChild(title); leading.appendChild(favBtn);
+    leading.appendChild(title);
+    leading.appendChild(targetBtn);
+    leading.appendChild(favBtn);
     head.appendChild(leading); head.appendChild(closeBtn);
 
     const dialWrap = ce("div", "tstat-dial-wrap");
@@ -1531,11 +1635,14 @@
 
     bindPopupDismiss(tstatPopup, panel, closeBtn, closeTstatPopup);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && tstatSession) closeTstatPopup();
+      if (e.key !== "Escape" || !tstatSession) return;
+      if (centralTstatTargetMenu) { closeCentralTstatTargetMenu(); return; }
+      closeTstatPopup();
     });
 
     tstatPopup._panel = panel;
     tstatPopup._title = title;
+    tstatPopup._targetBtn = targetBtn;
     tstatPopup._favBtn = favBtn;
     tstatPopup._svg = svg;
     tstatPopup._heatArc = heatArc;
@@ -1599,7 +1706,7 @@
 
   function adjustTstatSetpoint(delta) {
     if (!tstatSession?.ids?.length) return;
-    const t = thermostats.find((x) => x.i === tstatSession.ids[0]);
+    const t = activeTstat();
     if (!t) return;
     const target = tstatSetpointTarget(t);
     if (!target) return;
@@ -2031,6 +2138,148 @@
     };
   }
 
+  function closeCentralTstatTargetMenu() {
+    if (centralTstatTargetMenuCleanup) {
+      centralTstatTargetMenuCleanup();
+      centralTstatTargetMenuCleanup = null;
+    }
+    if (centralTstatTargetMenu) {
+      centralTstatTargetMenu.remove();
+      centralTstatTargetMenu = null;
+    }
+    centralTstatTargetMenuAnchor = null;
+  }
+
+  function repositionCentralTstatTargetMenu() {
+    const menu = centralTstatTargetMenu;
+    const anchorBtn = centralTstatTargetMenuAnchor;
+    if (!menu || !anchorBtn?.isConnected) return;
+    const rect = anchorBtn.getBoundingClientRect();
+    const menuW = menu.offsetWidth;
+    const menuH = menu.offsetHeight;
+    let top = rect.bottom + 6;
+    if (top + menuH > window.innerHeight - 8) top = rect.top - menuH - 6;
+    let left = rect.left;
+    left = Math.max(8, Math.min(left, window.innerWidth - menuW - 8));
+    menu.style.top = top + "px";
+    menu.style.left = left + "px";
+  }
+
+  function syncCentralTstatTargetMenu() {
+    if (!centralTstatTargetMenu || !tstatSession?.central) return;
+    const allIds = tstatSession.allIds || [];
+    const selectedSet = new Set(tstatSession.ids);
+    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+    const selectAllBtn = centralTstatTargetMenu.querySelector(".tstat-target-all");
+    if (selectAllBtn) {
+      selectAllBtn.classList.toggle("active", allSelected);
+      selectAllBtn.setAttribute("aria-selected", allSelected ? "true" : "false");
+    }
+    for (const b of centralTstatTargetMenu.querySelectorAll(".tstat-target-opt:not(.tstat-target-all)")) {
+      const id = Number(b.dataset.tstatId);
+      const on = selectedSet.has(id);
+      b.classList.toggle("active", on);
+      if (on) b.setAttribute("aria-selected", "true");
+      else b.removeAttribute("aria-selected");
+    }
+  }
+
+  function openCentralTstatTargetMenu(anchorBtn) {
+    closeCentralTstatTargetMenu();
+    if (!tstatSession?.central) return;
+
+    const menu = ce("div", "tstat-target-menu");
+    menu.setAttribute("role", "listbox");
+    menu.setAttribute("aria-multiselectable", "true");
+
+    const allIds = tstatSession.allIds || thermostats.map((t) => t.i);
+    const selectedSet = new Set(tstatSession.ids);
+    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+
+    const selectAllBtn = ce("button", "tstat-target-opt tstat-target-all");
+    selectAllBtn.type = "button";
+    selectAllBtn.setAttribute("role", "option");
+    const selectAllCheck = ce("span", "tstat-target-check");
+    const selectAllInfo = ce("span", "tstat-target-info");
+    const selectAllName = ce("span", "tstat-target-name");
+    selectAllName.textContent = "Select all";
+    selectAllInfo.appendChild(selectAllName);
+    selectAllBtn.appendChild(selectAllCheck);
+    selectAllBtn.appendChild(selectAllInfo);
+    if (allSelected) {
+      selectAllBtn.classList.add("active");
+      selectAllBtn.setAttribute("aria-selected", "true");
+    }
+    selectAllBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hapticTap();
+      const currentSelected = new Set(tstatSession.ids);
+      const currentlyAll = allIds.every((id) => currentSelected.has(id));
+      if (currentlyAll) return;
+      applyCentralTstatSelection(allIds.slice());
+    });
+    menu.appendChild(selectAllBtn);
+
+    for (const t of centralThermostatsSorted()) {
+      const b = ce("button", "tstat-target-opt");
+      b.type = "button";
+      b.setAttribute("role", "option");
+      b.dataset.tstatId = String(t.i);
+      const check = ce("span", "tstat-target-check");
+      const info = ce("span", "tstat-target-info");
+      const name = ce("span", "tstat-target-name");
+      name.textContent = t.n || ("Thermostat " + t.i);
+      const room = ce("span", "tstat-target-room");
+      room.textContent = postCall("roomLabel", t.r) || String(t.r ?? "");
+      info.appendChild(name);
+      info.appendChild(room);
+      b.appendChild(check);
+      b.appendChild(info);
+      if (selectedSet.has(t.i)) {
+        b.classList.add("active");
+        b.setAttribute("aria-selected", "true");
+      }
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        hapticTap();
+        const next = new Set(tstatSession.ids);
+        if (next.has(t.i)) {
+          if (next.size <= 1) return;
+          next.delete(t.i);
+        } else {
+          next.add(t.i);
+        }
+        applyCentralTstatSelection([...next]);
+      });
+      menu.appendChild(b);
+    }
+
+    document.body.appendChild(menu);
+    centralTstatTargetMenu = menu;
+    centralTstatTargetMenuAnchor = anchorBtn;
+    repositionCentralTstatTargetMenu();
+    anchorBtn.setAttribute("aria-expanded", "true");
+
+    const onOutside = (e) => {
+      if (menu.contains(e.target) || anchorBtn.contains(e.target)) return;
+      closeCentralTstatTargetMenu();
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") closeCentralTstatTargetMenu();
+    };
+    setTimeout(() => {
+      document.addEventListener("click", onOutside);
+      document.addEventListener("keydown", onKey);
+    }, 0);
+
+    centralTstatTargetMenuCleanup = () => {
+      document.removeEventListener("click", onOutside);
+      document.removeEventListener("keydown", onKey);
+      anchorBtn.setAttribute("aria-expanded", "false");
+      centralTstatTargetMenuAnchor = null;
+    };
+  }
+
   function setTstatMode(cmd, key) {
     if (!tstatSession) return;
     const ids = tstatSession.ids;
@@ -2104,24 +2353,22 @@
     if (colorSession) closeColorPopup(false);
     closeMusicMasterPopup();
     if (!thermostats.length) return;
-    const ids = thermostats.map(t => t.i);
+    const ids = thermostats.map((t) => t.i);
     const first = thermostats[0];
-    const union = (arr) => [...new Set(arr.flat())];
-    const centralTstat = {
-      i: -1, n: "All Thermostats", r: null,
-      tm: "", os: "", hsp: null, csp: null, temp: null, u: first?.u,
-      hasFm: thermostats.some(t => t.hasFm), fm: "",
-      hasFs: thermostats.some(deviceHasFanSpeed), fs: "",
-      fsLev: union(thermostats.map(supportedFanSpeeds)).join(","),
-      supM: union(thermostats.map(supportedModes)).join(","),
-      supFM: union(thermostats.map(supportedFanModes)).join(","),
-      _central: true
+    tstatSession = {
+      rid: null,
+      anchorEl: CENTRAL_TSTAT_BTN,
+      ids: ids.slice(),
+      allIds: ids.slice(),
+      unit: normalizeTstatUnit(first?.u),
+      edit: "heat",
+      central: true,
+      centralTstat: buildCentralTstat(thermostats),
     };
-    tstatSession = { rid: null, anchorEl: CENTRAL_TSTAT_BTN, ids, unit: normalizeTstatUnit(first?.u), edit: "heat", central: true, centralTstat };
     const popup = ensureTstatPopup();
     renderTstatDial();
     renderTstatControls();
-    updateTstatFavButton();
+    updateTstatHeadExtras();
     positionTstatPopup(CENTRAL_TSTAT_BTN);
     popup.removeAttribute("hidden");
     popup.classList.add("open");
@@ -2149,6 +2396,7 @@
   }
 
   function closeTstatPopup() {
+    closeCentralTstatTargetMenu();
     if (tstatPopup) {
       tstatPopup.setAttribute("hidden", "");
       tstatPopup.classList.remove("open");
@@ -3443,6 +3691,7 @@
 
   async function toggleFavorite(id) {
     const numId = Number(id);
+    if (!isFavoriteableDeviceId(numId)) return;
     const idx = favorites.indexOf(numId);
     const wasFav = idx >= 0;
     if (wasFav) favorites.splice(idx, 1);
@@ -4651,6 +4900,14 @@
     return el;
   }
 
+  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "scheduling"]);
+  const HUB_MODE_POPUP_TYPE = "hub-mode";
+
+  function syncQuickPopupWidth(popup, type) {
+    popup.classList.toggle("quick-popup-wide", WIDE_POPUP_TYPES.has(type) && !inTabView());
+    popup.classList.toggle("quick-popup-hub-mode", type === HUB_MODE_POPUP_TYPE);
+  }
+
   function makeLockRow(lock, context) {
     const inFav = context === "favorites";
     const row = ce("div", "quick-lock-row" + (inFav ? " quick-fav-span" : ""));
@@ -4836,7 +5093,7 @@
 
   function renderBlindsPopup() {
     const popup = ensureQuickPopup();
-    popup.classList.toggle("quick-popup-wide", !inTabView());
+    syncQuickPopupWidth(popup, "blinds");
     const body = currentBody();
     body.className = "quick-body quick-body-blinds" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";
@@ -5096,6 +5353,7 @@
 
   function renderSensorsPopup() {
     const popup = ensureQuickPopup();
+    syncQuickPopupWidth(popup, "sensors");
     const body = currentBody();
     body.className = "quick-body quick-body-sensors" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";
@@ -5833,7 +6091,7 @@
   function renderFavoritesPopup() {
     closeFavoriteTstatModeMenu();
     const popup = ensureQuickPopup();
-    popup.classList.toggle("quick-popup-wide", !inTabView());
+    syncQuickPopupWidth(popup, "favorites");
     const body = currentBody();
     body.className = "quick-body quick-body-favorites" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";
@@ -5888,7 +6146,7 @@
   function renderThermostatsPopup() {
     closeFavoriteTstatModeMenu();
     const popup = ensureQuickPopup();
-    popup.classList.toggle("quick-popup-wide", !inTabView());
+    syncQuickPopupWidth(popup, "thermostats");
     const body = currentBody();
     body.className = "quick-body quick-body-thermostats" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";
@@ -5978,8 +6236,7 @@
     closeMusicMasterPopup();
     const popup = ensureQuickPopup();
     syncQuickPopupRef(popup);
-    popup.classList.toggle("quick-popup-wide", id === "favorites" || id === "sensors" || id === "thermostats" || id === "blinds");
-    popup.classList.toggle("quick-popup-hub-mode", id === "hub-mode");
+    syncQuickPopupWidth(popup, id);
     popup._title.textContent = title;
     popup.setAttribute("aria-label", title);
     quickPopupOpenType = id;
@@ -7346,8 +7603,7 @@
   function renderSchedulerActive() {
     const popup = ensureQuickPopup();
     syncQuickPopupRef(popup);
-    popup.classList.remove("quick-popup-hub-mode");
-    popup.classList.add("quick-popup-wide");
+    syncQuickPopupWidth(popup, "scheduling");
     const body = currentBody();
     body.className = "quick-body quick-body-scheduler" + (inTabView() ? " tab-body" : "");
     body.innerHTML = "";

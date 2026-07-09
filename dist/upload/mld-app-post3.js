@@ -407,8 +407,7 @@
   function renderSchedulerActive() {
     const popup = M.ensureQuickPopup();
     M.syncQuickPopupRef(popup);
-    popup.classList.remove("quick-popup-hub-mode");
-    popup.classList.add("quick-popup-wide");
+    M.syncQuickPopupWidth(popup, "scheduling");
     const body = M.currentBody();
     body.className = "quick-body quick-body-scheduler" + (M.inTabView() ? " tab-body" : "");
     body.innerHTML = "";
