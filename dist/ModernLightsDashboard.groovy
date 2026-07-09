@@ -5,7 +5,7 @@
 //
 // INSTALL:
 //   1. Paste this file into Apps Code, enable OAuth, Save.
-//   2. Upload the 10 files from dist/upload/ to Settings -> File Manager:
+//   2. Upload the 11 files from dist/upload/ to Settings -> File Manager:
 //        mld-index.html, mld-app.css, mld-app-pre.js, mld-app.js, mld-app-post.js, mld-app-post2.js, mld-app-post3.js,
 //        mld-manifest.webmanifest, mld-sw.js, mld-icon-192.b64, mld-icon-512.b64
 //   3. Apps -> Add User App -> Modern Dashboard -> select devices -> Done
@@ -14,7 +14,7 @@ definition(
     name: "Modern Dashboard",
     namespace: "modernlights",
     author: "Ephrayim (evdev)",
-    description: "Minimal-setup Hubitat dashboard: select your devices and you're done. Room-grouped layout with clean names (room prefixes removed automatically). Installable PWA; fully hosted on your hub with no outside dependencies.",
+    description: "Control-first Hubitat dashboard: select your devices and you're done. Bulk room/house lights and multi-thermostat control. Installable PWA, built-in remote scheduler (no Hubitat login), runs entirely on your hub.",
     category: "My Apps",
     iconUrl: "",
     iconX2Url: "",
@@ -33,10 +33,11 @@ def mainPage() {
     def cloudUrl = dashboardUrl(false)
     dynamicPage(name: "mainPage", uninstall: true, install: true) {
         section("About Modern Dashboard", hideable: true, hidden: false) {
-            paragraph "<small><b>Minimal setup:</b> select your devices below — the dashboard groups them by Hubitat room and lays them out automatically.</small>"
-            paragraph "<small><b>Smart names:</b> room names are stripped from device labels so you don't see redundant text like \"Kitchen Kitchen Light\".</small>"
-            paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen.</small>"
-            paragraph "<small><b>Hub-only:</b> the UI and API are served entirely from your Hubitat hub — no Maker API or external cloud services.</small>"
+            paragraph "<small><b>Control-first:</b> optimized for acting on devices — bulk room/house lights, multi-thermostat control — not just viewing status.</small>"
+            paragraph "<small><b>Minimal effort:</b> select your devices below — the dashboard groups them by Hubitat room and lays them out automatically. Customization is optional.</small>"
+            paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
+            paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
+            paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
             paragraph "<small>Version 0.2.14 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {

@@ -7,7 +7,7 @@
 			"name": "Modern Dashboard",
 			"category": "Convenience",
 			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/packageManifest.json",
-			"description": "Minimal-setup Hubitat dashboard: select your devices and you're done. Devices are grouped by room with clean names (room prefixes removed automatically). Installable PWA; fully hosted on your hub with no outside dependencies.",
+			"description": "Control-first Hubitat dashboard: select your devices and you're done. Optimized for acting on devices — bulk room/house lights, multi-thermostat control. Installable PWA, built-in remote scheduler (no Hubitat login), runs entirely on your hub.",
 			"tags": [
 				"Cloud",
 				"Dashboards",

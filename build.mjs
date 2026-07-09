@@ -39,9 +39,9 @@ const LICENSE_NAME = "Apache License 2.0";
 const LICENSE_URL =
   "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/LICENSE";
 const PACKAGE_DESCRIPTION =
-  "Minimal-setup Hubitat dashboard: select your devices and you're done. Devices are grouped by room with clean names (room prefixes removed automatically). Installable PWA; fully hosted on your hub with no outside dependencies.";
+  "Control-first Hubitat dashboard: select your devices and you're done. Optimized for acting on devices — bulk room/house lights, multi-thermostat control. Installable PWA, built-in remote scheduler (no Hubitat login), runs entirely on your hub.";
 const FEATURE_SUMMARY =
-  "Modern, mobile-first Hubitat dashboard for lights (switches, dimmers, color temperature, RGB), thermostats (setpoint dial, mode, fan), temperature sensors, and music/media players (Sonos, Echo Speaks, AirPlay, Chromecast). Room-grouped layout with per-room on/off, drag-to-dim sliders, sticky search, and collapsible rooms. Works on local and cloud URLs with no Maker API; installable as a PWA from the cloud link. Dark, light, and auto themes; instant LAN updates via WebSocket when available.";
+  "Control-first, minimal-effort Hubitat dashboard (mDash): pick devices and go — rooms and layout are automatic. Optimized for control (not just status): bulk room/house on/off, multi-thermostat control, drag-to-dim. Installable PWA from the cloud URL. Built-in scheduler (daily/weekly/once/sunrise/sunset/mode) managed from the dashboard without Hubitat admin login. Lights, shades, thermostats, locks, HSM, scenes, hub mode, music/media, and sensors. Snapshots, favorites, and reorderable rooms/nav. Fully hosted on your hub — no Maker API or third-party cloud.";
 // Set to your Hubitat Community thread URL after posting docs/hubitat-community-post.md
 const COMMUNITY_LINK =
   process.env.COMMUNITY_LINK ?? `${GITHUB_URL}/discussions`;
@@ -436,11 +436,12 @@ writeFileSync(
   join(staging, "file-manager", "README.txt"),
   `Modern Dashboard — File Manager assets
 
-Minimal setup: after the Groovy app is installed, upload these nine files (exact names).
+Minimal setup: after the Groovy app is installed, upload these ${FILE_MANAGER_ASSETS.length} files (exact names).
 Then Apps → Add User App → ${APP_DISPLAY_NAME} → select your devices → Done.
 The dashboard groups devices by Hubitat room automatically.
 
 Installable PWA: open the cloud URL from the app page on your phone.
+Built-in scheduler: manage schedules remotely without Hubitat admin login.
 Fully hosted on your hub — no Maker API or external services.
 
 Upload to Settings → File Manager (root folder):
@@ -456,14 +457,14 @@ writeFileSync(
   `Modern Dashboard — Hubitat bundle
 
 Minimal setup: select your devices in the app — rooms and layout are automatic.
-Installable PWA via the cloud URL. Fully hosted on your hub.
+Installable PWA via the cloud URL. Built-in remote scheduler. Fully hosted on your hub.
 
 IMPORT (installs the Groovy app):
   Settings → Developer Tools → Bundles → Import ZIP
   Upload: ModernLightsDashboard.bundle.zip
 
 THEN (required — bundles cannot install File Manager files or enable OAuth):
-  Upload these ten files to Settings → File Manager (root folder, exact names):
+  Upload these ${FILE_MANAGER_ASSETS.length} files to Settings → File Manager (root folder, exact names):
   Open Apps Code → ${APP_DISPLAY_NAME} → enable OAuth → Save
   Apps → Add User App → ${APP_DISPLAY_NAME} → select devices → Done
 
