@@ -84,13 +84,19 @@ room header shows as **Island**, not "Kitchen Island".
 | Toggle on/off | Tap the tile |
 | Dim | Drag horizontally on the tile fill (touch or mouse) |
 | Color / white balance | Tap the device **name** to open the color popup |
-| Room all on / all off | Use the **On** / **Off** buttons in the room header |
-| Whole house all on / all off | Use **All on** / **All off** in the top bar |
+| Room all on / all off | Use the **On** / **Off** buttons in the room header (lights only) |
+| Whole house all on / all off | Use **All on** / **All off** in the top bar (lights only) |
 
 **Color popup:** RGB bulbs get white (color temperature) and/or color tabs as
 supported by the device. Changes apply live while you adjust; click outside the
 popup or press Escape to dismiss. Tap the tile body (not the name) to toggle
 on/off without opening color controls.
+
+**Outlets:** Devices selected under the **Outlets** picker appear in the same
+room layout as lights, with a socket-style tile so they are easy to tell apart.
+Tap an outlet tile to toggle it. Room and whole-house **On** / **Off** (and
+snapshots) control **lights only** — outlets are grouped with rooms for
+organization, not bulk lighting control.
 
 **Room climate:** If a thermostat or temperature sensor is in the same room,
 the room header shows the current temperature. Tap the thermostat icon to open
@@ -554,7 +560,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | ---------- | ---------------- | --------- | ----------- |
 | Lights (switches & dimmers) | Tiles by room | On/off, dim, CT | — |
 | Switches (not lights/outlets) | Hidden | On/off only | — |
-| Outlets | Hidden | On/off only | — |
+| Outlets | Socket tiles by room (not in room/house on/off) | On/off only | Favorites |
 | Thermostats | Room header + Thermostats popup | Mode, setpoints, fan | All thermostats bulk |
 | Temperature sensors | Room header (read-only) | — | Sensors popup |
 | Locks | — | — | Locks popup |
@@ -564,8 +570,9 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Hub scenes | — | — | Scenes popup (all hub scenes) |
 | Hub mode | — | Trigger & action | Hub mode popup |
 
-Outlets may also be selected in the **Lights** picker; the **Outlets** scheduler
-section only includes devices selected under **Outlets**.
+Outlets may also be selected in the **Lights** picker (they then behave as
+lights, including room/house on/off). The **Outlets** tiles and scheduler
+section only include devices selected under **Outlets**.
 
 ## Community and wider distribution
 
@@ -638,7 +645,8 @@ Kitchen room are not shortened incorrectly.
 
 - No offline mode — hub must be reachable (local or cloud).
 - WebSocket only on the local URL; cloud access uses polling only.
-- Plain switches and outlets are scheduler-only, not light tiles.
+- Plain switches are scheduler-only (not shown as tiles). Outlets appear as
+  room tiles but are excluded from room/house on/off and light snapshots.
 - Cloud responses are capped at ~128 KB; the slim API supports ~130 lights on one
   page but very large installs may need device subsetting.
 - Service worker does not cache — refresh always fetches from the hub.

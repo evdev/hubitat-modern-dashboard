@@ -66,8 +66,9 @@ Maker API setup. Rooms and names come from your Hubitat room assignments. You
 - **UX** — dark/light/auto theme, search, collapsible rooms, favorites, reorderable
   rooms and nav icons (synced across devices), local ↔ cloud switching
 
-Plain switches and outlets are selected separately and used in the **scheduler**
-(they are not shown as light tiles on the main view).
+Plain switches are selected separately and used in the **scheduler** (not shown
+as tiles). Outlets appear as socket-style tiles in rooms for organization; room
+and house on/off still control lights only.
 
 ### Install (HPM — recommended)
 

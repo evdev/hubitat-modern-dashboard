@@ -192,6 +192,8 @@ function renderScenesPopup() {
     for (const entry of entries) {
       if (entry.type === "light") {
         grid.appendChild(M.makeTile(entry.dev, "favorites"));
+      } else if (entry.type === "outlet") {
+        grid.appendChild(M.makeOutletTile(entry.dev, "favorites"));
       } else if (entry.type === "thermostat") {
         grid.appendChild(makeQuickTstatCard(entry.dev, M.favTstatMap));
       } else if (entry.type === "sensor") {
@@ -726,6 +728,7 @@ function renderScenesPopup() {
     if (!q) {
       for (const [, rec] of M.roomEls) rec.card.classList.remove("hidden");
       for (const [, rec] of M.devMap) rec.el.classList.remove("hidden");
+      for (const [, rec] of M.outletMap) rec.el.classList.remove("hidden");
       if (collapsedBeforeSearch) {
         for (const [rid, rec] of M.roomEls) {
           rec.card.classList.toggle("collapsed", collapsedBeforeSearch.has(rid));
@@ -739,6 +742,9 @@ function renderScenesPopup() {
     if (!collapsedBeforeSearch) collapsedBeforeSearch = collapsedIdSet();
 
     for (const [, rec] of M.devMap) {
+      rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
+    }
+    for (const [, rec] of M.outletMap) {
       rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
     }
     for (const [, rec] of M.roomEls) {
@@ -1092,6 +1098,14 @@ function renderScenesPopup() {
               M.updateStates();
             }
           }
+          return;
+        }
+        const outletRec = M.outletMap.get(Number(m.deviceId)) || M.favDevMap.get(Number(m.deviceId));
+        if (outletRec?.isOutlet && m.name === "switch") {
+          const out = M.outlets.find((x) => x.i === Number(m.deviceId));
+          if (out) out.s = (m.value === "on") ? 1 : 0;
+          M.clearSwitchOptimistic(Number(m.deviceId));
+          M.updateStates();
           return;
         }
         const lock = M.locks.find(x => x.i === Number(m.deviceId));

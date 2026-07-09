@@ -596,6 +596,8 @@ async function saveRoomOrder(order) {
     for (const id of M.favorites) {
       const dev = M.devices.find(d => d.i === id);
       if (dev) { out.push({ type: "light", dev }); continue; }
+      const outlet = M.outlets.find(o => o.i === id);
+      if (outlet) { out.push({ type: "outlet", dev: outlet }); continue; }
       const t = M.thermostats.find(x => x.i === id);
       if (t) { out.push({ type: "thermostat", dev: t }); continue; }
       const ts = M.tempSensors.find(x => x.i === id);
@@ -614,6 +616,7 @@ async function saveRoomOrder(order) {
 
   function updateAllFavButtons() {
     for (const [, rec] of M.devMap) M.syncFavButton(rec.el.querySelector(".tile-fav"), rec.data.i);
+    for (const [, rec] of M.outletMap) M.syncFavButton(rec.el.querySelector(".tile-fav"), rec.data.i);
     for (const [, rec] of M.favDevMap) M.syncFavButton(rec.el.querySelector(".tile-fav"), rec.data.i);
     for (const [, rec] of M.sensorCardMap) M.syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of M.favSensorMap) M.syncFavButton(rec.favBtn, rec.i);
@@ -1102,6 +1105,7 @@ async function saveRoomOrder(order) {
     M.replaceList(M.sensors, d.sensors);
     M.snapshots = d.snapshots && typeof d.snapshots === "object" ? d.snapshots : {};
     M.rebuildDevicesByRoom();
+    M.rebuildOutletsByRoom();
     M.reapplySwitchOptimistic();
     M.reapplyTstatDeviceModeLocks();
     M.applyTstatSessionModeLock();
@@ -1111,7 +1115,7 @@ async function saveRoomOrder(order) {
     M.ensureRoomsFromDevices();
     M.updateQuickNavVisibility();
 
-    if (!M.devices.length && !M.thermostats.length && !M.tempSensors.length) { M.noDevicesState(); return; }
+    if (!M.devices.length && !M.outlets.length && !M.thermostats.length && !M.tempSensors.length) { M.noDevicesState(); return; }
 
     const groups = new Map();
     for (const dev of M.devices) {
@@ -1137,7 +1141,7 @@ async function saveRoomOrder(order) {
 
   function buildDom() {
     M.ROOMS_EL.innerHTML = "";
-    M.roomEls.clear(); M.devMap.clear(); M.climateEls.clear();
+    M.roomEls.clear(); M.devMap.clear(); M.outletMap.clear(); M.climateEls.clear();
 
     // group M.devices by room id (null/undefined -> -1 Unassigned)
     const groups = new Map();
@@ -1146,15 +1150,25 @@ async function saveRoomOrder(order) {
       if (!groups.has(rid)) groups.set(rid, []);
       groups.get(rid).push(dev);
     }
+    const outletGroups = new Map();
+    for (const out of M.outlets) {
+      const rid = normalizeRoomId(out.r);
+      if (!outletGroups.has(rid)) outletGroups.set(rid, []);
+      outletGroups.get(rid).push(out);
+    }
 
-    // a room is shown if it has lights, M.thermostats, or temp M.sensors
-    const hasContent = (rid) => (groups.get(normalizeRoomId(rid))?.length || M.roomHasClimate(rid));
+    // a room is shown if it has lights, M.outlets, M.thermostats, or temp M.sensors
+    const hasContent = (rid) => {
+      const key = normalizeRoomId(rid);
+      return (groups.get(key)?.length || outletGroups.get(key)?.length || M.roomHasClimate(key));
+    };
 
     const orderedIds = M.getDisplayRoomIds(groups, hasContent);
 
     for (const rid of orderedIds) {
       const roomKey = normalizeRoomId(rid);
       const devs = groups.get(roomKey) || [];
+      const roomOutlets = outletGroups.get(roomKey) || [];
       const name = roomKey === -1 ? "Unassigned" : (M.roomMap.get(roomKey) || "Room");
 
       const card = ce("section", "room");
@@ -1255,8 +1269,8 @@ async function saveRoomOrder(order) {
         onCommit: () => {
           snapshotSaveApi("room", roomKey).then((ok) => {
             if (!ok) return;
-            const devs = M.devicesByRoom.get(roomKey) || [];
-            M.snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: devs.length };
+            const snapDevs = M.devicesByRoom.get(roomKey) || [];
+            M.snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: snapDevs.length };
             updateRoomSnapshotUi();
             M.flash(roomLabel(roomKey) + " saved");
           });
@@ -1294,6 +1308,7 @@ async function saveRoomOrder(order) {
       M.roomEls.set(roomKey, { card, body, meta, moveUp, moveDown, offTrack, onTrack, saveBtn, restoreBtn });
 
       for (const dev of devs) body.appendChild(makeTile(dev));
+      for (const out of roomOutlets) body.appendChild(makeOutletTile(out));
     }
 
     M.restoreCollapsed();
@@ -1364,15 +1379,75 @@ async function saveRoomOrder(order) {
     return tile;
   }
 
+  function makeOutletTile(outlet, context) {
+    const inFavorites = context === "favorites";
+    const tile = ce("section", "tile switch outlet");
+    tile.dataset.id = outlet.i;
+    tile.dataset.name = String(outlet.n || "").toLowerCase();
+
+    const fullName = outlet.n || ("Outlet " + outlet.i);
+    const roomName = outlet.r != null && outlet.r !== -1 ? M.roomMap.get(outlet.r) : null;
+    const shortName = (outlet.n ? stripRoomPrefix(outlet.n, roomName) : null) || fullName;
+
+    const head = ce("div", "tile-head");
+    const name = ce("div", "tile-name");
+    name.textContent = shortName;
+    if (outlet.n) name.title = outlet.n;
+    const socket = ce("button", "tile-socket");
+    socket.type = "button";
+    socket.setAttribute("aria-label", "Toggle " + shortName);
+    socket.setAttribute("aria-pressed", outlet.s ? "true" : "false");
+    const face = ce("span", "tile-socket-face");
+    face.appendChild(ce("span", "tile-socket-slot tile-socket-slot-l"));
+    face.appendChild(ce("span", "tile-socket-slot tile-socket-slot-r"));
+    face.appendChild(ce("span", "tile-socket-ground"));
+    socket.appendChild(face);
+    head.appendChild(name); head.appendChild(socket);
+    tile.appendChild(head);
+
+    attachOutletSocketTap(socket, outlet.i);
+
+    const fav = ce("button", "tile-fav");
+    fav.type = "button";
+    attachFavButton(fav, outlet.i);
+
+    const foot = ce("div", "tile-foot");
+    const state = ce("span", "tile-state"); state.textContent = outlet.s ? "On" : "Off";
+    const level = ce("span", "tile-level");
+    level.textContent = "Outlet";
+    const footStart = ce("div", "tile-foot-start");
+    footStart.appendChild(fav);
+    footStart.appendChild(state);
+    foot.appendChild(footStart);
+    foot.appendChild(level);
+    tile.appendChild(foot);
+
+    attachSwitchTap(tile, outlet.i);
+
+    const rec = { el: tile, data: outlet, isDim: false, isOutlet: true, levelEl: level, stateEl: state, sliderEl: null };
+    if (inFavorites) M.favDevMap.set(outlet.i, rec);
+    else M.outletMap.set(outlet.i, rec);
+    return tile;
+  }
+
+  function attachOutletSocketTap(socket, id) {
+    socket.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleOutlet(id);
+    });
+  }
+
   // Tap detector for switch tiles: ignores scrolls, long-presses, and taps on the name.
   function attachSwitchTap(tile, id) {
     const TAP_MOVE = 10;
     const TAP_MAX_MS = 500;
     let downX = 0, downY = 0, downT = 0, active = false;
+    const isOutlet = tile.classList.contains("outlet");
 
     tile.addEventListener("pointerdown", (e) => {
       if (e.button != null && e.button !== 0) return;
       if (e.target.closest(".tile-bulb")) return;
+      if (e.target.closest(".tile-socket")) return;
       if (e.target.closest(".tile-fav")) return;
       active = true;
       downX = e.clientX; downY = e.clientY; downT = Date.now();
@@ -1382,13 +1457,15 @@ async function saveRoomOrder(order) {
       if (!active) return;
       active = false;
       if (e.target.closest(".tile-bulb")) return;
+      if (e.target.closest(".tile-socket")) return;
       if (e.target.closest(".tile-name")) return;
       if (e.target.closest(".tile-fav")) return;
       const dx = Math.abs(e.clientX - downX);
       const dy = Math.abs(e.clientY - downY);
       if (dx > TAP_MOVE || dy > TAP_MOVE) return;
       if (Date.now() - downT > TAP_MAX_MS) return;
-      toggleSwitch(id);
+      if (isOutlet) toggleOutlet(id);
+      else toggleSwitch(id);
     }, { passive: true });
 
     tile.addEventListener("pointercancel", () => { active = false; }, { passive: true });
@@ -1446,12 +1523,18 @@ async function saveRoomOrder(order) {
     rec.stateEl.textContent = on ? "On" : "Off";
     const bulb = qs(".tile-bulb", rec.el);
     if (bulb) bulb.setAttribute("aria-pressed", on ? "true" : "false");
+    const socket = qs(".tile-socket", rec.el);
+    if (socket) socket.setAttribute("aria-pressed", on ? "true" : "false");
     const nameEl = qs(".tile-name", rec.el);
     if (nameEl) nameEl.classList.toggle("color-capable", rec.isDim);
-    rec.levelEl.textContent = formatFootText(
-      rec.isDim ? { ...dev, l: M.effectiveLevel(dev) } : dev,
-      rec.isDim
-    );
+    if (rec.isOutlet) {
+      rec.levelEl.textContent = "Outlet";
+    } else {
+      rec.levelEl.textContent = formatFootText(
+        rec.isDim ? { ...dev, l: M.effectiveLevel(dev) } : dev,
+        rec.isDim
+      );
+    }
     if (rec.isDim) {
       const displayL = M.effectiveLevel(dev);
       if (!rec.el.classList.contains("dragging") && displayL != null) {
@@ -1466,18 +1549,33 @@ async function saveRoomOrder(order) {
       syncTileState(M.devMap.get(dev.i), dev);
       syncTileState(M.favDevMap.get(dev.i), dev);
     }
+    for (const out of M.outlets) {
+      syncTileState(M.outletMap.get(out.i), out);
+      syncTileState(M.favDevMap.get(out.i), out);
+    }
     updateRoomMeta();
   }
 
   function updateRoomMeta() {
     for (const [rid, rec] of M.roomEls) {
       const devs = M.devicesByRoom.get(rid) || [];
+      const roomOutlets = M.outletsByRoom.get(rid) || [];
       const onCount = devs.filter((d) => M.effectiveSwitch(d)).length;
       const total = devs.length;
+      const outletOn = roomOutlets.filter((o) => M.effectiveSwitch(o)).length;
+      const outletTotal = roomOutlets.length;
       const hasClimate = M.roomHasClimate(rid);
       let text;
       if (total > 0) {
         text = onCount ? onCount + " of " + total + " on" : (total + " light" + (total === 1 ? "" : "s"));
+        if (outletTotal > 0) {
+          text += " · " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s");
+          if (outletOn) text += " (" + outletOn + " on)";
+        }
+      } else if (outletTotal > 0) {
+        text = outletOn
+          ? outletOn + " of " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s") + " on"
+          : (outletTotal + " outlet" + (outletTotal === 1 ? "" : "s"));
       } else if (M.thermoByRoom.has(rid)) {
         const t = (M.thermoByRoom.get(rid) || [])[0];
         const tm = String(t?.tm || "").toLowerCase();
@@ -1492,7 +1590,7 @@ async function saveRoomOrder(order) {
       if (total > 0) {
         if (onCount === 0) state = "all-off";
         else if (onCount === total) state = "all-on";
-      } else if (hasClimate) {
+      } else if (outletTotal > 0 || hasClimate) {
         state = "all-off";
       }
       rec.card.classList.remove("room-all-on", "room-all-off", "room-mixed", "room-on");
@@ -1720,6 +1818,19 @@ async function saveRoomOrder(order) {
     updateStates();
     M.sendCmd(id, next).then((r) => {
       if (!r?.ok) { M.clearSwitchOptimistic(id); refreshDevice(id); }
+    });
+  }
+
+  function toggleOutlet(id) {
+    M.hapticTap();
+    const out = M.outlets.find((d) => d.i === id);
+    if (!out) return;
+    const on = M.effectiveSwitch(out);
+    const next = on ? "off" : "on";
+    M.setSwitchOptimistic(id, next === "on" ? 1 : 0);
+    updateStates();
+    M.sendCmd(id, next).then((r) => {
+      if (!r?.ok) { M.clearSwitchOptimistic(id); M.refresh(); }
     });
   }
 
@@ -3057,5 +3168,5 @@ async function saveRoomOrder(order) {
     ruleSection.appendChild(ruleModes);
     body.appendChild(ruleSection);
   }
-  Object.assign(M, { currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
+  Object.assign(M, { currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
 })();

@@ -104,7 +104,9 @@
   let roomMap = new Map();   // id -> name
   let devices = [];          // [{i,n,r,d,ct,s,l,k}]
   let devicesByRoom = new Map(); // roomId -> [device]
+  let outletsByRoom = new Map(); // roomId -> [outlet]
   let devMap = new Map();    // id -> {el, data}
+  let outletMap = new Map(); // id -> {el, data} (outlet tiles in rooms)
   let favDevMap = new Map(); // id -> {el, data} (favorites popup tiles)
   let roomEls = new Map();   // roomId -> {card, body, meta}
   let lastDataSig = "";
@@ -217,6 +219,9 @@
     if (dev) {
       dev.s = s;
       if (l !== undefined) dev.l = l;
+    } else {
+      const out = outlets.find((d) => d.i === id);
+      if (out) out.s = s;
     }
     const entry = { s, until: Date.now() + LEVEL_OPTIMISTIC_MS, timer: null };
     if (l !== undefined) entry.l = l;
@@ -240,7 +245,7 @@
         switchOptimistic.delete(id);
         continue;
       }
-      const dev = devices.find((d) => d.i === id);
+      const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
       if (!dev) continue;
       const sMatch = !!dev.s === !!opt.s;
       const lMatch = opt.l === undefined || (opt.l === null && opt.s === 1) || dev.l === opt.l;
@@ -250,7 +255,7 @@
         continue;
       }
       dev.s = opt.s;
-      if (opt.l !== undefined) dev.l = opt.l;
+      if (opt.l !== undefined && "l" in dev) dev.l = opt.l;
     }
   }
 
@@ -1331,6 +1336,7 @@
     const numId = Number(id);
     if (!Number.isFinite(numId) || numId < 0) return false;
     return devices.some((d) => d.i === numId)
+      || outlets.some((o) => o.i === numId)
       || thermostats.some((t) => t.i === numId)
       || tempSensors.some((t) => t.i === numId)
       || sensors.some((s) => s.i === numId)
@@ -2986,6 +2992,15 @@
     }
   }
 
+  function rebuildOutletsByRoom() {
+    outletsByRoom.clear();
+    for (const out of outlets) {
+      const rid = normalizeRoomId(out.r);
+      if (!outletsByRoom.has(rid)) outletsByRoom.set(rid, []);
+      outletsByRoom.get(rid).push(out);
+    }
+  }
+
   function applyTstatSessionModeLock() {
     if (tstatSession?.modeLockUntil > Date.now() && tstatSession.lockedMode) {
       for (const t of thermostats) {
@@ -3053,7 +3068,7 @@
     emptyState(
       '<div class="empty">' +
       '<h2>No devices configured</h2>' +
-      'Open the Modern Dashboard app on your hub and select your lights or thermostats.' +
+      'Open the Modern Dashboard app on your hub and select your lights, outlets, or thermostats.' +
       '</div>'
     );
   }
@@ -3092,6 +3107,7 @@
       if (!byId.has(id)) byId.set(id, { id, name: "Room " + id });
     };
     for (const dev of devices) addRef(dev);
+    for (const out of outlets) addRef(out);
     for (const t of thermostats) addRef(t);
     for (const s of tempSensors) addRef(s);
     for (const lk of locks) addRef(lk);
@@ -3103,6 +3119,7 @@
   function contentRoomIds() {
     const ids = new Set();
     for (const rid of devicesByRoom.keys()) ids.add(rid);
+    for (const rid of outletsByRoom.keys()) ids.add(rid);
     for (const rid of thermoByRoom.keys()) ids.add(rid);
     for (const rid of sensorByRoom.keys()) ids.add(rid);
     return ids;
@@ -3112,7 +3129,7 @@
     const knownIds = new Set(rooms.map(r => r.id));
     const allIds = new Set(knownIds);
     for (const id of contentRoomIds()) allIds.add(id);
-    const hasUnassigned = groups.has(-1) || roomHasClimate(-1);
+    const hasUnassigned = groups.has(-1) || outletsByRoom.has(-1) || roomHasClimate(-1);
     let order;
     if (cfg.roomOrder?.length) {
       order = cfg.roomOrder.map(normalizeRoomId).filter(id => {
@@ -3759,6 +3776,8 @@
     for (const id of favorites) {
       const dev = devices.find(d => d.i === id);
       if (dev) { out.push({ type: "light", dev }); continue; }
+      const outlet = outlets.find(o => o.i === id);
+      if (outlet) { out.push({ type: "outlet", dev: outlet }); continue; }
       const t = thermostats.find(x => x.i === id);
       if (t) { out.push({ type: "thermostat", dev: t }); continue; }
       const ts = tempSensors.find(x => x.i === id);
@@ -3777,6 +3796,7 @@
 
   function updateAllFavButtons() {
     for (const [, rec] of devMap) syncFavButton(rec.el.querySelector(".tile-fav"), rec.data.i);
+    for (const [, rec] of outletMap) syncFavButton(rec.el.querySelector(".tile-fav"), rec.data.i);
     for (const [, rec] of favDevMap) syncFavButton(rec.el.querySelector(".tile-fav"), rec.data.i);
     for (const [, rec] of sensorCardMap) syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of favSensorMap) syncFavButton(rec.favBtn, rec.i);
@@ -4265,6 +4285,7 @@
     replaceList(sensors, d.sensors);
     snapshots = d.snapshots && typeof d.snapshots === "object" ? d.snapshots : {};
     rebuildDevicesByRoom();
+    rebuildOutletsByRoom();
     reapplySwitchOptimistic();
     reapplyTstatDeviceModeLocks();
     applyTstatSessionModeLock();
@@ -4274,7 +4295,7 @@
     ensureRoomsFromDevices();
     updateQuickNavVisibility();
 
-    if (!devices.length && !thermostats.length && !tempSensors.length) { noDevicesState(); return; }
+    if (!devices.length && !outlets.length && !thermostats.length && !tempSensors.length) { noDevicesState(); return; }
 
     const groups = new Map();
     for (const dev of devices) {
@@ -4300,7 +4321,7 @@
 
   function buildDom() {
     ROOMS_EL.innerHTML = "";
-    roomEls.clear(); devMap.clear(); climateEls.clear();
+    roomEls.clear(); devMap.clear(); outletMap.clear(); climateEls.clear();
 
     // group devices by room id (null/undefined -> -1 Unassigned)
     const groups = new Map();
@@ -4309,15 +4330,25 @@
       if (!groups.has(rid)) groups.set(rid, []);
       groups.get(rid).push(dev);
     }
+    const outletGroups = new Map();
+    for (const out of outlets) {
+      const rid = normalizeRoomId(out.r);
+      if (!outletGroups.has(rid)) outletGroups.set(rid, []);
+      outletGroups.get(rid).push(out);
+    }
 
-    // a room is shown if it has lights, thermostats, or temp sensors
-    const hasContent = (rid) => (groups.get(normalizeRoomId(rid))?.length || roomHasClimate(rid));
+    // a room is shown if it has lights, outlets, thermostats, or temp sensors
+    const hasContent = (rid) => {
+      const key = normalizeRoomId(rid);
+      return (groups.get(key)?.length || outletGroups.get(key)?.length || roomHasClimate(key));
+    };
 
     const orderedIds = getDisplayRoomIds(groups, hasContent);
 
     for (const rid of orderedIds) {
       const roomKey = normalizeRoomId(rid);
       const devs = groups.get(roomKey) || [];
+      const roomOutlets = outletGroups.get(roomKey) || [];
       const name = roomKey === -1 ? "Unassigned" : (roomMap.get(roomKey) || "Room");
 
       const card = ce("section", "room");
@@ -4418,8 +4449,8 @@
         onCommit: () => {
           snapshotSaveApi("room", roomKey).then((ok) => {
             if (!ok) return;
-            const devs = devicesByRoom.get(roomKey) || [];
-            snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: devs.length };
+            const snapDevs = devicesByRoom.get(roomKey) || [];
+            snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: snapDevs.length };
             updateRoomSnapshotUi();
             flash(roomLabel(roomKey) + " saved");
           });
@@ -4457,6 +4488,7 @@
       roomEls.set(roomKey, { card, body, meta, moveUp, moveDown, offTrack, onTrack, saveBtn, restoreBtn });
 
       for (const dev of devs) body.appendChild(makeTile(dev));
+      for (const out of roomOutlets) body.appendChild(makeOutletTile(out));
     }
 
     restoreCollapsed();
@@ -4527,15 +4559,75 @@
     return tile;
   }
 
+  function makeOutletTile(outlet, context) {
+    const inFavorites = context === "favorites";
+    const tile = ce("section", "tile switch outlet");
+    tile.dataset.id = outlet.i;
+    tile.dataset.name = String(outlet.n || "").toLowerCase();
+
+    const fullName = outlet.n || ("Outlet " + outlet.i);
+    const roomName = outlet.r != null && outlet.r !== -1 ? roomMap.get(outlet.r) : null;
+    const shortName = (outlet.n ? stripRoomPrefix(outlet.n, roomName) : null) || fullName;
+
+    const head = ce("div", "tile-head");
+    const name = ce("div", "tile-name");
+    name.textContent = shortName;
+    if (outlet.n) name.title = outlet.n;
+    const socket = ce("button", "tile-socket");
+    socket.type = "button";
+    socket.setAttribute("aria-label", "Toggle " + shortName);
+    socket.setAttribute("aria-pressed", outlet.s ? "true" : "false");
+    const face = ce("span", "tile-socket-face");
+    face.appendChild(ce("span", "tile-socket-slot tile-socket-slot-l"));
+    face.appendChild(ce("span", "tile-socket-slot tile-socket-slot-r"));
+    face.appendChild(ce("span", "tile-socket-ground"));
+    socket.appendChild(face);
+    head.appendChild(name); head.appendChild(socket);
+    tile.appendChild(head);
+
+    attachOutletSocketTap(socket, outlet.i);
+
+    const fav = ce("button", "tile-fav");
+    fav.type = "button";
+    attachFavButton(fav, outlet.i);
+
+    const foot = ce("div", "tile-foot");
+    const state = ce("span", "tile-state"); state.textContent = outlet.s ? "On" : "Off";
+    const level = ce("span", "tile-level");
+    level.textContent = "Outlet";
+    const footStart = ce("div", "tile-foot-start");
+    footStart.appendChild(fav);
+    footStart.appendChild(state);
+    foot.appendChild(footStart);
+    foot.appendChild(level);
+    tile.appendChild(foot);
+
+    attachSwitchTap(tile, outlet.i);
+
+    const rec = { el: tile, data: outlet, isDim: false, isOutlet: true, levelEl: level, stateEl: state, sliderEl: null };
+    if (inFavorites) favDevMap.set(outlet.i, rec);
+    else outletMap.set(outlet.i, rec);
+    return tile;
+  }
+
+  function attachOutletSocketTap(socket, id) {
+    socket.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleOutlet(id);
+    });
+  }
+
   // Tap detector for switch tiles: ignores scrolls, long-presses, and taps on the name.
   function attachSwitchTap(tile, id) {
     const TAP_MOVE = 10;
     const TAP_MAX_MS = 500;
     let downX = 0, downY = 0, downT = 0, active = false;
+    const isOutlet = tile.classList.contains("outlet");
 
     tile.addEventListener("pointerdown", (e) => {
       if (e.button != null && e.button !== 0) return;
       if (e.target.closest(".tile-bulb")) return;
+      if (e.target.closest(".tile-socket")) return;
       if (e.target.closest(".tile-fav")) return;
       active = true;
       downX = e.clientX; downY = e.clientY; downT = Date.now();
@@ -4545,13 +4637,15 @@
       if (!active) return;
       active = false;
       if (e.target.closest(".tile-bulb")) return;
+      if (e.target.closest(".tile-socket")) return;
       if (e.target.closest(".tile-name")) return;
       if (e.target.closest(".tile-fav")) return;
       const dx = Math.abs(e.clientX - downX);
       const dy = Math.abs(e.clientY - downY);
       if (dx > TAP_MOVE || dy > TAP_MOVE) return;
       if (Date.now() - downT > TAP_MAX_MS) return;
-      toggleSwitch(id);
+      if (isOutlet) toggleOutlet(id);
+      else toggleSwitch(id);
     }, { passive: true });
 
     tile.addEventListener("pointercancel", () => { active = false; }, { passive: true });
@@ -4609,12 +4703,18 @@
     rec.stateEl.textContent = on ? "On" : "Off";
     const bulb = qs(".tile-bulb", rec.el);
     if (bulb) bulb.setAttribute("aria-pressed", on ? "true" : "false");
+    const socket = qs(".tile-socket", rec.el);
+    if (socket) socket.setAttribute("aria-pressed", on ? "true" : "false");
     const nameEl = qs(".tile-name", rec.el);
     if (nameEl) nameEl.classList.toggle("color-capable", rec.isDim);
-    rec.levelEl.textContent = formatFootText(
-      rec.isDim ? { ...dev, l: effectiveLevel(dev) } : dev,
-      rec.isDim
-    );
+    if (rec.isOutlet) {
+      rec.levelEl.textContent = "Outlet";
+    } else {
+      rec.levelEl.textContent = formatFootText(
+        rec.isDim ? { ...dev, l: effectiveLevel(dev) } : dev,
+        rec.isDim
+      );
+    }
     if (rec.isDim) {
       const displayL = effectiveLevel(dev);
       if (!rec.el.classList.contains("dragging") && displayL != null) {
@@ -4629,18 +4729,33 @@
       syncTileState(devMap.get(dev.i), dev);
       syncTileState(favDevMap.get(dev.i), dev);
     }
+    for (const out of outlets) {
+      syncTileState(outletMap.get(out.i), out);
+      syncTileState(favDevMap.get(out.i), out);
+    }
     updateRoomMeta();
   }
 
   function updateRoomMeta() {
     for (const [rid, rec] of roomEls) {
       const devs = devicesByRoom.get(rid) || [];
+      const roomOutlets = outletsByRoom.get(rid) || [];
       const onCount = devs.filter((d) => effectiveSwitch(d)).length;
       const total = devs.length;
+      const outletOn = roomOutlets.filter((o) => effectiveSwitch(o)).length;
+      const outletTotal = roomOutlets.length;
       const hasClimate = roomHasClimate(rid);
       let text;
       if (total > 0) {
         text = onCount ? onCount + " of " + total + " on" : (total + " light" + (total === 1 ? "" : "s"));
+        if (outletTotal > 0) {
+          text += " · " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s");
+          if (outletOn) text += " (" + outletOn + " on)";
+        }
+      } else if (outletTotal > 0) {
+        text = outletOn
+          ? outletOn + " of " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s") + " on"
+          : (outletTotal + " outlet" + (outletTotal === 1 ? "" : "s"));
       } else if (thermoByRoom.has(rid)) {
         const t = (thermoByRoom.get(rid) || [])[0];
         const tm = String(t?.tm || "").toLowerCase();
@@ -4655,7 +4770,7 @@
       if (total > 0) {
         if (onCount === 0) state = "all-off";
         else if (onCount === total) state = "all-on";
-      } else if (hasClimate) {
+      } else if (outletTotal > 0 || hasClimate) {
         state = "all-off";
       }
       rec.card.classList.remove("room-all-on", "room-all-off", "room-mixed", "room-on");
@@ -4883,6 +4998,19 @@
     updateStates();
     sendCmd(id, next).then((r) => {
       if (!r?.ok) { clearSwitchOptimistic(id); refreshDevice(id); }
+    });
+  }
+
+  function toggleOutlet(id) {
+    hapticTap();
+    const out = outlets.find((d) => d.i === id);
+    if (!out) return;
+    const on = effectiveSwitch(out);
+    const next = on ? "off" : "on";
+    setSwitchOptimistic(id, next === "on" ? 1 : 0);
+    updateStates();
+    sendCmd(id, next).then((r) => {
+      if (!r?.ok) { clearSwitchOptimistic(id); refresh(); }
     });
   }
 
@@ -6410,6 +6538,8 @@
     for (const entry of entries) {
       if (entry.type === "light") {
         grid.appendChild(makeTile(entry.dev, "favorites"));
+      } else if (entry.type === "outlet") {
+        grid.appendChild(makeOutletTile(entry.dev, "favorites"));
       } else if (entry.type === "thermostat") {
         grid.appendChild(makeQuickTstatCard(entry.dev, favTstatMap));
       } else if (entry.type === "sensor") {
@@ -6944,6 +7074,7 @@
     if (!q) {
       for (const [, rec] of roomEls) rec.card.classList.remove("hidden");
       for (const [, rec] of devMap) rec.el.classList.remove("hidden");
+      for (const [, rec] of outletMap) rec.el.classList.remove("hidden");
       if (collapsedBeforeSearch) {
         for (const [rid, rec] of roomEls) {
           rec.card.classList.toggle("collapsed", collapsedBeforeSearch.has(rid));
@@ -6957,6 +7088,9 @@
     if (!collapsedBeforeSearch) collapsedBeforeSearch = collapsedIdSet();
 
     for (const [, rec] of devMap) {
+      rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
+    }
+    for (const [, rec] of outletMap) {
       rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
     }
     for (const [, rec] of roomEls) {
@@ -7310,6 +7444,14 @@
               updateStates();
             }
           }
+          return;
+        }
+        const outletRec = outletMap.get(Number(m.deviceId)) || favDevMap.get(Number(m.deviceId));
+        if (outletRec?.isOutlet && m.name === "switch") {
+          const out = outlets.find((x) => x.i === Number(m.deviceId));
+          if (out) out.s = (m.value === "on") ? 1 : 0;
+          clearSwitchOptimistic(Number(m.deviceId));
+          updateStates();
           return;
         }
         const lock = locks.find(x => x.i === Number(m.deviceId));

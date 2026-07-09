@@ -705,6 +705,52 @@ body {
 .tile.on .tile-bulb::before { border-color: var(--on); box-shadow: 0 0 14px var(--on-glow); }
 .tile.on .tile-bulb::after { background: radial-gradient(circle at 35% 30%, #fff, var(--on) 70%); }
 
+/* Outlet socket icon (distinct from light bulb) */
+.tile.outlet {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--stroke-2) 80%, transparent);
+}
+.tile.outlet.on {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--on) 40%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--on) 8%, var(--panel-solid)), var(--panel-solid));
+}
+.tile-socket {
+  width: 44px; height: 44px; flex-shrink: 0;
+  border: none; background: transparent; padding: 0; margin: -9px -9px -9px 0;
+  position: relative; cursor: pointer; appearance: none;
+  display: grid; place-items: center;
+  touch-action: manipulation; -webkit-touch-callout: none;
+}
+.tile-socket-face {
+  width: 28px; height: 28px; border-radius: 7px;
+  border: 1.5px solid var(--stroke-2); background: var(--panel-2);
+  position: relative; box-sizing: border-box;
+  transition: border-color .25s var(--ease), box-shadow .25s var(--ease), transform .15s var(--ease);
+}
+.tile-socket:hover .tile-socket-face { border-color: var(--text-dim); transform: scale(1.06); }
+.tile-socket:active .tile-socket-face { transform: scale(.9); }
+.tile.on .tile-socket-face {
+  border-color: var(--on);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--on-glow) 70%, transparent);
+  background: color-mix(in srgb, var(--on) 14%, var(--panel-2));
+}
+.tile-socket-slot {
+  position: absolute; top: 7px; width: 3.5px; height: 9px; border-radius: 1px;
+  background: var(--text-faint);
+  transition: background .25s var(--ease);
+}
+.tile-socket-slot-l { left: 7px; }
+.tile-socket-slot-r { right: 7px; }
+.tile-socket-ground {
+  position: absolute; left: 50%; bottom: 5px; transform: translateX(-50%);
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-faint);
+  transition: background .25s var(--ease);
+}
+.tile.on .tile-socket-slot,
+.tile.on .tile-socket-ground { background: var(--on); }
+
 /* Color popup (tap light name on CT/RGB-capable devices) */
 .ct-popup {
   position: fixed; inset: 0; z-index: 60; pointer-events: none;

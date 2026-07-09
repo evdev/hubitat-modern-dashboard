@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.16
+
+- Outlets appear as socket-style tiles in rooms (favorites supported); room and
+  house on/off and light snapshots still control lights only.
+
 ## 0.2.15
 
 - HPM manifest and README link to the published Hubitat Community release thread.

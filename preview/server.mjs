@@ -226,6 +226,13 @@ function applyCmd(id, c, v, pin) {
     }
     return { ok: true };
   }
+  const outlet = state.outlets?.find(d => d.i === id) || state.plainSwitches?.find(d => d.i === id);
+  if (outlet) {
+    if (c === "on") outlet.s = 1;
+    else if (c === "off") outlet.s = 0;
+    else return { ok: false, error: "unknown command" };
+    return { ok: true };
+  }
   const t = state.thermostats?.find(d => d.i === id);
   if (t) {
     if (c === "setMode" || c === "modeAuto" || c === "modeHeat" || c === "modeCool" || c === "off") {

@@ -48,7 +48,7 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "outletSwitches", "capability.switch", title: "Outlets",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            paragraph "<small>Outlets may also appear in the lights list above. The Outlets section on the dashboard only shows devices selected here.</small>"
+            paragraph "<small>Outlets may also appear in the lights list above. Devices selected here show as outlet tiles in rooms (room On/Off does not control them).</small>"
             input "thermostats", "capability.thermostat", title: "Select your thermostats",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "tempSensors", "capability.temperatureMeasurement", title: "Temperature sensors (display only)",
