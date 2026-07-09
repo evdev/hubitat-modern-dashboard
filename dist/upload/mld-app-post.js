@@ -694,6 +694,10 @@ async function saveRoomOrder(order) {
     closeTopbarOverflowMenu();
     relocateNavForReorder();
     showAllNavForReorder();
+    if (M.SEARCH_EL) {
+      M.SEARCH_EL.value = "";
+      M.applySearch();
+    }
     if (M.REORDER_DONE_BTN) M.REORDER_DONE_BTN.hidden = false;
     if (M.REORDER_CANCEL_BTN) M.REORDER_CANCEL_BTN.hidden = false;
     updateMoveButtons();
@@ -796,12 +800,12 @@ async function saveRoomOrder(order) {
 
     function movePlaceholderForY(y) {
       if (!placeholder) return;
-      const rooms = visibleRooms();
+      const roomCards = visibleRooms();
       let insertBefore = null;
-      for (const room of M.rooms) {
-        const rect = room.getBoundingClientRect();
+      for (const roomCard of roomCards) {
+        const rect = roomCard.getBoundingClientRect();
         if (y < rect.top + rect.height / 2) {
-          insertBefore = room;
+          insertBefore = roomCard;
           break;
         }
       }
@@ -873,7 +877,7 @@ async function saveRoomOrder(order) {
     }
 
     handle.addEventListener("pointerdown", (e) => {
-      if (!M.reorderMode || M.SEARCH_EL.value.trim()) return;
+      if (!M.reorderMode) return;
       e.preventDefault();
       e.stopPropagation();
       active = true;

@@ -3857,6 +3857,10 @@
     closeTopbarOverflowMenu();
     relocateNavForReorder();
     showAllNavForReorder();
+    if (SEARCH_EL) {
+      SEARCH_EL.value = "";
+      applySearch();
+    }
     if (REORDER_DONE_BTN) REORDER_DONE_BTN.hidden = false;
     if (REORDER_CANCEL_BTN) REORDER_CANCEL_BTN.hidden = false;
     updateMoveButtons();
@@ -3959,12 +3963,12 @@
 
     function movePlaceholderForY(y) {
       if (!placeholder) return;
-      const rooms = visibleRooms();
+      const roomCards = visibleRooms();
       let insertBefore = null;
-      for (const room of rooms) {
-        const rect = room.getBoundingClientRect();
+      for (const roomCard of roomCards) {
+        const rect = roomCard.getBoundingClientRect();
         if (y < rect.top + rect.height / 2) {
-          insertBefore = room;
+          insertBefore = roomCard;
           break;
         }
       }
@@ -4036,7 +4040,7 @@
     }
 
     handle.addEventListener("pointerdown", (e) => {
-      if (!reorderMode || SEARCH_EL.value.trim()) return;
+      if (!reorderMode) return;
       e.preventDefault();
       e.stopPropagation();
       active = true;
