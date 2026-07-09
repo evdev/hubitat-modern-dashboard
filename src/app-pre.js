@@ -113,12 +113,15 @@ const MUSIC_PAUSE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7"
 const MUSIC_STOP_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/></svg>';
 const MUSIC_ART_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="mlMusicArt" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c4b5ff"/><stop offset="1" stop-color="#7b5cff"/></linearGradient></defs><path d="M9.5 17.6V5.4l9-2v12.2" fill="none" stroke="url(#mlMusicArt)" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="6.9" cy="17.6" rx="2.7" ry="2.1" fill="url(#mlMusicArt)" stroke="#5a3df0" stroke-width="0.6" transform="rotate(-22 6.9 17.6)"/><ellipse cx="15.8" cy="15.6" rx="2.4" ry="1.8" fill="url(#mlMusicArt)" stroke="#5a3df0" stroke-width="0.6" transform="rotate(-22 15.8 15.6)"/></svg>';
 
+const OUTLET_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="8.5" y="8" width="2" height="5" rx="1" fill="currentColor"/><rect x="13.5" y="8" width="2" height="5" rx="1" fill="currentColor"/><circle cx="12" cy="16.5" r="1.5" fill="currentColor"/></svg>';
+
 const QUICK_NAV = [
   { id: "quick-locks", popup: "locks", title: "Locks", svg: LOCK_SVG },
   { id: "quick-scenes", popup: "scenes", title: "Scenes", svg: SCENES_SVG },
   { id: "quick-hub-mode", popup: "hub-mode", title: "Hub mode", svg: HUB_MODE_SVG },
   { id: "quick-security", popup: "security", title: "Security", svg: SECURITY_SVG },
   { id: "quick-blinds", popup: "blinds", title: "Blinds", svg: BLINDS_SVG },
+  { id: "quick-outlets", popup: "outlets", title: "Outlets", svg: OUTLET_SVG },
   { id: "quick-scheduling", popup: "scheduling", title: "Scheduling", svg: SCHEDULE_SVG },
   { id: "quick-sensors", popup: "sensors", title: "Sensors", svg: SENSORS_SVG },
   { id: "quick-thermostats", popup: "thermostats", title: "Thermostats", svg: TSTAT_NAV_SVG },

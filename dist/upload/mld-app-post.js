@@ -1083,6 +1083,7 @@ async function saveRoomOrder(order) {
     M.hsmEnabled = !!d.hsmEnabled;
     M.hsmPinRequired = !!d.hsmPinRequired;
     M.thermostatsPopupEnabled = d.thermostatsPopupEnabled !== false;
+    M.outletsSeparateTab = !!d.outletsSeparateTab;
     M.unlockPinEnabled = !!d.unlockPinEnabled;
     M.unlockPinRequired = !!d.unlockPinRequired;
     M.replaceList(M.scenes, d.scenes);
@@ -1127,6 +1128,7 @@ async function saveRoomOrder(order) {
     const displayOrder = M.getDisplayRoomIds(groups, hasContent);
 
     const sig = displayOrder.join(",") + "|" + M.devices.map(x => x.i).join(",")
+      + "|" + M.outlets.map(x => x.i).join(",") + "|" + (M.outletsSeparateTab ? 1 : 0)
       + "|" + M.thermostats.map(x => x.i).join(",") + "|" + M.tempSensors.map(x => x.i).join(",");
     const fullRerender = sig !== M.lastDataSig;
     M.lastDataSig = sig;
@@ -1151,16 +1153,19 @@ async function saveRoomOrder(order) {
       groups.get(rid).push(dev);
     }
     const outletGroups = new Map();
-    for (const out of M.outlets) {
-      const rid = normalizeRoomId(out.r);
-      if (!outletGroups.has(rid)) outletGroups.set(rid, []);
-      outletGroups.get(rid).push(out);
+    if (M.outletsInLightsRooms()) {
+      for (const out of M.outlets) {
+        const rid = normalizeRoomId(out.r);
+        if (!outletGroups.has(rid)) outletGroups.set(rid, []);
+        outletGroups.get(rid).push(out);
+      }
     }
 
-    // a room is shown if it has lights, M.outlets, M.thermostats, or temp M.sensors
+    // a room is shown if it has lights, M.outlets (when in M.rooms), M.thermostats, or temp M.sensors
     const hasContent = (rid) => {
       const key = normalizeRoomId(rid);
-      return (groups.get(key)?.length || outletGroups.get(key)?.length || M.roomHasClimate(key));
+      const hasOutlets = M.outletsInLightsRooms() && (outletGroups.get(key)?.length || 0) > 0;
+      return (groups.get(key)?.length || hasOutlets || M.roomHasClimate(key));
     };
 
     const orderedIds = M.getDisplayRoomIds(groups, hasContent);
@@ -1168,7 +1173,7 @@ async function saveRoomOrder(order) {
     for (const rid of orderedIds) {
       const roomKey = normalizeRoomId(rid);
       const devs = groups.get(roomKey) || [];
-      const roomOutlets = outletGroups.get(roomKey) || [];
+      const roomOutlets = M.outletsInLightsRooms() ? (outletGroups.get(roomKey) || []) : [];
       const name = roomKey === -1 ? "Unassigned" : (M.roomMap.get(roomKey) || "Room");
 
       const card = ce("section", "room");
@@ -1528,7 +1533,7 @@ async function saveRoomOrder(order) {
     const nameEl = qs(".tile-name", rec.el);
     if (nameEl) nameEl.classList.toggle("color-capable", rec.isDim);
     if (rec.isOutlet) {
-      rec.levelEl.textContent = "Outlet";
+      rec.levelEl.textContent = M.outletsSeparateTab ? roomLabel(dev.r) : "Outlet";
     } else {
       rec.levelEl.textContent = formatFootText(
         rec.isDim ? { ...dev, l: M.effectiveLevel(dev) } : dev,
@@ -1559,7 +1564,7 @@ async function saveRoomOrder(order) {
   function updateRoomMeta() {
     for (const [rid, rec] of M.roomEls) {
       const devs = M.devicesByRoom.get(rid) || [];
-      const roomOutlets = M.outletsByRoom.get(rid) || [];
+      const roomOutlets = M.outletsInLightsRooms() ? (M.outletsByRoom.get(rid) || []) : [];
       const onCount = devs.filter((d) => M.effectiveSwitch(d)).length;
       const total = devs.length;
       const outletOn = roomOutlets.filter((o) => M.effectiveSwitch(o)).length;
@@ -1568,11 +1573,11 @@ async function saveRoomOrder(order) {
       let text;
       if (total > 0) {
         text = onCount ? onCount + " of " + total + " on" : (total + " light" + (total === 1 ? "" : "s"));
-        if (outletTotal > 0) {
+        if (M.outletsInLightsRooms() && outletTotal > 0) {
           text += " · " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s");
           if (outletOn) text += " (" + outletOn + " on)";
         }
-      } else if (outletTotal > 0) {
+      } else if (M.outletsInLightsRooms() && outletTotal > 0) {
         text = outletOn
           ? outletOn + " of " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s") + " on"
           : (outletTotal + " outlet" + (outletTotal === 1 ? "" : "s"));
@@ -1590,7 +1595,7 @@ async function saveRoomOrder(order) {
       if (total > 0) {
         if (onCount === 0) state = "all-off";
         else if (onCount === total) state = "all-on";
-      } else if (outletTotal > 0 || hasClimate) {
+      } else if (M.outletsInLightsRooms() && outletTotal > 0 || hasClimate) {
         state = "all-off";
       }
       rec.card.classList.remove("room-all-on", "room-all-off", "room-mixed", "room-on");
@@ -2137,7 +2142,7 @@ async function saveRoomOrder(order) {
     return el;
   }
 
-  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "scheduling"]);
+  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "outlets", "scheduling"]);
   const HUB_MODE_POPUP_TYPE = "hub-mode";
 
   function syncQuickPopupWidth(popup, type) {
@@ -2352,6 +2357,28 @@ async function saveRoomOrder(order) {
     const list = ce("div", "quick-list");
     for (const shade of sorted) list.appendChild(makeShadeTile(shade, "popup"));
     body.appendChild(list);
+  }
+
+  function renderOutletsPopup() {
+    const popup = ensureQuickPopup();
+    syncQuickPopupWidthForOpen(popup);
+    const body = M.currentBody();
+    body.className = "quick-body quick-body-outlets" + (M.inTabView() ? " tab-body" : "");
+    body.innerHTML = "";
+    M.outletMap.clear();
+    if (!M.outlets.length) {
+      body.textContent = "No outlets configured — add outlets in the Hubitat app settings";
+      return;
+    }
+    const sorted = M.outlets.slice().sort((a, b) => {
+      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
+      if (ra !== 0) return ra;
+      return String(a.n || "").localeCompare(String(b.n || ""));
+    });
+    const grid = ce("div", "quick-fav-grid");
+    for (const out of sorted) grid.appendChild(makeOutletTile(out));
+    body.appendChild(grid);
+    updateStates();
   }
 
   // ---------- M.sensors popup ----------
@@ -3168,5 +3195,5 @@ async function saveRoomOrder(order) {
     ruleSection.appendChild(ruleModes);
     body.appendChild(ruleSection);
   }
-  Object.assign(M, { currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
+  Object.assign(M, { currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, renderOutletsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
 })();

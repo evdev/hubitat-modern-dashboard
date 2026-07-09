@@ -1869,6 +1869,7 @@ body {
 .quick-lock-btn:active { transform: scale(.96); }
 
 .quick-body-blinds .quick-list { gap: 12px; }
+.quick-body-outlets .quick-fav-grid { gap: 12px; }
 .shade-tile {
   display: flex; flex-direction: column; gap: 10px;
   border: 1px solid var(--stroke); background: var(--panel-2);

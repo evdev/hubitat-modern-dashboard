@@ -256,6 +256,7 @@ function renderScenesPopup() {
       case "hub-mode": return M.hubModes.length > 0;
       case "security": return M.hsmEnabled;
       case "blinds": return M.windowShades.length > 0;
+      case "outlets": return M.outletsSeparateTab && M.outlets.length > 0;
       case "scheduling": return true;
       case "sensors": return M.mergedSensorList().length > 0;
       case "thermostats": return M.thermostatsPopupEnabled && M.thermostats.length > 0;
@@ -301,6 +302,7 @@ function renderScenesPopup() {
         case "thermostats": refreshThermostatsPopup(); break;
         case "sensors": M.refreshSensorsPopup(); break;
         case "blinds": M.renderBlindsPopup(); break;
+        case "outlets": M.renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
           break;
@@ -340,6 +342,7 @@ function renderScenesPopup() {
       case "favorites": renderFavoritesPopup(); break;
       case "locks": M.renderLocksPopup(); break;
       case "blinds": M.renderBlindsPopup(); break;
+      case "outlets": M.renderOutletsPopup(); break;
       case "music": M.renderMusicPopup(); break;
       case "security": M.renderSecurityPopup(); break;
       case "sensors": M.renderSensorsPopup(); break;
@@ -461,6 +464,7 @@ function renderScenesPopup() {
         case "thermostats": renderThermostatsPopup(); break;
         case "music": M.renderMusicPopup(); break;
         case "blinds": M.renderBlindsPopup(); break;
+        case "outlets": M.renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
           break;
@@ -728,7 +732,9 @@ function renderScenesPopup() {
     if (!q) {
       for (const [, rec] of M.roomEls) rec.card.classList.remove("hidden");
       for (const [, rec] of M.devMap) rec.el.classList.remove("hidden");
-      for (const [, rec] of M.outletMap) rec.el.classList.remove("hidden");
+      if (M.outletsInLightsRooms()) {
+        for (const [, rec] of M.outletMap) rec.el.classList.remove("hidden");
+      }
       if (collapsedBeforeSearch) {
         for (const [rid, rec] of M.roomEls) {
           rec.card.classList.toggle("collapsed", collapsedBeforeSearch.has(rid));
@@ -744,8 +750,10 @@ function renderScenesPopup() {
     for (const [, rec] of M.devMap) {
       rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
     }
-    for (const [, rec] of M.outletMap) {
-      rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
+    if (M.outletsInLightsRooms()) {
+      for (const [, rec] of M.outletMap) {
+        rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
+      }
     }
     for (const [, rec] of M.roomEls) {
       const visible = rec.body.querySelectorAll(".tile:not(.hidden)");

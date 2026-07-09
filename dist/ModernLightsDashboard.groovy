@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.16
+// Modern Dashboard v0.2.17
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.16 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.17 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -48,7 +48,8 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "outletSwitches", "capability.switch", title: "Outlets",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            paragraph "<small>Outlets may also appear in the lights list above. Devices selected here show as outlet tiles in rooms (room On/Off does not control them).</small>"
+            input "outletsSeparateTab", "bool", title: "Show outlets in separate Outlets tab", defaultValue: false, submitOnChange: true
+            paragraph "<small>Outlets may also appear in the lights list above. When <b>separate Outlets tab</b> is off, outlet tiles appear in room cards on the Lights view. When on, they appear under the Outlets quick-nav tab instead. Room On/Off never controls outlets.</small>"
             input "thermostats", "capability.thermostat", title: "Select your thermostats",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "tempSensors", "capability.temperatureMeasurement", title: "Temperature sensors (display only)",
@@ -954,6 +955,7 @@ def renderData() {
     out << ",\"hsmEnabled\":" << (hsmEnabled == true ? "true" : "false")
     out << ",\"hsmPinRequired\":" << (hsmEnabled == true && hsmPinEnabled == true && hsmPin?.toString()?.trim() ? "true" : "false")
     out << ",\"thermostatsPopupEnabled\":" << (thermostatsPopupEnabled == true ? "true" : "false")
+    out << ",\"outletsSeparateTab\":" << (outletsSeparateTab == true ? "true" : "false")
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
     out << ",\"unlockPinEnabled\":" << (unlockPinEnabled == true ? "true" : "false")
     out << ",\"unlockPinRequired\":" << (unlockPinEnabled == true && unlockPin?.toString()?.trim() ? "true" : "false")
@@ -1980,7 +1982,7 @@ def saveRoomOrderFromList(order) {
 // Nav order (state.navOrder — synced across devices)
 // ---------------------------------------------------------------------------
 def validNavKeySet() {
-    return ["lights", "locks", "scenes", "hub-mode", "security", "blinds", "scheduling", "sensors", "thermostats", "music", "favorites"] as Set
+    return ["lights", "locks", "scenes", "hub-mode", "security", "blinds", "outlets", "scheduling", "sensors", "thermostats", "music", "favorites"] as Set
 }
 
 def parseNavOrderState() {

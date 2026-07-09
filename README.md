@@ -92,11 +92,12 @@ supported by the device. Changes apply live while you adjust; click outside the
 popup or press Escape to dismiss. Tap the tile body (not the name) to toggle
 on/off without opening color controls.
 
-**Outlets:** Devices selected under the **Outlets** picker appear in the same
-room layout as lights, with a socket-style tile so they are easy to tell apart.
-Tap an outlet tile to toggle it. Room and whole-house **On** / **Off** (and
-snapshots) control **lights only** — outlets are grouped with rooms for
-organization, not bulk lighting control.
+**Outlets:** Devices selected under the **Outlets** picker use socket-style tiles
+so they are easy to tell apart from lights. By default they appear in the same
+room layout as lights. Enable **Show outlets in separate Outlets tab** in the
+companion app to move them to the **Outlets** quick-nav view instead. Tap an
+outlet tile to toggle it. Room and whole-house **On** / **Off** (and snapshots)
+control **lights only** — outlets are never included in bulk lighting control.
 
 **Room climate:** If a thermostat or temperature sensor is in the same room,
 the room header shows the current temperature. Tap the thermostat icon to open
@@ -560,7 +561,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | ---------- | ---------------- | --------- | ----------- |
 | Lights (switches & dimmers) | Tiles by room | On/off, dim, CT | — |
 | Switches (not lights/outlets) | Hidden | On/off only | — |
-| Outlets | Socket tiles by room (not in room/house on/off) | On/off only | Favorites |
+| Outlets | Socket tiles by room, or separate Outlets tab (preference) | On/off only | Favorites |
 | Thermostats | Room header + Thermostats popup | Mode, setpoints, fan | All thermostats bulk |
 | Temperature sensors | Room header (read-only) | — | Sensors popup |
 | Locks | — | — | Locks popup |
@@ -571,8 +572,8 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Hub mode | — | Trigger & action | Hub mode popup |
 
 Outlets may also be selected in the **Lights** picker (they then behave as
-lights, including room/house on/off). The **Outlets** tiles and scheduler
-section only include devices selected under **Outlets**.
+lights, including room/house on/off). The **Outlets** picker and optional
+**separate Outlets tab** only include devices selected under **Outlets**.
 
 ## Community and wider distribution
 
@@ -645,8 +646,9 @@ Kitchen room are not shortened incorrectly.
 
 - No offline mode — hub must be reachable (local or cloud).
 - WebSocket only on the local URL; cloud access uses polling only.
-- Plain switches are scheduler-only (not shown as tiles). Outlets appear as
-  room tiles but are excluded from room/house on/off and light snapshots.
+- Plain switches are scheduler-only (not shown as tiles). Outlets can appear in
+  room cards or a separate Outlets tab (companion app preference); they are
+  excluded from room/house on/off and light snapshots either way.
 - Cloud responses are capped at ~128 KB; the slim API supports ~130 lights on one
   page but very large installs may need device subsetting.
 - Service worker does not cache — refresh always fetches from the hub.

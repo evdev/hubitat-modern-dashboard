@@ -167,6 +167,7 @@
   let hsmEnabled = false;
   let hsmPinRequired = false;
   let thermostatsPopupEnabled = false;
+  let outletsSeparateTab = false;
   let unlockPinEnabled = false;
   let unlockPinRequired = false;
   let hsmLockUntil = 0;
@@ -183,8 +184,8 @@
   }
 
   // ---------- tab mode (inline tabs instead of popups) ----------
-  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "blinds", "scheduling"]);
-  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", blinds: "Blinds", scheduling: "Scheduler" };
+  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "blinds", "outlets", "scheduling"]);
+  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", blinds: "Blinds", outlets: "Outlets", scheduling: "Scheduler" };
   let tabMode = cfg.enableTabs;
   let activeTab = "lights";
   let tabViewEl = null;
@@ -3119,17 +3120,23 @@
   function contentRoomIds() {
     const ids = new Set();
     for (const rid of devicesByRoom.keys()) ids.add(rid);
-    for (const rid of outletsByRoom.keys()) ids.add(rid);
+    if (outletsInLightsRooms()) {
+      for (const rid of outletsByRoom.keys()) ids.add(rid);
+    }
     for (const rid of thermoByRoom.keys()) ids.add(rid);
     for (const rid of sensorByRoom.keys()) ids.add(rid);
     return ids;
+  }
+
+  function outletsInLightsRooms() {
+    return !outletsSeparateTab;
   }
 
   function getDisplayRoomIds(groups, hasContent) {
     const knownIds = new Set(rooms.map(r => r.id));
     const allIds = new Set(knownIds);
     for (const id of contentRoomIds()) allIds.add(id);
-    const hasUnassigned = groups.has(-1) || outletsByRoom.has(-1) || roomHasClimate(-1);
+    const hasUnassigned = groups.has(-1) || (outletsInLightsRooms() && outletsByRoom.has(-1)) || roomHasClimate(-1);
     let order;
     if (cfg.roomOrder?.length) {
       order = cfg.roomOrder.map(normalizeRoomId).filter(id => {
@@ -4263,6 +4270,7 @@
     hsmEnabled = !!d.hsmEnabled;
     hsmPinRequired = !!d.hsmPinRequired;
     thermostatsPopupEnabled = d.thermostatsPopupEnabled !== false;
+    outletsSeparateTab = !!d.outletsSeparateTab;
     unlockPinEnabled = !!d.unlockPinEnabled;
     unlockPinRequired = !!d.unlockPinRequired;
     replaceList(scenes, d.scenes);
@@ -4307,6 +4315,7 @@
     const displayOrder = getDisplayRoomIds(groups, hasContent);
 
     const sig = displayOrder.join(",") + "|" + devices.map(x => x.i).join(",")
+      + "|" + outlets.map(x => x.i).join(",") + "|" + (outletsSeparateTab ? 1 : 0)
       + "|" + thermostats.map(x => x.i).join(",") + "|" + tempSensors.map(x => x.i).join(",");
     const fullRerender = sig !== lastDataSig;
     lastDataSig = sig;
@@ -4331,16 +4340,19 @@
       groups.get(rid).push(dev);
     }
     const outletGroups = new Map();
-    for (const out of outlets) {
-      const rid = normalizeRoomId(out.r);
-      if (!outletGroups.has(rid)) outletGroups.set(rid, []);
-      outletGroups.get(rid).push(out);
+    if (outletsInLightsRooms()) {
+      for (const out of outlets) {
+        const rid = normalizeRoomId(out.r);
+        if (!outletGroups.has(rid)) outletGroups.set(rid, []);
+        outletGroups.get(rid).push(out);
+      }
     }
 
-    // a room is shown if it has lights, outlets, thermostats, or temp sensors
+    // a room is shown if it has lights, outlets (when in rooms), thermostats, or temp sensors
     const hasContent = (rid) => {
       const key = normalizeRoomId(rid);
-      return (groups.get(key)?.length || outletGroups.get(key)?.length || roomHasClimate(key));
+      const hasOutlets = outletsInLightsRooms() && (outletGroups.get(key)?.length || 0) > 0;
+      return (groups.get(key)?.length || hasOutlets || roomHasClimate(key));
     };
 
     const orderedIds = getDisplayRoomIds(groups, hasContent);
@@ -4348,7 +4360,7 @@
     for (const rid of orderedIds) {
       const roomKey = normalizeRoomId(rid);
       const devs = groups.get(roomKey) || [];
-      const roomOutlets = outletGroups.get(roomKey) || [];
+      const roomOutlets = outletsInLightsRooms() ? (outletGroups.get(roomKey) || []) : [];
       const name = roomKey === -1 ? "Unassigned" : (roomMap.get(roomKey) || "Room");
 
       const card = ce("section", "room");
@@ -4708,7 +4720,7 @@
     const nameEl = qs(".tile-name", rec.el);
     if (nameEl) nameEl.classList.toggle("color-capable", rec.isDim);
     if (rec.isOutlet) {
-      rec.levelEl.textContent = "Outlet";
+      rec.levelEl.textContent = outletsSeparateTab ? roomLabel(dev.r) : "Outlet";
     } else {
       rec.levelEl.textContent = formatFootText(
         rec.isDim ? { ...dev, l: effectiveLevel(dev) } : dev,
@@ -4739,7 +4751,7 @@
   function updateRoomMeta() {
     for (const [rid, rec] of roomEls) {
       const devs = devicesByRoom.get(rid) || [];
-      const roomOutlets = outletsByRoom.get(rid) || [];
+      const roomOutlets = outletsInLightsRooms() ? (outletsByRoom.get(rid) || []) : [];
       const onCount = devs.filter((d) => effectiveSwitch(d)).length;
       const total = devs.length;
       const outletOn = roomOutlets.filter((o) => effectiveSwitch(o)).length;
@@ -4748,11 +4760,11 @@
       let text;
       if (total > 0) {
         text = onCount ? onCount + " of " + total + " on" : (total + " light" + (total === 1 ? "" : "s"));
-        if (outletTotal > 0) {
+        if (outletsInLightsRooms() && outletTotal > 0) {
           text += " · " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s");
           if (outletOn) text += " (" + outletOn + " on)";
         }
-      } else if (outletTotal > 0) {
+      } else if (outletsInLightsRooms() && outletTotal > 0) {
         text = outletOn
           ? outletOn + " of " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s") + " on"
           : (outletTotal + " outlet" + (outletTotal === 1 ? "" : "s"));
@@ -4770,7 +4782,7 @@
       if (total > 0) {
         if (onCount === 0) state = "all-off";
         else if (onCount === total) state = "all-on";
-      } else if (outletTotal > 0 || hasClimate) {
+      } else if (outletsInLightsRooms() && outletTotal > 0 || hasClimate) {
         state = "all-off";
       }
       rec.card.classList.remove("room-all-on", "room-all-off", "room-mixed", "room-on");
@@ -5317,7 +5329,7 @@
     return el;
   }
 
-  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "scheduling"]);
+  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "outlets", "scheduling"]);
   const HUB_MODE_POPUP_TYPE = "hub-mode";
 
   function syncQuickPopupWidth(popup, type) {
@@ -5532,6 +5544,28 @@
     const list = ce("div", "quick-list");
     for (const shade of sorted) list.appendChild(makeShadeTile(shade, "popup"));
     body.appendChild(list);
+  }
+
+  function renderOutletsPopup() {
+    const popup = ensureQuickPopup();
+    syncQuickPopupWidthForOpen(popup);
+    const body = currentBody();
+    body.className = "quick-body quick-body-outlets" + (inTabView() ? " tab-body" : "");
+    body.innerHTML = "";
+    outletMap.clear();
+    if (!outlets.length) {
+      body.textContent = "No outlets configured — add outlets in the Hubitat app settings";
+      return;
+    }
+    const sorted = outlets.slice().sort((a, b) => {
+      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
+      if (ra !== 0) return ra;
+      return String(a.n || "").localeCompare(String(b.n || ""));
+    });
+    const grid = ce("div", "quick-fav-grid");
+    for (const out of sorted) grid.appendChild(makeOutletTile(out));
+    body.appendChild(grid);
+    updateStates();
   }
 
   // ---------- sensors popup ----------
@@ -6602,6 +6636,7 @@
       case "hub-mode": return hubModes.length > 0;
       case "security": return hsmEnabled;
       case "blinds": return windowShades.length > 0;
+      case "outlets": return outletsSeparateTab && outlets.length > 0;
       case "scheduling": return true;
       case "sensors": return mergedSensorList().length > 0;
       case "thermostats": return thermostatsPopupEnabled && thermostats.length > 0;
@@ -6647,6 +6682,7 @@
         case "thermostats": refreshThermostatsPopup(); break;
         case "sensors": refreshSensorsPopup(); break;
         case "blinds": renderBlindsPopup(); break;
+        case "outlets": renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
           break;
@@ -6686,6 +6722,7 @@
       case "favorites": renderFavoritesPopup(); break;
       case "locks": renderLocksPopup(); break;
       case "blinds": renderBlindsPopup(); break;
+      case "outlets": renderOutletsPopup(); break;
       case "music": renderMusicPopup(); break;
       case "security": renderSecurityPopup(); break;
       case "sensors": renderSensorsPopup(); break;
@@ -6807,6 +6844,7 @@
         case "thermostats": renderThermostatsPopup(); break;
         case "music": renderMusicPopup(); break;
         case "blinds": renderBlindsPopup(); break;
+        case "outlets": renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
           break;
@@ -7074,7 +7112,9 @@
     if (!q) {
       for (const [, rec] of roomEls) rec.card.classList.remove("hidden");
       for (const [, rec] of devMap) rec.el.classList.remove("hidden");
-      for (const [, rec] of outletMap) rec.el.classList.remove("hidden");
+      if (outletsInLightsRooms()) {
+        for (const [, rec] of outletMap) rec.el.classList.remove("hidden");
+      }
       if (collapsedBeforeSearch) {
         for (const [rid, rec] of roomEls) {
           rec.card.classList.toggle("collapsed", collapsedBeforeSearch.has(rid));
@@ -7090,8 +7130,10 @@
     for (const [, rec] of devMap) {
       rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
     }
-    for (const [, rec] of outletMap) {
-      rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
+    if (outletsInLightsRooms()) {
+      for (const [, rec] of outletMap) {
+        rec.el.classList.toggle("hidden", !rec.el.dataset.name.includes(q));
+      }
     }
     for (const [, rec] of roomEls) {
       const visible = rec.body.querySelectorAll(".tile:not(.hidden)");

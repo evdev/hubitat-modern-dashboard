@@ -67,8 +67,8 @@ Maker API setup. Rooms and names come from your Hubitat room assignments. You
   rooms and nav icons (synced across devices), local ↔ cloud switching
 
 Plain switches are selected separately and used in the **scheduler** (not shown
-as tiles). Outlets appear as socket-style tiles in rooms for organization; room
-and house on/off still control lights only.
+as tiles). Outlets use socket-style tiles; enable **separate Outlets tab** in
+app settings to show them outside the Lights room view.
 
 ### Install (HPM — recommended)
 

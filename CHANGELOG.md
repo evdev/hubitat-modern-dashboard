@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.17
+
+- Companion app option **Show outlets in separate Outlets tab** — when enabled,
+  outlets move from Lights room cards to a dedicated Outlets quick-nav view.
+
 ## 0.2.16
 
 - Outlets appear as socket-style tiles in rooms (favorites supported); room and
