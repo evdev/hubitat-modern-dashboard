@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.12
+
+- Central thermostat target menu: toggle select-all off, deselect individual units down to none; controls disable when nothing is selected.
+
 ## 0.2.11
 
 - All-thermostats popup: choose which thermostats to control via a multi-select target menu.

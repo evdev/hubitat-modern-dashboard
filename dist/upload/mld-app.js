@@ -1345,12 +1345,12 @@
     });
   }
 
-  function buildCentralTstat(selectedThermostats) {
+  function buildCentralTstat(selectedThermostats, unitHint) {
     const first = selectedThermostats[0];
     const union = (arr) => [...new Set(arr.flat())];
     return {
       i: -1, n: "All Thermostats", r: null,
-      tm: "", os: "", hsp: null, csp: null, temp: null, u: first?.u,
+      tm: "", os: "", hsp: null, csp: null, temp: null, u: first?.u ?? unitHint,
       hasFm: selectedThermostats.some((t) => t.hasFm), fm: "",
       hasFs: selectedThermostats.some(deviceHasFanSpeed), fs: "",
       fsLev: union(selectedThermostats.map(supportedFanSpeeds)).join(","),
@@ -1364,10 +1364,9 @@
     if (!tstatSession?.central) return;
     const allIds = tstatSession.allIds || thermostats.map((t) => t.i);
     const ids = selectedIds.filter((id) => allIds.includes(id));
-    if (!ids.length) return;
     tstatSession.ids = ids;
     const selected = ids.map((id) => thermostats.find((t) => t.i === id)).filter(Boolean);
-    tstatSession.centralTstat = buildCentralTstat(selected);
+    tstatSession.centralTstat = buildCentralTstat(selected, tstatSession.unit);
     updateTstatHeadExtras();
     renderTstatDial();
     renderTstatControls();
@@ -1386,7 +1385,8 @@
     const allCount = (tstatSession.allIds || []).length;
     const selCount = tstatSession.ids.length;
     let label;
-    if (selCount === allCount) label = "All thermostats (" + allCount + ")";
+    if (selCount === 0) label = "No thermostats selected";
+    else if (selCount === allCount) label = "All thermostats (" + allCount + ")";
     else if (selCount === 1) {
       const t = thermostats.find((x) => x.i === tstatSession.ids[0]);
       label = t?.n || "1 thermostat";
@@ -1670,8 +1670,9 @@
   }
 
   function activeTstat() {
-    if (!tstatSession?.ids?.length) return null;
+    if (!tstatSession) return null;
     if (tstatSession.central) return tstatSession.centralTstat;
+    if (!tstatSession.ids?.length) return null;
     return thermostats.find((x) => x.i === tstatSession.ids[0]) || null;
   }
 
@@ -1776,10 +1777,11 @@
     popup._heatChip.classList.toggle("active", editHeat);
     popup._coolChip.classList.toggle("active", !editHeat);
 
-    // disabled look when off
-    popup._svg.classList.toggle("disabled", tm === "off");
+    // disabled look when off or none selected for bulk
+    const noneSelected = !!(tstatSession?.central && !tstatSession.ids?.length);
+    popup._svg.classList.toggle("disabled", tm === "off" || noneSelected);
     const noMode = !!(tstatSession?.central && !tm);
-    const canAdjust = tm !== "off" && !noMode;
+    const canAdjust = tm !== "off" && !noMode && !noneSelected;
     if (popup._minusBtn) popup._minusBtn.disabled = !canAdjust;
     if (popup._plusBtn) popup._plusBtn.disabled = !canAdjust;
   }
@@ -1788,6 +1790,7 @@
     const popup = ensureTstatPopup();
     const t = activeTstat();
     if (!t) return;
+    const noneSelected = !!(tstatSession?.central && !tstatSession.ids?.length);
     const supM = supportedModes(t);
     const tm = String(t.tm || "").toLowerCase();
     let modeCount = 0;
@@ -1796,6 +1799,7 @@
       btn.hidden = !show;
       if (show) modeCount++;
       btn.classList.toggle("active", tm === key);
+      btn.disabled = noneSelected;
     }
     popup._modeSection.style.display = modeCount ? "" : "none";
 
@@ -1808,6 +1812,7 @@
         btn.hidden = !show;
         if (show) fanCount++;
         btn.classList.toggle("active", fmVal === key);
+        btn.disabled = noneSelected;
       }
       popup._fanModeSection.style.display = fanCount ? "" : "none";
     } else {
@@ -1823,6 +1828,7 @@
         btn.hidden = !show;
         if (show) speedCount++;
         btn.classList.toggle("active", fsVal === key);
+        btn.disabled = noneSelected;
       }
       popup._fanSpeedSection.style.display = speedCount ? "" : "none";
     } else {
@@ -1849,7 +1855,7 @@
 
     function apply(e) {
       const t = activeTstat();
-      if (!t || !tstatSession) return;
+      if (!t || !tstatSession || !tstatSession.ids?.length) return;
       const unit = tstatSession.unit;
       const tm = String(t.tm || "").toLowerCase();
       if (tm === "off") return;
@@ -1889,7 +1895,7 @@
     function move(e) { if (dragging) apply(e); }
     function start(e) {
       const t = activeTstat();
-      if (!t || !tstatSession) return;
+      if (!t || !tstatSession || !tstatSession.ids?.length) return;
       if (String(t.tm || "").toLowerCase() === "off") return;
       if (tstatSession?.central && !String(t.tm || "")) return;
       if (e.button != null && e.button !== 0) return;
@@ -2214,9 +2220,8 @@
       e.stopPropagation();
       hapticTap();
       const currentSelected = new Set(tstatSession.ids);
-      const currentlyAll = allIds.every((id) => currentSelected.has(id));
-      if (currentlyAll) return;
-      applyCentralTstatSelection(allIds.slice());
+      const currentlyAll = allIds.length > 0 && allIds.every((id) => currentSelected.has(id));
+      applyCentralTstatSelection(currentlyAll ? [] : allIds.slice());
     });
     menu.appendChild(selectAllBtn);
 
@@ -2243,12 +2248,8 @@
         e.stopPropagation();
         hapticTap();
         const next = new Set(tstatSession.ids);
-        if (next.has(t.i)) {
-          if (next.size <= 1) return;
-          next.delete(t.i);
-        } else {
-          next.add(t.i);
-        }
+        if (next.has(t.i)) next.delete(t.i);
+        else next.add(t.i);
         applyCentralTstatSelection([...next]);
       });
       menu.appendChild(b);
@@ -2281,7 +2282,7 @@
   }
 
   function setTstatMode(cmd, key) {
-    if (!tstatSession) return;
+    if (!tstatSession || !tstatSession.ids?.length) return;
     const ids = tstatSession.ids;
     applyTstatModeOptimistic(ids, key);
     if (tstatSession.central) {
@@ -2305,7 +2306,7 @@
   }
 
   function setFanMode(fm) {
-    if (!tstatSession) return;
+    if (!tstatSession || !tstatSession.ids?.length) return;
     const ids = tstatSession.ids;
     for (const id of ids) {
       for (const t of thermostats) {
@@ -2330,7 +2331,7 @@
   }
 
   function setFanSpeed(lv) {
-    if (!tstatSession) return;
+    if (!tstatSession || !tstatSession.ids?.length) return;
     const ids = tstatSession.ids;
     for (const id of ids) for (const t of thermostats) if (t.i === id && deviceHasFanSpeed(t)) t.fs = lv;
     renderTstatControls();
@@ -2363,7 +2364,7 @@
       unit: normalizeTstatUnit(first?.u),
       edit: "heat",
       central: true,
-      centralTstat: buildCentralTstat(thermostats),
+      centralTstat: buildCentralTstat(thermostats, normalizeTstatUnit(first?.u)),
     };
     const popup = ensureTstatPopup();
     renderTstatDial();
