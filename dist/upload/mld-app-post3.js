@@ -927,7 +927,6 @@
     wrap.appendChild(q);
     const opts = [
       { k: "lights", label: "Lights" },
-      ...(M.plainSwitches.length ? [{ k: "switches", label: "Switches" }] : []),
       ...(M.outlets.length ? [{ k: "outlets", label: "Outlets" }] : []),
       { k: "thermostats", label: "Thermostats" },
       { k: "hubMode", label: "Hub mode" }
@@ -942,7 +941,7 @@
       b.textContent = label;
       b.addEventListener("click", () => {
         schedDraft.action.target = k;
-        if ((k === "lights" || k === "switches" || k === "outlets") && !schedDraft.action.states) schedDraft.action.states = [];
+        if ((k === "lights" || k === "outlets") && !schedDraft.action.states) schedDraft.action.states = [];
         if (k === "thermostats" && !schedDraft.action.devices) schedDraft.action.devices = [];
         renderSchedulerActive();
       });
@@ -981,7 +980,6 @@
     const wrap = ce("div", "sched-step");
     const t = schedDraft.action.target;
     if (t === "lights") wrap.appendChild(renderSchedLightAction());
-    else if (t === "switches") wrap.appendChild(renderSchedOnOffDeviceAction(M.plainSwitches, "Select switches", "No switches configured. Add switches in the companion app device settings."));
     else if (t === "outlets") wrap.appendChild(renderSchedOnOffDeviceAction(M.outlets, "Select outlets", "No outlets configured. Add outlets in the companion app device settings."));
     else if (t === "thermostats") wrap.appendChild(renderSchedThermostatAction());
     else if (t === "hubMode") wrap.appendChild(renderSchedHubModeAction());
@@ -1519,7 +1517,6 @@
     else if (tr?.kind === "mode") when = "When mode is " + (tr.mode || "");
     let what = "";
     if (ac?.target === "lights") what = " lights";
-    else if (ac?.target === "switches") what = " switches";
     else if (ac?.target === "outlets") what = " outlets";
     else if (ac?.target === "thermostats") what = " thermostats";
     else if (ac?.target === "hubMode") what = " \u2192 " + (ac.mode || "mode");
@@ -1530,7 +1527,6 @@
     if (!validateStep1()) { schedStep = 1; renderSchedulerActive(); return; }
     const ac = schedDraft.action;
     if (ac.target === "lights" && (!ac.states || !ac.states.length)) { M.flash("Select at least one light", true); return; }
-    if (ac.target === "switches" && (!ac.states || !ac.states.length)) { M.flash("Select at least one switch", true); return; }
     if (ac.target === "outlets" && (!ac.states || !ac.states.length)) { M.flash("Select at least one outlet", true); return; }
     if (ac.target === "thermostats" && (!ac.devices || !ac.devices.length)) { M.flash("Select at least one thermostat", true); return; }
     if (ac.target === "hubMode" && !ac.mode) { M.flash("Pick a hub mode", true); return; }

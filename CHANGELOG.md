@@ -4,6 +4,8 @@
 
 - Companion app option **Show outlets in separate Outlets tab** — when enabled,
   outlets move from Lights room cards to a dedicated Outlets quick-nav view.
+- Removed **Switches (not lights or outlets)** companion app picker — plain
+  switches had no dashboard UI; use **Outlets** or **Lights** instead.
 
 ## 0.2.16
 

@@ -44,8 +44,6 @@ def mainPage() {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
             input "lights", "capability.switch", title: "Select your light devices (switches and dimmers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "plainSwitches", "capability.switch", title: "Switches (not lights or outlets)",
-                multiple: true, required: false, showFilter: true, submitOnChange: true
             input "outletSwitches", "capability.switch", title: "Outlets",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "outletsSeparateTab", "bool", title: "Show outlets in separate Outlets tab", defaultValue: false, submitOnChange: true
@@ -176,7 +174,6 @@ def updated() {
 
 def logInit() {
     if (lights) { log.info "Modern Dashboard: ${lights.size()} light(s) authorized" }
-    if (plainSwitches) { log.info "Modern Dashboard: ${plainSwitches.size()} switch(es) authorized" }
     if (outletSwitches) { log.info "Modern Dashboard: ${outletSwitches.size()} outlet(s) authorized" }
     if (thermostats) { log.info "Modern Dashboard: ${thermostats.size()} thermostat(s) authorized" }
     if (tempSensors) { log.info "Modern Dashboard: ${tempSensors.size()} temperature sensor(s) authorized" }
@@ -722,14 +719,6 @@ def renderData() {
             out << "}"
         }
     }
-    out << "],\"plainSwitches\":["
-    first = true
-    if (plainSwitches) {
-        for (d in plainSwitches) {
-            if (!first) out << ","; first = false
-            appendOnOffDeviceJson(out, d, roomsList)
-        }
-    }
     out << "],\"outlets\":["
     first = true
     if (outletSwitches) {
@@ -820,7 +809,6 @@ def renderData() {
     first = true
     def excludeIds = [] as Set
     if (lights) for (d in lights) excludeIds << d.id.toString()
-    if (plainSwitches) for (d in plainSwitches) excludeIds << d.id.toString()
     if (outletSwitches) for (d in outletSwitches) excludeIds << d.id.toString()
     if (thermostats) for (d in thermostats) excludeIds << d.id.toString()
     if (tempSensors) for (d in tempSensors) excludeIds << d.id.toString()
@@ -1320,20 +1308,19 @@ def executeOneCmd(id, c, v, pin) {
         return [ok: false, error: "missing params"]
     }
     def dev = lights?.find { it.id.toString() == id.toString() }
-    def swDev = plainSwitches?.find { it.id.toString() == id.toString() }
     def outletDev = outletSwitches?.find { it.id.toString() == id.toString() }
     def t = thermostats?.find { it.id.toString() == id.toString() }
     def lk = locks?.find { it.id.toString() == id.toString() }
     def shade = windowShades?.find { it.id.toString() == id.toString() }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
-    if (dev == null && swDev == null && outletDev == null && t == null && lk == null && shade == null && mp == null) {
+    if (dev == null && outletDev == null && t == null && lk == null && shade == null && mp == null) {
         return [ok: false, error: "device not found"]
     }
     try {
         if (dev != null) {
             runLightCmd(dev, c, v)
-        } else if (swDev != null || outletDev != null) {
-            runLightCmd(swDev ?: outletDev, c, v)
+        } else if (outletDev != null) {
+            runLightCmd(outletDev, c, v)
         } else if (t != null) {
             runThermostatCmd(t, c, v)
         } else if (lk != null) {
@@ -2775,9 +2762,6 @@ def runScheduleAction(action) {
         case "lights":
             runScheduleLightAction(action)
             break
-        case "switches":
-            runScheduleOnOffAction(action, plainSwitches)
-            break
         case "outlets":
             runScheduleOnOffAction(action, outletSwitches)
             break
@@ -2972,7 +2956,7 @@ def schedulesNormalizePayload(body) {
     // action
     def ac = [:]
     ac.target = body?.action?.target?.toString()?.trim() ?: "lights"
-    if (ac.target == "lights" || ac.target == "switches" || ac.target == "outlets") {
+    if (ac.target == "lights" || ac.target == "outlets") {
         def states = body?.action?.states
         if (states instanceof List) {
             ac.states = states.collect {

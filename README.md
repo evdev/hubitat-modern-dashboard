@@ -560,7 +560,6 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Preference | Main lights view | Scheduler | Other views |
 | ---------- | ---------------- | --------- | ----------- |
 | Lights (switches & dimmers) | Tiles by room | On/off, dim, CT | — |
-| Switches (not lights/outlets) | Hidden | On/off only | — |
 | Outlets | Socket tiles by room, or separate Outlets tab (preference) | On/off only | Favorites |
 | Thermostats | Room header + Thermostats popup | Mode, setpoints, fan | All thermostats bulk |
 | Temperature sensors | Room header (read-only) | — | Sensors popup |
