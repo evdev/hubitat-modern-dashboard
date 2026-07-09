@@ -1621,6 +1621,19 @@ body {
   flex-shrink: 0;
   margin-left: auto;
 }
+.sensor-card-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.sensor-card-controls .sensor-valve-btn {
+  flex: 1;
+  min-height: 36px;
+  font-size: 0.82rem;
+}
+.sensor-card-controls .sensor-valve-btn.moving {
+  opacity: 0.55;
+}
 @media (prefers-reduced-motion: reduce) {
   .sensor-card.is-alert .sensor-card-dot.is-active { animation: none; }
 }

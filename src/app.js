@@ -131,6 +131,7 @@
   const switchOptimistic = new Map(); // device id -> { s, l?, until, timer }
   const lockOptimistic = new Map(); // lock id -> { lk, st, until, timer }
   const shadeOptimistic = new Map(); // shade id -> { st?, pos?, until, timer }
+  const valveOptimistic = new Map(); // valve id -> { st?, until, timer }
   const musicOptimistic = new Map(); // music id -> { st, v?, until, timer }
   const setpointOptimistic = new Map(); // tstat id -> { hsp?, csp?, until, timer }
 
@@ -154,6 +155,7 @@
   let scenes = [];
   let locks = [];
   let windowShades = [];
+  let valves = [];
   let outlets = [];              // [{i,n,r,s}] outlet devices from companion app
   let music = [];
   let favorites = [];
@@ -406,6 +408,64 @@
     if (st === "partially open") return posText ? posText + " · Partially open" : "Partially open";
     if (st === "unknown" || st === "unavailable") return st.charAt(0).toUpperCase() + st.slice(1);
     return posText || st || "—";
+  }
+
+  function setValveOptimistic(id, patch) {
+    const prev = valveOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    const valve = valves.find((v) => v.i === id);
+    if (valve && patch.st != null) valve.st = patch.st;
+    const entry = {
+      st: patch.st != null ? patch.st : prev?.st,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      timer: null,
+    };
+    entry.timer = setTimeout(() => {
+      valveOptimistic.delete(id);
+      if (postCall("currentCategory") === "sensors") postCall("refreshSensorsPopup");
+      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
+    }, LEVEL_OPTIMISTIC_MS);
+    valveOptimistic.set(id, entry);
+  }
+
+  function clearValveOptimistic(id) {
+    const prev = valveOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    valveOptimistic.delete(id);
+  }
+
+  function reapplyValveOptimistic() {
+    for (const [id, opt] of valveOptimistic) {
+      if (Date.now() >= opt.until) {
+        if (opt.timer) clearTimeout(opt.timer);
+        valveOptimistic.delete(id);
+        continue;
+      }
+      const valve = valves.find((v) => v.i === id);
+      if (!valve) continue;
+      if (opt.st != null && valve.st === opt.st) {
+        if (opt.timer) clearTimeout(opt.timer);
+        valveOptimistic.delete(id);
+        continue;
+      }
+      if (opt.st != null) valve.st = opt.st;
+    }
+  }
+
+  function effectiveValveState(valve) {
+    const opt = valveOptimistic.get(valve.i);
+    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    return valve.st || "unknown";
+  }
+
+  function valveIsMoving(valve) {
+    const st = effectiveValveState(valve);
+    return st === "opening" || st === "closing";
+  }
+
+  function normalizeValveForCard(valve) {
+    const st = effectiveValveState(valve);
+    return { i: valve.i, n: valve.n, r: valve.r, t: "valve", v: st, a: st === "open" ? 1 : 0, ex: [], _ref: valve };
   }
 
   function isMusicPlaying(st) {
@@ -1342,7 +1402,8 @@
       || sensors.some((s) => s.i === numId)
       || music.some((m) => m.i === numId)
       || locks.some((l) => l.i === numId)
-      || windowShades.some((s) => s.i === numId);
+      || windowShades.some((s) => s.i === numId)
+      || valves.some((v) => v.i === numId);
   }
 
   function centralThermostatsSorted() {
@@ -3790,6 +3851,8 @@
       if (ts) { out.push({ type: "sensor", dev: normalizeTempSensorForCard(ts) }); continue; }
       const sen = sensors.find(x => x.i === id);
       if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
+      const valve = valves.find(x => x.i === id);
+      if (valve) { out.push({ type: "sensor", dev: normalizeValveForCard(valve) }); continue; }
       const mp = music.find(x => x.i === id);
       if (mp) { out.push({ type: "music", dev: mp }); continue; }
       const lk = locks.find(x => x.i === id);
@@ -4275,10 +4338,13 @@
     replaceList(scenes, d.scenes);
     replaceList(locks, d.locks);
     replaceList(windowShades, d.windowShades);
+    if (!Array.isArray(valves)) valves = [];
+    replaceList(valves, Array.isArray(d.valves) ? d.valves : []);
     replaceList(music, d.music);
     if (Array.isArray(d.config?.favorites)) replaceList(favorites, d.config.favorites.map(Number));
     reapplyLockOptimistic();
     reapplyShadeOptimistic();
+    try { reapplyValveOptimistic(); } catch {}
     reapplyMusicOptimistic();
     reapplySetpointOptimistic();
 
@@ -5093,6 +5159,15 @@
         if (d.temp != null) s.temp = Number(d.temp);
         updateClimateWidgets();
         updateRoomMeta();
+        if (currentCategory() === "sensors") refreshSensorsPopup();
+        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        return;
+      }
+      const sen = sensors.find(x => x.i === Number(d.i));
+      if (sen) {
+        applySensorPayload(sen, d);
+        if (currentCategory() === "sensors") refreshSensorsPopup();
+        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
       const lock = locks.find(x => x.i === Number(d.i));
@@ -5117,6 +5192,15 @@
           if (matched) clearShadeOptimistic(Number(d.i));
         }
         if (currentCategory() === "blinds") renderBlindsPopup();
+        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        return;
+      }
+      const valve = valves.find(x => x.i === Number(d.i));
+      if (valve) {
+        if (d.st != null) valve.st = d.st;
+        const opt = valveOptimistic.get(Number(d.i));
+        if (opt?.st != null && valve.st === opt.st) clearValveOptimistic(Number(d.i));
+        if (currentCategory() === "sensors") refreshSensorsPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
@@ -5260,7 +5344,6 @@
     }
     return result;
   }
-
 
   function applySwitchCmdOptimistic(dev, cmd) {
     const id = dev.i;
@@ -5566,289 +5649,10 @@
     updateStates();
   }
 
-  // ---------- sensors popup ----------
   function normalizeTempSensorForCard(s) {
     return { i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s };
   }
 
-  function mergedSensorList() {
-    const out = [];
-    for (const s of tempSensors) out.push({ i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s });
-    for (const s of sensors) out.push({ i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
-    out.sort((a, b) => {
-      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
-      if (ra !== 0) return ra;
-      return String(a.n || "").localeCompare(String(b.n || ""));
-    });
-    return out;
-  }
-
-  function sensorsPopupSignature() {
-    return mergedSensorList().map((d) => `${d.i}:${d.t}:${d.v}:${d.a}:${sensorBatteryPct(d)}:${(d.ex || []).map((e) => e.k + e.v).join(".")}`).join("|");
-  }
-
-  function sensorTypesWithCounts() {
-    const counts = new Map();
-    for (const d of mergedSensorList()) counts.set(d.t, (counts.get(d.t) || 0) + 1);
-    return [...counts.entries()].sort((a, b) => sensorTypeLabel(a[0]).localeCompare(sensorTypeLabel(b[0])));
-  }
-
-  function sensorMatchesFilter(dev) {
-    return !sensorTypeFilter.size || sensorTypeFilter.has(dev.t);
-  }
-
-  function syncSensorFilterBtn() {
-    if (!sensorFilterBtnEl) return;
-    const n = sensorTypeFilter.size;
-    sensorFilterBtnEl.classList.toggle("is-active", n > 0 || sensorFilterOpen);
-    let badge = sensorFilterBtnEl.querySelector(".sensor-filter-btn-badge");
-    if (n > 0) {
-      if (!badge) {
-        badge = ce("span", "sensor-filter-btn-badge");
-        sensorFilterBtnEl.appendChild(badge);
-      }
-      badge.textContent = String(n);
-      badge.hidden = false;
-    } else if (badge) badge.hidden = true;
-  }
-
-  function syncSensorFilterChips() {
-    if (!sensorFilterChipsEl) return;
-    for (const btn of sensorFilterChipsEl.querySelectorAll(".sensor-filter-chip")) {
-      const t = btn.dataset.type;
-      const on = t === "all" ? !sensorTypeFilter.size : sensorTypeFilter.has(t);
-      btn.classList.toggle("active", on);
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
-    }
-  }
-
-  function applySensorTypeFilter() {
-    let visible = 0;
-    for (const dev of mergedSensorList()) {
-      const rec = sensorCardMap.get(dev.i);
-      if (!rec) continue;
-      const show = sensorMatchesFilter(dev);
-      rec.el.hidden = !show;
-      if (show) visible++;
-    }
-    if (sensorFilterEmptyEl) sensorFilterEmptyEl.hidden = visible > 0;
-    syncSensorFilterBtn();
-    syncSensorFilterChips();
-  }
-
-  function buildSensorFilterBar() {
-    const toolbar = ce("div", "sensor-toolbar");
-    const filterBtn = ce("button", "sensor-filter-btn");
-    filterBtn.type = "button";
-    filterBtn.innerHTML = FILTER_SVG + '<span class="sensor-filter-btn-label">Filter</span>';
-    filterBtn.setAttribute("aria-expanded", sensorFilterOpen ? "true" : "false");
-    filterBtn.setAttribute("aria-label", "Filter sensors by type");
-    toolbar.appendChild(filterBtn);
-    sensorFilterBtnEl = filterBtn;
-
-    const chips = ce("div", "sensor-filter-chips");
-    chips.hidden = !sensorFilterOpen;
-    chips.classList.toggle("is-open", sensorFilterOpen);
-    const allBtn = ce("button", "sensor-filter-chip");
-    allBtn.type = "button";
-    allBtn.dataset.type = "all";
-    allBtn.textContent = "All";
-    allBtn.setAttribute("aria-pressed", !sensorTypeFilter.size ? "true" : "false");
-    if (!sensorTypeFilter.size) allBtn.classList.add("active");
-    allBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      sensorTypeFilter.clear();
-      applySensorTypeFilter();
-    });
-    chips.appendChild(allBtn);
-    for (const [t, n] of sensorTypesWithCounts()) {
-      const btn = ce("button", "sensor-filter-chip sensor-filter-chip--" + t);
-      btn.type = "button";
-      btn.dataset.type = t;
-      btn.textContent = sensorTypeLabel(t) + " " + n;
-      btn.setAttribute("aria-pressed", sensorTypeFilter.has(t) ? "true" : "false");
-      if (sensorTypeFilter.has(t)) btn.classList.add("active");
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (sensorTypeFilter.has(t)) sensorTypeFilter.delete(t);
-        else sensorTypeFilter.add(t);
-        applySensorTypeFilter();
-      });
-      chips.appendChild(btn);
-    }
-    sensorFilterChipsEl = chips;
-    filterBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      sensorFilterOpen = !sensorFilterOpen;
-      chips.hidden = !sensorFilterOpen;
-      chips.classList.toggle("is-open", sensorFilterOpen);
-      filterBtn.setAttribute("aria-expanded", sensorFilterOpen ? "true" : "false");
-      syncSensorFilterBtn();
-    });
-    syncSensorFilterBtn();
-    return { toolbar, chips };
-  }
-
-  function sensorBatteryPct(dev) {
-    const ex = dev.ex || [];
-    const entry = ex.find((e) => e.k === "battery");
-    if (entry?.v != null && entry.v !== "") {
-      const n = Number(entry.v);
-      if (!isNaN(n)) return Math.round(n);
-    }
-    const bat = dev.bat ?? dev._ref?.bat;
-    if (bat != null && bat !== "") {
-      const n = Number(bat);
-      if (!isNaN(n)) return Math.round(n);
-    }
-    return null;
-  }
-
-  function sensorBatteryLabel(dev) {
-    const pct = sensorBatteryPct(dev);
-    return pct != null ? pct + "% battery" : "";
-  }
-
-  function sensorExFooter(dev) {
-    const ex = (dev.ex || []).filter((e) => e.k !== "battery");
-    if (!ex.length) return "";
-    const parts = [];
-    for (const e of ex.slice(0, 2)) {
-      let txt = humanizeAttr(e.k);
-      const v = e.v;
-      if (v != null && v !== "") {
-        if (e.k === "temperature") txt += " " + Math.round(Number(v)) + tstatTempSuffix(e.u);
-        else if (e.k === "humidity") txt += " " + Math.round(Number(v)) + "%";
-        else if (e.k === "illuminance") txt += " " + Math.round(Number(v)) + " lx";
-        else txt += " " + v + (e.u ? " " + e.u : "");
-      }
-      parts.push(txt);
-    }
-    return parts.join(" · ");
-  }
-
-  function applySensorCardState(card, dev, rec) {
-    const meta = SENSOR_TYPE_META[dev.t] || SENSOR_TYPE_META.generic;
-    card.style.setProperty("--sensor-accent", meta.accent);
-    let hero, pill, alert;
-    if (dev.t === "temp") {
-      hero = formatRoomTemp(dev._ref || dev);
-      pill = "Temp";
-      alert = false;
-    } else {
-      const d = sensorDisplay(dev);
-      hero = d.hero; pill = d.pill; alert = d.alert;
-    }
-    card.className = "sensor-card sensor-card--" + (dev.t || "generic") + (alert ? " is-alert" : "");
-    rec.heroEl.textContent = hero;
-    if (pill) {
-      rec.pillEl.hidden = false;
-      rec.pillTxt.textContent = pill;
-      rec.dot.classList.toggle("is-active", !!alert);
-    } else {
-      rec.pillEl.hidden = true;
-    }
-    rec.footEl.textContent = sensorExFooter(dev);
-    rec.footEl.hidden = !rec.footEl.textContent;
-    const batTxt = sensorBatteryLabel(dev);
-    rec.batteryEl.textContent = batTxt;
-    rec.batteryEl.hidden = !batTxt;
-    card.setAttribute("aria-label", `${dev.n || "Sensor"}, ${roomLabel(dev.r)}, ${sensorTypeLabel(dev.t)}${pill ? ", " + pill : ""}${batTxt ? ", " + batTxt : ""}`);
-  }
-
-  function makeSensorCard(dev, context) {
-    const meta = SENSOR_TYPE_META[dev.t] || SENSOR_TYPE_META.generic;
-    const card = ce("div", "sensor-card sensor-card--" + (dev.t || "generic"));
-    card.style.setProperty("--sensor-accent", meta.accent);
-    card.dataset.name = String(dev.n || "").toLowerCase();
-    const top = ce("div", "sensor-card-top");
-    const icon = ce("span", "sensor-card-icon");
-    icon.innerHTML = meta.svg;
-    const pill = ce("span", "sensor-card-pill");
-    const dot = ce("span", "sensor-card-dot");
-    const pillTxt = ce("span", "sensor-card-pill-txt");
-    pill.appendChild(dot);
-    pill.appendChild(pillTxt);
-    top.appendChild(icon);
-    top.appendChild(pill);
-    const hero = ce("div", "sensor-card-value");
-    const name = ce("div", "sensor-card-name");
-    name.textContent = dev.n || ("Sensor " + dev.i);
-    const metaRow = ce("div", "sensor-card-meta");
-    metaRow.textContent = roomLabel(dev.r) + " · " + sensorTypeLabel(dev.t);
-    const foot = ce("div", "sensor-card-foot");
-    const actions = ce("div", "sensor-card-actions");
-    const battery = ce("div", "sensor-card-battery");
-    const fav = ce("button", "sensor-card-fav tile-fav");
-    fav.type = "button";
-    attachFavButton(fav, dev.i);
-    actions.appendChild(battery);
-    actions.appendChild(fav);
-    card.appendChild(top);
-    card.appendChild(hero);
-    card.appendChild(name);
-    card.appendChild(metaRow);
-    card.appendChild(foot);
-    card.appendChild(actions);
-    const rec = { el: card, heroEl: hero, pillEl: pill, pillTxt, dot, footEl: foot, batteryEl: battery, favBtn: fav, t: dev.t, i: dev.i };
-    applySensorCardState(card, dev, rec);
-    if (context === "favorites") favSensorMap.set(dev.i, rec);
-    else sensorCardMap.set(dev.i, rec);
-    return card;
-  }
-
-  function makeFavoriteSensorCard(dev) {
-    return makeSensorCard(dev, "favorites");
-  }
-
-  function updateSensorCard(dev) {
-    const rec = sensorCardMap.get(dev.i) || favSensorMap.get(dev.i);
-    if (rec) applySensorCardState(rec.el, dev, rec);
-  }
-
-  function renderSensorsPopup() {
-    const popup = ensureQuickPopup();
-    syncQuickPopupWidthForOpen(popup);
-    const body = currentBody();
-    body.className = "quick-body quick-body-sensors" + (inTabView() ? " tab-body" : "");
-    body.innerHTML = "";
-    sensorCardMap.clear();
-    sensorFilterChipsEl = null;
-    sensorFilterBtnEl = null;
-    sensorFilterEmptyEl = null;
-    const merged = mergedSensorList();
-    sensorsPopupSig = sensorsPopupSignature();
-    if (!merged.length) {
-      body.textContent = "No sensors selected — add temperature or other sensors in Hubitat app settings";
-      return;
-    }
-    const wrap = ce("div", "sensor-popup-wrap");
-    const { toolbar, chips } = buildSensorFilterBar();
-    const grid = ce("div", "sensor-grid");
-    for (const dev of merged) grid.appendChild(makeSensorCard(dev));
-    const empty = ce("div", "sensor-filter-empty");
-    empty.textContent = "No sensors match this filter";
-    empty.hidden = true;
-    sensorFilterEmptyEl = empty;
-    wrap.appendChild(toolbar);
-    wrap.appendChild(chips);
-    wrap.appendChild(grid);
-    wrap.appendChild(empty);
-    body.appendChild(wrap);
-    applySensorTypeFilter();
-  }
-
-  function refreshSensorsPopup() {
-    if (currentCategory() !== "sensors") return;
-    const sig = sensorsPopupSignature();
-    const body = currentBody();
-    if (!body.querySelector(".sensor-grid") || sig !== sensorsPopupSig) {
-      renderSensorsPopup();
-      return;
-    }
-    for (const dev of mergedSensorList()) updateSensorCard(dev);
-    applySensorTypeFilter();
-  }
 
   let musicVolTimer = null;
 
@@ -6383,6 +6187,358 @@
 
   // __MLD_SPLIT2__
 
+  async function sendValveCmd(id, cmd) {
+    const valve = valves.find((v) => v.i === id);
+    if (!valve) return { ok: false };
+    hapticTap();
+    const patch = cmd === "open" ? { st: "opening" } : cmd === "close" ? { st: "closing" } : null;
+    if (patch) {
+      setValveOptimistic(id, patch);
+      if (currentCategory() === "sensors") refreshSensorsPopup();
+      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+    }
+    const result = await sendCmd(id, cmd);
+    if (!result.ok) {
+      clearValveOptimistic(id);
+      reconcileValve(id);
+      if (currentCategory() === "sensors") refreshSensorsPopup();
+      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+    } else {
+      reconcileValve(id);
+    }
+    return result;
+  }
+
+  function reconcileValve(id) {
+    setTimeout(() => refreshDevice(id), 700);
+    setTimeout(() => refreshDevice(id), 2200);
+  }
+
+  // ---------- sensors popup ----------
+  function mergedSensorList() {
+    const out = [];
+    for (const s of tempSensors) out.push({ i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s });
+    for (const s of sensors) out.push({ i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
+    for (const v of valves) out.push(normalizeValveForCard(v));
+    out.sort((a, b) => {
+      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
+      if (ra !== 0) return ra;
+      return String(a.n || "").localeCompare(String(b.n || ""));
+    });
+    return out;
+  }
+
+  function sensorsPopupSignature() {
+    return mergedSensorList().map((d) => `${d.i}:${d.t}:${d.v}:${d.a}:${sensorBatteryPct(d)}:${(d.ex || []).map((e) => e.k + e.v).join(".")}`).join("|");
+  }
+
+  function sensorTypesWithCounts() {
+    const counts = new Map();
+    for (const d of mergedSensorList()) counts.set(d.t, (counts.get(d.t) || 0) + 1);
+    return [...counts.entries()].sort((a, b) => sensorTypeLabel(a[0]).localeCompare(sensorTypeLabel(b[0])));
+  }
+
+  function sensorMatchesFilter(dev) {
+    return !sensorTypeFilter.size || sensorTypeFilter.has(dev.t);
+  }
+
+  function syncSensorFilterBtn() {
+    if (!sensorFilterBtnEl) return;
+    const n = sensorTypeFilter.size;
+    sensorFilterBtnEl.classList.toggle("is-active", n > 0 || sensorFilterOpen);
+    let badge = sensorFilterBtnEl.querySelector(".sensor-filter-btn-badge");
+    if (n > 0) {
+      if (!badge) {
+        badge = ce("span", "sensor-filter-btn-badge");
+        sensorFilterBtnEl.appendChild(badge);
+      }
+      badge.textContent = String(n);
+      badge.hidden = false;
+    } else if (badge) badge.hidden = true;
+  }
+
+  function syncSensorFilterChips() {
+    if (!sensorFilterChipsEl) return;
+    for (const btn of sensorFilterChipsEl.querySelectorAll(".sensor-filter-chip")) {
+      const t = btn.dataset.type;
+      const on = t === "all" ? !sensorTypeFilter.size : sensorTypeFilter.has(t);
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+
+  function applySensorTypeFilter() {
+    let visible = 0;
+    for (const dev of mergedSensorList()) {
+      const rec = sensorCardMap.get(dev.i);
+      if (!rec) continue;
+      const show = sensorMatchesFilter(dev);
+      rec.el.hidden = !show;
+      if (show) visible++;
+    }
+    if (sensorFilterEmptyEl) sensorFilterEmptyEl.hidden = visible > 0;
+    syncSensorFilterBtn();
+    syncSensorFilterChips();
+  }
+
+  function buildSensorFilterBar() {
+    const toolbar = ce("div", "sensor-toolbar");
+    const filterBtn = ce("button", "sensor-filter-btn");
+    filterBtn.type = "button";
+    filterBtn.innerHTML = FILTER_SVG + '<span class="sensor-filter-btn-label">Filter</span>';
+    filterBtn.setAttribute("aria-expanded", sensorFilterOpen ? "true" : "false");
+    filterBtn.setAttribute("aria-label", "Filter sensors by type");
+    toolbar.appendChild(filterBtn);
+    sensorFilterBtnEl = filterBtn;
+
+    const chips = ce("div", "sensor-filter-chips");
+    chips.hidden = !sensorFilterOpen;
+    chips.classList.toggle("is-open", sensorFilterOpen);
+    const allBtn = ce("button", "sensor-filter-chip");
+    allBtn.type = "button";
+    allBtn.dataset.type = "all";
+    allBtn.textContent = "All";
+    allBtn.setAttribute("aria-pressed", !sensorTypeFilter.size ? "true" : "false");
+    if (!sensorTypeFilter.size) allBtn.classList.add("active");
+    allBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      sensorTypeFilter.clear();
+      applySensorTypeFilter();
+    });
+    chips.appendChild(allBtn);
+    for (const [t, n] of sensorTypesWithCounts()) {
+      const btn = ce("button", "sensor-filter-chip sensor-filter-chip--" + t);
+      btn.type = "button";
+      btn.dataset.type = t;
+      btn.textContent = sensorTypeLabel(t) + " " + n;
+      btn.setAttribute("aria-pressed", sensorTypeFilter.has(t) ? "true" : "false");
+      if (sensorTypeFilter.has(t)) btn.classList.add("active");
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (sensorTypeFilter.has(t)) sensorTypeFilter.delete(t);
+        else sensorTypeFilter.add(t);
+        applySensorTypeFilter();
+      });
+      chips.appendChild(btn);
+    }
+    sensorFilterChipsEl = chips;
+    filterBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      sensorFilterOpen = !sensorFilterOpen;
+      chips.hidden = !sensorFilterOpen;
+      chips.classList.toggle("is-open", sensorFilterOpen);
+      filterBtn.setAttribute("aria-expanded", sensorFilterOpen ? "true" : "false");
+      syncSensorFilterBtn();
+    });
+    syncSensorFilterBtn();
+    return { toolbar, chips };
+  }
+
+  function sensorBatteryPct(dev) {
+    const ex = dev.ex || [];
+    const entry = ex.find((e) => e.k === "battery");
+    if (entry?.v != null && entry.v !== "") {
+      const n = Number(entry.v);
+      if (!isNaN(n)) return Math.round(n);
+    }
+    const bat = dev.bat ?? dev._ref?.bat;
+    if (bat != null && bat !== "") {
+      const n = Number(bat);
+      if (!isNaN(n)) return Math.round(n);
+    }
+    return null;
+  }
+
+  function sensorBatteryLabel(dev) {
+    const pct = sensorBatteryPct(dev);
+    return pct != null ? pct + "% battery" : "";
+  }
+
+  function sensorExFooter(dev) {
+    const ex = (dev.ex || []).filter((e) => e.k !== "battery");
+    if (!ex.length) return "";
+    const parts = [];
+    for (const e of ex.slice(0, 2)) {
+      let txt = humanizeAttr(e.k);
+      const v = e.v;
+      if (v != null && v !== "") {
+        if (e.k === "temperature") txt += " " + Math.round(Number(v)) + tstatTempSuffix(e.u);
+        else if (e.k === "humidity") txt += " " + Math.round(Number(v)) + "%";
+        else if (e.k === "illuminance") txt += " " + Math.round(Number(v)) + " lx";
+        else txt += " " + v + (e.u ? " " + e.u : "");
+      }
+      parts.push(txt);
+    }
+    return parts.join(" · ");
+  }
+
+  function applySensorCardState(card, dev, rec) {
+    const meta = SENSOR_TYPE_META[dev.t] || SENSOR_TYPE_META.generic;
+    card.style.setProperty("--sensor-accent", meta.accent);
+    let hero, pill, alert;
+    if (dev.t === "temp") {
+      hero = formatRoomTemp(dev._ref || dev);
+      pill = "Temp";
+      alert = false;
+    } else if (dev.t === "valve") {
+      const d = sensorDisplay({ ...dev, v: effectiveValveState(dev._ref || dev) });
+      hero = d.hero; pill = d.pill; alert = d.alert;
+    } else {
+      const d = sensorDisplay(dev);
+      hero = d.hero; pill = d.pill; alert = d.alert;
+    }
+    card.className = "sensor-card sensor-card--" + (dev.t || "generic") + (alert ? " is-alert" : "");
+    rec.heroEl.textContent = hero;
+    if (pill) {
+      rec.pillEl.hidden = false;
+      rec.pillTxt.textContent = pill;
+      rec.dot.classList.toggle("is-active", !!alert);
+    } else {
+      rec.pillEl.hidden = true;
+    }
+    rec.footEl.textContent = sensorExFooter(dev);
+    rec.footEl.hidden = !rec.footEl.textContent;
+    const batTxt = sensorBatteryLabel(dev);
+    rec.batteryEl.textContent = batTxt;
+    rec.batteryEl.hidden = !batTxt;
+    card.setAttribute("aria-label", (dev.n || "Sensor") + ", " + roomLabel(dev.r) + ", " + sensorTypeLabel(dev.t) + (pill ? ", " + pill : "") + (batTxt ? ", " + batTxt : ""));
+    if (dev.t === "valve" && rec.openBtn && rec.closeBtn) {
+      const valve = dev._ref || dev;
+      const moving = valveIsMoving(valve);
+      const st = effectiveValveState(valve);
+      rec.openBtn.classList.toggle("active", st === "open");
+      rec.closeBtn.classList.toggle("active", st === "closed");
+      rec.openBtn.classList.toggle("moving", moving);
+      rec.closeBtn.classList.toggle("moving", moving);
+      rec.openBtn.disabled = moving;
+      rec.closeBtn.disabled = moving;
+    }
+  }
+
+  function makeSensorCard(dev, context) {
+    const meta = SENSOR_TYPE_META[dev.t] || SENSOR_TYPE_META.generic;
+    const card = ce("div", "sensor-card sensor-card--" + (dev.t || "generic"));
+    card.style.setProperty("--sensor-accent", meta.accent);
+    card.dataset.name = String(dev.n || "").toLowerCase();
+    const top = ce("div", "sensor-card-top");
+    const icon = ce("span", "sensor-card-icon");
+    icon.innerHTML = meta.svg;
+    const pill = ce("span", "sensor-card-pill");
+    const dot = ce("span", "sensor-card-dot");
+    const pillTxt = ce("span", "sensor-card-pill-txt");
+    pill.appendChild(dot);
+    pill.appendChild(pillTxt);
+    top.appendChild(icon);
+    top.appendChild(pill);
+    const hero = ce("div", "sensor-card-value");
+    const name = ce("div", "sensor-card-name");
+    name.textContent = dev.n || ("Sensor " + dev.i);
+    const metaRow = ce("div", "sensor-card-meta");
+    metaRow.textContent = roomLabel(dev.r) + " · " + sensorTypeLabel(dev.t);
+    const foot = ce("div", "sensor-card-foot");
+    const actions = ce("div", "sensor-card-actions");
+    const battery = ce("div", "sensor-card-battery");
+    const fav = ce("button", "sensor-card-fav tile-fav");
+    fav.type = "button";
+    attachFavButton(fav, dev.i);
+    actions.appendChild(battery);
+    actions.appendChild(fav);
+    card.appendChild(top);
+    card.appendChild(hero);
+    card.appendChild(name);
+    card.appendChild(metaRow);
+    card.appendChild(foot);
+    const rec = { el: card, heroEl: hero, pillEl: pill, pillTxt, dot, footEl: foot, batteryEl: battery, favBtn: fav, t: dev.t, i: dev.i };
+    if (dev.t === "valve") {
+      const controls = ce("div", "sensor-card-controls");
+      const openBtn = ce("button", "quick-lock-btn sensor-valve-btn");
+      openBtn.type = "button";
+      openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
+      const closeBtn = ce("button", "quick-lock-btn sensor-valve-btn");
+      closeBtn.type = "button";
+      closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
+      const valveRef = dev._ref || dev;
+      openBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!valveIsMoving(valveRef) && effectiveValveState(valveRef) !== "open") sendValveCmd(valveRef.i, "open");
+      });
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!valveIsMoving(valveRef) && effectiveValveState(valveRef) !== "closed") sendValveCmd(valveRef.i, "close");
+      });
+      controls.appendChild(openBtn);
+      controls.appendChild(closeBtn);
+      card.appendChild(controls);
+      rec.openBtn = openBtn;
+      rec.closeBtn = closeBtn;
+    }
+    card.appendChild(actions);
+    applySensorCardState(card, dev, rec);
+    if (context === "favorites") favSensorMap.set(dev.i, rec);
+    else sensorCardMap.set(dev.i, rec);
+    return card;
+  }
+
+  function makeFavoriteSensorCard(dev) {
+    return makeSensorCard(dev, "favorites");
+  }
+
+  function updateSensorCard(dev) {
+    // Update both maps: after visiting Sensors then Favorites, sensorCardMap can
+    // still hold detached cards that would otherwise steal updates from fav cards.
+    const sen = sensorCardMap.get(dev.i);
+    if (sen) applySensorCardState(sen.el, dev, sen);
+    const fav = favSensorMap.get(dev.i);
+    if (fav && fav !== sen) applySensorCardState(fav.el, dev, fav);
+  }
+
+  function renderSensorsPopup() {
+    const popup = ensureQuickPopup();
+    syncQuickPopupWidthForOpen(popup);
+    const body = currentBody();
+    body.className = "quick-body quick-body-sensors" + (inTabView() ? " tab-body" : "");
+    body.innerHTML = "";
+    sensorCardMap.clear();
+    favSensorMap.clear();
+    sensorFilterChipsEl = null;
+    sensorFilterBtnEl = null;
+    sensorFilterEmptyEl = null;
+    const merged = mergedSensorList();
+    sensorsPopupSig = sensorsPopupSignature();
+    if (!merged.length) {
+      body.textContent = "No sensors selected — add temperature, other sensors, or valves in Hubitat app settings";
+      return;
+    }
+    const wrap = ce("div", "sensor-popup-wrap");
+    const { toolbar, chips } = buildSensorFilterBar();
+    const grid = ce("div", "sensor-grid");
+    for (const dev of merged) grid.appendChild(makeSensorCard(dev));
+    const empty = ce("div", "sensor-filter-empty");
+    empty.textContent = "No sensors match this filter";
+    empty.hidden = true;
+    sensorFilterEmptyEl = empty;
+    wrap.appendChild(toolbar);
+    wrap.appendChild(chips);
+    wrap.appendChild(grid);
+    wrap.appendChild(empty);
+    body.appendChild(wrap);
+    applySensorTypeFilter();
+  }
+
+  function refreshSensorsPopup() {
+    if (currentCategory() !== "sensors") return;
+    const sig = sensorsPopupSignature();
+    const body = currentBody();
+    if (!body.querySelector(".sensor-grid") || sig !== sensorsPopupSig) {
+      renderSensorsPopup();
+      return;
+    }
+    for (const dev of mergedSensorList()) updateSensorCard(dev);
+    applySensorTypeFilter();
+  }
+
+
+
   function renderScenesPopup() {
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
@@ -6557,6 +6713,7 @@
     favDevMap.clear();
     favTstatMap.clear();
     favSensorMap.clear();
+    sensorCardMap.clear();
     favMusicMap.clear();
     favLockMap.clear();
     favShadeMap.clear();
@@ -7557,19 +7714,23 @@
         }
         const sen = sensors.find(x => x.i === Number(m.deviceId));
         if (sen) {
-          const nm = String(m.name || "").toLowerCase();
-          const val = m.value;
-          if (nm === "battery" || nm === "temperature" || nm === "humidity" || nm === "illuminance") {
-            const ex = sen.ex || (sen.ex = []);
-            let entry = ex.find((e) => e.k === nm);
-            if (entry) { entry.v = val; if (m.unit) entry.u = m.unit; }
-            else if (ex.length < 3) ex.push({ k: nm, v: val, u: m.unit || null });
-          } else {
-            sen.v = val;
-            const alerts = ({ motion: ["active"], contact: ["open"], water: ["wet"], leak: ["wet"], smoke: ["detected"], presence: ["present"] })[sen.t] || [];
-            sen.a = alerts.includes(String(val || "").toLowerCase()) ? 1 : 0;
+          if (applySensorWsAttr(sen, m.name, m.value, m.unit)) {
+            if (currentCategory() === "sensors") refreshSensorsPopup();
+            else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
           }
-          if (currentCategory() === "sensors") refreshSensorsPopup();
+          return;
+        }
+        const valve = valves.find(x => x.i === Number(m.deviceId));
+        if (valve) {
+          const nm = String(m.name || "").toLowerCase();
+          if (nm === "valve") {
+            valve.st = String(m.value || "");
+            const opt = valveOptimistic.get(valve.i);
+            if (opt?.st != null && valve.st === opt.st) clearValveOptimistic(valve.i);
+            if (currentCategory() === "sensors") refreshSensorsPopup();
+            else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+          }
+          return;
         }
       } catch {}
     };

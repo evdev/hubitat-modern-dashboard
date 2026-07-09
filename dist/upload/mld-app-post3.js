@@ -5,7 +5,7 @@
     console.error("Modern Dashboard: upload mld-app-post2.js before mld-app-post3.js");
     return;
   }
-// ---------- scheduler module (ships as mld-app-post3.js) ----------
+  // ---------- scheduler module (ships as mld-app-post3.js) ----------
   const SCHED_DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
   const SCHED_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const SCHED_OFFSET_PRESETS = [-60, -45, -30, -15, 0, 15, 30, 45, 60];

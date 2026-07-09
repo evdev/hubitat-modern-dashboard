@@ -1,8 +1,34 @@
 # Changelog
 
+## 0.2.23
+
+- Fix valve Open/Close UI not updating after visiting Sensors then Favorites:
+  `updateSensorCard` preferred detached Sensors-tab cards over live Favorites cards.
+
+## 0.2.22
+
+- Re-land valve controls and sensor normalization with fixes for the blank-dashboard
+  regression from 0.2.18/0.2.20:
+  - Hubitat valves picker uses `capability.valve` (lowercase).
+  - Sensor/valve UI moved into `mld-app-post2.js` so `mld-app-post.js` stays near the
+    previously working ~118 KB size.
+  - `/data` without a `valves` array no longer breaks room/light rendering.
+
 ## 0.2.21
 
 - Revert 0.2.20 (valve controls and sensor normalization) — restores the previous
+  stable release.
+
+## 0.2.20
+
+- Re-land valve controls and sensor normalization from 0.2.18.
+- Fix Hubitat valves picker: use `capability.valve` (lowercase). Capital
+  `capability.Valve` in 0.2.18 could break Groovy compile and leave the dashboard
+  shell empty aside from All on/All off.
+
+## 0.2.19
+
+- Revert 0.2.18 (valve controls and sensor normalization) — restores the previous
   stable release.
 
 ## 0.2.19

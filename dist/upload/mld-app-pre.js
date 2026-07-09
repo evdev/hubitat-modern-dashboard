@@ -61,6 +61,7 @@ const SENSOR_TYPE_META = {
   humidity: { label: "Humidity", accent: "#5b9cff", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>' },
   illuminance: { label: "Illuminance", accent: "#b58cff", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>' },
   presence: { label: "Presence", accent: "#3fbf7f", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 20a7 7 0 0 1 14 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>' },
+  valve: { label: "Valve", accent: "#4a9eff", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h8v3l4 4-4 4v3H8v-3l-4-4 4-4V8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 8v8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>' },
   generic: { label: "Sensor", accent: "#9aa4b8", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h3l2-5 4 12 2-7h7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' },
 };
 
@@ -80,6 +81,89 @@ function humanizeAttr(k) {
 }
 
 // Returns { hero, pill, alert } for a sensor device object.
+const SENSOR_PRIMARY_ATTRS = {
+  motion: new Set(["motion", "motionstatus"]),
+  contact: new Set(["contact"]),
+  leak: new Set(["water"]),
+  presence: new Set(["presence"]),
+  humidity: new Set(["humidity", "relativehumidity"]),
+  illuminance: new Set(["illuminance"]),
+  smoke: new Set(["smoke", "carbonmonoxide"]),
+  valve: new Set(["valve"]),
+};
+
+function sensorIsPrimaryAttr(t, attrName) {
+  const set = SENSOR_PRIMARY_ATTRS[t];
+  if (!set) return false;
+  return set.has(String(attrName || "").toLowerCase());
+}
+
+function normalizeSensorWsValue(t, attr, val) {
+  if (val == null) return val;
+  const lower = String(val).trim().toLowerCase();
+  const attrL = String(attr || "").toLowerCase();
+  switch (t) {
+    case "motion":
+      if (lower === "on" || lower === "true") return "active";
+      if (lower === "off" || lower === "false") return "inactive";
+      return lower;
+    case "contact":
+      if (lower === "on" || lower === "true") return "open";
+      if (lower === "off" || lower === "false") return "closed";
+      return lower;
+    case "leak":
+      if (lower === "true" || lower === "wet") return "wet";
+      if (lower === "false" || lower === "dry") return "dry";
+      return lower;
+    case "presence":
+      if (lower === "home" || lower === "true") return "present";
+      if (lower === "away" || lower === "false" || lower === "not home" || lower === "not present") return "not present";
+      return lower;
+    case "smoke":
+      if (lower === "tested" || lower === "monitored") return "clear";
+      if (attrL === "carbonmonoxide" && (lower === "detected" || lower === "co")) return "detected";
+      return lower;
+    default:
+      return val;
+  }
+}
+
+function sensorAlertFlag(t, v) {
+  const s = String(v || "").toLowerCase();
+  const alerts = { motion: ["active"], contact: ["open"], leak: ["wet"], smoke: ["detected"], presence: ["present"], valve: ["open"] };
+  return (alerts[t] || []).includes(s) ? 1 : 0;
+}
+
+function applySensorPayload(sen, d) {
+  if (d.t != null) sen.t = d.t;
+  if (d.v !== undefined) sen.v = d.v;
+  if (d.a != null) sen.a = d.a ? 1 : 0;
+  if (Array.isArray(d.ex)) sen.ex = d.ex.map((e) => ({ k: e.k, v: e.v, u: e.u ?? null }));
+}
+
+function applySensorWsAttr(sen, attrName, val, unit) {
+  const nm = String(attrName || "").toLowerCase();
+  const t = sen.t || "generic";
+  const secondary = nm === "battery" || nm === "temperature" || nm === "humidity" || nm === "illuminance";
+  if (secondary && (t === "generic" || !sensorIsPrimaryAttr(t, nm))) {
+    const ex = sen.ex || (sen.ex = []);
+    let entry = ex.find((e) => e.k === nm);
+    if (entry) {
+      entry.v = val;
+      if (unit) entry.u = unit;
+    } else if (ex.length < 3) {
+      ex.push({ k: nm, v: val, u: unit || null });
+    }
+    return true;
+  }
+  if (sensorIsPrimaryAttr(t, nm) || t === "generic") {
+    sen.v = t === "generic" ? val : normalizeSensorWsValue(t, nm, val);
+    sen.a = sensorAlertFlag(t, sen.v);
+    return true;
+  }
+  return false;
+}
+
 function sensorDisplay(dev) {
   const t = dev.t || "generic";
   const v = dev.v;
@@ -89,12 +173,23 @@ function sensorDisplay(dev) {
     case "leak": return v === "wet" ? { hero: "Wet", pill: "Wet", alert: true } : { hero: "Dry", pill: "Dry", alert: false };
     case "smoke": {
       const s = String(v || "").toLowerCase();
-      if (s === "detected" || s === "carbonmonoxide") return { hero: "Detected", pill: s === "carbonmonoxide" ? "CO" : "Detected", alert: true };
+      if (s === "detected" || s === "co" || s === "carbonmonoxide") return { hero: "Detected", pill: (s === "co" || s === "carbonmonoxide") ? "CO" : "Detected", alert: true };
       return { hero: "Clear", pill: "Clear", alert: false };
     }
-    case "presence": return v === "present" ? { hero: "Present", pill: "Present", alert: true } : { hero: "Away", pill: "Away", alert: false };
+    case "presence": {
+      const s = String(v || "").toLowerCase();
+      const home = s === "present" || s === "home" || s === "true";
+      return home ? { hero: "Present", pill: "Present", alert: true } : { hero: "Away", pill: "Away", alert: false };
+    }
     case "humidity": { const n = Math.round(Number(v)); return { hero: isNaN(n) ? "—" : (n + "%"), pill: "Humidity", alert: false }; }
     case "illuminance": { const n = Math.round(Number(v)); return { hero: isNaN(n) ? "—" : (n + " lx"), pill: "Light", alert: false }; }
+    case "valve": {
+      const s = String(v || "").toLowerCase();
+      if (s === "opening") return { hero: "Opening…", pill: "Opening", alert: false };
+      if (s === "closing") return { hero: "Closing…", pill: "Closing", alert: false };
+      if (s === "open") return { hero: "Open", pill: "Open", alert: true };
+      return { hero: "Closed", pill: "Closed", alert: false };
+    }
     case "temp": return { hero: "—", pill: "Temp", alert: false }; // temp hero computed in app.js via formatRoomTemp
     default: return { hero: (v != null && v !== "") ? String(v) : dev.n, pill: "", alert: !!(v && SENSOR_ALERT_WORDS[String(v).toLowerCase()]) };
   }

@@ -5,7 +5,359 @@
     console.error("Modern Dashboard: upload mld-app-post.js before mld-app-post2.js");
     return;
   }
-function renderScenesPopup() {
+  async function sendValveCmd(id, cmd) {
+    const valve = M.valves.find((v) => v.i === id);
+    if (!valve) return { ok: false };
+    M.hapticTap();
+    const patch = cmd === "open" ? { st: "opening" } : cmd === "close" ? { st: "closing" } : null;
+    if (patch) {
+      M.setValveOptimistic(id, patch);
+      if (currentCategory() === "sensors") refreshSensorsPopup();
+      else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+    }
+    const result = await M.sendCmd(id, cmd);
+    if (!result.ok) {
+      M.clearValveOptimistic(id);
+      reconcileValve(id);
+      if (currentCategory() === "sensors") refreshSensorsPopup();
+      else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+    } else {
+      reconcileValve(id);
+    }
+    return result;
+  }
+
+  function reconcileValve(id) {
+    setTimeout(() => M.refreshDevice(id), 700);
+    setTimeout(() => M.refreshDevice(id), 2200);
+  }
+
+  // ---------- M.sensors popup ----------
+  function mergedSensorList() {
+    const out = [];
+    for (const s of M.tempSensors) out.push({ i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s });
+    for (const s of M.sensors) out.push({ i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
+    for (const v of M.valves) out.push(M.normalizeValveForCard(v));
+    out.sort((a, b) => {
+      const ra = M.roomLabel(a.r).localeCompare(M.roomLabel(b.r));
+      if (ra !== 0) return ra;
+      return String(a.n || "").localeCompare(String(b.n || ""));
+    });
+    return out;
+  }
+
+  function sensorsPopupSignature() {
+    return mergedSensorList().map((d) => `${d.i}:${d.t}:${d.v}:${d.a}:${sensorBatteryPct(d)}:${(d.ex || []).map((e) => e.k + e.v).join(".")}`).join("|");
+  }
+
+  function sensorTypesWithCounts() {
+    const counts = new Map();
+    for (const d of mergedSensorList()) counts.set(d.t, (counts.get(d.t) || 0) + 1);
+    return [...counts.entries()].sort((a, b) => sensorTypeLabel(a[0]).localeCompare(sensorTypeLabel(b[0])));
+  }
+
+  function sensorMatchesFilter(dev) {
+    return !M.sensorTypeFilter.size || M.sensorTypeFilter.has(dev.t);
+  }
+
+  function syncSensorFilterBtn() {
+    if (!M.sensorFilterBtnEl) return;
+    const n = M.sensorTypeFilter.size;
+    M.sensorFilterBtnEl.classList.toggle("is-active", n > 0 || M.sensorFilterOpen);
+    let badge = M.sensorFilterBtnEl.querySelector(".sensor-filter-btn-badge");
+    if (n > 0) {
+      if (!badge) {
+        badge = ce("span", "sensor-filter-btn-badge");
+        M.sensorFilterBtnEl.appendChild(badge);
+      }
+      badge.textContent = String(n);
+      badge.hidden = false;
+    } else if (badge) badge.hidden = true;
+  }
+
+  function syncSensorFilterChips() {
+    if (!M.sensorFilterChipsEl) return;
+    for (const btn of M.sensorFilterChipsEl.querySelectorAll(".sensor-filter-chip")) {
+      const t = btn.dataset.type;
+      const on = t === "all" ? !M.sensorTypeFilter.size : M.sensorTypeFilter.has(t);
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  }
+
+  function applySensorTypeFilter() {
+    let visible = 0;
+    for (const dev of mergedSensorList()) {
+      const rec = M.sensorCardMap.get(dev.i);
+      if (!rec) continue;
+      const show = sensorMatchesFilter(dev);
+      rec.el.hidden = !show;
+      if (show) visible++;
+    }
+    if (M.sensorFilterEmptyEl) M.sensorFilterEmptyEl.hidden = visible > 0;
+    syncSensorFilterBtn();
+    syncSensorFilterChips();
+  }
+
+  function buildSensorFilterBar() {
+    const toolbar = ce("div", "sensor-toolbar");
+    const filterBtn = ce("button", "sensor-filter-btn");
+    filterBtn.type = "button";
+    filterBtn.innerHTML = FILTER_SVG + '<span class="sensor-filter-btn-label">Filter</span>';
+    filterBtn.setAttribute("aria-expanded", M.sensorFilterOpen ? "true" : "false");
+    filterBtn.setAttribute("aria-label", "Filter sensors by type");
+    toolbar.appendChild(filterBtn);
+    M.sensorFilterBtnEl = filterBtn;
+
+    const chips = ce("div", "sensor-filter-chips");
+    chips.hidden = !M.sensorFilterOpen;
+    chips.classList.toggle("is-open", M.sensorFilterOpen);
+    const allBtn = ce("button", "sensor-filter-chip");
+    allBtn.type = "button";
+    allBtn.dataset.type = "all";
+    allBtn.textContent = "All";
+    allBtn.setAttribute("aria-pressed", !M.sensorTypeFilter.size ? "true" : "false");
+    if (!M.sensorTypeFilter.size) allBtn.classList.add("active");
+    allBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      M.sensorTypeFilter.clear();
+      applySensorTypeFilter();
+    });
+    chips.appendChild(allBtn);
+    for (const [t, n] of sensorTypesWithCounts()) {
+      const btn = ce("button", "sensor-filter-chip sensor-filter-chip--" + t);
+      btn.type = "button";
+      btn.dataset.type = t;
+      btn.textContent = sensorTypeLabel(t) + " " + n;
+      btn.setAttribute("aria-pressed", M.sensorTypeFilter.has(t) ? "true" : "false");
+      if (M.sensorTypeFilter.has(t)) btn.classList.add("active");
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (M.sensorTypeFilter.has(t)) M.sensorTypeFilter.delete(t);
+        else M.sensorTypeFilter.add(t);
+        applySensorTypeFilter();
+      });
+      chips.appendChild(btn);
+    }
+    M.sensorFilterChipsEl = chips;
+    filterBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      M.sensorFilterOpen = !M.sensorFilterOpen;
+      chips.hidden = !M.sensorFilterOpen;
+      chips.classList.toggle("is-open", M.sensorFilterOpen);
+      filterBtn.setAttribute("aria-expanded", M.sensorFilterOpen ? "true" : "false");
+      syncSensorFilterBtn();
+    });
+    syncSensorFilterBtn();
+    return { toolbar, chips };
+  }
+
+  function sensorBatteryPct(dev) {
+    const ex = dev.ex || [];
+    const entry = ex.find((e) => e.k === "battery");
+    if (entry?.v != null && entry.v !== "") {
+      const n = Number(entry.v);
+      if (!isNaN(n)) return Math.round(n);
+    }
+    const bat = dev.bat ?? dev._ref?.bat;
+    if (bat != null && bat !== "") {
+      const n = Number(bat);
+      if (!isNaN(n)) return Math.round(n);
+    }
+    return null;
+  }
+
+  function sensorBatteryLabel(dev) {
+    const pct = sensorBatteryPct(dev);
+    return pct != null ? pct + "% battery" : "";
+  }
+
+  function sensorExFooter(dev) {
+    const ex = (dev.ex || []).filter((e) => e.k !== "battery");
+    if (!ex.length) return "";
+    const parts = [];
+    for (const e of ex.slice(0, 2)) {
+      let txt = humanizeAttr(e.k);
+      const v = e.v;
+      if (v != null && v !== "") {
+        if (e.k === "temperature") txt += " " + Math.round(Number(v)) + tstatTempSuffix(e.u);
+        else if (e.k === "humidity") txt += " " + Math.round(Number(v)) + "%";
+        else if (e.k === "illuminance") txt += " " + Math.round(Number(v)) + " lx";
+        else txt += " " + v + (e.u ? " " + e.u : "");
+      }
+      parts.push(txt);
+    }
+    return parts.join(" · ");
+  }
+
+  function applySensorCardState(card, dev, rec) {
+    const meta = SENSOR_TYPE_META[dev.t] || SENSOR_TYPE_META.generic;
+    card.style.setProperty("--sensor-accent", meta.accent);
+    let hero, pill, alert;
+    if (dev.t === "temp") {
+      hero = M.formatRoomTemp(dev._ref || dev);
+      pill = "Temp";
+      alert = false;
+    } else if (dev.t === "valve") {
+      const d = sensorDisplay({ ...dev, v: M.effectiveValveState(dev._ref || dev) });
+      hero = d.hero; pill = d.pill; alert = d.alert;
+    } else {
+      const d = sensorDisplay(dev);
+      hero = d.hero; pill = d.pill; alert = d.alert;
+    }
+    card.className = "sensor-card sensor-card--" + (dev.t || "generic") + (alert ? " is-alert" : "");
+    rec.heroEl.textContent = hero;
+    if (pill) {
+      rec.pillEl.hidden = false;
+      rec.pillTxt.textContent = pill;
+      rec.dot.classList.toggle("is-active", !!alert);
+    } else {
+      rec.pillEl.hidden = true;
+    }
+    rec.footEl.textContent = sensorExFooter(dev);
+    rec.footEl.hidden = !rec.footEl.textContent;
+    const batTxt = sensorBatteryLabel(dev);
+    rec.batteryEl.textContent = batTxt;
+    rec.batteryEl.hidden = !batTxt;
+    card.setAttribute("aria-label", (dev.n || "Sensor") + ", " + M.roomLabel(dev.r) + ", " + sensorTypeLabel(dev.t) + (pill ? ", " + pill : "") + (batTxt ? ", " + batTxt : ""));
+    if (dev.t === "valve" && rec.openBtn && rec.closeBtn) {
+      const valve = dev._ref || dev;
+      const moving = M.valveIsMoving(valve);
+      const st = M.effectiveValveState(valve);
+      rec.openBtn.classList.toggle("active", st === "open");
+      rec.closeBtn.classList.toggle("active", st === "closed");
+      rec.openBtn.classList.toggle("moving", moving);
+      rec.closeBtn.classList.toggle("moving", moving);
+      rec.openBtn.disabled = moving;
+      rec.closeBtn.disabled = moving;
+    }
+  }
+
+  function makeSensorCard(dev, context) {
+    const meta = SENSOR_TYPE_META[dev.t] || SENSOR_TYPE_META.generic;
+    const card = ce("div", "sensor-card sensor-card--" + (dev.t || "generic"));
+    card.style.setProperty("--sensor-accent", meta.accent);
+    card.dataset.name = String(dev.n || "").toLowerCase();
+    const top = ce("div", "sensor-card-top");
+    const icon = ce("span", "sensor-card-icon");
+    icon.innerHTML = meta.svg;
+    const pill = ce("span", "sensor-card-pill");
+    const dot = ce("span", "sensor-card-dot");
+    const pillTxt = ce("span", "sensor-card-pill-txt");
+    pill.appendChild(dot);
+    pill.appendChild(pillTxt);
+    top.appendChild(icon);
+    top.appendChild(pill);
+    const hero = ce("div", "sensor-card-value");
+    const name = ce("div", "sensor-card-name");
+    name.textContent = dev.n || ("Sensor " + dev.i);
+    const metaRow = ce("div", "sensor-card-meta");
+    metaRow.textContent = M.roomLabel(dev.r) + " · " + sensorTypeLabel(dev.t);
+    const foot = ce("div", "sensor-card-foot");
+    const actions = ce("div", "sensor-card-actions");
+    const battery = ce("div", "sensor-card-battery");
+    const fav = ce("button", "sensor-card-fav tile-fav");
+    fav.type = "button";
+    M.attachFavButton(fav, dev.i);
+    actions.appendChild(battery);
+    actions.appendChild(fav);
+    card.appendChild(top);
+    card.appendChild(hero);
+    card.appendChild(name);
+    card.appendChild(metaRow);
+    card.appendChild(foot);
+    const rec = { el: card, heroEl: hero, pillEl: pill, pillTxt, dot, footEl: foot, batteryEl: battery, favBtn: fav, t: dev.t, i: dev.i };
+    if (dev.t === "valve") {
+      const controls = ce("div", "sensor-card-controls");
+      const openBtn = ce("button", "quick-lock-btn sensor-valve-btn");
+      openBtn.type = "button";
+      openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
+      const closeBtn = ce("button", "quick-lock-btn sensor-valve-btn");
+      closeBtn.type = "button";
+      closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
+      const valveRef = dev._ref || dev;
+      openBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!M.valveIsMoving(valveRef) && M.effectiveValveState(valveRef) !== "open") sendValveCmd(valveRef.i, "open");
+      });
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!M.valveIsMoving(valveRef) && M.effectiveValveState(valveRef) !== "closed") sendValveCmd(valveRef.i, "close");
+      });
+      controls.appendChild(openBtn);
+      controls.appendChild(closeBtn);
+      card.appendChild(controls);
+      rec.openBtn = openBtn;
+      rec.closeBtn = closeBtn;
+    }
+    card.appendChild(actions);
+    applySensorCardState(card, dev, rec);
+    if (context === "favorites") M.favSensorMap.set(dev.i, rec);
+    else M.sensorCardMap.set(dev.i, rec);
+    return card;
+  }
+
+  function makeFavoriteSensorCard(dev) {
+    return makeSensorCard(dev, "favorites");
+  }
+
+  function updateSensorCard(dev) {
+    // Update both maps: after visiting Sensors then Favorites, M.sensorCardMap can
+    // still hold detached cards that would otherwise steal updates from fav cards.
+    const sen = M.sensorCardMap.get(dev.i);
+    if (sen) applySensorCardState(sen.el, dev, sen);
+    const fav = M.favSensorMap.get(dev.i);
+    if (fav && fav !== sen) applySensorCardState(fav.el, dev, fav);
+  }
+
+  function renderSensorsPopup() {
+    const popup = M.ensureQuickPopup();
+    M.syncQuickPopupWidthForOpen(popup);
+    const body = currentBody();
+    body.className = "quick-body quick-body-sensors" + (inTabView() ? " tab-body" : "");
+    body.innerHTML = "";
+    M.sensorCardMap.clear();
+    M.favSensorMap.clear();
+    M.sensorFilterChipsEl = null;
+    M.sensorFilterBtnEl = null;
+    M.sensorFilterEmptyEl = null;
+    const merged = mergedSensorList();
+    M.sensorsPopupSig = sensorsPopupSignature();
+    if (!merged.length) {
+      body.textContent = "No sensors selected — add temperature, other sensors, or valves in Hubitat app settings";
+      return;
+    }
+    const wrap = ce("div", "sensor-popup-wrap");
+    const { toolbar, chips } = buildSensorFilterBar();
+    const grid = ce("div", "sensor-grid");
+    for (const dev of merged) grid.appendChild(makeSensorCard(dev));
+    const empty = ce("div", "sensor-filter-empty");
+    empty.textContent = "No sensors match this filter";
+    empty.hidden = true;
+    M.sensorFilterEmptyEl = empty;
+    wrap.appendChild(toolbar);
+    wrap.appendChild(chips);
+    wrap.appendChild(grid);
+    wrap.appendChild(empty);
+    body.appendChild(wrap);
+    applySensorTypeFilter();
+  }
+
+  function refreshSensorsPopup() {
+    if (currentCategory() !== "sensors") return;
+    const sig = sensorsPopupSignature();
+    const body = currentBody();
+    if (!body.querySelector(".sensor-grid") || sig !== M.sensorsPopupSig) {
+      renderSensorsPopup();
+      return;
+    }
+    for (const dev of mergedSensorList()) updateSensorCard(dev);
+    applySensorTypeFilter();
+  }
+
+
+
+  function renderScenesPopup() {
     const popup = M.ensureQuickPopup();
     M.syncQuickPopupWidthForOpen(popup);
     const body = popup._body;
@@ -152,8 +504,8 @@ function renderScenesPopup() {
         const t = M.thermostats.find((x) => x.i === entry.dev.i) || entry.dev;
         updateQuickTstatCard(t, M.favTstatMap);
       } else if (entry.type === "sensor") {
-        const dev = M.mergedSensorList().find((x) => x.i === entry.dev.i) || entry.dev;
-        M.updateSensorCard(dev);
+        const dev = mergedSensorList().find((x) => x.i === entry.dev.i) || entry.dev;
+        updateSensorCard(dev);
       } else if (entry.type === "music") {
         const mp = M.music.find((x) => x.i === entry.dev.i) || entry.dev;
         M.updateFavoriteMusicRow(mp);
@@ -179,6 +531,7 @@ function renderScenesPopup() {
     M.favDevMap.clear();
     M.favTstatMap.clear();
     M.favSensorMap.clear();
+    M.sensorCardMap.clear();
     M.favMusicMap.clear();
     M.favLockMap.clear();
     M.favShadeMap.clear();
@@ -197,7 +550,7 @@ function renderScenesPopup() {
       } else if (entry.type === "thermostat") {
         grid.appendChild(makeQuickTstatCard(entry.dev, M.favTstatMap));
       } else if (entry.type === "sensor") {
-        grid.appendChild(M.makeFavoriteSensorCard(entry.dev));
+        grid.appendChild(makeFavoriteSensorCard(entry.dev));
       } else if (entry.type === "music") {
         grid.appendChild(M.makeMusicRow(entry.dev, "favorites"));
       } else if (entry.type === "lock") {
@@ -258,7 +611,7 @@ function renderScenesPopup() {
       case "blinds": return M.windowShades.length > 0;
       case "outlets": return M.outletsSeparateTab && M.outlets.length > 0;
       case "scheduling": return true;
-      case "sensors": return M.mergedSensorList().length > 0;
+      case "sensors": return mergedSensorList().length > 0;
       case "thermostats": return M.thermostatsPopupEnabled && M.thermostats.length > 0;
       case "music": return M.music.length > 0;
       case "favorites": return M.getFavoriteEntries().length > 0;
@@ -300,7 +653,7 @@ function renderScenesPopup() {
         case "music": M.renderMusicPopup(); break;
         case "favorites": refreshFavoritesPopup(); break;
         case "thermostats": refreshThermostatsPopup(); break;
-        case "sensors": M.refreshSensorsPopup(); break;
+        case "sensors": refreshSensorsPopup(); break;
         case "blinds": M.renderBlindsPopup(); break;
         case "outlets": M.renderOutletsPopup(); break;
         case "scheduling":
@@ -318,7 +671,7 @@ function renderScenesPopup() {
       case "favorites": refreshFavoritesPopup(); break;
       case "thermostats": refreshThermostatsPopup(); break;
       case "security": M.renderSecurityPopup(); break;
-      case "sensors": M.refreshSensorsPopup(); break;
+      case "sensors": refreshSensorsPopup(); break;
       case "scheduling":
         if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
         break;
@@ -345,7 +698,7 @@ function renderScenesPopup() {
       case "outlets": M.renderOutletsPopup(); break;
       case "music": M.renderMusicPopup(); break;
       case "security": M.renderSecurityPopup(); break;
-      case "sensors": M.renderSensorsPopup(); break;
+      case "sensors": renderSensorsPopup(); break;
       case "thermostats": renderThermostatsPopup(); break;
       case "scheduling":
         if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
@@ -460,7 +813,7 @@ function renderScenesPopup() {
     if (nonLights) {
       switch (id) {
         case "favorites": renderFavoritesPopup(); break;
-        case "sensors": M.renderSensorsPopup(); break;
+        case "sensors": renderSensorsPopup(); break;
         case "thermostats": renderThermostatsPopup(); break;
         case "music": M.renderMusicPopup(); break;
         case "blinds": M.renderBlindsPopup(); break;
@@ -1174,24 +1527,28 @@ function renderScenesPopup() {
             const n = Number(m.value);
             if (!isNaN(n)) s.bat = Math.round(n);
           } else return;
-          if (currentCategory() === "sensors") M.refreshSensorsPopup();
+          if (currentCategory() === "sensors") refreshSensorsPopup();
           return;
         }
         const sen = M.sensors.find(x => x.i === Number(m.deviceId));
         if (sen) {
-          const nm = String(m.name || "").toLowerCase();
-          const val = m.value;
-          if (nm === "battery" || nm === "temperature" || nm === "humidity" || nm === "illuminance") {
-            const ex = sen.ex || (sen.ex = []);
-            let entry = ex.find((e) => e.k === nm);
-            if (entry) { entry.v = val; if (m.unit) entry.u = m.unit; }
-            else if (ex.length < 3) ex.push({ k: nm, v: val, u: m.unit || null });
-          } else {
-            sen.v = val;
-            const alerts = ({ motion: ["active"], contact: ["open"], water: ["wet"], leak: ["wet"], smoke: ["detected"], presence: ["present"] })[sen.t] || [];
-            sen.a = alerts.includes(String(val || "").toLowerCase()) ? 1 : 0;
+          if (applySensorWsAttr(sen, m.name, m.value, m.unit)) {
+            if (currentCategory() === "sensors") refreshSensorsPopup();
+            else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
           }
-          if (currentCategory() === "sensors") M.refreshSensorsPopup();
+          return;
+        }
+        const valve = M.valves.find(x => x.i === Number(m.deviceId));
+        if (valve) {
+          const nm = String(m.name || "").toLowerCase();
+          if (nm === "valve") {
+            valve.st = String(m.value || "");
+            const opt = M.valveOptimistic.get(valve.i);
+            if (opt?.st != null && valve.st === opt.st) M.clearValveOptimistic(valve.i);
+            if (currentCategory() === "sensors") refreshSensorsPopup();
+            else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+          }
+          return;
         }
       } catch {}
     };
@@ -1316,5 +1673,5 @@ function renderScenesPopup() {
   })();
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
-  Object.assign(M, { favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect });
+  Object.assign(M, { sendValveCmd, reconcileValve, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect });
 })();

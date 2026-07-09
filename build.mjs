@@ -277,9 +277,12 @@ function splitAppJs(srcPath) {
   }
 
   const part1Lines = raw.slice(0, split1Idx).trimEnd().split("\n");
-  let part2Lines = raw.slice(split1Idx + MLD_SPLIT.length, split2Idx).trimStart().split("\n");
-  let part3Lines = raw.slice(split2Idx + MLD_SPLIT2.length, split3Idx).trimStart().split("\n");
-  let part4Lines = raw.slice(split3Idx + MLD_SPLIT3.length).trimStart().split("\n");
+  // Keep leading indentation on the first declaration so parseTopLevelFunctions
+  // still sees "  function …" / "  async function …" after the split marker.
+  const trimLeadingBlankLines = (s) => s.replace(/^(?:\s*\n)+/, "");
+  let part2Lines = trimLeadingBlankLines(raw.slice(split1Idx + MLD_SPLIT.length, split2Idx)).split("\n");
+  let part3Lines = trimLeadingBlankLines(raw.slice(split2Idx + MLD_SPLIT2.length, split3Idx)).split("\n");
+  let part4Lines = trimLeadingBlankLines(raw.slice(split3Idx + MLD_SPLIT3.length)).split("\n");
 
   const trimTrailing = (lines) => {
     while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
