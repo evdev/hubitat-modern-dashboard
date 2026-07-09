@@ -1179,23 +1179,19 @@ function renderScenesPopup() {
         }
         const sen = M.sensors.find(x => x.i === Number(m.deviceId));
         if (sen) {
-          if (applySensorWsAttr(sen, m.name, m.value, m.unit)) {
-            if (currentCategory() === "sensors") M.refreshSensorsPopup();
-            else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
-          }
-          return;
-        }
-        const valve = M.valves.find(x => x.i === Number(m.deviceId));
-        if (valve) {
           const nm = String(m.name || "").toLowerCase();
-          if (nm === "valve") {
-            valve.st = String(m.value || "");
-            const opt = M.valveOptimistic.get(valve.i);
-            if (opt?.st != null && valve.st === opt.st) M.clearValveOptimistic(valve.i);
-            if (currentCategory() === "sensors") M.refreshSensorsPopup();
-            else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+          const val = m.value;
+          if (nm === "battery" || nm === "temperature" || nm === "humidity" || nm === "illuminance") {
+            const ex = sen.ex || (sen.ex = []);
+            let entry = ex.find((e) => e.k === nm);
+            if (entry) { entry.v = val; if (m.unit) entry.u = m.unit; }
+            else if (ex.length < 3) ex.push({ k: nm, v: val, u: m.unit || null });
+          } else {
+            sen.v = val;
+            const alerts = ({ motion: ["active"], contact: ["open"], water: ["wet"], leak: ["wet"], smoke: ["detected"], presence: ["present"] })[sen.t] || [];
+            sen.a = alerts.includes(String(val || "").toLowerCase()) ? 1 : 0;
           }
-          return;
+          if (currentCategory() === "sensors") M.refreshSensorsPopup();
         }
       } catch {}
     };

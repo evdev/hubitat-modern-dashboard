@@ -131,7 +131,6 @@
   const switchOptimistic = new Map(); // device id -> { s, l?, until, timer }
   const lockOptimistic = new Map(); // lock id -> { lk, st, until, timer }
   const shadeOptimistic = new Map(); // shade id -> { st?, pos?, until, timer }
-  const valveOptimistic = new Map(); // valve id -> { st?, until, timer }
   const musicOptimistic = new Map(); // music id -> { st, v?, until, timer }
   const setpointOptimistic = new Map(); // tstat id -> { hsp?, csp?, until, timer }
 
@@ -155,7 +154,6 @@
   let scenes = [];
   let locks = [];
   let windowShades = [];
-  let valves = [];
   let outlets = [];              // [{i,n,r,s}] outlet devices from companion app
   let music = [];
   let favorites = [];
@@ -408,64 +406,6 @@
     if (st === "partially open") return posText ? posText + " · Partially open" : "Partially open";
     if (st === "unknown" || st === "unavailable") return st.charAt(0).toUpperCase() + st.slice(1);
     return posText || st || "—";
-  }
-
-  function setValveOptimistic(id, patch) {
-    const prev = valveOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
-    const valve = valves.find((v) => v.i === id);
-    if (valve && patch.st != null) valve.st = patch.st;
-    const entry = {
-      st: patch.st != null ? patch.st : prev?.st,
-      until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
-    };
-    entry.timer = setTimeout(() => {
-      valveOptimistic.delete(id);
-      if (postCall("currentCategory") === "sensors") postCall("refreshSensorsPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, LEVEL_OPTIMISTIC_MS);
-    valveOptimistic.set(id, entry);
-  }
-
-  function clearValveOptimistic(id) {
-    const prev = valveOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
-    valveOptimistic.delete(id);
-  }
-
-  function reapplyValveOptimistic() {
-    for (const [id, opt] of valveOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        valveOptimistic.delete(id);
-        continue;
-      }
-      const valve = valves.find((v) => v.i === id);
-      if (!valve) continue;
-      if (opt.st != null && valve.st === opt.st) {
-        if (opt.timer) clearTimeout(opt.timer);
-        valveOptimistic.delete(id);
-        continue;
-      }
-      if (opt.st != null) valve.st = opt.st;
-    }
-  }
-
-  function effectiveValveState(valve) {
-    const opt = valveOptimistic.get(valve.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
-    return valve.st || "unknown";
-  }
-
-  function valveIsMoving(valve) {
-    const st = effectiveValveState(valve);
-    return st === "opening" || st === "closing";
-  }
-
-  function normalizeValveForCard(valve) {
-    const st = effectiveValveState(valve);
-    return { i: valve.i, n: valve.n, r: valve.r, t: "valve", v: st, a: st === "open" ? 1 : 0, ex: [], _ref: valve };
   }
 
   function isMusicPlaying(st) {
@@ -1402,8 +1342,7 @@
       || sensors.some((s) => s.i === numId)
       || music.some((m) => m.i === numId)
       || locks.some((l) => l.i === numId)
-      || windowShades.some((s) => s.i === numId)
-      || valves.some((v) => v.i === numId);
+      || windowShades.some((s) => s.i === numId);
   }
 
   function centralThermostatsSorted() {
@@ -3851,8 +3790,6 @@
       if (ts) { out.push({ type: "sensor", dev: normalizeTempSensorForCard(ts) }); continue; }
       const sen = sensors.find(x => x.i === id);
       if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
-      const valve = valves.find(x => x.i === id);
-      if (valve) { out.push({ type: "sensor", dev: normalizeValveForCard(valve) }); continue; }
       const mp = music.find(x => x.i === id);
       if (mp) { out.push({ type: "music", dev: mp }); continue; }
       const lk = locks.find(x => x.i === id);
@@ -4338,12 +4275,10 @@
     replaceList(scenes, d.scenes);
     replaceList(locks, d.locks);
     replaceList(windowShades, d.windowShades);
-    replaceList(valves, d.valves);
     replaceList(music, d.music);
     if (Array.isArray(d.config?.favorites)) replaceList(favorites, d.config.favorites.map(Number));
     reapplyLockOptimistic();
     reapplyShadeOptimistic();
-    reapplyValveOptimistic();
     reapplyMusicOptimistic();
     reapplySetpointOptimistic();
 
@@ -5158,15 +5093,6 @@
         if (d.temp != null) s.temp = Number(d.temp);
         updateClimateWidgets();
         updateRoomMeta();
-        if (currentCategory() === "sensors") refreshSensorsPopup();
-        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
-      }
-      const sen = sensors.find(x => x.i === Number(d.i));
-      if (sen) {
-        applySensorPayload(sen, d);
-        if (currentCategory() === "sensors") refreshSensorsPopup();
-        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
       const lock = locks.find(x => x.i === Number(d.i));
@@ -5191,15 +5117,6 @@
           if (matched) clearShadeOptimistic(Number(d.i));
         }
         if (currentCategory() === "blinds") renderBlindsPopup();
-        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
-      }
-      const valve = valves.find(x => x.i === Number(d.i));
-      if (valve) {
-        if (d.st != null) valve.st = d.st;
-        const opt = valveOptimistic.get(Number(d.i));
-        if (opt?.st != null && valve.st === opt.st) clearValveOptimistic(Number(d.i));
-        if (currentCategory() === "sensors") refreshSensorsPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
@@ -5344,32 +5261,6 @@
     return result;
   }
 
-  async function sendValveCmd(id, cmd) {
-    const valve = valves.find((v) => v.i === id);
-    if (!valve) return { ok: false };
-    hapticTap();
-    const patch = cmd === "open" ? { st: "opening" } : cmd === "close" ? { st: "closing" } : null;
-    if (patch) {
-      setValveOptimistic(id, patch);
-      if (currentCategory() === "sensors") refreshSensorsPopup();
-      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-    }
-    const result = await sendCmd(id, cmd);
-    if (!result.ok) {
-      clearValveOptimistic(id);
-      reconcileValve(id);
-      if (currentCategory() === "sensors") refreshSensorsPopup();
-      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-    } else {
-      reconcileValve(id);
-    }
-    return result;
-  }
-
-  function reconcileValve(id) {
-    setTimeout(() => refreshDevice(id), 700);
-    setTimeout(() => refreshDevice(id), 2200);
-  }
 
   function applySwitchCmdOptimistic(dev, cmd) {
     const id = dev.i;
@@ -5684,7 +5575,6 @@
     const out = [];
     for (const s of tempSensors) out.push({ i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s });
     for (const s of sensors) out.push({ i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
-    for (const v of valves) out.push(normalizeValveForCard(v));
     out.sort((a, b) => {
       const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
       if (ra !== 0) return ra;
@@ -5845,9 +5735,6 @@
       hero = formatRoomTemp(dev._ref || dev);
       pill = "Temp";
       alert = false;
-    } else if (dev.t === "valve") {
-      const d = sensorDisplay({ ...dev, v: effectiveValveState(dev._ref || dev) });
-      hero = d.hero; pill = d.pill; alert = d.alert;
     } else {
       const d = sensorDisplay(dev);
       hero = d.hero; pill = d.pill; alert = d.alert;
@@ -5867,17 +5754,6 @@
     rec.batteryEl.textContent = batTxt;
     rec.batteryEl.hidden = !batTxt;
     card.setAttribute("aria-label", `${dev.n || "Sensor"}, ${roomLabel(dev.r)}, ${sensorTypeLabel(dev.t)}${pill ? ", " + pill : ""}${batTxt ? ", " + batTxt : ""}`);
-    if (dev.t === "valve" && rec.openBtn && rec.closeBtn) {
-      const valve = dev._ref || dev;
-      const moving = valveIsMoving(valve);
-      const st = effectiveValveState(valve);
-      rec.openBtn.classList.toggle("active", st === "open");
-      rec.closeBtn.classList.toggle("active", st === "closed");
-      rec.openBtn.classList.toggle("moving", moving);
-      rec.closeBtn.classList.toggle("moving", moving);
-      rec.openBtn.disabled = moving;
-      rec.closeBtn.disabled = moving;
-    }
   }
 
   function makeSensorCard(dev, context) {
@@ -5913,31 +5789,8 @@
     card.appendChild(name);
     card.appendChild(metaRow);
     card.appendChild(foot);
-    const rec = { el: card, heroEl: hero, pillEl: pill, pillTxt, dot, footEl: foot, batteryEl: battery, favBtn: fav, t: dev.t, i: dev.i };
-    if (dev.t === "valve") {
-      const controls = ce("div", "sensor-card-controls");
-      const openBtn = ce("button", "quick-lock-btn sensor-valve-btn");
-      openBtn.type = "button";
-      openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
-      const closeBtn = ce("button", "quick-lock-btn sensor-valve-btn");
-      closeBtn.type = "button";
-      closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
-      const valveRef = dev._ref || dev;
-      openBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (!valveIsMoving(valveRef) && effectiveValveState(valveRef) !== "open") sendValveCmd(valveRef.i, "open");
-      });
-      closeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (!valveIsMoving(valveRef) && effectiveValveState(valveRef) !== "closed") sendValveCmd(valveRef.i, "close");
-      });
-      controls.appendChild(openBtn);
-      controls.appendChild(closeBtn);
-      card.appendChild(controls);
-      rec.openBtn = openBtn;
-      rec.closeBtn = closeBtn;
-    }
     card.appendChild(actions);
+    const rec = { el: card, heroEl: hero, pillEl: pill, pillTxt, dot, footEl: foot, batteryEl: battery, favBtn: fav, t: dev.t, i: dev.i };
     applySensorCardState(card, dev, rec);
     if (context === "favorites") favSensorMap.set(dev.i, rec);
     else sensorCardMap.set(dev.i, rec);
@@ -5966,7 +5819,7 @@
     const merged = mergedSensorList();
     sensorsPopupSig = sensorsPopupSignature();
     if (!merged.length) {
-      body.textContent = "No sensors selected — add temperature, other sensors, or valves in Hubitat app settings";
+      body.textContent = "No sensors selected — add temperature or other sensors in Hubitat app settings";
       return;
     }
     const wrap = ce("div", "sensor-popup-wrap");
@@ -7704,23 +7557,19 @@
         }
         const sen = sensors.find(x => x.i === Number(m.deviceId));
         if (sen) {
-          if (applySensorWsAttr(sen, m.name, m.value, m.unit)) {
-            if (currentCategory() === "sensors") refreshSensorsPopup();
-            else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-          }
-          return;
-        }
-        const valve = valves.find(x => x.i === Number(m.deviceId));
-        if (valve) {
           const nm = String(m.name || "").toLowerCase();
-          if (nm === "valve") {
-            valve.st = String(m.value || "");
-            const opt = valveOptimistic.get(valve.i);
-            if (opt?.st != null && valve.st === opt.st) clearValveOptimistic(valve.i);
-            if (currentCategory() === "sensors") refreshSensorsPopup();
-            else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+          const val = m.value;
+          if (nm === "battery" || nm === "temperature" || nm === "humidity" || nm === "illuminance") {
+            const ex = sen.ex || (sen.ex = []);
+            let entry = ex.find((e) => e.k === nm);
+            if (entry) { entry.v = val; if (m.unit) entry.u = m.unit; }
+            else if (ex.length < 3) ex.push({ k: nm, v: val, u: m.unit || null });
+          } else {
+            sen.v = val;
+            const alerts = ({ motion: ["active"], contact: ["open"], water: ["wet"], leak: ["wet"], smoke: ["detected"], presence: ["present"] })[sen.t] || [];
+            sen.a = alerts.includes(String(val || "").toLowerCase()) ? 1 : 0;
           }
-          return;
+          if (currentCategory() === "sensors") refreshSensorsPopup();
         }
       } catch {}
     };

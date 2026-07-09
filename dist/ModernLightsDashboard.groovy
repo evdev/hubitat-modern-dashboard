@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.18
+// Modern Dashboard v0.2.17
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.18 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.17 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -76,8 +76,6 @@ def mainPage() {
             input "illuminanceSensors", "capability.illuminanceMeasurement", title: "Illuminance / light sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "smokeSensors", "capability.smokeDetector", title: "Smoke / CO detectors",
-                multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "valves", "capability.Valve", title: "Valves (water shutoff, irrigation)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Options") {
@@ -184,7 +182,6 @@ def logInit() {
     def audioCount = allAudioDevices()?.size() ?: 0
     if (audioCount) { log.info "Modern Dashboard: ${audioCount} audio device(s) authorized" }
     if (windowShades) { log.info "Modern Dashboard: ${windowShades.size()} shade(s) authorized" }
-    if (valves) { log.info "Modern Dashboard: ${valves.size()} valve(s) authorized" }
     if (state.accessToken == null) { state.accessToken = createAccessToken() }
     if (!assetsPresent()) { log.warn "Modern Dashboard: upload all mld-* dashboard files to File Manager (see app setup page)" }
 }
@@ -817,15 +814,61 @@ def renderData() {
     if (tempSensors) for (d in tempSensors) excludeIds << d.id.toString()
     if (locks) for (d in locks) excludeIds << d.id.toString()
     if (windowShades) for (d in windowShades) excludeIds << d.id.toString()
-    if (valves) for (d in valves) excludeIds << d.id.toString()
     for (d in allAudioDevices()) excludeIds << d.id.toString()
     def sensorDevs = allSensorDevices()
     if (sensorDevs) {
         for (entry in sensorDevs) {
             def d = entry.device
             if (excludeIds.contains(d.id.toString())) continue
+            // Determine type: prefer declared primary attr; fall back to generic.
+            def t = entry.type
+            def primaryAttr = entry.attr
+            def rawVal = safeCurrent(d, primaryAttr)
+            def alertVals = entry.alerts as Set
+            // If primary attr missing, try to classify generically
+            if (rawVal == null) {
+                // Try smoke carbonMonoxide fallback for smoke detectors
+                if (t == "smoke") {
+                    def co = safeCurrent(d, "carbonMonoxide")
+                    if (co != null) { rawVal = co; primaryAttr = "carbonMonoxide"; alertVals = ["detected"] as Set }
+                }
+                if (rawVal == null) {
+                    t = "generic"
+                    def fm = firstMeaningfulAttr(d, null)
+                    if (fm != null) { rawVal = fm.value; primaryAttr = fm.name }
+                }
+            }
+            def aFlag = 0
+            if (rawVal != null && alertVals && alertVals.contains(rawVal.toString().toLowerCase())) aFlag = 1
+            def rid = sensorRoomId(d, roomsList)
             if (!first) out << ","; first = false
-            appendSensorJson(out, d, entry, roomsList)
+            out << "{\"i\":" << d.id
+            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+            out << ",\"t\":" << jsonStr(t)
+            if (rawVal != null && isNumberLike(rawVal)) {
+                out << ",\"v\":" << numOrNull(rawVal)
+            } else {
+                out << ",\"v\":" << jsonStr(rawVal)
+            }
+            out << ",\"a\":" << aFlag
+            // ex: battery + up to 2 more (3 for generic)
+            int exMax = (t == "generic") ? 3 : 2
+            def extras = sensorExtraAttrs(d, primaryAttr, exMax)
+            out << ",\"ex\":["
+            boolean exFirst = true
+            for (ex in extras) {
+                if (!exFirst) out << ","; exFirst = false
+                out << "{\"k\":" << jsonStr(ex.k)
+                if (isNumberLike(ex.v)) {
+                    out << ",\"v\":" << numOrNull(ex.v)
+                } else {
+                    out << ",\"v\":" << jsonStr(ex.v)
+                }
+                out << ",\"u\":" << jsonStr(ex.u)
+                out << "}"
+            }
+            out << "]}"
         }
     }
     out << "],\"music\":["
@@ -877,26 +920,6 @@ def renderData() {
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"st\":" << jsonStr(shadeSt)
             out << ",\"pos\":" << numOrNull(shadePos)
-            out << "}"
-        }
-    }
-    out << "],\"valves\":["
-    first = true
-    if (valves) {
-        for (d in valves) {
-            if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
-            def valveSt = safeCurrent(d, "valve")
-            out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
-            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
-            out << ",\"st\":" << jsonStr(valveSt)
             out << "}"
         }
     }
@@ -1007,121 +1030,6 @@ def firstMeaningfulAttr(d, skipAttr) {
     return null
 }
 
-// Alternate Hubitat attribute names per sensor type (tried after the picker's primary attr).
-def SENSOR_ATTR_CANDIDATES = [
-    smoke: ["smoke", "carbonMonoxide"],
-    leak: ["water"],
-    contact: ["contact"],
-    motion: ["motion", "motionStatus"],
-    presence: ["presence"],
-    humidity: ["humidity", "relativeHumidity"],
-    illuminance: ["illuminance"]
-]
-
-def normalizeSensorValue(t, attrName, raw) {
-    if (raw == null) return null
-    def s = raw.toString().trim()
-    if (s.isEmpty()) return null
-    def lower = s.toLowerCase()
-    switch (t) {
-        case "motion":
-            if (lower == "on" || lower == "true") return "active"
-            if (lower == "off" || lower == "false") return "inactive"
-            return lower
-        case "contact":
-            if (lower == "on" || lower == "true") return "open"
-            if (lower == "off" || lower == "false") return "closed"
-            return lower
-        case "leak":
-            if (lower == "true" || lower == "wet") return "wet"
-            if (lower == "false" || lower == "dry") return "dry"
-            return lower
-        case "presence":
-            if (lower == "home" || lower == "true") return "present"
-            if (lower == "away" || lower == "false" || lower == "not home" || lower == "not present") return "not present"
-            return lower
-        case "smoke":
-            if (lower == "tested" || lower == "monitored") return "clear"
-            if (attrName == "carbonMonoxide" && (lower == "detected" || lower == "co")) return "detected"
-            return lower
-        default:
-            return s
-    }
-}
-
-def resolveSensorReading(d, entry) {
-    def t = entry.type
-    def alerts = entry.alerts as Set
-    def primaryAttr = entry.attr
-    def rawVal = null
-    def candidates = [entry.attr]
-    def extra = SENSOR_ATTR_CANDIDATES[t]
-    if (extra) {
-        for (a in extra) {
-            if (!candidates.contains(a)) candidates << a
-        }
-    }
-    for (attr in candidates) {
-        def raw = safeCurrent(d, attr)
-        if (raw == null) continue
-        def norm = normalizeSensorValue(t, attr, raw)
-        if (norm == null) continue
-        rawVal = norm
-        primaryAttr = attr
-        if (t == "smoke" && attr == "carbonMonoxide") {
-            alerts = ["detected"] as Set
-        }
-        break
-    }
-    if (rawVal == null) {
-        t = "generic"
-        def fm = firstMeaningfulAttr(d, null)
-        if (fm != null) {
-            rawVal = fm.value
-            primaryAttr = fm.name
-        }
-        alerts = [] as Set
-    }
-    def aFlag = 0
-    if (rawVal != null && alerts && alerts.contains(rawVal.toString().toLowerCase())) aFlag = 1
-    return [t: t, attr: primaryAttr, v: rawVal, a: aFlag]
-}
-
-def appendSensorJson(out, d, entry, roomsList) {
-    def reading = resolveSensorReading(d, entry)
-    def t = reading.t
-    def primaryAttr = reading.attr
-    def rawVal = reading.v
-    def aFlag = reading.a
-    def rid = sensorRoomId(d, roomsList)
-    out << "{\"i\":" << d.id
-    out << ",\"n\":" << jsonStr(d.displayName)
-    out << ",\"r\":" << (rid == null ? "null" : rid.toString())
-    out << ",\"t\":" << jsonStr(t)
-    if (rawVal != null && isNumberLike(rawVal)) {
-        out << ",\"v\":" << numOrNull(rawVal)
-    } else {
-        out << ",\"v\":" << jsonStr(rawVal)
-    }
-    out << ",\"a\":" << aFlag
-    int exMax = (t == "generic") ? 3 : 2
-    def extras = sensorExtraAttrs(d, primaryAttr, exMax)
-    out << ",\"ex\":["
-    boolean exFirst = true
-    for (ex in extras) {
-        if (!exFirst) out << ","; exFirst = false
-        out << "{\"k\":" << jsonStr(ex.k)
-        if (isNumberLike(ex.v)) {
-            out << ",\"v\":" << numOrNull(ex.v)
-        } else {
-            out << ",\"v\":" << jsonStr(ex.v)
-        }
-        out << ",\"u\":" << jsonStr(ex.u)
-        out << "}"
-    }
-    out << "]}"
-}
-
 def resolvedDashboardName() {
     return (dashboardName?.trim()) ?: "mDash"
 }
@@ -1219,9 +1127,11 @@ def renderDevice() {
     if (senEntry != null) {
         def sd = senEntry.device
         try { sd.refresh() } catch (e) {}
-        def roomsList = app.getRooms() ?: []
         def out = new StringBuilder()
-        appendSensorJson(out, sd, senEntry, roomsList)
+        out << "{\"i\":" << sd.id
+        out << ",\"t\":" << jsonStr(senEntry.type)
+        out << ",\"v\":" << jsonStr(safeCurrent(sd, senEntry.attr))
+        out << "}"
         return render(contentType: "application/json", data: out.toString(), status: 200)
     }
     def lk = locks?.find { it.id.toString() == id.toString() }
@@ -1243,15 +1153,6 @@ def renderDevice() {
         out << "{\"i\":" << shade.id
         out << ",\"st\":" << jsonStr(shadeSt)
         out << ",\"pos\":" << numOrNull(shadePos) << "}"
-        return render(contentType: "application/json", data: out.toString(), status: 200)
-    }
-    def valve = valves?.find { it.id.toString() == id.toString() }
-    if (valve != null) {
-        try { valve.refresh() } catch (e) {}
-        def out = new StringBuilder()
-        out << "{\"i\":" << valve.id
-        out << ",\"st\":" << jsonStr(safeCurrent(valve, "valve"))
-        out << "}"
         return render(contentType: "application/json", data: out.toString(), status: 200)
     }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
@@ -1351,15 +1252,6 @@ def runShadeCmd(dev, c, v) {
     }
 }
 
-def runValveCmd(dev, c, v) {
-    switch (c) {
-        case "open":  dev.open(); break
-        case "close": dev.close(); break
-        default:
-            throw new IllegalArgumentException("unknown command")
-    }
-}
-
 def runAudioCmd(dev, c, v) {
     switch (c) {
         case "play":
@@ -1420,9 +1312,8 @@ def executeOneCmd(id, c, v, pin) {
     def t = thermostats?.find { it.id.toString() == id.toString() }
     def lk = locks?.find { it.id.toString() == id.toString() }
     def shade = windowShades?.find { it.id.toString() == id.toString() }
-    def valve = valves?.find { it.id.toString() == id.toString() }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
-    if (dev == null && outletDev == null && t == null && lk == null && shade == null && valve == null && mp == null) {
+    if (dev == null && outletDev == null && t == null && lk == null && shade == null && mp == null) {
         return [ok: false, error: "device not found"]
     }
     try {
@@ -1440,8 +1331,6 @@ def executeOneCmd(id, c, v, pin) {
             runLockCmd(lk, c, v)
         } else if (shade != null) {
             runShadeCmd(shade, c, v)
-        } else if (valve != null) {
-            runValveCmd(valve, c, v)
         } else {
             runAudioCmd(mp, c, v)
         }
@@ -2188,7 +2077,6 @@ def validFavoriteIdSet() {
     allSensorDevices()?.each { set.add(it.device.id.toString()) }
     locks?.each { set.add(it.id.toString()) }
     windowShades?.each { set.add(it.id.toString()) }
-    valves?.each { set.add(it.id.toString()) }
     allAudioDevices()?.each { set.add(it.id.toString()) }
     return set
 }

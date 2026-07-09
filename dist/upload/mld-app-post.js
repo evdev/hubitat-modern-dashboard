@@ -604,8 +604,6 @@ async function saveRoomOrder(order) {
       if (ts) { out.push({ type: "sensor", dev: normalizeTempSensorForCard(ts) }); continue; }
       const sen = M.sensors.find(x => x.i === id);
       if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
-      const valve = M.valves.find(x => x.i === id);
-      if (valve) { out.push({ type: "sensor", dev: M.normalizeValveForCard(valve) }); continue; }
       const mp = M.music.find(x => x.i === id);
       if (mp) { out.push({ type: "music", dev: mp }); continue; }
       const lk = M.locks.find(x => x.i === id);
@@ -1091,12 +1089,10 @@ async function saveRoomOrder(order) {
     M.replaceList(M.scenes, d.scenes);
     M.replaceList(M.locks, d.locks);
     M.replaceList(M.windowShades, d.windowShades);
-    M.replaceList(M.valves, d.valves);
     M.replaceList(M.music, d.music);
     if (Array.isArray(d.config?.favorites)) M.replaceList(M.favorites, d.config.favorites.map(Number));
     M.reapplyLockOptimistic();
     M.reapplyShadeOptimistic();
-    M.reapplyValveOptimistic();
     M.reapplyMusicOptimistic();
     M.reapplySetpointOptimistic();
 
@@ -1911,15 +1907,6 @@ async function saveRoomOrder(order) {
         if (d.temp != null) s.temp = Number(d.temp);
         M.updateClimateWidgets();
         updateRoomMeta();
-        if (M.currentCategory() === "sensors") refreshSensorsPopup();
-        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
-        return;
-      }
-      const sen = M.sensors.find(x => x.i === Number(d.i));
-      if (sen) {
-        applySensorPayload(sen, d);
-        if (M.currentCategory() === "sensors") refreshSensorsPopup();
-        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
       const lock = M.locks.find(x => x.i === Number(d.i));
@@ -1944,15 +1931,6 @@ async function saveRoomOrder(order) {
           if (matched) M.clearShadeOptimistic(Number(d.i));
         }
         if (M.currentCategory() === "blinds") renderBlindsPopup();
-        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
-        return;
-      }
-      const valve = M.valves.find(x => x.i === Number(d.i));
-      if (valve) {
-        if (d.st != null) valve.st = d.st;
-        const opt = M.valveOptimistic.get(Number(d.i));
-        if (opt?.st != null && valve.st === opt.st) M.clearValveOptimistic(Number(d.i));
-        if (M.currentCategory() === "sensors") refreshSensorsPopup();
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
@@ -2097,32 +2075,6 @@ async function saveRoomOrder(order) {
     return result;
   }
 
-  async function sendValveCmd(id, cmd) {
-    const valve = M.valves.find((v) => v.i === id);
-    if (!valve) return { ok: false };
-    M.hapticTap();
-    const patch = cmd === "open" ? { st: "opening" } : cmd === "close" ? { st: "closing" } : null;
-    if (patch) {
-      M.setValveOptimistic(id, patch);
-      if (M.currentCategory() === "sensors") refreshSensorsPopup();
-      else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
-    }
-    const result = await M.sendCmd(id, cmd);
-    if (!result.ok) {
-      M.clearValveOptimistic(id);
-      reconcileValve(id);
-      if (M.currentCategory() === "sensors") refreshSensorsPopup();
-      else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
-    } else {
-      reconcileValve(id);
-    }
-    return result;
-  }
-
-  function reconcileValve(id) {
-    setTimeout(() => refreshDevice(id), 700);
-    setTimeout(() => refreshDevice(id), 2200);
-  }
 
   function applySwitchCmdOptimistic(dev, cmd) {
     const id = dev.i;
@@ -2437,7 +2389,6 @@ async function saveRoomOrder(order) {
     const out = [];
     for (const s of M.tempSensors) out.push({ i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s });
     for (const s of M.sensors) out.push({ i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
-    for (const v of M.valves) out.push(M.normalizeValveForCard(v));
     out.sort((a, b) => {
       const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
       if (ra !== 0) return ra;
@@ -2598,9 +2549,6 @@ async function saveRoomOrder(order) {
       hero = M.formatRoomTemp(dev._ref || dev);
       pill = "Temp";
       alert = false;
-    } else if (dev.t === "valve") {
-      const d = sensorDisplay({ ...dev, v: M.effectiveValveState(dev._ref || dev) });
-      hero = d.hero; pill = d.pill; alert = d.alert;
     } else {
       const d = sensorDisplay(dev);
       hero = d.hero; pill = d.pill; alert = d.alert;
@@ -2620,17 +2568,6 @@ async function saveRoomOrder(order) {
     rec.batteryEl.textContent = batTxt;
     rec.batteryEl.hidden = !batTxt;
     card.setAttribute("aria-label", `${dev.n || "Sensor"}, ${roomLabel(dev.r)}, ${sensorTypeLabel(dev.t)}${pill ? ", " + pill : ""}${batTxt ? ", " + batTxt : ""}`);
-    if (dev.t === "valve" && rec.openBtn && rec.closeBtn) {
-      const valve = dev._ref || dev;
-      const moving = M.valveIsMoving(valve);
-      const st = M.effectiveValveState(valve);
-      rec.openBtn.classList.toggle("active", st === "open");
-      rec.closeBtn.classList.toggle("active", st === "closed");
-      rec.openBtn.classList.toggle("moving", moving);
-      rec.closeBtn.classList.toggle("moving", moving);
-      rec.openBtn.disabled = moving;
-      rec.closeBtn.disabled = moving;
-    }
   }
 
   function makeSensorCard(dev, context) {
@@ -2666,31 +2603,8 @@ async function saveRoomOrder(order) {
     card.appendChild(name);
     card.appendChild(metaRow);
     card.appendChild(foot);
-    const rec = { el: card, heroEl: hero, pillEl: pill, pillTxt, dot, footEl: foot, batteryEl: battery, favBtn: fav, t: dev.t, i: dev.i };
-    if (dev.t === "valve") {
-      const controls = ce("div", "sensor-card-controls");
-      const openBtn = ce("button", "quick-lock-btn sensor-valve-btn");
-      openBtn.type = "button";
-      openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
-      const closeBtn = ce("button", "quick-lock-btn sensor-valve-btn");
-      closeBtn.type = "button";
-      closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
-      const valveRef = dev._ref || dev;
-      openBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (!M.valveIsMoving(valveRef) && M.effectiveValveState(valveRef) !== "open") sendValveCmd(valveRef.i, "open");
-      });
-      closeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (!M.valveIsMoving(valveRef) && M.effectiveValveState(valveRef) !== "closed") sendValveCmd(valveRef.i, "close");
-      });
-      controls.appendChild(openBtn);
-      controls.appendChild(closeBtn);
-      card.appendChild(controls);
-      rec.openBtn = openBtn;
-      rec.closeBtn = closeBtn;
-    }
     card.appendChild(actions);
+    const rec = { el: card, heroEl: hero, pillEl: pill, pillTxt, dot, footEl: foot, batteryEl: battery, favBtn: fav, t: dev.t, i: dev.i };
     applySensorCardState(card, dev, rec);
     if (context === "favorites") M.favSensorMap.set(dev.i, rec);
     else M.sensorCardMap.set(dev.i, rec);
@@ -2719,7 +2633,7 @@ async function saveRoomOrder(order) {
     const merged = mergedSensorList();
     M.sensorsPopupSig = sensorsPopupSignature();
     if (!merged.length) {
-      body.textContent = "No sensors selected — add temperature, other sensors, or valves in Hubitat app settings";
+      body.textContent = "No sensors selected — add temperature or other sensors in Hubitat app settings";
       return;
     }
     const wrap = ce("div", "sensor-popup-wrap");
@@ -3280,5 +3194,5 @@ async function saveRoomOrder(order) {
     ruleSection.appendChild(ruleModes);
     body.appendChild(ruleSection);
   }
-  Object.assign(M, { currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, sendValveCmd, reconcileValve, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, renderOutletsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
+  Object.assign(M, { currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, renderOutletsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
 })();

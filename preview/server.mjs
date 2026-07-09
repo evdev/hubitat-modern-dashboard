@@ -157,12 +157,7 @@ function buildMockData(count) {
     { i: 2106, n: "Desk Light Sensor", r: 4, t: "illuminance", v: 320, a: 0, ex: [] },
     { i: 2107, n: "Car Presence", r: 11, t: "presence", v: "present", a: 1, ex: [] },
     { i: 2108, n: "Kitchen Smoke", r: 2, t: "smoke", v: "clear", a: 0, ex: [{ k: "battery", v: 95, u: "%" }] },
-    { i: 2109, n: "Guest Presence", r: 5, t: "presence", v: "home", a: 1, ex: [] },
     { i: 2199, n: "Air Quality Monitor", r: 4, t: "generic", v: "82", a: 0, ex: [{ k: "battery", v: 60, u: "%" }, { k: "pressure", v: 29.9, u: "inHg" }, { k: "co2", v: 612, u: "ppm" }] },
-  ];
-  const valves = [
-    { i: 2201, n: "Main Water Shutoff", r: 8, st: "closed" },
-    { i: 2202, n: "Irrigation Zone 1", r: 7, st: "open" },
   ];
   const locks = [
     { i: 3001, n: "Front Door", r: 11, lk: 1, st: "locked" },
@@ -176,10 +171,10 @@ function buildMockData(count) {
     { i: 4004, n: "Office HomePod", r: 4, st: "playing", v: 28, tr: "Khruangbin — Texas Sun", m: "unmuted", trackIdx: 3, f: AUDIO_F_AIRPLAY },
     { i: 4005, n: "Patio Speaker", r: 7, st: "stopped", v: 0, tr: "", m: "muted", trackIdx: 2, f: AUDIO_F_FULL },
   ];
-  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", roomOrder: [], navOrder: [], favorites: [1, 5, 1001, 2103, 2201] }, rooms, devices, outlets: [
+  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", roomOrder: [], navOrder: [], favorites: [1, 5, 1001, 2103] }, rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
+  ], thermostats, tempSensors, sensors, locks, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
 }
 
 function tstatOstateForMode(tm) {
@@ -276,13 +271,6 @@ function applyCmd(id, c, v, pin) {
     else if (c === "mute") { mp.m = "muted"; }
     else if (c === "unmute") { mp.m = "unmuted"; }
     else if (c === "setVolume") { mp.v = Math.max(0, Math.min(100, Math.round(Number(v)))); if (mp.v > 0) mp.m = "unmuted"; }
-    else return { ok: false, error: "unknown command" };
-    return { ok: true };
-  }
-  const valve = state.valves?.find(d => d.i === id);
-  if (valve) {
-    if (c === "open") valve.st = "open";
-    else if (c === "close") valve.st = "closed";
     else return { ok: false, error: "unknown command" };
     return { ok: true };
   }
@@ -391,12 +379,6 @@ const server = createServer(async (req, res) => {
       else if (sen.t === "illuminance") { sen.v = Math.max(0, Math.min(1000, Math.round(Number(sen.v)) + Math.round((Math.random() - 0.5) * 60))); }
       else if (sen.t === "smoke") { const det = Math.random() < 0.05; sen.v = det ? "detected" : "clear"; sen.a = det ? 1 : 0; }
     }
-    if (state.valves?.length && Math.random() < 0.12) {
-      const valve = state.valves[Math.floor(Math.random() * state.valves.length)];
-      if (valve.st === "opening") valve.st = Math.random() < 0.5 ? "open" : "closed";
-      else if (valve.st === "closing") valve.st = Math.random() < 0.5 ? "closed" : "open";
-      else valve.st = valve.st === "open" ? "closed" : "open";
-    }
     // advance a playing music player's track occasionally to simulate live updates
     if (state.music?.length && Math.random() < 0.18) {
       const playing = state.music.filter(m => m.st === "playing");
@@ -434,12 +416,7 @@ const server = createServer(async (req, res) => {
     const sen = state.sensors?.find(d => d.i === id);
     if (sen) {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      return res.end(JSON.stringify({ i: sen.i, t: sen.t, v: sen.v, a: sen.a ?? 0, ex: sen.ex || [] }));
-    }
-    const valve = state.valves?.find(d => d.i === id);
-    if (valve) {
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      return res.end(JSON.stringify({ i: valve.i, st: valve.st }));
+      return res.end(JSON.stringify({ i: sen.i, t: sen.t, v: sen.v }));
     }
     const lock = state.locks?.find(d => d.i === id);
     if (lock) {
@@ -710,7 +687,6 @@ const server = createServer(async (req, res) => {
       ...(state.thermostats || []).map(t => t.i),
       ...(state.tempSensors || []).map(s => s.i),
       ...(state.sensors || []).map(s => s.i),
-      ...(state.valves || []).map(v => v.i),
       ...(state.music || []).map(m => m.i),
       ...(state.locks || []).map(l => l.i),
       ...(state.windowShades || []).map(s => s.i),
@@ -898,6 +874,6 @@ function mockSchedulesList() {
 
 const PORT = process.env.PORT || 4321;
 server.listen(PORT, () => {
-  console.log(`Preview: http://localhost:${PORT}/  (${state.devices.length} mock lights, ${state.thermostats?.length || 0} thermostats, ${state.locks?.length || 0} locks, ${state.music?.length || 0} music players, ${state.tempSensors?.length || 0} temp sensors, ${state.sensors?.length || 0} other sensors, ${state.valves?.length || 0} valves, ${state.rooms.length} rooms)`);
+  console.log(`Preview: http://localhost:${PORT}/  (${state.devices.length} mock lights, ${state.thermostats?.length || 0} thermostats, ${state.locks?.length || 0} locks, ${state.music?.length || 0} music players, ${state.tempSensors?.length || 0} temp sensors, ${state.sensors?.length || 0} other sensors, ${state.rooms.length} rooms)`);
   console.log(`data payload: ${(JSON.stringify(state).length / 1024).toFixed(1)} KB`);
 });
