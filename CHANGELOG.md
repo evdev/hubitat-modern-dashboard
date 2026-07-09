@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.19
+
+- Revert 0.2.18 (valve controls and sensor normalization) — restores the previous
+  stable release.
+
 ## 0.2.17
 
 - Companion app option **Show outlets in separate Outlets tab** — when enabled,
