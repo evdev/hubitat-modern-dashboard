@@ -4,6 +4,8 @@
 
 `COMMUNITY_LINK` in `build.mjs` points at this thread (also set in HPM manifests on build).
 
+**Full feature documentation:** see the [User guide](../README.md#user-guide) in the README (WebSocket, snapshots, iOS PWA/local mode, scheduler details, and more).
+
 Original draft body kept below for reference.
 
 Screenshots help a lot — capture from your hub or from the local preview
