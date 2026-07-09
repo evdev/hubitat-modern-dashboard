@@ -37,8 +37,6 @@
   const THEME_OPTIONS = ["dark", "light", "auto"];
   const APP_EL = document.getElementById("app");
   const REORDER_DRAG_THRESHOLD = 8;
-  const NAV_MOVE_PREV_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>';
-  const NAV_MOVE_NEXT_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg>';
   const DASHBOARD_TITLE_EL = document.getElementById("dashboard-title");
   const CURRENT_CATEGORY_TITLE_EL = document.getElementById("current-category-title");
 
@@ -123,7 +121,7 @@
   let navReorderSnapshot = null;
   let navReorderDraftOrder = null;
   let navReorderDrawerRelocated = false;
-  const navEls = new Map(); // navKey -> { wrap, btn, handle, movePrev, moveNext }
+  const navEls = new Map(); // navKey -> { wrap, btn, handle }
 
   let colorPopup = null;
   let colorSession = null;
@@ -3222,34 +3220,6 @@
     navReorderDraftOrder = currentNavOrderFromDom();
   }
 
-  function updateNavMoveButtons() {
-    if (!reorderMode) return;
-    const items = Array.from(document.querySelectorAll(".quick-nav .nav-reorder-item"));
-    items.forEach((wrap, i) => {
-      const rec = navEls.get(wrap.dataset.navKey);
-      if (!rec?.movePrev || !rec?.moveNext) return;
-      rec.movePrev.disabled = i === 0;
-      rec.moveNext.disabled = i === items.length - 1;
-    });
-  }
-
-  function moveNav(key, delta) {
-    const nav = document.querySelector(".quick-nav");
-    if (!nav) return;
-    const items = Array.from(nav.querySelectorAll(".nav-reorder-item"));
-    const idx = items.findIndex(w => w.dataset.navKey === key);
-    if (idx < 0) return;
-    const newIdx = idx + delta;
-    if (newIdx < 0 || newIdx >= items.length) return;
-    const wrap = items[idx];
-    const sibling = items[newIdx];
-    if (delta < 0) nav.insertBefore(wrap, sibling);
-    else nav.insertBefore(sibling, wrap);
-    updateNavDraftOrderFromDom();
-    updateNavMoveButtons();
-    hapticTap();
-  }
-
   function showAllNavForReorder() {
     const nav = document.querySelector(".quick-nav");
     if (nav) nav.hidden = false;
@@ -3889,10 +3859,7 @@
     showAllNavForReorder();
     if (REORDER_DONE_BTN) REORDER_DONE_BTN.hidden = false;
     if (REORDER_CANCEL_BTN) REORDER_CANCEL_BTN.hidden = false;
-    SEARCH_EL.disabled = true;
-    SEARCH_EL.blur();
     updateMoveButtons();
-    updateNavMoveButtons();
   }
 
   function exitReorderMode(resumePoll) {
@@ -3906,7 +3873,6 @@
     restoreNavAfterReorder();
     if (REORDER_DONE_BTN) REORDER_DONE_BTN.hidden = true;
     if (REORDER_CANCEL_BTN) REORDER_CANCEL_BTN.hidden = true;
-    SEARCH_EL.disabled = false;
     updateQuickNavVisibility();
     if (resumePoll) {
       startPolling();
@@ -4148,7 +4114,6 @@
       wrap.style.top = "";
       placeholder = null;
       updateNavDraftOrderFromDom();
-      updateNavMoveButtons();
     }
 
     function cleanupListeners() {
@@ -4207,28 +4172,14 @@
       const wrap = ce("div", "nav-reorder-item");
       wrap.dataset.navKey = key;
       nav.insertBefore(wrap, btn);
+      wrap.appendChild(btn);
       const handle = ce("button", "nav-drag-handle");
       handle.type = "button";
       handle.setAttribute("aria-label", "Drag to reorder");
       handle.innerHTML = DRAG_HANDLE_SVG;
       wrap.appendChild(handle);
-      wrap.appendChild(btn);
-      const moveBtns = ce("div", "nav-move-btns");
-      const movePrev = ce("button", "nav-move-btn nav-move-prev");
-      movePrev.type = "button";
-      movePrev.setAttribute("aria-label", "Move icon left");
-      movePrev.innerHTML = NAV_MOVE_PREV_SVG;
-      movePrev.addEventListener("click", (e) => { e.stopPropagation(); moveNav(key, -1); });
-      const moveNext = ce("button", "nav-move-btn nav-move-next");
-      moveNext.type = "button";
-      moveNext.setAttribute("aria-label", "Move icon right");
-      moveNext.innerHTML = NAV_MOVE_NEXT_SVG;
-      moveNext.addEventListener("click", (e) => { e.stopPropagation(); moveNav(key, 1); });
-      moveBtns.appendChild(movePrev);
-      moveBtns.appendChild(moveNext);
-      wrap.appendChild(moveBtns);
       attachNavReorder(wrap, handle);
-      navEls.set(key, { wrap, btn, handle, movePrev, moveNext });
+      navEls.set(key, { wrap, btn, handle });
     }
   }
 

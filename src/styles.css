@@ -341,47 +341,35 @@ body {
 .reorder-mode .room-climate { display: none !important; }
 
 .nav-reorder-item {
-  position: relative; display: flex; align-items: center; gap: 2px; flex-shrink: 0;
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  gap: 3px; flex-shrink: 0;
 }
-.nav-drag-handle,
-.nav-move-btns { display: none; }
 .nav-drag-handle {
-  appearance: none; border: none; background: transparent; color: var(--text-dim);
-  padding: 4px; cursor: grab; touch-action: none; flex-shrink: 0;
+  display: none;
+  appearance: none; border: none; background: transparent; color: var(--text-faint);
+  padding: 2px 4px; cursor: grab; touch-action: none; flex-shrink: 0;
+  line-height: 0;
 }
-.nav-drag-handle svg { width: 14px; height: 14px; fill: currentColor; }
-.nav-move-btns { align-items: center; gap: 0; flex-shrink: 0; }
-.nav-move-btn {
-  appearance: none; border: none; background: transparent; color: var(--text-dim);
-  width: 24px; height: 28px; padding: 0; cursor: pointer; touch-action: manipulation;
-  display: flex; align-items: center; justify-content: center;
-}
-.nav-move-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.nav-move-btn:active:not(:disabled) { transform: scale(.94); }
-.nav-move-btn:disabled { opacity: 0.35; cursor: default; }
+.nav-drag-handle svg { width: 12px; height: 12px; fill: currentColor; opacity: 0.85; }
+.reorder-mode .search-wrap { display: none !important; }
 .reorder-mode .quick-nav {
-  outline: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  border-radius: var(--radius); padding: 4px 2px; margin-top: 10px;
-  justify-content: flex-start; gap: 2px;
+  justify-content: space-evenly; gap: 8px; margin-top: 10px; padding-bottom: 2px;
 }
-.reorder-mode .nav-drag-handle,
-.reorder-mode .nav-move-btns { display: flex; }
+.reorder-mode .nav-drag-handle { display: flex; align-items: center; justify-content: center; }
 .reorder-mode .quick-nav .ghost-btn.icon-btn { pointer-events: none; }
-.reorder-mode .quick-nav .nav-drag-handle,
-.reorder-mode .quick-nav .nav-move-btn { pointer-events: auto; }
+.reorder-mode .quick-nav .nav-drag-handle { pointer-events: auto; }
 .reorder-mode #app.drawer-mode .topbar > .quick-nav {
   display: flex !important; margin-top: 10px;
 }
 .nav-drag-placeholder {
-  border-radius: var(--radius); flex-shrink: 0;
+  border-radius: var(--radius); flex-shrink: 0; align-self: stretch;
   border: 2px dashed color-mix(in srgb, var(--accent) 55%, var(--stroke));
   background: color-mix(in srgb, var(--accent) 8%, var(--panel));
   box-sizing: border-box;
 }
 .nav-dragging {
   position: fixed; z-index: 200; margin: 0; pointer-events: none;
-  opacity: 0.96; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  transform: scale(1.04);
+  opacity: 0.92; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
 }
 .room-drag-placeholder {
   border-radius: var(--radius); min-height: 56px;

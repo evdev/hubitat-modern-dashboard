@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.14
+
+- Nav reorder mode: drag-only (no arrow buttons), handle above each icon; search bar hidden while reordering.
+
 ## 0.2.13
 
 - Reorder category nav icons (lights, locks, scenes, etc.) alongside rooms; order syncs across devices via the hub.

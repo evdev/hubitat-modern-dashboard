@@ -57,34 +57,6 @@ async function saveRoomOrder(order) {
     M.navReorderDraftOrder = currentNavOrderFromDom();
   }
 
-  function updateNavMoveButtons() {
-    if (!M.reorderMode) return;
-    const items = Array.from(document.querySelectorAll(".quick-nav .nav-reorder-item"));
-    items.forEach((wrap, i) => {
-      const rec = M.navEls.get(wrap.dataset.navKey);
-      if (!rec?.movePrev || !rec?.moveNext) return;
-      rec.movePrev.disabled = i === 0;
-      rec.moveNext.disabled = i === items.length - 1;
-    });
-  }
-
-  function moveNav(key, delta) {
-    const nav = document.querySelector(".quick-nav");
-    if (!nav) return;
-    const items = Array.from(nav.querySelectorAll(".nav-reorder-item"));
-    const idx = items.findIndex(w => w.dataset.navKey === key);
-    if (idx < 0) return;
-    const newIdx = idx + delta;
-    if (newIdx < 0 || newIdx >= items.length) return;
-    const wrap = items[idx];
-    const sibling = items[newIdx];
-    if (delta < 0) nav.insertBefore(wrap, sibling);
-    else nav.insertBefore(sibling, wrap);
-    updateNavDraftOrderFromDom();
-    updateNavMoveButtons();
-    M.hapticTap();
-  }
-
   function showAllNavForReorder() {
     const nav = document.querySelector(".quick-nav");
     if (nav) nav.hidden = false;
@@ -724,10 +696,7 @@ async function saveRoomOrder(order) {
     showAllNavForReorder();
     if (M.REORDER_DONE_BTN) M.REORDER_DONE_BTN.hidden = false;
     if (M.REORDER_CANCEL_BTN) M.REORDER_CANCEL_BTN.hidden = false;
-    M.SEARCH_EL.disabled = true;
-    M.SEARCH_EL.blur();
     updateMoveButtons();
-    updateNavMoveButtons();
   }
 
   function exitReorderMode(resumePoll) {
@@ -741,7 +710,6 @@ async function saveRoomOrder(order) {
     restoreNavAfterReorder();
     if (M.REORDER_DONE_BTN) M.REORDER_DONE_BTN.hidden = true;
     if (M.REORDER_CANCEL_BTN) M.REORDER_CANCEL_BTN.hidden = true;
-    M.SEARCH_EL.disabled = false;
     M.updateQuickNavVisibility();
     if (resumePoll) {
       M.startPolling();
@@ -983,7 +951,6 @@ async function saveRoomOrder(order) {
       wrap.style.top = "";
       placeholder = null;
       updateNavDraftOrderFromDom();
-      updateNavMoveButtons();
     }
 
     function cleanupListeners() {
@@ -1042,28 +1009,14 @@ async function saveRoomOrder(order) {
       const wrap = ce("div", "nav-reorder-item");
       wrap.dataset.navKey = key;
       nav.insertBefore(wrap, btn);
+      wrap.appendChild(btn);
       const handle = ce("button", "nav-drag-handle");
       handle.type = "button";
       handle.setAttribute("aria-label", "Drag to reorder");
       handle.innerHTML = DRAG_HANDLE_SVG;
       wrap.appendChild(handle);
-      wrap.appendChild(btn);
-      const moveBtns = ce("div", "nav-move-btns");
-      const movePrev = ce("button", "nav-move-btn nav-move-prev");
-      movePrev.type = "button";
-      movePrev.setAttribute("aria-label", "Move icon left");
-      movePrev.innerHTML = M.NAV_MOVE_PREV_SVG;
-      movePrev.addEventListener("click", (e) => { e.stopPropagation(); moveNav(key, -1); });
-      const moveNext = ce("button", "nav-move-btn nav-move-next");
-      moveNext.type = "button";
-      moveNext.setAttribute("aria-label", "Move icon right");
-      moveNext.innerHTML = M.NAV_MOVE_NEXT_SVG;
-      moveNext.addEventListener("click", (e) => { e.stopPropagation(); moveNav(key, 1); });
-      moveBtns.appendChild(movePrev);
-      moveBtns.appendChild(moveNext);
-      wrap.appendChild(moveBtns);
       attachNavReorder(wrap, handle);
-      M.navEls.set(key, { wrap, btn, handle, movePrev, moveNext });
+      M.navEls.set(key, { wrap, btn, handle });
     }
   }
 
@@ -3073,5 +3026,5 @@ async function saveRoomOrder(order) {
     ruleSection.appendChild(ruleModes);
     body.appendChild(ruleSection);
   }
-  Object.assign(M, { currentNavOrderFromDom, updateNavDraftOrderFromDom, updateNavMoveButtons, moveNav, showAllNavForReorder, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
+  Object.assign(M, { currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, normalizeTempSensorForCard, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
 })();
