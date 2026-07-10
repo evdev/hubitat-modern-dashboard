@@ -1,14 +1,11 @@
 # Changelog
 
-## 0.2.24
+## 0.2.23
 
 - Optional dashboard password: enable in app preferences to require a password
   before the dashboard loads. Successful unlock keeps a server-signed session that
   slides forward for seven days while the dashboard is used; after a week of
   inactivity the password is required again.
-
-## 0.2.23
-
 - Fix valve Open/Close UI not updating after visiting Sensors then Favorites:
   `updateSensorCard` preferred detached Sensors-tab cards over live Favorites cards.
 
