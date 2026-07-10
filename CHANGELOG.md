@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.31
+
+- Outlets tab: dedicated card layout with centered socket graphic, status, and name
+  (2-column grid); room tiles keep the compact inline layout.
+
 ## 0.2.30
 
 - Category tabs on by default for new users (localStorage unset → enabled).

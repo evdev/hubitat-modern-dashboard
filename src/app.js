@@ -4748,7 +4748,8 @@
 
   function makeOutletTile(outlet, context) {
     const inFavorites = context === "favorites";
-    const tile = ce("section", "tile switch outlet");
+    const inOutletsTab = context === "outlets";
+    const tile = ce("section", "tile switch outlet" + (inOutletsTab ? " outlet-tab-card" : ""));
     tile.dataset.id = outlet.i;
     tile.dataset.name = String(outlet.n || "").toLowerCase();
 
@@ -4756,11 +4757,7 @@
     const roomName = outlet.r != null && outlet.r !== -1 ? roomMap.get(outlet.r) : null;
     const shortName = (outlet.n ? stripRoomPrefix(outlet.n, roomName) : null) || fullName;
 
-    const head = ce("div", "tile-head");
-    const name = ce("div", "tile-name");
-    name.textContent = shortName;
-    if (outlet.n) name.title = outlet.n;
-    const socket = ce("button", "tile-socket");
+    const socket = ce("button", "tile-socket" + (inOutletsTab ? " outlet-tab-socket" : ""));
     socket.type = "button";
     socket.setAttribute("aria-label", "Toggle " + shortName);
     socket.setAttribute("aria-pressed", outlet.s ? "true" : "false");
@@ -4769,25 +4766,45 @@
     face.appendChild(ce("span", "tile-socket-slot tile-socket-slot-r"));
     face.appendChild(ce("span", "tile-socket-ground"));
     socket.appendChild(face);
-    head.appendChild(name); head.appendChild(socket);
-    tile.appendChild(head);
-
     attachOutletSocketTap(socket, outlet.i);
 
     const fav = ce("button", "tile-fav");
     fav.type = "button";
     attachFavButton(fav, outlet.i);
 
-    const foot = ce("div", "tile-foot");
-    const state = ce("span", "tile-state"); state.textContent = outlet.s ? "On" : "Off";
+    const state = ce("span", "tile-state");
+    state.textContent = outlet.s ? "On" : "Off";
     const level = ce("span", "tile-level");
     level.textContent = "Outlet";
-    const footStart = ce("div", "tile-foot-start");
-    footStart.appendChild(fav);
-    footStart.appendChild(state);
-    foot.appendChild(footStart);
-    foot.appendChild(level);
-    tile.appendChild(foot);
+    const name = ce("div", "tile-name" + (inOutletsTab ? " outlet-tab-name" : ""));
+    name.textContent = shortName;
+    if (outlet.n) name.title = outlet.n;
+
+    if (inOutletsTab) {
+      const visual = ce("div", "outlet-tab-visual");
+      visual.appendChild(socket);
+      const status = ce("div", "outlet-tab-status");
+      status.appendChild(state);
+      const foot = ce("div", "outlet-tab-foot");
+      foot.appendChild(level);
+      foot.appendChild(name);
+      tile.appendChild(fav);
+      tile.appendChild(visual);
+      tile.appendChild(status);
+      tile.appendChild(foot);
+    } else {
+      const head = ce("div", "tile-head");
+      head.appendChild(name);
+      head.appendChild(socket);
+      tile.appendChild(head);
+      const foot = ce("div", "tile-foot");
+      const footStart = ce("div", "tile-foot-start");
+      footStart.appendChild(fav);
+      footStart.appendChild(state);
+      foot.appendChild(footStart);
+      foot.appendChild(level);
+      tile.appendChild(foot);
+    }
 
     attachSwitchTap(tile, outlet.i);
 
@@ -5755,7 +5772,7 @@
       return String(a.n || "").localeCompare(String(b.n || ""));
     });
     const grid = ce("div", "quick-fav-grid");
-    for (const out of sorted) grid.appendChild(makeOutletTile(out));
+    for (const out of sorted) grid.appendChild(makeOutletTile(out, "outlets"));
     body.appendChild(grid);
     updateStates();
   }

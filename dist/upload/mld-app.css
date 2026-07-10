@@ -1929,7 +1929,85 @@ body {
 .quick-lock-btn:active { transform: scale(.96); }
 
 .quick-body-blinds .quick-list { gap: 12px; }
-.quick-body-outlets .quick-fav-grid { gap: 12px; }
+.quick-body-outlets .quick-fav-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.tile.outlet-tab-card {
+  min-height: 172px;
+  padding: 14px 12px 12px;
+  align-items: stretch;
+  text-align: center;
+  gap: 8px;
+}
+.tile.outlet-tab-card .tile-fav {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  margin: 0;
+  z-index: 1;
+}
+.tile.outlet-tab-card .outlet-tab-visual {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 1;
+  min-height: 76px;
+  padding-top: 10px;
+}
+.tile.outlet-tab-card .tile-socket.outlet-tab-socket {
+  width: 68px;
+  height: 68px;
+  margin: 0;
+}
+.tile.outlet-tab-card .tile-socket.outlet-tab-socket .tile-socket-face {
+  width: 46px;
+  height: 46px;
+  border-radius: 11px;
+  border-width: 2px;
+}
+.tile.outlet-tab-card .tile-socket-slot {
+  top: 11px;
+  width: 4.5px;
+  height: 12px;
+}
+.tile.outlet-tab-card .tile-socket-slot-l { left: 11px; }
+.tile.outlet-tab-card .tile-socket-slot-r { right: 11px; }
+.tile.outlet-tab-card .tile-socket-ground {
+  bottom: 8px;
+  width: 7px;
+  height: 7px;
+}
+.tile.outlet-tab-card .outlet-tab-status {
+  display: flex;
+  justify-content: center;
+}
+.tile.outlet-tab-card .tile-state {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+.tile.outlet-tab-card .outlet-tab-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  width: 100%;
+}
+.tile.outlet-tab-card .tile-level {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.tile.outlet-tab-card .tile-name.outlet-tab-name {
+  font-size: 14px;
+  font-weight: 650;
+  text-align: center;
+  padding-right: 0;
+  max-height: calc(2 * 1.25em);
+}
 .shade-tile {
   display: flex; flex-direction: column; gap: 10px;
   border: 1px solid var(--stroke); background: var(--panel-2);
