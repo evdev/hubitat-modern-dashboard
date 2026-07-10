@@ -183,6 +183,7 @@
   let dashSessionExpiresAt = 0;
   let dashboardPasswordRequired = false;
   let dashSessionActivityBound = false;
+  let ensureDashboardAccessTask = null;
   let confirmPopup = null;
   let confirmPending = null;
   let quickPopup = null;
@@ -900,6 +901,10 @@
     if (data.dashSession && data.dashSessionExpiresAt) {
       saveDashSession(data.dashSession, data.dashSessionExpiresAt);
     }
+  }
+
+  function isDashboardGateOpen() {
+    return !!gatePopup?.classList.contains("open");
   }
 
   function setupDashSessionActivityRenewal() {
@@ -7634,6 +7639,7 @@
 
   // ---------- polling ----------
   async function refresh() {
+    if (isDashboardGateOpen()) return;
     try {
       const d = await fetchData();
       refreshLocalUrlFromConfig();
@@ -7691,6 +7697,7 @@
 
   function syncApp() {
     if (document.hidden) return;
+    if (isDashboardGateOpen()) return;
     refresh();
     if (!reorderMode) startPolling();
     startWS();
@@ -7895,7 +7902,6 @@
   window.addEventListener("pageshow", (e) => {
     if (document.hidden) return;
     if (e.persisted) resumeApp();
-    else syncApp();
   });
 
   // ---------- init ----------
@@ -8062,13 +8068,16 @@
 
   function openDashboardGate() {
     const popup = ensureDashboardGatePopup();
-    popup._error.hidden = true;
-    popup._error.textContent = "";
-    popup._input.value = "";
+    const alreadyOpen = popup.classList.contains("open") && gateState?.resolve;
+    if (!alreadyOpen) {
+      popup._error.hidden = true;
+      popup._error.textContent = "";
+      popup._input.value = "";
+    }
     popup.hidden = false;
     popup.classList.remove("shake");
     popup.classList.add("open");
-    requestAnimationFrame(() => popup._input.focus());
+    if (!alreadyOpen) requestAnimationFrame(() => popup._input.focus());
   }
 
   function closeDashboardGate() {
@@ -8086,25 +8095,33 @@
   }
 
   async function ensureDashboardAccess() {
-    loadDashSession();
-    let status;
-    try {
-      status = await fetchAuthStatus();
-    } catch {
-      return;
-    }
-    if (!status?.required) {
-      dashboardPasswordRequired = false;
-      clearDashSession();
-      return;
-    }
-    dashboardPasswordRequired = true;
-    if (isDashSessionFresh()) {
+    if (ensureDashboardAccessTask) return ensureDashboardAccessTask;
+    ensureDashboardAccessTask = (async () => {
+      loadDashSession();
+      let status;
+      try {
+        status = await fetchAuthStatus();
+      } catch {
+        return;
+      }
+      if (!status?.required) {
+        dashboardPasswordRequired = false;
+        clearDashSession();
+        return;
+      }
+      dashboardPasswordRequired = true;
+      if (isDashSessionFresh()) {
+        setupDashSessionActivityRenewal();
+        return;
+      }
+      await promptDashboardPassword();
       setupDashSessionActivityRenewal();
-      return;
+    })();
+    try {
+      await ensureDashboardAccessTask;
+    } finally {
+      ensureDashboardAccessTask = null;
     }
-    await promptDashboardPassword();
-    setupDashSessionActivityRenewal();
   }
 
   (async function init() {

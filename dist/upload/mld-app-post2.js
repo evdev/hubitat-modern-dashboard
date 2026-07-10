@@ -1324,6 +1324,7 @@
 
   // ---------- polling ----------
   async function refresh() {
+    if (M.isDashboardGateOpen()) return;
     try {
       const d = await M.fetchData();
       M.refreshLocalUrlFromConfig();
@@ -1381,6 +1382,7 @@
 
   function syncApp() {
     if (document.hidden) return;
+    if (M.isDashboardGateOpen()) return;
     refresh();
     if (!M.reorderMode) startPolling();
     startWS();
@@ -1585,7 +1587,6 @@
   window.addEventListener("pageshow", (e) => {
     if (document.hidden) return;
     if (e.persisted) resumeApp();
-    else syncApp();
   });
 
   // ---------- init ----------
@@ -1752,13 +1753,16 @@
 
   function openDashboardGate() {
     const popup = ensureDashboardGatePopup();
-    popup._error.hidden = true;
-    popup._error.textContent = "";
-    popup._input.value = "";
+    const alreadyOpen = popup.classList.contains("open") && M.gateState?.resolve;
+    if (!alreadyOpen) {
+      popup._error.hidden = true;
+      popup._error.textContent = "";
+      popup._input.value = "";
+    }
     popup.hidden = false;
     popup.classList.remove("shake");
     popup.classList.add("open");
-    requestAnimationFrame(() => popup._input.focus());
+    if (!alreadyOpen) requestAnimationFrame(() => popup._input.focus());
   }
 
   function closeDashboardGate() {
@@ -1776,25 +1780,33 @@
   }
 
   async function ensureDashboardAccess() {
-    M.loadDashSession();
-    let status;
-    try {
-      status = await fetchAuthStatus();
-    } catch {
-      return;
-    }
-    if (!status?.required) {
-      M.dashboardPasswordRequired = false;
-      M.clearDashSession();
-      return;
-    }
-    M.dashboardPasswordRequired = true;
-    if (M.isDashSessionFresh()) {
+    if (M.ensureDashboardAccessTask) return M.ensureDashboardAccessTask;
+    M.ensureDashboardAccessTask = (async () => {
+      M.loadDashSession();
+      let status;
+      try {
+        status = await fetchAuthStatus();
+      } catch {
+        return;
+      }
+      if (!status?.required) {
+        M.dashboardPasswordRequired = false;
+        M.clearDashSession();
+        return;
+      }
+      M.dashboardPasswordRequired = true;
+      if (M.isDashSessionFresh()) {
+        M.setupDashSessionActivityRenewal();
+        return;
+      }
+      await promptDashboardPassword();
       M.setupDashSessionActivityRenewal();
-      return;
+    })();
+    try {
+      await M.ensureDashboardAccessTask;
+    } finally {
+      M.ensureDashboardAccessTask = null;
     }
-    await promptDashboardPassword();
-    M.setupDashSessionActivityRenewal();
   }
 
   (async function init() {

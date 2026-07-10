@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.32
+
+- Dashboard password gate: skip polling/refresh while the gate is open; dedupe
+  concurrent `ensureDashboardAccess` calls; avoid clearing the password field when
+  the gate is already showing.
+
 ## 0.2.31
 
 - Outlets tab: dedicated card layout with centered socket graphic, status, and name
