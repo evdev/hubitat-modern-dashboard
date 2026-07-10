@@ -140,6 +140,7 @@ function buildMockData(count) {
       h: hue,
       sat: sat,
       cm: cmode,
+      ...(i === 3 ? { off: 1 } : {}),
     });
   }
   const thermostats = [
@@ -154,7 +155,7 @@ function buildMockData(count) {
   const sensors = [
     { i: 2101, n: "Front Door", r: 11, t: "contact", v: "closed", a: 0, ex: [{ k: "battery", v: 92, u: "%" }] },
     { i: 2102, n: "Back Door", r: 7, t: "contact", v: "open", a: 1, ex: [{ k: "battery", v: 88, u: "%" }] },
-    { i: 2103, n: "Garage Motion", r: 6, t: "motion", v: "active", a: 1, ex: [{ k: "battery", v: 74, u: "%" }, { k: "temperature", v: 68, u: "F" }] },
+    { i: 2103, n: "Garage Motion", r: 6, t: "motion", v: "active", a: 1, off: 1, ex: [{ k: "battery", v: 74, u: "%" }, { k: "temperature", v: 68, u: "F" }] },
     { i: 2104, n: "Basement Leak", r: 8, t: "leak", v: "dry", a: 0, ex: [{ k: "battery", v: 99, u: "%" }] },
     { i: 2105, n: "Attic Humidity", r: 9, t: "humidity", v: 54, a: 0, ex: [{ k: "temperature", v: 78, u: "F" }] },
     { i: 2106, n: "Desk Light Sensor", r: 4, t: "illuminance", v: 320, a: 0, ex: [] },
@@ -179,7 +180,7 @@ function buildMockData(count) {
     { i: 4004, n: "Office HomePod", r: 4, st: "playing", v: 28, tr: "Khruangbin — Texas Sun", m: "unmuted", trackIdx: 3, f: AUDIO_F_AIRPLAY },
     { i: 4005, n: "Patio Speaker", r: 7, st: "stopped", v: 0, tr: "", m: "muted", trackIdx: 2, f: AUDIO_F_FULL },
   ];
-  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", roomOrder: [], navOrder: [], favorites: [1, 5, 1001, 2103, 2201] }, rooms, devices, outlets: [
+  return { config: { pollIntervalMs: 5000, useWebSocket: false, showOfflineDevices: true, dashboardName: "mDash", roomOrder: [], navOrder: [], favorites: [1, 5, 1001, 2103, 2201] }, rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
   ], thermostats, tempSensors, sensors, valves, locks, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };

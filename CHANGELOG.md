@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.37
+
+- Optional **Show inactive devices as offline** companion setting: devices Hubitat reports
+  as INACTIVE are grayed out and labeled Offline across lights, outlets, thermostats,
+  locks, shades, valves, sensors, and music tiles.
+
 ## 0.2.36
 
 - Dashboard password: re-sync session from localStorage after unlock; derive expiry

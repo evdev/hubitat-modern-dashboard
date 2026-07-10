@@ -32,7 +32,7 @@ const APP_DISPLAY_NAME = "Modern Dashboard";
 
 const HPM_BASE_URL =
   process.env.HPM_BASE_URL ??
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist";
 
 const APP_AUTHOR = "Ephrayim (evdev)";
 const GITHUB_URL = "https://github.com/evdev/hubitat-modern-dashboard";
@@ -49,10 +49,10 @@ const COMMUNITY_LINK =
   "https://community.hubitat.com/t/release-modern-dashboard-mdash-minimal-setup-pwa-with-built-in-scheduler-runs-entirely-on-your-hub/165028";
 const HPM_REPO_PACKAGE_ID = "e8f4a1c2-3b5d-4e9f-a7c6-1d2e3f4a5b6c";
 const REPOSITORY_JSON_URL =
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/repository.json";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/hubitat/repository.json";
 const PACKAGE_MANIFEST_URL =
   process.env.HPM_PACKAGE_MANIFEST_URL ??
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/packageManifest.json";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/hubitat/packageManifest.json";
 
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";

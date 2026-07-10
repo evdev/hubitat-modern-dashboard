@@ -84,6 +84,8 @@ def mainPage() {
             input "dashboardName", "string", title: "Dashboard name", defaultValue: "mDash", required: false
             input "pollSec", "number", title: "Refresh interval (seconds)", defaultValue: 5, required: false, range: "2..60"
             input "enableWs", "bool", title: "Enable real-time updates on local network (eventsocket)", defaultValue: true, required: false
+            input "showOfflineDevices", "bool", title: "Show inactive devices as offline (grayed out)", defaultValue: false, required: false
+            paragraph "<small>Uses Hubitat device status (INACTIVE). Quiet but healthy devices may occasionally appear offline.</small>"
         }
         section("Scheduler") {
             input "schedulerUse24Hour", "bool", title: "Use 24-hour time in scheduler", defaultValue: false
@@ -364,6 +366,7 @@ def appendAudioDeviceJson(out, d, roomsList) {
     out << ",\"tr\":" << jsonStr(track ?: "")
     out << ",\"m\":" << jsonStr(muteVal ?: "unmuted")
     out << ",\"f\":" << flags.toString()
+    appendOfflineJson(out, d)
     out << "}"
 }
 
@@ -698,6 +701,7 @@ def renderData() {
     out << "{\"config\":{"
     out << "\"pollIntervalMs\":" << (pollSec ? (pollSec.toInteger() * 1000) : 5000)
     out << ",\"useWebSocket\":" << (enableWs == null ? true : enableWs)
+    out << ",\"showOfflineDevices\":" << (showOfflineDevices == true)
     out << ",\"dashboardName\":" << jsonStr((dashboardName?.trim()) ?: "mDash")
     out << ",\"localUrl\":" << jsonStr(dashboardUrl(true))
     out << ",\"cloudUrl\":" << jsonStr(dashboardUrl(false))
@@ -745,6 +749,7 @@ def renderData() {
             out << ",\"h\":" << (hue == null ? "null" : hue.toString())
             out << ",\"sat\":" << (sat == null ? "null" : sat.toString())
             out << ",\"cm\":" << jsonStr(cmode)
+            appendOfflineJson(out, d)
             out << "}"
         }
     }
@@ -801,6 +806,7 @@ def renderData() {
             out << ",\"supM\":" << jsonStr(supModes)
             out << ",\"supFM\":" << jsonStr(supFanModes)
             out << ",\"fsLev\":" << jsonStr(fsLevels)
+            appendOfflineJson(out, d)
             out << "}"
         }
     }
@@ -831,6 +837,7 @@ def renderData() {
             out << ",\"temp\":" << numOrNull(temp)
             out << ",\"u\":" << jsonStr(tempUnit)
             out << ",\"bat\":" << numOrNull(bat)
+            appendOfflineJson(out, d)
             out << "}"
         }
     }
@@ -881,6 +888,7 @@ def renderData() {
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
             out << ",\"st\":" << jsonStr(lockSt)
+            appendOfflineJson(out, d)
             out << "}"
         }
     }
@@ -903,6 +911,7 @@ def renderData() {
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"st\":" << jsonStr(shadeSt)
             out << ",\"pos\":" << numOrNull(shadePos)
+            appendOfflineJson(out, d)
             out << "}"
         }
     }
@@ -923,6 +932,7 @@ def renderData() {
             out << ",\"n\":" << jsonStr(d.displayName)
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"st\":" << jsonStr(valveSt)
+            appendOfflineJson(out, d)
             out << "}"
         }
     }
@@ -985,6 +995,14 @@ def safeCurrent(d, attrName) {
     } catch (e) { return null }
 }
 
+def isDeviceInactive(d) {
+    try { return d.getStatus()?.toString()?.equalsIgnoreCase("INACTIVE") } catch (e) { return false }
+}
+
+def appendOfflineJson(out, d) {
+    if (showOfflineDevices == true && isDeviceInactive(d)) out << ",\"off\":1"
+}
+
 def appendOnOffDeviceJson(out, d, roomsList) {
     def roomName = null
     try { roomName = d.getRoomName() } catch (e) { roomName = null }
@@ -998,6 +1016,7 @@ def appendOnOffDeviceJson(out, d, roomsList) {
     out << ",\"n\":" << jsonStr(d.displayName)
     out << ",\"r\":" << (rid == null ? "null" : rid.toString())
     out << ",\"s\":" << (sw == "on" ? 1 : 0)
+    appendOfflineJson(out, d)
     out << "}"
 }
 
@@ -1150,7 +1169,9 @@ def appendSensorJson(out, d, entry, roomsList) {
         out << ",\"u\":" << jsonStr(ex.u)
         out << "}"
     }
-    out << "]}"
+    out << "]"
+    appendOfflineJson(out, d)
+    out << "}"
 }
 
 def resolvedDashboardName() {
@@ -1215,7 +1236,9 @@ def renderDevice() {
         out << ",\"l\":" << (lvl == null ? "null" : lvl.toString())
         out << ",\"k\":" << (kelvin == null ? "null" : kelvin.toString())
         out << ",\"h\":" << (hue == null ? "null" : hue.toString())
-        out << ",\"sat\":" << (sat == null ? "null" : sat.toString()) << "}"
+        out << ",\"sat\":" << (sat == null ? "null" : sat.toString())
+        appendOfflineJson(out, dev)
+        out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     // thermostat?
@@ -1235,6 +1258,7 @@ def renderDevice() {
         out << ",\"fm\":" << jsonStr(hasFanMode ? safeCurrent(t, "thermostatFanMode") : null)
         out << ",\"hasFs\":" << (hasFanSpeed ? 1 : 0)
         out << ",\"fs\":" << jsonStr(hasFanSpeed ? safeCurrent(t, "fanSpeed") : null)
+        appendOfflineJson(out, t)
         out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
@@ -1244,6 +1268,7 @@ def renderDevice() {
         def out = new StringBuilder()
         out << "{\"i\":" << s.id
         out << ",\"temp\":" << numOrNull(safeCurrent(s, "temperature"))
+        appendOfflineJson(out, s)
         out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
@@ -1263,7 +1288,9 @@ def renderDevice() {
         def out = new StringBuilder()
         out << "{\"i\":" << lk.id
         out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
-        out << ",\"st\":" << jsonStr(lockSt) << "}"
+        out << ",\"st\":" << jsonStr(lockSt)
+        appendOfflineJson(out, lk)
+        out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def shade = windowShades?.find { it.id.toString() == id.toString() }
@@ -1274,7 +1301,9 @@ def renderDevice() {
         def out = new StringBuilder()
         out << "{\"i\":" << shade.id
         out << ",\"st\":" << jsonStr(shadeSt)
-        out << ",\"pos\":" << numOrNull(shadePos) << "}"
+        out << ",\"pos\":" << numOrNull(shadePos)
+        appendOfflineJson(out, shade)
+        out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def valve = valves?.find { it.id.toString() == id.toString() }
@@ -1283,6 +1312,7 @@ def renderDevice() {
         def out = new StringBuilder()
         out << "{\"i\":" << valve.id
         out << ",\"st\":" << jsonStr(safeCurrent(valve, "valve"))
+        appendOfflineJson(out, valve)
         out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
@@ -1298,6 +1328,7 @@ def renderDevice() {
         def muteVal = safeCurrent(mp, "mute")
         out << ",\"m\":" << jsonStr(muteVal ?: "unmuted")
         out << ",\"f\":" << audioControlFlags(mp).toString()
+        appendOfflineJson(out, mp)
         out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }

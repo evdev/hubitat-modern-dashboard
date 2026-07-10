@@ -1545,10 +1545,11 @@
   function syncTileState(rec, dev) {
     if (!rec) return;
     rec.data = dev;
+    const offline = M.applyOfflineUi(rec.el, dev);
     const on = M.effectiveSwitch(dev);
     rec.el.classList.toggle("on", on);
     rec.el.classList.toggle("off", !on);
-    rec.stateEl.textContent = on ? "On" : "Off";
+    rec.stateEl.textContent = offline ? "Offline" : (on ? "On" : "Off");
     const bulb = qs(".tile-bulb", rec.el);
     if (bulb) bulb.setAttribute("aria-pressed", on ? "true" : "false");
     const socket = qs(".tile-socket", rec.el);
@@ -1903,6 +1904,7 @@
           if (rec.data.ct && d.k != null) dev.k = d.k;
           if (rec.data.rgb && d.h != null) dev.h = d.h;
           if (rec.data.rgb && d.sat != null) dev.sat = d.sat;
+          M.mergeOfflineField(dev, d);
         }
         const opt = M.switchOptimistic.get(Number(d.i));
         if (opt && !!dev?.s === !!opt.s) M.clearSwitchOptimistic(Number(d.i));
@@ -1921,6 +1923,7 @@
         if (d.fm != null) t.fm = d.fm;
         if (d.hasFs != null) t.hasFs = d.hasFs;
         if (d.fs != null) t.fs = d.fs;
+        M.mergeOfflineField(t, d);
         M.updateClimateWidgets();
         updateRoomMeta();
         M.refreshOpenTstatQuickPopups();
@@ -1929,6 +1932,7 @@
       const s = M.tempSensors.find(x => x.i === Number(d.i));
       if (s) {
         if (d.temp != null) s.temp = Number(d.temp);
+        M.mergeOfflineField(s, d);
         M.updateClimateWidgets();
         updateRoomMeta();
         if (M.currentCategory() === "sensors") M.refreshSensorsPopup();
@@ -1938,6 +1942,7 @@
       const sen = M.sensors.find(x => x.i === Number(d.i));
       if (sen) {
         applySensorPayload(sen, d);
+        M.mergeOfflineField(sen, d);
         if (M.currentCategory() === "sensors") M.refreshSensorsPopup();
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
@@ -1946,6 +1951,7 @@
       if (lock) {
         if (d.lk != null) lock.lk = d.lk ? 1 : 0;
         if (d.st != null) lock.st = d.st;
+        M.mergeOfflineField(lock, d);
         const opt = M.lockOptimistic.get(Number(d.i));
         if (opt && !!lock.lk === !!opt.lk) M.clearLockOptimistic(Number(d.i));
         if (M.currentCategory() === "locks") renderLocksPopup();
@@ -1956,6 +1962,7 @@
       if (shade) {
         if (d.st != null) shade.st = d.st;
         if (d.pos != null) shade.pos = d.pos;
+        M.mergeOfflineField(shade, d);
         const opt = M.shadeOptimistic.get(Number(d.i));
         if (opt) {
           let matched = true;
@@ -1970,6 +1977,7 @@
       const valve = M.valves.find(x => x.i === Number(d.i));
       if (valve) {
         if (d.st != null) valve.st = d.st;
+        M.mergeOfflineField(valve, d);
         const opt = M.valveOptimistic.get(Number(d.i));
         if (opt?.st != null && valve.st === opt.st) M.clearValveOptimistic(Number(d.i));
         if (M.currentCategory() === "sensors") M.refreshSensorsPopup();
@@ -1983,6 +1991,7 @@
         if (d.tr != null) mp.tr = d.tr;
         if (d.m != null) mp.m = d.m;
         if (d.f != null) mp.f = d.f;
+        M.mergeOfflineField(mp, d);
         const mopt = M.musicOptimistic.get(Number(d.i));
         if (mopt && (mopt.st == null || mp.st === mopt.st) && (mopt.v == null || mp.v === mopt.v)) {
           M.clearMusicOptimistic(Number(d.i));
@@ -2239,12 +2248,14 @@
     if (inFav) {
       M.favLockMap.set(lock.i, { el: row, meta, lockBtn, unlockBtn, favBtn: fav });
     }
+    M.applyOfflineUi(row, lock);
     return row;
   }
 
   function updateFavoriteLockRow(lock) {
     const rec = M.favLockMap.get(lock.i);
     if (!rec) return;
+    const offline = M.applyOfflineUi(rec.el, lock);
     rec.meta.textContent = roomLabel(lock.r) + " · " + M.lockStatusLabel(lock);
     const isLocked = M.effectiveLock(lock);
     rec.lockBtn.classList.toggle("active", isLocked);
@@ -2356,12 +2367,14 @@
     if (inFav) {
       M.favShadeMap.set(shade.i, { el: tile, meta, levelLabel, slider, openBtn, closeBtn, stopBtn, favBtn: fav });
     }
+    M.applyOfflineUi(tile, shade);
     return tile;
   }
 
   function updateFavoriteShadeTile(shade) {
     const rec = M.favShadeMap.get(shade.i);
     if (!rec) return;
+    const offline = M.applyOfflineUi(rec.el, shade);
     const moving = M.shadeIsMoving(shade);
     const pos = M.effectiveShadePosition(shade);
     rec.meta.textContent = roomLabel(shade.r) + " · " + M.shadeStatusLabel(shade);
@@ -2377,6 +2390,7 @@
     rec.closeBtn.classList.toggle("moving", moving);
     rec.openBtn.disabled = moving;
     rec.closeBtn.disabled = moving;
+    if (rec.stopBtn) rec.stopBtn.disabled = moving;
   }
 
   function renderBlindsPopup() {
@@ -2560,12 +2574,14 @@
         el: row, art, track, meta, playPauseBtn, stopBtn, volIcon, slider, muteBadge, favBtn, i: dev.i,
       });
     }
+    M.applyOfflineUi(row, dev);
     return row;
   }
 
   function updateFavoriteMusicRow(dev) {
     const rec = M.favMusicMap.get(dev.i);
     if (!rec) return;
+    M.applyOfflineUi(rec.el, dev);
     const ctrl = M.musicControls(dev);
     const playing = M.isMusicPlaying(M.effectiveMusicStatus(dev));
     const status = M.effectiveMusicStatus(dev);

@@ -191,6 +191,7 @@
   }
 
   function applySensorCardState(card, dev, rec) {
+    const offline = M.applyOfflineUi(card, dev);
     const meta = SENSOR_TYPE_META[dev.t] || SENSOR_TYPE_META.generic;
     card.style.setProperty("--sensor-accent", meta.accent);
     let hero, pill, alert;
@@ -205,7 +206,11 @@
       const d = sensorDisplay(dev);
       hero = d.hero; pill = d.pill; alert = d.alert;
     }
-    card.className = "sensor-card sensor-card--" + (dev.t || "generic") + (alert ? " is-alert" : "");
+    if (offline) {
+      pill = "Offline";
+      alert = false;
+    }
+    card.className = "sensor-card sensor-card--" + (dev.t || "generic") + (alert ? " is-alert" : "") + (offline ? " offline" : "");
     rec.heroEl.textContent = hero;
     if (pill) {
       rec.pillEl.hidden = false;
@@ -470,20 +475,22 @@
     card.appendChild(controls);
 
     map.set(t.i, { el: card, card, spEl, stateEl, stateTxt, modeLabel, modeBtn, minus, plus });
+    M.applyOfflineUi(card, t);
     return card;
   }
 
   function updateQuickTstatCard(t, map) {
     const rec = map.get(t.i);
     if (!rec) return;
+    const offline = M.applyOfflineUi(rec.card, t);
     const tm = String(t.tm || "").toLowerCase();
-    rec.card.className = "quick-fav-card quick-fav-tstat mode-" + (tm || "off");
+    rec.card.className = "quick-fav-card quick-fav-tstat mode-" + (tm || "off") + (offline ? " offline" : "");
     const temps = M.favoriteTstatTemps(t);
     const stateInfo = M.favoriteTstatState(t);
     rec.spEl.className = "quick-fav-tstat-sp " + temps.tone;
     rec.spEl.textContent = temps.setpoint;
     rec.stateEl.className = "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : "");
-    rec.stateTxt.textContent = stateInfo.label;
+    rec.stateTxt.textContent = offline ? "Offline" : stateInfo.label;
     rec.modeLabel.textContent = M.tstatModeDisplayLabel(t.tm);
     const canAdjust = !!M.favoriteTstatTarget(t);
     rec.minus.disabled = !canAdjust;

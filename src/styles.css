@@ -663,6 +663,16 @@ body {
 .tile:hover { border-color: var(--stroke-2); }
 .tile.on { border-color: color-mix(in srgb, var(--on) 55%, transparent); background: linear-gradient(180deg, color-mix(in srgb, var(--on) 12%, var(--panel-solid)), var(--panel-solid)); }
 .tile.on .tile-name { color: var(--text); }
+.tile.offline,
+.sensor-card.offline,
+.quick-lock-row.offline,
+.shade-tile.offline,
+.music-row.offline,
+.quick-fav-card.offline,
+.room-climate.offline {
+  opacity: 0.45;
+  filter: grayscale(0.85);
+}
 .tile-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .tile-name {
   font-size: 14px; font-weight: 650; line-height: 1.25; color: var(--text-dim);
