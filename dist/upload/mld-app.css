@@ -243,7 +243,7 @@ body {
 .topbar-central-btn:active { transform: scale(.96); }
 
 .quick-nav {
-  display: flex; justify-content: center; width: 100%;
+  display: flex; justify-content: flex-start; width: 100%;
   gap: 8px; margin-top: 10px;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
   scrollbar-width: none; padding-bottom: 2px;
@@ -354,7 +354,7 @@ body {
 .nav-drag-handle svg { width: 12px; height: 12px; fill: currentColor; opacity: 0.85; }
 .reorder-mode .search-wrap { display: none !important; }
 .reorder-mode .quick-nav {
-  justify-content: center; gap: 8px; margin-top: 10px; padding-bottom: 2px;
+  justify-content: flex-start; gap: 8px; margin-top: 10px; padding-bottom: 2px;
 }
 .reorder-mode .nav-drag-handle { display: flex; align-items: center; justify-content: center; }
 .reorder-mode .quick-nav .ghost-btn.icon-btn { pointer-events: none; }

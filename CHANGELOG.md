@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.38
+
+- Category quick-nav icons align left (scrollable row) instead of centered.
+
 ## 0.2.37
 
 - Optional **Show inactive devices as offline** companion setting: devices Hubitat reports
