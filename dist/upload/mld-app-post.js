@@ -2174,7 +2174,7 @@
   }
 
   function syncQuickPopupWidthForOpen(popup) {
-    const type = M.inTabView() ? activeTab : M.quickPopupOpenType;
+    const type = M.inTabView() ? M.activeTab : M.quickPopupOpenType;
     if (type) syncQuickPopupWidth(popup, type);
   }
 

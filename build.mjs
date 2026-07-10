@@ -92,10 +92,19 @@ function rewriteCodeSegment(segment, replaceIds) {
   let out = segment;
   for (const id of replaceIds) {
     const re = new RegExp(
-      `(?<!(?:const|let|var) )(?<![.\\w])${id.replace(/\$/g, "\\$")}(?!\\s*:)(?![\\w$])`,
+      `(?<!(?:const|let|var) )(?<![.\\w])${id.replace(/\$/g, "\\$")}(?![\\w$])`,
       "g"
     );
-    out = out.replace(re, `M.${id}`);
+    // Rewrite bare ids to M.id, but leave object-literal keys alone
+    // (`{ foo: … }` / `, foo: …`). Ternaries (`? foo : bar`) must still rewrite.
+    out = out.replace(re, (match, offset, str) => {
+      const after = str.slice(offset + match.length);
+      if (/^\s*:/.test(after)) {
+        const before = str.slice(0, offset);
+        if (/(?:\{|,)\s*$/.test(before)) return match;
+      }
+      return `M.${match}`;
+    });
   }
   return out;
 }

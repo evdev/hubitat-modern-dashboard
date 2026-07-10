@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.29
+
+- Fix Category tabs / non-Lights views crashing with `ReferenceError: activeTab is
+  not defined`. The chunk rewriter treated ternary `? activeTab : …` like an object
+  key and skipped the `M.` prefix after the 0.2.28 core split.
+
 ## 0.2.28
 
 - Fix cloud dashboard blank after 0.2.27: Hubitat cloud gateway times out serving

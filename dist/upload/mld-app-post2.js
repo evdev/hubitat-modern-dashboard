@@ -770,7 +770,7 @@
   for (const { popup, title } of QUICK_NAV) POPUP_LABELS[popup] = title;
 
   function currentCategoryLabel() {
-    const cat = M.quickPopupOpenType || (M.tabMode && M.activeTab !== "lights" ? activeTab : null);
+    const cat = M.quickPopupOpenType || (M.tabMode && M.activeTab !== "lights" ? M.activeTab : null);
     if (!cat) return "Lights";
     return POPUP_LABELS[cat] || M.TAB_LABELS[cat] || cat;
   }
