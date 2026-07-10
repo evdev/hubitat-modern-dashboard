@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.34
+
+- Dashboard password unlock: use stateless signed sessions (djb2 hash) instead of
+  server-side session map — avoids Hubitat sandbox failures from `Random` and
+  session state writes that caused "an unexpected error occurred" on unlock.
+
 ## 0.2.33
 
 - Dashboard password sessions: store opaque tokens in app state instead of
