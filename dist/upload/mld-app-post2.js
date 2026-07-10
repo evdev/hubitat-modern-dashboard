@@ -1655,7 +1655,16 @@
         return { ok: false, error: "wrong password" };
       }
       if (!r.ok) {
-        return { ok: false, error: data.error ? String(data.error) : "Unlock failed" };
+        const hubMsg = data?.message || data?.errorMessage || data?.msg;
+        const err = data?.error;
+        let msg = "Unlock failed";
+        if (typeof hubMsg === "string" && hubMsg.trim()) msg = hubMsg.trim();
+        else if (typeof err === "string" && err.trim()) msg = err.trim();
+        else if (err != null && err !== true) msg = String(err);
+        return { ok: false, error: msg };
+      }
+      if (!data?.session && !data?.dashSession) {
+        return { ok: false, error: "Unlock failed" };
       }
       M.applyDashSessionFromResponse(data);
       return { ok: true };

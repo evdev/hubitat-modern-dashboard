@@ -4,7 +4,6 @@
 // Run:  node preview/server.mjs   then open http://localhost:4321/
 
 import { readFileSync, existsSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createServer } from "node:http";
@@ -24,7 +23,6 @@ const NAMES = ["Ceiling", "Recessed", "Pendant", "Lamp", "Sconce", "Strip", "Spo
 const MOCK_HSM_PIN = "1234";
 const MOCK_UNLOCK_PIN = "5678";
 const MOCK_DASH_PASSWORD = "dashpass";
-const MOCK_ACCESS_TOKEN = "preview-token";
 const DASH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MOCK_TRACKS = [
   "Daft Punk — Get Lucky",
@@ -311,25 +309,37 @@ function dashboardPasswordRequired() {
   return state.dashboardPasswordEnabled === true && state.dashboardPasswordRequired === true;
 }
 
-function dashboardSessionSig(expiryMs) {
-  const secret = `${MOCK_DASH_PASSWORD}|${MOCK_ACCESS_TOKEN}|${expiryMs}`;
-  return createHash("sha256").update(secret).digest("hex");
+const dashSessions = new Map(); // token -> expiresAt
+
+function pruneDashSessions(nowMs = Date.now()) {
+  for (const [token, exp] of dashSessions) {
+    if (!exp || exp <= nowMs) dashSessions.delete(token);
+  }
 }
 
 function issueDashboardSession() {
-  const expiresAt = Date.now() + DASH_SESSION_TTL_MS;
-  const session = `${expiresAt}.${dashboardSessionSig(expiresAt)}`;
+  const nowMs = Date.now();
+  pruneDashSessions(nowMs);
+  const expiresAt = nowMs + DASH_SESSION_TTL_MS;
+  const session = `ds-${nowMs}-${Math.floor(Math.random() * 1e9)}`;
+  dashSessions.set(session, expiresAt);
   return { session, expiresAt };
 }
 
 function validateAndRenewDashboardSession(token) {
   if (!token || !dashboardPasswordRequired()) return null;
-  const [expStr, sig] = String(token).split(".", 2);
-  if (!expStr || !sig) return null;
-  const expiry = Number(expStr);
-  if (!Number.isFinite(expiry) || expiry <= Date.now()) return null;
-  if (sig !== dashboardSessionSig(expiry)) return null;
-  return issueDashboardSession();
+  const key = String(token).trim();
+  if (!key) return null;
+  const nowMs = Date.now();
+  pruneDashSessions(nowMs);
+  const expiry = dashSessions.get(key);
+  if (!expiry || expiry <= nowMs) {
+    dashSessions.delete(key);
+    return null;
+  }
+  const renewedExpiry = nowMs + DASH_SESSION_TTL_MS;
+  dashSessions.set(key, renewedExpiry);
+  return { session: key, expiresAt: renewedExpiry };
 }
 
 function dashSessionFromUrl(url, body) {

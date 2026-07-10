@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.33
+
+- Dashboard password sessions: store opaque tokens in app state instead of
+  SHA-256/HMAC (Hubitat sandbox blocks `MessageDigest`). Unlock and API calls now
+  renew sessions server-side; client uses `expiresAt` from the hub.
+
 ## 0.2.32
 
 - Dashboard password gate: skip polling/refresh while the gate is open; dedupe

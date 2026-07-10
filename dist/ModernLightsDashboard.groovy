@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.32
+// Modern Dashboard v0.2.33
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.32 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.33 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -2296,44 +2296,73 @@ def dashboardPasswordRequired() {
     return dashboardPasswordEnabled == true && (dashboardPassword?.toString()?.trim() ?: "") != ""
 }
 
-def sha256Hex(input) {
-    def md = java.security.MessageDigest.getInstance("SHA-256")
-    md.update(input.toString().getBytes("UTF-8"))
-    def digest = md.digest()
-    def sb = new StringBuilder()
-    for (byte b : digest) {
-        sb.append(String.format("%02x", b & 0xff))
+// Opaque sessions stored in app state (Hubitat sandbox blocks MessageDigest/HMAC).
+def parseDashSessionsMap() {
+    if (!state.dashSessionsJson) return [:]
+    try {
+        return new groovy.json.JsonSlurper().parseText(state.dashSessionsJson.toString()) ?: [:]
+    } catch (e) {
+        return [:]
     }
-    return sb.toString()
 }
 
-def dashboardSessionSecret() {
-    def pw = dashboardPassword?.toString()?.trim() ?: ""
-    def tok = state.accessToken?.toString()?.trim() ?: ""
-    return pw + "|" + tok
+def saveDashSessionsMap(map) {
+    state.dashSessionsJson = groovy.json.JsonOutput.toJson(map ?: [:])
 }
 
-def dashboardSessionSig(expiryMs) {
-    return sha256Hex(dashboardSessionSecret() + "|" + expiryMs.toString())
+def pruneDashSessionsMap(map, long nowMs) {
+    def out = [:]
+    map?.each { k, v ->
+        try {
+            long exp = (v instanceof Number) ? v.longValue() : v.toString().toLong()
+            if (exp > nowMs && k) out[k.toString()] = exp
+        } catch (e) {}
+    }
+    return out
+}
+
+def newDashSessionToken() {
+    return "ds-" + now() + "-" + Math.abs(new Random().nextInt() % 1000000) + "-" + Math.abs(new Random().nextInt() % 1000000)
 }
 
 def issueDashboardSession() {
-    long expiry = now() + DASH_SESSION_TTL_MS
-    def sig = dashboardSessionSig(expiry)
-    def session = expiry.toString() + "." + sig
-    return [session: session, expiresAt: expiry]
+    long nowMs = now()
+    long expiry = nowMs + DASH_SESSION_TTL_MS
+    def token = newDashSessionToken()
+    def map = pruneDashSessionsMap(parseDashSessionsMap(), nowMs)
+    map[token] = expiry
+    saveDashSessionsMap(map)
+    return [session: token, expiresAt: expiry]
 }
 
 def validateAndRenewDashboardSession(token) {
     if (!token || !dashboardPasswordRequired()) return null
-    def parts = token.toString().split("\\.", 2)
-    if (parts.length != 2) return null
+    def key = token.toString().trim()
+    if (!key) return null
+    long nowMs = now()
+    def map = pruneDashSessionsMap(parseDashSessionsMap(), nowMs)
+    def expVal = map[key]
+    if (expVal == null) {
+        saveDashSessionsMap(map)
+        return null
+    }
     long expiry
-    try { expiry = parts[0].toLong() } catch (e) { return null }
-    if (expiry <= now()) return null
-    def expectedSig = dashboardSessionSig(expiry)
-    if (!pinsMatch(expectedSig, parts[1])) return null
-    return issueDashboardSession()
+    try {
+        expiry = (expVal instanceof Number) ? expVal.longValue() : expVal.toString().toLong()
+    } catch (e) {
+        map.remove(key)
+        saveDashSessionsMap(map)
+        return null
+    }
+    if (expiry <= nowMs) {
+        map.remove(key)
+        saveDashSessionsMap(map)
+        return null
+    }
+    long renewedExpiry = nowMs + DASH_SESSION_TTL_MS
+    map[key] = renewedExpiry
+    saveDashSessionsMap(map)
+    return [session: key, expiresAt: renewedExpiry]
 }
 
 def extractDashSession() {

@@ -870,24 +870,14 @@
     saveDashSession("", 0);
   }
 
-  function dashSessionExpiryMs(token) {
-    const raw = String(token || "").split(".")[0];
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  }
-
   function isDashSessionFresh() {
-    if (!dashSession) return false;
-    const tokenExp = dashSessionExpiryMs(dashSession);
-    const exp = tokenExp || dashSessionExpiresAt;
-    return exp > Date.now();
+    return !!dashSession && dashSessionExpiresAt > Date.now();
   }
 
   function slideDashSessionExpiry() {
     if (!dashSession) return;
-    const tokenExp = dashSessionExpiryMs(dashSession);
-    const slid = Date.now() + DASH_SESSION_MAX_AGE_MS;
-    dashSessionExpiresAt = tokenExp ? Math.min(slid, tokenExp) : slid;
+    // Local UX extension only; server expiry is authoritative and renewed on API calls.
+    dashSessionExpiresAt = Date.now() + DASH_SESSION_MAX_AGE_MS;
     try { localStorage.setItem(DASH_SESSION_EXPIRES_KEY, String(dashSessionExpiresAt)); } catch {}
     publishMld({ dashSessionExpiresAt: dashSessionExpiresAt });
   }
@@ -7970,7 +7960,16 @@
         return { ok: false, error: "wrong password" };
       }
       if (!r.ok) {
-        return { ok: false, error: data.error ? String(data.error) : "Unlock failed" };
+        const hubMsg = data?.message || data?.errorMessage || data?.msg;
+        const err = data?.error;
+        let msg = "Unlock failed";
+        if (typeof hubMsg === "string" && hubMsg.trim()) msg = hubMsg.trim();
+        else if (typeof err === "string" && err.trim()) msg = err.trim();
+        else if (err != null && err !== true) msg = String(err);
+        return { ok: false, error: msg };
+      }
+      if (!data?.session && !data?.dashSession) {
+        return { ok: false, error: "Unlock failed" };
       }
       applyDashSessionFromResponse(data);
       return { ok: true };
