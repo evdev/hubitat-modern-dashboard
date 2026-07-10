@@ -1647,13 +1647,7 @@
   }
 
   async function unlockDashboard(password) {
-    try {
-      const r = await M.fetchWithTimeout(M.withToken("auth/unlock"), {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ password }),
-      });
+    async function parseUnlockResponse(r) {
       let data = {};
       try { data = await r.json(); } catch {}
       if (r.status === 403 || data.error === "wrong password") {
@@ -1664,6 +1658,23 @@
       }
       M.applyDashSessionFromResponse(data);
       return { ok: true };
+    }
+    try {
+      const postUrl = M.withToken("auth/unlock");
+      let r = await M.fetchWithTimeout(postUrl, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      let result = await parseUnlockResponse(r);
+      if (result.ok || result.error === "wrong password") return result;
+      const sep = postUrl.includes("?") ? "&" : "?";
+      r = await M.fetchWithTimeout(postUrl + sep + "password=" + encodeURIComponent(password), {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      return parseUnlockResponse(r);
     } catch {
       return { ok: false, error: "Unlock failed" };
     }
@@ -1803,6 +1814,20 @@
       startWS();
     } catch (e) {
       console.error("Dashboard init failed:", e);
+      if (e?.code === "auth_required" || /auth required/i.test(String(e?.message || ""))) {
+        try {
+          await ensureDashboardAccess();
+          const d = await M.fetchData();
+          if (M.applyLocalModeStrategy()) return;
+          M.render(d);
+          M.initAndroidLocalImmersive();
+          startPolling();
+          startWS();
+          return;
+        } catch (retryErr) {
+          console.error("Dashboard auth retry failed:", retryErr);
+        }
+      }
       const cloud = String(M.cfg.cloudUrl || M.loadStoredCloudUrl() || "").trim();
       if (M.isLocalOrigin() && cloud) {
         M.cfg.cloudUrl = cloud;

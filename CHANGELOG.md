@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.27
+
+- Fix dashboard password flow on hub: validate session expiry from the token (not only
+  client-side sliding expiry), retry auth after HTTP 401 instead of showing a generic
+  connection error, and fall back to GET unlock when POST body parsing fails on Hubitat.
+- Bust browser cache after updates: script/CSS URLs in `mld-index.html` include the app
+  version query string so hubs no longer keep serving stale JS after File Manager uploads.
+
 ## 0.2.26
 
 - Fix password unlock hanging forever: `closeDashboardGate()` cleared `gateState`

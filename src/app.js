@@ -2830,14 +2830,26 @@
     saveDashSession("", 0);
   }
 
+  function dashSessionExpiryMs(token) {
+    const raw = String(token || "").split(".")[0];
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
   function isDashSessionFresh() {
-    return !!dashSession && dashSessionExpiresAt > Date.now();
+    if (!dashSession) return false;
+    const tokenExp = dashSessionExpiryMs(dashSession);
+    const exp = tokenExp || dashSessionExpiresAt;
+    return exp > Date.now();
   }
 
   function slideDashSessionExpiry() {
     if (!dashSession) return;
-    dashSessionExpiresAt = Date.now() + DASH_SESSION_MAX_AGE_MS;
+    const tokenExp = dashSessionExpiryMs(dashSession);
+    const slid = Date.now() + DASH_SESSION_MAX_AGE_MS;
+    dashSessionExpiresAt = tokenExp ? Math.min(slid, tokenExp) : slid;
     try { localStorage.setItem(DASH_SESSION_EXPIRES_KEY, String(dashSessionExpiresAt)); } catch {}
+    publishMld({ dashSessionExpiresAt });
   }
 
   function applyDashSessionFromResponse(data) {
@@ -3032,12 +3044,16 @@
     }
   }
 
-  async function getJson(url, retried) {
+  async function getJson(url, authPass) {
+    const pass = authPass || 0;
     const r = await fetchWithTimeout(withToken(url), { cache: "no-store", headers: { "Accept": "application/json" } });
-    if (r.status === 401 && !retried) {
+    if (r.status === 401) {
       clearDashSession();
       await postCall("ensureDashboardAccess");
-      return getJson(url, true);
+      if (pass < 2) return getJson(url, pass + 1);
+      const err = new Error("auth required");
+      err.code = "auth_required";
+      throw err;
     }
     if (!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
@@ -7916,13 +7932,7 @@
   }
 
   async function unlockDashboard(password) {
-    try {
-      const r = await fetchWithTimeout(withToken("auth/unlock"), {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ password }),
-      });
+    async function parseUnlockResponse(r) {
       let data = {};
       try { data = await r.json(); } catch {}
       if (r.status === 403 || data.error === "wrong password") {
@@ -7933,6 +7943,23 @@
       }
       applyDashSessionFromResponse(data);
       return { ok: true };
+    }
+    try {
+      const postUrl = withToken("auth/unlock");
+      let r = await fetchWithTimeout(postUrl, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      let result = await parseUnlockResponse(r);
+      if (result.ok || result.error === "wrong password") return result;
+      const sep = postUrl.includes("?") ? "&" : "?";
+      r = await fetchWithTimeout(postUrl + sep + "password=" + encodeURIComponent(password), {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      return parseUnlockResponse(r);
     } catch {
       return { ok: false, error: "Unlock failed" };
     }
@@ -8072,6 +8099,20 @@
       startWS();
     } catch (e) {
       console.error("Dashboard init failed:", e);
+      if (e?.code === "auth_required" || /auth required/i.test(String(e?.message || ""))) {
+        try {
+          await ensureDashboardAccess();
+          const d = await fetchData();
+          if (applyLocalModeStrategy()) return;
+          render(d);
+          initAndroidLocalImmersive();
+          startPolling();
+          startWS();
+          return;
+        } catch (retryErr) {
+          console.error("Dashboard auth retry failed:", retryErr);
+        }
+      }
       const cloud = String(cfg.cloudUrl || loadStoredCloudUrl() || "").trim();
       if (isLocalOrigin() && cloud) {
         cfg.cloudUrl = cloud;

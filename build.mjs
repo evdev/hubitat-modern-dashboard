@@ -393,7 +393,9 @@ function hpmReleaseNotes() {
 
 mkdirSync(upload, { recursive: true });
 
-copyFileSync(join(root, "src", "index.html"), join(upload, "mld-index.html"));
+const indexHtml = readFileSync(join(root, "src", "index.html"), "utf8")
+  .replaceAll("__APP_VERSION__", pkg.version);
+writeFileSync(join(upload, "mld-index.html"), indexHtml);
 copyFileSync(join(root, "src", "styles.css"), join(upload, "mld-app.css"));
 copyFileSync(join(root, "src", "app-pre.js"), join(upload, "mld-app-pre.js"));
 copyFileSync(join(root, "src", "manifest.webmanifest"), join(upload, "mld-manifest.webmanifest"));
