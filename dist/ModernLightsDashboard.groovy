@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.23
+// Modern Dashboard v0.2.24
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.23 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.24 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -104,6 +104,13 @@ def mainPage() {
             input "lightControlActivationOptimization", "bool",
                 title: "Enable activation optimization", defaultValue: false
             paragraph "<small>Enable activation optimization (snapshot restore only): skip level, color, and color temperature commands when the device already reports the expected state.</small>"
+        }
+        section("Dashboard access") {
+            input "dashboardPasswordEnabled", "bool", title: "Require password to open dashboard", defaultValue: false, submitOnChange: true
+            if (dashboardPasswordEnabled) {
+                input "dashboardPassword", "password", title: "Dashboard password", required: false
+                paragraph "<small>Visitors must enter this password before the dashboard loads. The unlock lasts seven days while the dashboard is used; after a week of inactivity the password is required again.</small>"
+            }
         }
         section("Locks") {
             input "unlockPinEnabled", "bool", title: "Require PIN to unlock doors from dashboard", defaultValue: false, submitOnChange: true
@@ -533,6 +540,8 @@ mappings {
     path("/sw.js") { action: [GET: "renderSw"] }
     path("/icons/icon-192.png") { action: [GET: "renderIcon192"] }
     path("/icons/icon-512.png") { action: [GET: "renderIcon512"] }
+    path("/auth/status") { action: [GET: "authStatus"] }
+    path("/auth/unlock") { action: [GET: "authUnlock", POST: "authUnlock"] }
     path("/data")      { action: [GET: "renderData"] }
     path("/device")    { action: [GET: "renderDevice"] }
     path("/cmd")       { action: [GET: "doCmd"] }
@@ -668,6 +677,7 @@ def renderIcon512() {
 // /data - slim JSON
 // ---------------------------------------------------------------------------
 def renderData() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def out = new StringBuilder()
     out << "{\"config\":{"
     out << "\"pollIntervalMs\":" << (pollSec ? (pollSec.toInteger() * 1000) : 5000)
@@ -924,6 +934,7 @@ def renderData() {
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
     out << ",\"unlockPinEnabled\":" << (unlockPinEnabled == true ? "true" : "false")
     out << ",\"unlockPinRequired\":" << (unlockPinEnabled == true && unlockPin?.toString()?.trim() ? "true" : "false")
+    out << ",\"dashboardPasswordRequired\":" << (dashboardPasswordRequired() ? "true" : "false")
     out << ",\"scenes\":["
     def sceneEntries = []
     try {
@@ -943,6 +954,10 @@ def renderData() {
     out << lightJobJsonFragment()
     out << sunTimesJsonFragment()
     out << schedulesJsonFragment()
+    if (authRenewed) {
+        out << ",\"dashSession\":" << jsonStr(authRenewed.session)
+        out << ",\"dashSessionExpiresAt\":" << authRenewed.expiresAt
+    }
     out << "}"
     render contentType: "application/json", data: out.toString(), status: 200
 }
@@ -1160,6 +1175,7 @@ def jsonStr(s) {
 // /device?id=.. - single-device state (reconcile dimmer level after "on")
 // ---------------------------------------------------------------------------
 def renderDevice() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def id = params.id
     if (id == null) {
         return render(contentType: "application/json", data: '{"error":"missing id"}', status: 400)
@@ -1184,7 +1200,7 @@ def renderDevice() {
         out << ",\"k\":" << (kelvin == null ? "null" : kelvin.toString())
         out << ",\"h\":" << (hue == null ? "null" : hue.toString())
         out << ",\"sat\":" << (sat == null ? "null" : sat.toString()) << "}"
-        return render(contentType: "application/json", data: out.toString(), status: 200)
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     // thermostat?
     def t = thermostats?.find { it.id.toString() == id.toString() }
@@ -1204,7 +1220,7 @@ def renderDevice() {
         out << ",\"hasFs\":" << (hasFanSpeed ? 1 : 0)
         out << ",\"fs\":" << jsonStr(hasFanSpeed ? safeCurrent(t, "fanSpeed") : null)
         out << "}"
-        return render(contentType: "application/json", data: out.toString(), status: 200)
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def s = tempSensors?.find { it.id.toString() == id.toString() }
     if (s != null) {
@@ -1213,7 +1229,7 @@ def renderDevice() {
         out << "{\"i\":" << s.id
         out << ",\"temp\":" << numOrNull(safeCurrent(s, "temperature"))
         out << "}"
-        return render(contentType: "application/json", data: out.toString(), status: 200)
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def senEntry = allSensorDevices()?.find { it.device.id.toString() == id.toString() }
     if (senEntry != null) {
@@ -1222,7 +1238,7 @@ def renderDevice() {
         def roomsList = app.getRooms() ?: []
         def out = new StringBuilder()
         appendSensorJson(out, sd, senEntry, roomsList)
-        return render(contentType: "application/json", data: out.toString(), status: 200)
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def lk = locks?.find { it.id.toString() == id.toString() }
     if (lk != null) {
@@ -1232,7 +1248,7 @@ def renderDevice() {
         out << "{\"i\":" << lk.id
         out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
         out << ",\"st\":" << jsonStr(lockSt) << "}"
-        return render(contentType: "application/json", data: out.toString(), status: 200)
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def shade = windowShades?.find { it.id.toString() == id.toString() }
     if (shade != null) {
@@ -1243,7 +1259,7 @@ def renderDevice() {
         out << "{\"i\":" << shade.id
         out << ",\"st\":" << jsonStr(shadeSt)
         out << ",\"pos\":" << numOrNull(shadePos) << "}"
-        return render(contentType: "application/json", data: out.toString(), status: 200)
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def valve = valves?.find { it.id.toString() == id.toString() }
     if (valve != null) {
@@ -1252,7 +1268,7 @@ def renderDevice() {
         out << "{\"i\":" << valve.id
         out << ",\"st\":" << jsonStr(safeCurrent(valve, "valve"))
         out << "}"
-        return render(contentType: "application/json", data: out.toString(), status: 200)
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
     if (mp != null) {
@@ -1267,7 +1283,7 @@ def renderDevice() {
         out << ",\"m\":" << jsonStr(muteVal ?: "unmuted")
         out << ",\"f\":" << audioControlFlags(mp).toString()
         out << "}"
-        return render(contentType: "application/json", data: out.toString(), status: 200)
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     render(contentType: "application/json", data: '{"error":"not found"}', status: 404)
 }
@@ -1452,6 +1468,7 @@ def executeOneCmd(id, c, v, pin) {
 }
 
 def doCmd() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def result = executeOneCmd(params.id, params.c, params.v, params.pin)
     if (!result.ok) {
         def status = result.error == "device not found" ? 404 : (result.error == "missing params" ? 400 : 500)
@@ -1460,10 +1477,11 @@ def doCmd() {
         if (result.error == "pin not configured") status = 400
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(result.error)}}", status: status)
     }
-    return render(contentType: "application/json", data: '{"ok":true}', status: 200)
+    return render(contentType: "application/json", data: withAuthJson('{"ok":true}'), status: 200)
 }
 
 def doCmdBatch() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def body = request?.JSON
     if (body == null) {
         try {
@@ -1501,7 +1519,7 @@ def doCmdBatch() {
     }
     out << "]}"
     def status = 200
-    return render(contentType: "application/json", data: out.toString(), status: status)
+    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: status)
 }
 
 // ---------------------------------------------------------------------------
@@ -1870,7 +1888,7 @@ def renderAsyncEnqueueResult(result, extra) {
         }
     }
     out << "}"
-    return render(contentType: "application/json", data: out.toString(), status: 200)
+    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
 }
 
 def parseScopeParams(body) {
@@ -1893,6 +1911,7 @@ def snapshotSave() {
 }
 
 def snapshotSaveFromParams(body) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def parsed = parseScopeParams(body ?: [:])
     if (parsed.error) {
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", status: 400)
@@ -1914,7 +1933,7 @@ def snapshotSaveFromParams(body) {
     all[key] = snap
     saveSnapshotsMap(all)
     return render(contentType: "application/json",
-        data: "{\"ok\":true,\"ts\":${ts},\"count\":${deviceIds.size()},\"scope\":${jsonStr(key)}}", status: 200)
+        data: withAuthJson("{\"ok\":true,\"ts\":${ts},\"count\":${deviceIds.size()},\"scope\":${jsonStr(key)}}"), status: 200)
 }
 
 def snapshotRestoreGet() {
@@ -1927,6 +1946,7 @@ def snapshotRestore() {
 }
 
 def snapshotRestoreFromParams(body) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def parsed = parseScopeParams(body ?: [:])
     if (parsed.error) {
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", status: 400)
@@ -1948,6 +1968,7 @@ def snapshotRestoreFromParams(body) {
 }
 
 def snapshotStatus() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def job = parseLightCommandJob()
     def out = new StringBuilder()
     out << "{\"ok\":true"
@@ -1962,7 +1983,7 @@ def snapshotStatus() {
         out << ",\"restoring\":false,\"done\":0,\"total\":0,\"failed\":0"
     }
     out << "}"
-    return render(contentType: "application/json", data: out.toString(), status: 200)
+    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
 }
 
 def lightsBulkGet() {
@@ -1975,6 +1996,7 @@ def lightsBulk() {
 }
 
 def lightsBulkFromParams(body) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def cmd = body?.cmd ?: params?.cmd
     cmd = cmd?.toString()?.trim()
     if (cmd != "on" && cmd != "off") {
@@ -2045,6 +2067,7 @@ def saveRoomOrder() {
 }
 
 def saveRoomOrderFromList(order) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     if (!(order instanceof List) || order.isEmpty()) {
         return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
     }
@@ -2073,7 +2096,7 @@ def saveRoomOrderFromList(order) {
         out << id
     }
     out << "]}"
-    return render(contentType: "application/json", data: out.toString(), status: 200)
+    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
 }
 
 // ---------------------------------------------------------------------------
@@ -2127,6 +2150,7 @@ def saveNavOrder() {
 }
 
 def saveNavOrderFromList(order) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     if (!(order instanceof List) || order.isEmpty()) {
         return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
     }
@@ -2152,7 +2176,7 @@ def saveNavOrderFromList(order) {
         out << jsonStr(key)
     }
     out << "]}"
-    return render(contentType: "application/json", data: out.toString(), status: 200)
+    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
 }
 
 // ---------------------------------------------------------------------------
@@ -2217,6 +2241,7 @@ def setHubMode() {
 }
 
 def setHubModeFromName(modeName) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def modes = []
     try { modes = location.modes ?: [] } catch (e) {}
     if (!modes.contains(modeName)) {
@@ -2224,7 +2249,7 @@ def setHubModeFromName(modeName) {
     }
     try {
         location.setMode(modeName)
-        return render(contentType: "application/json", data: "{\"ok\":true,\"mode\":${jsonStr(modeName)}}", status: 200)
+        return render(contentType: "application/json", data: withAuthJson("{\"ok\":true,\"mode\":${jsonStr(modeName)}}"), status: 200)
     } catch (e) {
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
     }
@@ -2245,6 +2270,124 @@ def pinsMatch(expected, provided) {
         diff |= (ca ^ cb)
     }
     return diff == 0
+}
+
+def DASH_SESSION_TTL_MS = 604800000L
+
+def authRenewed = null
+
+def dashboardPasswordRequired() {
+    return dashboardPasswordEnabled == true && (dashboardPassword?.toString()?.trim() ?: "") != ""
+}
+
+def sha256Hex(input) {
+    def md = java.security.MessageDigest.getInstance("SHA-256")
+    md.update(input.toString().getBytes("UTF-8"))
+    def digest = md.digest()
+    def sb = new StringBuilder()
+    for (byte b : digest) {
+        sb.append(String.format("%02x", b & 0xff))
+    }
+    return sb.toString()
+}
+
+def dashboardSessionSecret() {
+    def pw = dashboardPassword?.toString()?.trim() ?: ""
+    def tok = state.accessToken?.toString()?.trim() ?: ""
+    return pw + "|" + tok
+}
+
+def dashboardSessionSig(expiryMs) {
+    return sha256Hex(dashboardSessionSecret() + "|" + expiryMs.toString())
+}
+
+def issueDashboardSession() {
+    long expiry = System.currentTimeMillis() + DASH_SESSION_TTL_MS
+    def sig = dashboardSessionSig(expiry)
+    def session = expiry.toString() + "." + sig
+    return [session: session, expiresAt: expiry]
+}
+
+def validateAndRenewDashboardSession(token) {
+    if (!token || !dashboardPasswordRequired()) return null
+    def parts = token.toString().split("\\.", 2)
+    if (parts.length != 2) return null
+    long expiry
+    try { expiry = parts[0].toLong() } catch (e) { return null }
+    if (expiry <= System.currentTimeMillis()) return null
+    def expectedSig = dashboardSessionSig(expiry)
+    if (!pinsMatch(expectedSig, parts[1])) return null
+    return issueDashboardSession()
+}
+
+def extractDashSession() {
+    def token = params?.dash_session?.toString()?.trim()
+    if (token) return token
+    try {
+        def body = request?.JSON
+        if (body == null) {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        }
+        if (body?.dash_session) return body.dash_session.toString().trim()
+    } catch (e) {}
+    return null
+}
+
+def checkDashboardSession() {
+    if (!dashboardPasswordRequired()) return [allowed: true, renewed: null]
+    def token = extractDashSession()
+    def renewed = validateAndRenewDashboardSession(token)
+    if (!renewed) return [allowed: false, renewed: null]
+    return [allowed: true, renewed: renewed]
+}
+
+def guardDashboardAccess() {
+    authRenewed = null
+    def auth = checkDashboardSession()
+    if (!auth.allowed) return false
+    authRenewed = auth.renewed
+    return true
+}
+
+def renderAuthRequired() {
+    return render(contentType: "application/json", data: '{"ok":false,"error":"auth required"}', status: 401)
+}
+
+def withAuthJson(baseJson) {
+    if (!authRenewed) return baseJson
+    def suffix = ',"dashSession":' + jsonStr(authRenewed.session) + ',"dashSessionExpiresAt":' + authRenewed.expiresAt
+    if (baseJson.endsWith("}")) {
+        return baseJson.substring(0, baseJson.length() - 1) + suffix + "}"
+    }
+    return baseJson + suffix
+}
+
+def authStatus() {
+    render contentType: "application/json", data: '{"required":' + (dashboardPasswordRequired() ? "true" : "false") + '}', status: 200
+}
+
+def authUnlock() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    if (!dashboardPasswordRequired()) {
+        return render(contentType: "application/json", data: '{"ok":true,"required":false}', status: 200)
+    }
+    def expected = dashboardPassword?.toString()?.trim() ?: ""
+    if (!expected) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"password not configured"}', status: 400)
+    }
+    def provided = body?.password?.toString() ?: params?.password?.toString() ?: ""
+    if (!provided.trim() || !pinsMatch(expected, provided.trim())) {
+        return render(contentType: "application/json", data: '{"ok":false,"error":"wrong password"}', status: 403)
+    }
+    def issued = issueDashboardSession()
+    return render(contentType: "application/json", data: '{"ok":true,"session":' + jsonStr(issued.session) + ',"expiresAt":' + issued.expiresAt + '}', status: 200)
 }
 
 def initializeHsm() {
@@ -2353,6 +2496,7 @@ def setHsm() {
 }
 
 def setHsmFromMode(mode, pin) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     if (hsmEnabled != true) {
         return render(contentType: "application/json", data: '{"ok":false,"error":"HSM control disabled"}', status: 400)
     }
@@ -2376,7 +2520,7 @@ def setHsmFromMode(mode, pin) {
         sendLocationEvent(name: "hsmSetArm", value: mode)
         persistHsmFromCommand(mode)
         def out = hsmResponseAfterCommand(mode)
-        return render(contentType: "application/json", data: "{\"ok\":true,\"mode\":${jsonStr(mode)},\"status\":${jsonStr(out.status)},\"alert\":${jsonStr(out.alert)},\"alertDesc\":${jsonStr(out.alertDesc)}}", status: 200)
+        return render(contentType: "application/json", data: withAuthJson("{\"ok\":true,\"mode\":${jsonStr(mode)},\"status\":${jsonStr(out.status)},\"alert\":${jsonStr(out.alert)},\"alertDesc\":${jsonStr(out.alertDesc)}}"), status: 200)
     } catch (e) {
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
     }
@@ -2406,6 +2550,7 @@ def activateScene() {
 }
 
 def activateSceneFromId(id) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def sceneId
     try { sceneId = id instanceof Number ? id.longValue() : id.toString().toLong() } catch (e) {
         return render(contentType: "application/json", data: '{"ok":false,"error":"invalid id"}', status: 400)
@@ -2417,7 +2562,7 @@ def activateSceneFromId(id) {
     }
     try {
         location.activateScene(sceneId)
-        return render(contentType: "application/json", data: "{\"ok\":true,\"id\":${sceneId}}", status: 200)
+        return render(contentType: "application/json", data: withAuthJson("{\"ok\":true,\"id\":${sceneId}}"), status: 200)
     } catch (e) {
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
     }
@@ -2448,6 +2593,7 @@ def saveFavorites() {
 }
 
 def saveFavoritesFromList(ids) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def valid = validFavoriteIdSet()
     def validated = []
     def seen = new HashSet()
@@ -2470,7 +2616,7 @@ def saveFavoritesFromList(ids) {
         out << id
     }
     out << "]}"
-    return render(contentType: "application/json", data: out.toString(), status: 200)
+    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
 }
 
 // ===========================================================================
@@ -2990,7 +3136,8 @@ def cleanupSchedules() {
 // --- endpoints ---
 
 def schedulesGet() {
-    return render(contentType: "application/json", data: groovy.json.JsonOutput.toJson([ok: true, schedules: schedulesListForClient()]), status: 200)
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    return render(contentType: "application/json", data: withAuthJson(groovy.json.JsonOutput.toJson([ok: true, schedules: schedulesListForClient()])), status: 200)
 }
 
 def schedulesListForClient() {
@@ -3099,6 +3246,7 @@ def schedulesNormalizePayload(body) {
 }
 
 def schedulesSave() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def body = parseRequestJson()
     if (body == null) {
         return render(contentType: "application/json", data: '{"ok":false,"error":"missing body"}', status: 400)
@@ -3116,10 +3264,11 @@ def schedulesSave() {
     out << "{\"ok\":true,\"id\":" << jsonStr(id.toString())
     out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
     out << "}"
-    return render(contentType: "application/json", data: out.toString(), status: 200)
+    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
 }
 
 def schedulesDelete() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def body = parseRequestJson()
     def id = body?.id?.toString()?.trim()
     if (!id) {
@@ -3135,10 +3284,11 @@ def schedulesDelete() {
     out << "{\"ok\":true,\"id\":" << jsonStr(id.toString())
     out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
     out << "}"
-    return render(contentType: "application/json", data: out.toString(), status: 200)
+    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
 }
 
 def schedulesToggle() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def body = parseRequestJson()
     def id = body?.id?.toString()?.trim()
     if (!id) {
@@ -3158,10 +3308,11 @@ def schedulesToggle() {
     out << ",\"enabled\":" << (s.enabled == true ? "true" : "false")
     out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
     out << "}"
-    return render(contentType: "application/json", data: out.toString(), status: 200)
+    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
 }
 
 def schedulesTest() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
     def body = parseRequestJson()
     def id = body?.id?.toString()?.trim()
     if (!id) {
@@ -3177,7 +3328,7 @@ def schedulesTest() {
     } catch (e) {
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}".toString(), status: 500)
     }
-    return render(contentType: "application/json", data: '{"ok":true}', status: 200)
+    return render(contentType: "application/json", data: withAuthJson('{"ok":true}'), status: 200)
 }
 
 // --- cron next-fire helper (7-field Quartz: sec min hour dom mon dow year) ---

@@ -33,7 +33,10 @@
   const LOCAL_OK_STORAGE_KEY = "mld_localOk";
   const CLOUD_URL_STORAGE_KEY = "mld_cloudUrl";
   const PREFER_CLOUD_STORAGE_KEY = "mld_preferCloud";
+  const DASH_SESSION_STORAGE_KEY = "mld_dashSession";
+  const DASH_SESSION_EXPIRES_KEY = "mld_dashSessionExpiresAt";
   const LOCAL_OK_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  const DASH_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
   const THEME_OPTIONS = ["dark", "light", "auto"];
   const APP_EL = document.getElementById("app");
   const REORDER_DRAG_THRESHOLD = 8;
@@ -174,6 +177,12 @@
   let hsmLockUntil = 0;
   let pinPadPopup = null;
   let pinPadState = null;
+  let gatePopup = null;
+  let gateState = null;
+  let dashSession = "";
+  let dashSessionExpiresAt = 0;
+  let dashboardPasswordRequired = false;
+  let dashSessionActivityBound = false;
   let confirmPopup = null;
   let confirmPending = null;
   let quickPopup = null;
@@ -2699,7 +2708,7 @@
 
     function isModalOpen() {
       return !!document.querySelector(
-        ".quick-popup.open, .ct-popup.open, .tstat-popup.open, .music-master-popup.open, .confirm-popup.open, .pin-pad-popup.open"
+        ".quick-popup.open, .ct-popup.open, .tstat-popup.open, .music-master-popup.open, .confirm-popup.open, .pin-pad-popup.open, .dash-gate-popup.open"
       );
     }
 
@@ -2790,6 +2799,69 @@
   function localOkFresh() {
     const ts = loadLocalOkTs();
     return ts > 0 && (Date.now() - ts) < LOCAL_OK_MAX_AGE_MS;
+  }
+
+  function loadDashSession() {
+    try {
+      dashSession = localStorage.getItem(DASH_SESSION_STORAGE_KEY) || "";
+      dashSessionExpiresAt = Number(localStorage.getItem(DASH_SESSION_EXPIRES_KEY)) || 0;
+    } catch {
+      dashSession = "";
+      dashSessionExpiresAt = 0;
+    }
+  }
+
+  function saveDashSession(session, expiresAt) {
+    dashSession = String(session || "");
+    dashSessionExpiresAt = Number(expiresAt) || 0;
+    try {
+      if (dashSession) {
+        localStorage.setItem(DASH_SESSION_STORAGE_KEY, dashSession);
+        localStorage.setItem(DASH_SESSION_EXPIRES_KEY, String(dashSessionExpiresAt));
+      } else {
+        localStorage.removeItem(DASH_SESSION_STORAGE_KEY);
+        localStorage.removeItem(DASH_SESSION_EXPIRES_KEY);
+      }
+    } catch {}
+  }
+
+  function clearDashSession() {
+    saveDashSession("", 0);
+  }
+
+  function isDashSessionFresh() {
+    return !!dashSession && dashSessionExpiresAt > Date.now();
+  }
+
+  function slideDashSessionExpiry() {
+    if (!dashSession) return;
+    dashSessionExpiresAt = Date.now() + DASH_SESSION_MAX_AGE_MS;
+    try { localStorage.setItem(DASH_SESSION_EXPIRES_KEY, String(dashSessionExpiresAt)); } catch {}
+  }
+
+  function applyDashSessionFromResponse(data) {
+    if (!data) return;
+    if (data.session && data.expiresAt) {
+      saveDashSession(data.session, data.expiresAt);
+      return;
+    }
+    if (data.dashSession && data.dashSessionExpiresAt) {
+      saveDashSession(data.dashSession, data.dashSessionExpiresAt);
+    }
+  }
+
+  function setupDashSessionActivityRenewal() {
+    if (dashSessionActivityBound) return;
+    dashSessionActivityBound = true;
+    const renew = () => {
+      if (!isDashSessionFresh()) return;
+      slideDashSessionExpiry();
+    };
+    document.addEventListener("pointerdown", renew, { passive: true });
+    document.addEventListener("keydown", renew);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") renew();
+    });
   }
 
   function refreshLocalUrlFromConfig() {
@@ -2939,9 +3011,162 @@
   })();
 
   function withToken(path) {
-    if (!ACCESS_TOKEN) return path;
+    const parts = [];
+    if (ACCESS_TOKEN) parts.push("access_token=" + encodeURIComponent(ACCESS_TOKEN));
+    if (dashSession && isDashSessionFresh()) {
+      parts.push("dash_session=" + encodeURIComponent(dashSession));
+    }
+    if (!parts.length) return path;
     const sep = path.indexOf("?") >= 0 ? "&" : "?";
-    return path + sep + "access_token=" + encodeURIComponent(ACCESS_TOKEN);
+    return path + sep + parts.join("&");
+  }
+
+  async function fetchAuthStatus() {
+    const r = await fetchWithTimeout(withToken("auth/status"), {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }
+
+  async function unlockDashboard(password) {
+    try {
+      const r = await fetchWithTimeout(withToken("auth/unlock"), {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      if (r.status === 403 || data.error === "wrong password") {
+        return { ok: false, error: "wrong password" };
+      }
+      if (!r.ok) {
+        return { ok: false, error: data.error ? String(data.error) : "Unlock failed" };
+      }
+      applyDashSessionFromResponse(data);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Unlock failed" };
+    }
+  }
+
+  function ensureDashboardGatePopup() {
+    if (gatePopup) return gatePopup;
+    gatePopup = ce("div", "dash-gate-popup");
+    gatePopup.hidden = true;
+    gatePopup.setAttribute("role", "dialog");
+    gatePopup.setAttribute("aria-modal", "true");
+    gatePopup.setAttribute("aria-label", "Dashboard password");
+    const panel = ce("div", "dash-gate-panel");
+    const title = ce("h2", "dash-gate-title");
+    title.textContent = "Enter dashboard password";
+    const error = ce("p", "dash-gate-error");
+    error.hidden = true;
+    error.setAttribute("role", "alert");
+    error.setAttribute("aria-live", "polite");
+    const input = ce("input", "dash-gate-input");
+    input.type = "password";
+    input.autocomplete = "current-password";
+    input.placeholder = "Password";
+    input.spellcheck = false;
+    const submit = ce("button", "confirm-btn dash-gate-submit");
+    submit.type = "button";
+    submit.textContent = "Unlock";
+    panel.appendChild(title);
+    panel.appendChild(error);
+    panel.appendChild(input);
+    panel.appendChild(submit);
+    gatePopup.appendChild(panel);
+    appendPopup(gatePopup);
+
+    async function submitGate() {
+      hapticTap();
+      const password = input.value;
+      if (!password) return;
+      submit.disabled = true;
+      const result = await unlockDashboard(password);
+      submit.disabled = false;
+      if (result.ok) {
+        error.hidden = true;
+        error.textContent = "";
+        closeDashboardGate();
+        gateState?.resolve?.();
+        return;
+      }
+      error.textContent = result.error === "wrong password" ? "Wrong password" : (result.error || "Unlock failed");
+      error.hidden = false;
+      gatePopup.classList.remove("shake");
+      void gatePopup.offsetWidth;
+      gatePopup.classList.add("shake");
+      input.select();
+    }
+
+    submit.addEventListener("click", (e) => {
+      e.stopPropagation();
+      submitGate();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submitGate();
+      }
+    });
+
+    gatePopup._title = title;
+    gatePopup._error = error;
+    gatePopup._input = input;
+    gatePopup._submit = submit;
+    return gatePopup;
+  }
+
+  function openDashboardGate() {
+    const popup = ensureDashboardGatePopup();
+    popup._error.hidden = true;
+    popup._error.textContent = "";
+    popup._input.value = "";
+    popup.hidden = false;
+    popup.classList.remove("shake");
+    popup.classList.add("open");
+    requestAnimationFrame(() => popup._input.focus());
+  }
+
+  function closeDashboardGate() {
+    if (!gatePopup) return;
+    gatePopup.classList.remove("open", "shake");
+    gatePopup.hidden = true;
+    gateState = null;
+  }
+
+  function promptDashboardPassword() {
+    return new Promise((resolve) => {
+      gateState = { resolve };
+      openDashboardGate();
+    });
+  }
+
+  async function ensureDashboardAccess() {
+    loadDashSession();
+    let status;
+    try {
+      status = await fetchAuthStatus();
+    } catch {
+      return;
+    }
+    if (!status?.required) {
+      dashboardPasswordRequired = false;
+      clearDashSession();
+      return;
+    }
+    dashboardPasswordRequired = true;
+    if (isDashSessionFresh()) {
+      setupDashSessionActivityRenewal();
+      return;
+    }
+    await promptDashboardPassword();
+    setupDashSessionActivityRenewal();
   }
 
   async function fetchWithTimeout(url, opts = {}, ms = 15000) {
@@ -2954,10 +3179,17 @@
     }
   }
 
-  async function getJson(url) {
+  async function getJson(url, retried) {
     const r = await fetchWithTimeout(withToken(url), { cache: "no-store", headers: { "Accept": "application/json" } });
+    if (r.status === 401 && !retried) {
+      clearDashSession();
+      await ensureDashboardAccess();
+      return getJson(url, true);
+    }
     if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
+    const data = await r.json();
+    applyDashSessionFromResponse(data);
+    return data;
   }
 
   async function fetchData() {
@@ -3385,6 +3617,7 @@
       }
       let data = {};
       try { data = await r.json(); } catch {}
+      applyDashSessionFromResponse(data);
       return { ok: true, data };
     } catch {
       flash("Request failed", true);
@@ -3402,6 +3635,7 @@
       });
       let data = {};
       try { data = await r.json(); } catch {}
+      applyDashSessionFromResponse(data);
       return { ok: r.ok, status: r.status, data, error: data?.error };
     } catch {
       return { ok: false, error: "Request failed" };
@@ -7819,6 +8053,11 @@
 
   (async function init() {
     consumePreferCloudParam();
+    try {
+      await ensureDashboardAccess();
+    } catch (e) {
+      console.error("Dashboard auth failed:", e);
+    }
     loadingState();
     try {
       const d = await fetchData();

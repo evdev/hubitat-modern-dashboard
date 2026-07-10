@@ -1637,6 +1637,11 @@
 
   (async function init() {
     M.consumePreferCloudParam();
+    try {
+      await M.ensureDashboardAccess();
+    } catch (e) {
+      console.error("Dashboard auth failed:", e);
+    }
     M.loadingState();
     try {
       const d = await M.fetchData();

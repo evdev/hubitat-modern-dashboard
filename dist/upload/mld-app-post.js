@@ -138,6 +138,7 @@
       }
       let data = {};
       try { data = await r.json(); } catch {}
+      M.applyDashSessionFromResponse(data);
       return { ok: true, data };
     } catch {
       M.flash("Request failed", true);
@@ -155,6 +156,7 @@
       });
       let data = {};
       try { data = await r.json(); } catch {}
+      M.applyDashSessionFromResponse(data);
       return { ok: r.ok, status: r.status, data, error: data?.error };
     } catch {
       return { ok: false, error: "Request failed" };

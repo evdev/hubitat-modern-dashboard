@@ -549,6 +549,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Light control | Metering delay | 75 ms | 0–2000 ms between light commands |
 | Light control | On/off optimization | Off | Skip on/off if device already in target state |
 | Light control | Activation optimization | Off | Skip level/CT/RGB on snapshot restore if already correct |
+| Dashboard access | Dashboard password | Off | Password required to open dashboard (7-day sliding session) |
 | Locks | Unlock PIN | Off | PIN required to unlock from dashboard |
 | Thermostats | Show in quick menu | On | Hide thermostats nav icon when off |
 | Security | HSM enabled | Off | Show Security quick-nav icon |
@@ -593,6 +594,11 @@ lights, including room/house on/off). The **Outlets** picker and optional
   link from the app page and reinstall the PWA if needed.
 - Lock and HSM PINs are validated by this SmartApp before commands are sent; they
   are not Hubitat user-account passwords.
+- Optional **Dashboard password** adds a second gate before the UI loads device
+  data. The password is checked server-side; a signed session in browser storage
+  renews for seven days while the dashboard is used, then expires after a week of
+  inactivity. This does not replace the OAuth URL token — treat dashboard links
+  as secrets either way.
 - The dashboard does not implement Hubitat admin login. The optional **Hub file
   access** credentials are only for the SmartApp to read File Manager assets when
   Hub Login Security is enabled.

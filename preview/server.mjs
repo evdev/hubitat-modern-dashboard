@@ -4,6 +4,7 @@
 // Run:  node preview/server.mjs   then open http://localhost:4321/
 
 import { readFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createServer } from "node:http";
@@ -22,6 +23,9 @@ const ROOM_NAMES = ["Living Room", "Kitchen", "Master Bedroom", "Office", "Hallw
 const NAMES = ["Ceiling", "Recessed", "Pendant", "Lamp", "Sconce", "Strip", "Spot", "Track", "Vanity", "Porch", "Flood", "Cabinet"];
 const MOCK_HSM_PIN = "1234";
 const MOCK_UNLOCK_PIN = "5678";
+const MOCK_DASH_PASSWORD = "dashpass";
+const MOCK_ACCESS_TOKEN = "preview-token";
+const DASH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MOCK_TRACKS = [
   "Daft Punk — Get Lucky",
   "Fleetwood Mac — Dreams",
@@ -179,7 +183,7 @@ function buildMockData(count) {
   return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", roomOrder: [], navOrder: [], favorites: [1, 5, 1001, 2103, 2201] }, rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
+  ], thermostats, tempSensors, sensors, valves, locks, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
 }
 
 function tstatOstateForMode(tm) {
@@ -303,6 +307,65 @@ function readJsonBody(req) {
   });
 }
 
+function dashboardPasswordRequired() {
+  return state.dashboardPasswordEnabled === true && state.dashboardPasswordRequired === true;
+}
+
+function dashboardSessionSig(expiryMs) {
+  const secret = `${MOCK_DASH_PASSWORD}|${MOCK_ACCESS_TOKEN}|${expiryMs}`;
+  return createHash("sha256").update(secret).digest("hex");
+}
+
+function issueDashboardSession() {
+  const expiresAt = Date.now() + DASH_SESSION_TTL_MS;
+  const session = `${expiresAt}.${dashboardSessionSig(expiresAt)}`;
+  return { session, expiresAt };
+}
+
+function validateAndRenewDashboardSession(token) {
+  if (!token || !dashboardPasswordRequired()) return null;
+  const [expStr, sig] = String(token).split(".", 2);
+  if (!expStr || !sig) return null;
+  const expiry = Number(expStr);
+  if (!Number.isFinite(expiry) || expiry <= Date.now()) return null;
+  if (sig !== dashboardSessionSig(expiry)) return null;
+  return issueDashboardSession();
+}
+
+function dashSessionFromUrl(url, body) {
+  const fromQuery = url.searchParams.get("dash_session");
+  if (fromQuery) return fromQuery.trim();
+  if (body?.dash_session) return String(body.dash_session).trim();
+  return "";
+}
+
+function checkDashboardAccess(url, body) {
+  if (!dashboardPasswordRequired()) return { allowed: true, renewed: null };
+  const token = dashSessionFromUrl(url, body);
+  const renewed = validateAndRenewDashboardSession(token);
+  if (!renewed) return { allowed: false, renewed: null };
+  return { allowed: true, renewed };
+}
+
+function appendDashSession(payload, renewed) {
+  if (!renewed) return payload;
+  return { ...payload, dashSession: renewed.session, dashSessionExpiresAt: renewed.expiresAt };
+}
+
+function sendAuthRequired(res) {
+  res.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  return res.end(JSON.stringify({ ok: false, error: "auth required" }));
+}
+
+function requireDashAuth(res, url, body) {
+  const auth = checkDashboardAccess(url, body);
+  if (!auth.allowed) {
+    sendAuthRequired(res);
+    return null;
+  }
+  return auth;
+}
+
 const distUpload = join(root, "dist", "upload");
 const readDist = (name) => readFileSync(join(distUpload, name), "utf8");
 
@@ -361,7 +424,34 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "image/png" });
     return res.end(readB64Icon("mld-icon-512.png", 512));
   }
+  if (p === "/auth/status") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ required: dashboardPasswordRequired() }));
+  }
+  if (p === "/auth/unlock") {
+    let body = null;
+    if (req.method === "POST") {
+      try { body = await readJsonBody(req); } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+      }
+    }
+    if (!dashboardPasswordRequired()) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: true, required: false }));
+    }
+    const password = String(body?.password ?? url.searchParams.get("password") ?? "");
+    if (password !== MOCK_DASH_PASSWORD) {
+      res.writeHead(403, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "wrong password" }));
+    }
+    const issued = issueDashboardSession();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ ok: true, session: issued.session, expiresAt: issued.expiresAt }));
+  }
   if (p === "/data") {
+    const auth = requireDashAuth(res, url, null);
+    if (!auth) return;
     // occasionally flip a random light to simulate real activity
     if (state.devices.length && Math.random() < 0.15) {
       const d = state.devices[Math.floor(Math.random() * state.devices.length)];
@@ -408,9 +498,11 @@ const server = createServer(async (req, res) => {
     }
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     state.sunTimes = mockSunTimes();
-    return res.end(JSON.stringify(state));
+    return res.end(JSON.stringify(appendDashSession(state, auth.renewed)));
   }
   if (p === "/device") {
+    const auth = requireDashAuth(res, url, null);
+    if (!auth) return;
     const id = Number(url.searchParams.get("id"));
     const dev = state.devices.find(d => d.i === id);
     if (dev) {
@@ -455,6 +547,8 @@ const server = createServer(async (req, res) => {
     return res.end('{"error":"not found"}');
   }
   if (p === "/cmd") {
+    const auth = requireDashAuth(res, url, null);
+    if (!auth) return;
     const id = Number(url.searchParams.get("id"));
     const c = url.searchParams.get("c");
     const v = url.searchParams.get("v");
@@ -470,6 +564,8 @@ const server = createServer(async (req, res) => {
       res.writeHead(400, { "Content-Type": "application/json" });
       return res.end('{"ok":false,"error":"invalid json"}');
     }
+    const auth = requireDashAuth(res, url, body);
+    if (!auth) return;
     const commands = body?.commands;
     if (!Array.isArray(commands) || !commands.length) {
       res.writeHead(400, { "Content-Type": "application/json" });
@@ -616,6 +712,8 @@ const server = createServer(async (req, res) => {
     }
   }
   if (p === "/hsm") {
+    const auth = requireDashAuth(res, url, null);
+    if (!auth) return;
     const modeParam = url.searchParams.get("mode");
     const pinParam = url.searchParams.get("pin");
     const applyHsm = (mode, pin) => {
