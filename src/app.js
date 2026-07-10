@@ -77,7 +77,7 @@
       if (raw === "0") return false;
       if (raw === "1") return true;
     } catch {}
-    return false;
+    return true;
   }
 
   function saveTabsPref(on) {

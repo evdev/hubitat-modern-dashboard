@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.30
+
+- Category tabs on by default for new users (localStorage unset → enabled).
+- Outlets quick-nav and tile icon use a blue gradient socket graphic.
+
 ## 0.2.29
 
 - Fix Category tabs / non-Lights views crashing with `ReferenceError: activeTab is
