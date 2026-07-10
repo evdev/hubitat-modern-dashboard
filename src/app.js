@@ -3021,154 +3021,6 @@
     return path + sep + parts.join("&");
   }
 
-  async function fetchAuthStatus() {
-    const r = await fetchWithTimeout(withToken("auth/status"), {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
-  }
-
-  async function unlockDashboard(password) {
-    try {
-      const r = await fetchWithTimeout(withToken("auth/unlock"), {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      let data = {};
-      try { data = await r.json(); } catch {}
-      if (r.status === 403 || data.error === "wrong password") {
-        return { ok: false, error: "wrong password" };
-      }
-      if (!r.ok) {
-        return { ok: false, error: data.error ? String(data.error) : "Unlock failed" };
-      }
-      applyDashSessionFromResponse(data);
-      return { ok: true };
-    } catch {
-      return { ok: false, error: "Unlock failed" };
-    }
-  }
-
-  function ensureDashboardGatePopup() {
-    if (gatePopup) return gatePopup;
-    gatePopup = ce("div", "dash-gate-popup");
-    gatePopup.hidden = true;
-    gatePopup.setAttribute("role", "dialog");
-    gatePopup.setAttribute("aria-modal", "true");
-    gatePopup.setAttribute("aria-label", "Dashboard password");
-    const panel = ce("div", "dash-gate-panel");
-    const title = ce("h2", "dash-gate-title");
-    title.textContent = "Enter dashboard password";
-    const error = ce("p", "dash-gate-error");
-    error.hidden = true;
-    error.setAttribute("role", "alert");
-    error.setAttribute("aria-live", "polite");
-    const input = ce("input", "dash-gate-input");
-    input.type = "password";
-    input.autocomplete = "current-password";
-    input.placeholder = "Password";
-    input.spellcheck = false;
-    const submit = ce("button", "confirm-btn dash-gate-submit");
-    submit.type = "button";
-    submit.textContent = "Unlock";
-    panel.appendChild(title);
-    panel.appendChild(error);
-    panel.appendChild(input);
-    panel.appendChild(submit);
-    gatePopup.appendChild(panel);
-    appendPopup(gatePopup);
-
-    async function submitGate() {
-      hapticTap();
-      const password = input.value;
-      if (!password) return;
-      submit.disabled = true;
-      const result = await unlockDashboard(password);
-      submit.disabled = false;
-      if (result.ok) {
-        error.hidden = true;
-        error.textContent = "";
-        closeDashboardGate();
-        gateState?.resolve?.();
-        return;
-      }
-      error.textContent = result.error === "wrong password" ? "Wrong password" : (result.error || "Unlock failed");
-      error.hidden = false;
-      gatePopup.classList.remove("shake");
-      void gatePopup.offsetWidth;
-      gatePopup.classList.add("shake");
-      input.select();
-    }
-
-    submit.addEventListener("click", (e) => {
-      e.stopPropagation();
-      submitGate();
-    });
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        submitGate();
-      }
-    });
-
-    gatePopup._title = title;
-    gatePopup._error = error;
-    gatePopup._input = input;
-    gatePopup._submit = submit;
-    return gatePopup;
-  }
-
-  function openDashboardGate() {
-    const popup = ensureDashboardGatePopup();
-    popup._error.hidden = true;
-    popup._error.textContent = "";
-    popup._input.value = "";
-    popup.hidden = false;
-    popup.classList.remove("shake");
-    popup.classList.add("open");
-    requestAnimationFrame(() => popup._input.focus());
-  }
-
-  function closeDashboardGate() {
-    if (!gatePopup) return;
-    gatePopup.classList.remove("open", "shake");
-    gatePopup.hidden = true;
-    gateState = null;
-  }
-
-  function promptDashboardPassword() {
-    return new Promise((resolve) => {
-      gateState = { resolve };
-      openDashboardGate();
-    });
-  }
-
-  async function ensureDashboardAccess() {
-    loadDashSession();
-    let status;
-    try {
-      status = await fetchAuthStatus();
-    } catch {
-      return;
-    }
-    if (!status?.required) {
-      dashboardPasswordRequired = false;
-      clearDashSession();
-      return;
-    }
-    dashboardPasswordRequired = true;
-    if (isDashSessionFresh()) {
-      setupDashSessionActivityRenewal();
-      return;
-    }
-    await promptDashboardPassword();
-    setupDashSessionActivityRenewal();
-  }
-
   async function fetchWithTimeout(url, opts = {}, ms = 15000) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), ms);
@@ -3183,7 +3035,7 @@
     const r = await fetchWithTimeout(withToken(url), { cache: "no-store", headers: { "Accept": "application/json" } });
     if (r.status === 401 && !retried) {
       clearDashSession();
-      await ensureDashboardAccess();
+      await postCall("ensureDashboardAccess");
       return getJson(url, true);
     }
     if (!r.ok) throw new Error("HTTP " + r.status);
@@ -8049,6 +7901,156 @@
   updateCurrentCategoryTitle();
   if (location.protocol === "https:" && "serviceWorker" in navigator) {
     navigator.serviceWorker.register(withToken("sw.js"), { scope: "./" }).catch(() => {});
+  }
+
+  // Password gate UI lives here (post2) so mld-app.js stays under Hubitat's 128 KB
+  // File Manager limit — putting it in part1 previously left only ~3 KB headroom.
+  async function fetchAuthStatus() {
+    const r = await fetchWithTimeout(withToken("auth/status"), {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }
+
+  async function unlockDashboard(password) {
+    try {
+      const r = await fetchWithTimeout(withToken("auth/unlock"), {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      if (r.status === 403 || data.error === "wrong password") {
+        return { ok: false, error: "wrong password" };
+      }
+      if (!r.ok) {
+        return { ok: false, error: data.error ? String(data.error) : "Unlock failed" };
+      }
+      applyDashSessionFromResponse(data);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Unlock failed" };
+    }
+  }
+
+  function ensureDashboardGatePopup() {
+    if (gatePopup) return gatePopup;
+    gatePopup = ce("div", "dash-gate-popup");
+    gatePopup.hidden = true;
+    gatePopup.setAttribute("role", "dialog");
+    gatePopup.setAttribute("aria-modal", "true");
+    gatePopup.setAttribute("aria-label", "Dashboard password");
+    const panel = ce("div", "dash-gate-panel");
+    const title = ce("h2", "dash-gate-title");
+    title.textContent = "Enter dashboard password";
+    const error = ce("p", "dash-gate-error");
+    error.hidden = true;
+    error.setAttribute("role", "alert");
+    error.setAttribute("aria-live", "polite");
+    const input = ce("input", "dash-gate-input");
+    input.type = "password";
+    input.autocomplete = "current-password";
+    input.placeholder = "Password";
+    input.spellcheck = false;
+    const submit = ce("button", "confirm-btn dash-gate-submit");
+    submit.type = "button";
+    submit.textContent = "Unlock";
+    panel.appendChild(title);
+    panel.appendChild(error);
+    panel.appendChild(input);
+    panel.appendChild(submit);
+    gatePopup.appendChild(panel);
+    appendPopup(gatePopup);
+
+    async function submitGate() {
+      hapticTap();
+      const password = input.value;
+      if (!password) return;
+      submit.disabled = true;
+      const result = await unlockDashboard(password);
+      submit.disabled = false;
+      if (result.ok) {
+        error.hidden = true;
+        error.textContent = "";
+        closeDashboardGate();
+        gateState?.resolve?.();
+        return;
+      }
+      error.textContent = result.error === "wrong password" ? "Wrong password" : (result.error || "Unlock failed");
+      error.hidden = false;
+      gatePopup.classList.remove("shake");
+      void gatePopup.offsetWidth;
+      gatePopup.classList.add("shake");
+      input.select();
+    }
+
+    submit.addEventListener("click", (e) => {
+      e.stopPropagation();
+      submitGate();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submitGate();
+      }
+    });
+
+    gatePopup._title = title;
+    gatePopup._error = error;
+    gatePopup._input = input;
+    gatePopup._submit = submit;
+    return gatePopup;
+  }
+
+  function openDashboardGate() {
+    const popup = ensureDashboardGatePopup();
+    popup._error.hidden = true;
+    popup._error.textContent = "";
+    popup._input.value = "";
+    popup.hidden = false;
+    popup.classList.remove("shake");
+    popup.classList.add("open");
+    requestAnimationFrame(() => popup._input.focus());
+  }
+
+  function closeDashboardGate() {
+    if (!gatePopup) return;
+    gatePopup.classList.remove("open", "shake");
+    gatePopup.hidden = true;
+    gateState = null;
+  }
+
+  function promptDashboardPassword() {
+    return new Promise((resolve) => {
+      gateState = { resolve };
+      openDashboardGate();
+    });
+  }
+
+  async function ensureDashboardAccess() {
+    loadDashSession();
+    let status;
+    try {
+      status = await fetchAuthStatus();
+    } catch {
+      return;
+    }
+    if (!status?.required) {
+      dashboardPasswordRequired = false;
+      clearDashSession();
+      return;
+    }
+    dashboardPasswordRequired = true;
+    if (isDashSessionFresh()) {
+      setupDashSessionActivityRenewal();
+      return;
+    }
+    await promptDashboardPassword();
+    setupDashSessionActivityRenewal();
   }
 
   (async function init() {

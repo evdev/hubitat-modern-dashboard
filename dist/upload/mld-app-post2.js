@@ -1635,10 +1635,160 @@
     navigator.serviceWorker.register(M.withToken("sw.js"), { scope: "./" }).catch(() => {});
   }
 
+  // Password gate UI lives here (post2) so mld-app.js stays under Hubitat's 128 KB
+  // File Manager limit — putting it in part1 previously left only ~3 KB headroom.
+  async function fetchAuthStatus() {
+    const r = await M.fetchWithTimeout(M.withToken("auth/status"), {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }
+
+  async function unlockDashboard(password) {
+    try {
+      const r = await M.fetchWithTimeout(M.withToken("auth/unlock"), {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      if (r.status === 403 || data.error === "wrong password") {
+        return { ok: false, error: "wrong password" };
+      }
+      if (!r.ok) {
+        return { ok: false, error: data.error ? String(data.error) : "Unlock failed" };
+      }
+      M.applyDashSessionFromResponse(data);
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Unlock failed" };
+    }
+  }
+
+  function ensureDashboardGatePopup() {
+    if (M.gatePopup) return M.gatePopup;
+    M.gatePopup = ce("div", "dash-gate-popup");
+    M.gatePopup.hidden = true;
+    M.gatePopup.setAttribute("role", "dialog");
+    M.gatePopup.setAttribute("aria-modal", "true");
+    M.gatePopup.setAttribute("aria-label", "Dashboard password");
+    const panel = ce("div", "dash-gate-panel");
+    const title = ce("h2", "dash-gate-title");
+    title.textContent = "Enter dashboard password";
+    const error = ce("p", "dash-gate-error");
+    error.hidden = true;
+    error.setAttribute("role", "alert");
+    error.setAttribute("aria-live", "polite");
+    const input = ce("input", "dash-gate-input");
+    input.type = "password";
+    input.autocomplete = "current-password";
+    input.placeholder = "Password";
+    input.spellcheck = false;
+    const submit = ce("button", "confirm-btn dash-gate-submit");
+    submit.type = "button";
+    submit.textContent = "Unlock";
+    panel.appendChild(title);
+    panel.appendChild(error);
+    panel.appendChild(input);
+    panel.appendChild(submit);
+    M.gatePopup.appendChild(panel);
+    M.appendPopup(M.gatePopup);
+
+    async function submitGate() {
+      M.hapticTap();
+      const password = input.value;
+      if (!password) return;
+      submit.disabled = true;
+      const result = await unlockDashboard(password);
+      submit.disabled = false;
+      if (result.ok) {
+        error.hidden = true;
+        error.textContent = "";
+        closeDashboardGate();
+        M.gateState?.resolve?.();
+        return;
+      }
+      error.textContent = result.error === "wrong password" ? "Wrong password" : (result.error || "Unlock failed");
+      error.hidden = false;
+      M.gatePopup.classList.remove("shake");
+      void M.gatePopup.offsetWidth;
+      M.gatePopup.classList.add("shake");
+      input.select();
+    }
+
+    submit.addEventListener("click", (e) => {
+      e.stopPropagation();
+      submitGate();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submitGate();
+      }
+    });
+
+    M.gatePopup._title = title;
+    M.gatePopup._error = error;
+    M.gatePopup._input = input;
+    M.gatePopup._submit = submit;
+    return M.gatePopup;
+  }
+
+  function openDashboardGate() {
+    const popup = ensureDashboardGatePopup();
+    popup._error.hidden = true;
+    popup._error.textContent = "";
+    popup._input.value = "";
+    popup.hidden = false;
+    popup.classList.remove("shake");
+    popup.classList.add("open");
+    requestAnimationFrame(() => popup._input.focus());
+  }
+
+  function closeDashboardGate() {
+    if (!M.gatePopup) return;
+    M.gatePopup.classList.remove("open", "shake");
+    M.gatePopup.hidden = true;
+    M.gateState = null;
+  }
+
+  function promptDashboardPassword() {
+    return new Promise((resolve) => {
+      M.gateState = { resolve };
+      openDashboardGate();
+    });
+  }
+
+  async function ensureDashboardAccess() {
+    M.loadDashSession();
+    let status;
+    try {
+      status = await fetchAuthStatus();
+    } catch {
+      return;
+    }
+    if (!status?.required) {
+      M.dashboardPasswordRequired = false;
+      M.clearDashSession();
+      return;
+    }
+    M.dashboardPasswordRequired = true;
+    if (M.isDashSessionFresh()) {
+      M.setupDashSessionActivityRenewal();
+      return;
+    }
+    await promptDashboardPassword();
+    M.setupDashSessionActivityRenewal();
+  }
+
   (async function init() {
     M.consumePreferCloudParam();
     try {
-      await M.ensureDashboardAccess();
+      await ensureDashboardAccess();
     } catch (e) {
       console.error("Dashboard auth failed:", e);
     }
@@ -1678,5 +1828,5 @@
   })();
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
-  Object.assign(M, { sendValveCmd, reconcileValve, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect });
+  Object.assign(M, { sendValveCmd, reconcileValve, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, fetchAuthStatus, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
 })();

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.25
+
+- Fix blank dashboard after password feature: move password-gate UI out of
+  `mld-app.js` into `mld-app-post2.js`. Part1 was only ~3 KB under Hubitat's 128 KB
+  File Manager limit and could truncate on upload.
+
 ## 0.2.23
 
 - Optional dashboard password: enable in app preferences to require a password

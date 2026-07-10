@@ -29,8 +29,15 @@ async function wait(ms) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+const MOCK_DASH_PASSWORD = "dashpass";
+let dashSessionQuery = "";
+
 async function getJson(path) {
-  const res = await fetch(`http://127.0.0.1:${PORT}${path}`);
+  const sep = path.includes("?") ? "&" : "?";
+  const url = dashSessionQuery
+    ? `http://127.0.0.1:${PORT}${path}${sep}${dashSessionQuery}`
+    : `http://127.0.0.1:${PORT}${path}`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
   return res.json();
 }
@@ -39,13 +46,25 @@ async function waitForServer(child) {
   for (let i = 0; i < 40; i++) {
     if (child.exitCode != null) throw new Error("preview server exited early");
     try {
-      await getJson("/data");
+      await getJson("/auth/status");
       return;
     } catch {
       await wait(100);
     }
   }
   throw new Error("preview server did not become ready");
+}
+
+async function unlockPreview() {
+  const res = await fetch(`http://127.0.0.1:${PORT}/auth/unlock`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ password: MOCK_DASH_PASSWORD }),
+  });
+  if (!res.ok) throw new Error("auth unlock failed: HTTP " + res.status);
+  const data = await res.json();
+  if (!data.session) throw new Error("auth unlock missing session");
+  dashSessionQuery = "dash_session=" + encodeURIComponent(data.session);
 }
 
 async function main() {
@@ -57,6 +76,7 @@ async function main() {
 
   try {
     await waitForServer(child);
+    await unlockPreview();
     const data = await getJson("/data");
 
     assert(Array.isArray(data.tempSensors) && data.tempSensors.length >= 1, "tempSensors present");
@@ -85,19 +105,19 @@ async function main() {
 
     const valve = data.valves[0];
     const valveBefore = (await getJson(`/device?id=${valve.i}`)).st;
-    const openRes = await fetch(`http://127.0.0.1:${PORT}/cmd?id=${valve.i}&c=open`);
+    const openRes = await fetch(`http://127.0.0.1:${PORT}/cmd?id=${valve.i}&c=open&${dashSessionQuery}`);
     assert(openRes.ok, "valve open /cmd succeeds");
     const valveOpen = await getJson(`/device?id=${valve.i}`);
     assert(valveOpen.st === "open", "valve /device reflects open after /cmd");
 
-    const closeRes = await fetch(`http://127.0.0.1:${PORT}/cmd?id=${valve.i}&c=close`);
+    const closeRes = await fetch(`http://127.0.0.1:${PORT}/cmd?id=${valve.i}&c=close&${dashSessionQuery}`);
     assert(closeRes.ok, "valve close /cmd succeeds");
     const valveClosed = await getJson(`/device?id=${valve.i}`);
     assert(valveClosed.st === "closed", "valve /device reflects closed after /cmd");
 
     assert((data.config?.favorites || []).includes(valve.i), "mock favorites includes a valve");
 
-    const favRes = await fetch(`http://127.0.0.1:${PORT}/favorites?ids=${valve.i}`);
+    const favRes = await fetch(`http://127.0.0.1:${PORT}/favorites?ids=${valve.i}&${dashSessionQuery}`);
     assert(favRes.ok, "favorites endpoint accepts valve id");
 
     ok(`valve state exercised: ${valveBefore} -> ${valveOpen.st} -> ${valveClosed.st}`);
