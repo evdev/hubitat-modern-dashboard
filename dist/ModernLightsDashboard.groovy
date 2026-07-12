@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.52
+// Modern Dashboard v0.2.53
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.52 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.53 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -1233,29 +1233,59 @@ def jsonStr(s) {
 }
 
 // JSON_OBJECT / list thermostat attributes (supportedThermostatModes, etc.)
-def jsonQuotedArray(items) {
-    def out = []
-    items.each { item ->
-        if (item != null) out << jsonStr(item.toString())
+def stripListToken(s) {
+    if (s == null) return null
+    def t = s.toString().trim()
+    if (!t) return null
+    if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+        t = t.substring(1, t.length() - 1).trim()
     }
-    return "[" + out.join(",") + "]"
+    return t ?: null
+}
+
+def normalizeListTokens(v) {
+    if (v == null) return null
+    def tokens = []
+    if (v instanceof Collection) {
+        v.each { item ->
+            def tok = stripListToken(item)
+            if (tok) tokens << tok
+        }
+    } else {
+        def s = v.toString().trim()
+        if (!s) return null
+        if (s.startsWith("[")) {
+            try {
+                def parsed = new groovy.json.JsonSlurper().parseText(s)
+                if (parsed instanceof Collection) {
+                    parsed.each { item ->
+                        def tok = stripListToken(item)
+                        if (tok) tokens << tok
+                    }
+                }
+            } catch (e) {
+                def inner = s.length() > 2 ? s.substring(1, s.length() - 1).trim() : ""
+                if (inner) {
+                    inner.split(/\s*,\s*/).each { part ->
+                        def tok = stripListToken(part)
+                        if (tok) tokens << tok
+                    }
+                }
+            }
+        } else {
+            s.split(/[,;|]/).each { part ->
+                def tok = stripListToken(part)
+                if (tok) tokens << tok
+            }
+        }
+    }
+    return tokens.size() ? tokens : null
 }
 
 def jsonListAttr(v) {
-    if (v == null) return "null"
-    if (v instanceof Collection) return jsonQuotedArray(v)
-    def s = v.toString().trim()
-    if (!s) return "null"
-    if (s.startsWith("[")) {
-        try {
-            def parsed = new groovy.json.JsonSlurper().parseText(s)
-            if (parsed instanceof Collection) return jsonQuotedArray(parsed)
-        } catch (e) {}
-        def inner = s.length() > 2 ? s.substring(1, s.length() - 1).trim() : ""
-        if (!inner) return "[]"
-        return jsonQuotedArray(inner.split(/\s*,\s*/).findAll { it })
-    }
-    return jsonStr(s)
+    def tokens = normalizeListTokens(v)
+    if (tokens == null) return "null"
+    return jsonStr(tokens.join(","))
 }
 
 // ---------------------------------------------------------------------------

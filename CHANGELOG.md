@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.53
+
+- Thermostat supported modes/fan modes: emit normalized comma-separated strings in
+  `/data` (handles collections, JSON arrays, and quoted tokens).
+- Thermostat dial: build mode buttons only from the device’s supported mode list
+  (no hidden placeholder buttons).
+
 ## 0.2.52
 
 - Thermostat list attributes: normalize bracketed string values (JSON or

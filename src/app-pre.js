@@ -444,23 +444,31 @@ function posToHs(cx, cy, x, y, radius) {
   return { h, s: sat };
 }
 
+function stripListToken(s) {
+  let t = String(s ?? "").trim();
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
+    t = t.slice(1, -1).trim();
+  }
+  return t.toLowerCase();
+}
+
 function parseList(csv) {
   if (csv == null || csv === "") return [];
   if (Array.isArray(csv)) {
-    return csv.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+    return csv.map(stripListToken).filter(Boolean);
   }
   const raw = String(csv).trim();
   if (!raw) return [];
   if (raw.startsWith("[")) {
     try {
       const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return arr.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+      if (Array.isArray(arr)) return arr.map(stripListToken).filter(Boolean);
     } catch {}
     const inner = raw.slice(1, -1).trim();
     if (!inner) return [];
-    return inner.split(/,\s*/).map((s) => s.trim().replace(/^["']|["']$/g, "").toLowerCase()).filter(Boolean);
+    return inner.split(/,\s*/).map(stripListToken).filter(Boolean);
   }
-  return raw.split(/[,;|]/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return raw.split(/[,;|]/).map(stripListToken).filter(Boolean);
 }
 
 function stripRoomPrefix(deviceName, roomName) {

@@ -820,25 +820,6 @@
     const modeSection = ce("div", "tstat-section");
     modeSection.appendChild(M.tstatSectionLabel("Thermostat mode"));
     const modes = ce("div", "tstat-modes");
-    const modeBtns = {};
-    for (const m of TSTAT_MODE_DEFS) {
-      const b = ce("button", "tstat-mode");
-      b.type = "button";
-      b.textContent = m.label;
-      b.dataset.modeKey = m.key;
-      b.setAttribute("aria-label", "Set thermostat to " + m.label);
-      b.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); setTstatMode(m.cmd, m.key); });
-      modes.appendChild(b);
-      modeBtns[m.key] = b;
-    }
-    const offBtn = ce("button", "tstat-mode off");
-    offBtn.type = "button";
-    offBtn.dataset.modeKey = "off";
-    offBtn.setAttribute("aria-label", "Turn thermostat off");
-    offBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M7.5 5.5a7 7 0 1 0 9 0"/></svg>';
-    offBtn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); setTstatMode("off", "off"); });
-    modes.appendChild(offBtn);
-    modeBtns.off = offBtn;
     modeSection.appendChild(modes);
 
     const fanModeSection = ce("div", "tstat-section");
@@ -907,7 +888,7 @@
     M.tstatPopup._coolChip = coolChip;
     M.tstatPopup._modeSection = modeSection;
     M.tstatPopup._modes = modes;
-    M.tstatPopup._modeBtns = modeBtns;
+    M.tstatPopup._modeBtns = {};
     M.tstatPopup._fanModeSection = fanModeSection;
     M.tstatPopup._fanModes = fanModes;
     M.tstatPopup._fanModeBtns = fanModeBtns;
@@ -1035,6 +1016,35 @@
     if (popup._plusBtn) popup._plusBtn.disabled = !canAdjust;
   }
 
+  function renderTstatModeButtons(popup, supported, tm, noneSelected) {
+    const modes = popup._modes;
+    modes.replaceChildren();
+    popup._modeBtns = {};
+    for (const key of supported) {
+      const k = String(key).toLowerCase();
+      const b = ce("button", "tstat-mode");
+      if (k === "off") b.classList.add("off");
+      b.type = "button";
+      b.dataset.modeKey = k;
+      if (k === "off") {
+        b.setAttribute("aria-label", "Turn thermostat off");
+        b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M7.5 5.5a7 7 0 1 0 9 0"/></svg>';
+        b.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); setTstatMode("off", "off"); });
+      } else {
+        const def = TSTAT_MODE_DEFS.find((m) => m.key === k);
+        const { cmd } = modeCmdForKey(k);
+        const label = def ? def.label : tstatModeDisplayLabel(k);
+        b.textContent = label;
+        b.setAttribute("aria-label", "Set thermostat to " + label);
+        b.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); setTstatMode(cmd, k); });
+      }
+      b.classList.toggle("active", tm === k);
+      b.disabled = noneSelected;
+      modes.appendChild(b);
+      popup._modeBtns[k] = b;
+    }
+  }
+
   function renderTstatControls() {
     const popup = ensureTstatPopup();
     const t = activeTstat();
@@ -1042,15 +1052,8 @@
     const noneSelected = !!(M.tstatSession?.central && !M.tstatSession.ids?.length);
     const supM = M.supportedModes(t);
     const tm = String(t.tm || "").toLowerCase();
-    let modeCount = 0;
-    for (const [key, btn] of Object.entries(popup._modeBtns)) {
-      const show = supM.includes(key);
-      btn.hidden = !show;
-      if (show) modeCount++;
-      btn.classList.toggle("active", tm === key);
-      btn.disabled = noneSelected;
-    }
-    popup._modeSection.style.display = modeCount ? "" : "none";
+    renderTstatModeButtons(popup, supM, tm, noneSelected);
+    popup._modeSection.style.display = supM.length ? "" : "none";
 
     if (t.hasFm) {
       const supported = M.supportedFanModes(t);
@@ -2270,5 +2273,5 @@
       if (rec?.wrap) nav.appendChild(rec.wrap);
     }
   }
-  Object.assign(M, { ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, trackPctFromEvent, levelFromTrackEvent, updateLevelTrackVisual, bindLevelTrackDrag, makeLevelTrackSlider, updateCtTrackVisual, bindCtTrackDrag, makeCtTrackSlider, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, applyCentralTstatSelection, updateCentralTstatTargetButton, updateTstatHeadExtras, updateTstatFavButton, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, closeCentralTstatTargetMenu, repositionCentralTstatTargetMenu, syncCentralTstatTargetMenu, openCentralTstatTargetMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, isCloudOrigin, isLocalOrigin, isAndroid, isStandaloneDisplay, initAndroidLocalImmersive, loadStoredLocalUrl, saveStoredLocalUrl, loadStoredCloudUrl, saveStoredCloudUrl, preferCloudMode, setPreferCloudMode, consumePreferCloudParam, loadLocalOkTs, saveLocalOkTs, localOkFresh, refreshLocalUrlFromConfig, navigateToLocal, maybeRefreshLocalOkFromReferrer, navigateToCloud, updateLocalModeMenuUI, hideLocalModeBanner, showLocalModeBanner, applyLocalModeStrategy, rebuildDevicesByRoom, rebuildOutletsByRoom, applyTstatSessionModeLock, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, outletsInLightsRooms, getDisplayRoomIds, getDefaultNavOrder, getDisplayNavOrder, applyNavOrder });
+  Object.assign(M, { ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, trackPctFromEvent, levelFromTrackEvent, updateLevelTrackVisual, bindLevelTrackDrag, makeLevelTrackSlider, updateCtTrackVisual, bindCtTrackDrag, makeCtTrackSlider, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, applyCentralTstatSelection, updateCentralTstatTargetButton, updateTstatHeadExtras, updateTstatFavButton, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatModeButtons, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, closeCentralTstatTargetMenu, repositionCentralTstatTargetMenu, syncCentralTstatTargetMenu, openCentralTstatTargetMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, isCloudOrigin, isLocalOrigin, isAndroid, isStandaloneDisplay, initAndroidLocalImmersive, loadStoredLocalUrl, saveStoredLocalUrl, loadStoredCloudUrl, saveStoredCloudUrl, preferCloudMode, setPreferCloudMode, consumePreferCloudParam, loadLocalOkTs, saveLocalOkTs, localOkFresh, refreshLocalUrlFromConfig, navigateToLocal, maybeRefreshLocalOkFromReferrer, navigateToCloud, updateLocalModeMenuUI, hideLocalModeBanner, showLocalModeBanner, applyLocalModeStrategy, rebuildDevicesByRoom, rebuildOutletsByRoom, applyTstatSessionModeLock, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, outletsInLightsRooms, getDisplayRoomIds, getDefaultNavOrder, getDisplayNavOrder, applyNavOrder });
 })();

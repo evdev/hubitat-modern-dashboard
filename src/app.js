@@ -2011,25 +2011,6 @@
     const modeSection = ce("div", "tstat-section");
     modeSection.appendChild(tstatSectionLabel("Thermostat mode"));
     const modes = ce("div", "tstat-modes");
-    const modeBtns = {};
-    for (const m of TSTAT_MODE_DEFS) {
-      const b = ce("button", "tstat-mode");
-      b.type = "button";
-      b.textContent = m.label;
-      b.dataset.modeKey = m.key;
-      b.setAttribute("aria-label", "Set thermostat to " + m.label);
-      b.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); setTstatMode(m.cmd, m.key); });
-      modes.appendChild(b);
-      modeBtns[m.key] = b;
-    }
-    const offBtn = ce("button", "tstat-mode off");
-    offBtn.type = "button";
-    offBtn.dataset.modeKey = "off";
-    offBtn.setAttribute("aria-label", "Turn thermostat off");
-    offBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M7.5 5.5a7 7 0 1 0 9 0"/></svg>';
-    offBtn.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); setTstatMode("off", "off"); });
-    modes.appendChild(offBtn);
-    modeBtns.off = offBtn;
     modeSection.appendChild(modes);
 
     const fanModeSection = ce("div", "tstat-section");
@@ -2098,7 +2079,7 @@
     tstatPopup._coolChip = coolChip;
     tstatPopup._modeSection = modeSection;
     tstatPopup._modes = modes;
-    tstatPopup._modeBtns = modeBtns;
+    tstatPopup._modeBtns = {};
     tstatPopup._fanModeSection = fanModeSection;
     tstatPopup._fanModes = fanModes;
     tstatPopup._fanModeBtns = fanModeBtns;
@@ -2226,6 +2207,35 @@
     if (popup._plusBtn) popup._plusBtn.disabled = !canAdjust;
   }
 
+  function renderTstatModeButtons(popup, supported, tm, noneSelected) {
+    const modes = popup._modes;
+    modes.replaceChildren();
+    popup._modeBtns = {};
+    for (const key of supported) {
+      const k = String(key).toLowerCase();
+      const b = ce("button", "tstat-mode");
+      if (k === "off") b.classList.add("off");
+      b.type = "button";
+      b.dataset.modeKey = k;
+      if (k === "off") {
+        b.setAttribute("aria-label", "Turn thermostat off");
+        b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M7.5 5.5a7 7 0 1 0 9 0"/></svg>';
+        b.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); setTstatMode("off", "off"); });
+      } else {
+        const def = TSTAT_MODE_DEFS.find((m) => m.key === k);
+        const { cmd } = modeCmdForKey(k);
+        const label = def ? def.label : tstatModeDisplayLabel(k);
+        b.textContent = label;
+        b.setAttribute("aria-label", "Set thermostat to " + label);
+        b.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); setTstatMode(cmd, k); });
+      }
+      b.classList.toggle("active", tm === k);
+      b.disabled = noneSelected;
+      modes.appendChild(b);
+      popup._modeBtns[k] = b;
+    }
+  }
+
   function renderTstatControls() {
     const popup = ensureTstatPopup();
     const t = activeTstat();
@@ -2233,15 +2243,8 @@
     const noneSelected = !!(tstatSession?.central && !tstatSession.ids?.length);
     const supM = supportedModes(t);
     const tm = String(t.tm || "").toLowerCase();
-    let modeCount = 0;
-    for (const [key, btn] of Object.entries(popup._modeBtns)) {
-      const show = supM.includes(key);
-      btn.hidden = !show;
-      if (show) modeCount++;
-      btn.classList.toggle("active", tm === key);
-      btn.disabled = noneSelected;
-    }
-    popup._modeSection.style.display = modeCount ? "" : "none";
+    renderTstatModeButtons(popup, supM, tm, noneSelected);
+    popup._modeSection.style.display = supM.length ? "" : "none";
 
     if (t.hasFm) {
       const supported = supportedFanModes(t);
