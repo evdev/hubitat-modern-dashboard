@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.48
+
+- Sensors tab: room headers collapse/expand on tap, expand/collapse-all works in
+  Sensors view, and rooms start expanded unless previously collapsed.
+- Lights view: hide room On/Off controls when a room has no lights.
+
 ## 0.2.47
 
 - Sensors view grouped by Hubitat room with collapsible room sections, type

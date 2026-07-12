@@ -1245,65 +1245,71 @@
         M.climateEls.set(roomKey, { el, iconEl, tempEl, controllable: climate.controllable });
       }
 
-      const toggle = ce("div", "room-toggle");
+      let offTrack = null;
+      let onTrack = null;
+      let saveBtn = null;
+      let restoreBtn = null;
+      if (devs.length > 0) {
+        const toggle = ce("div", "room-toggle");
 
-      const offTrack = ce("div", "slide-confirm-track room-slide-track room-slide-off");
-      const saveBtn = ce("button", "slide-confirm-action room-snap-action room-snap-save");
-      saveBtn.type = "button";
-      saveBtn.textContent = "Save Current State";
-      saveBtn.setAttribute("aria-label", "Save current state");
-      saveBtn.tabIndex = -1;
-      const offBtn = ce("button", "btn-off");
-      offBtn.type = "button";
-      offBtn.textContent = "Off";
-      offTrack.appendChild(saveBtn);
-      offTrack.appendChild(offBtn);
-      offTrack.appendChild(ce("span", "slide-confirm-thumb"));
+        offTrack = ce("div", "slide-confirm-track room-slide-track room-slide-off");
+        saveBtn = ce("button", "slide-confirm-action room-snap-action room-snap-save");
+        saveBtn.type = "button";
+        saveBtn.textContent = "Save Current State";
+        saveBtn.setAttribute("aria-label", "Save current state");
+        saveBtn.tabIndex = -1;
+        const offBtn = ce("button", "btn-off");
+        offBtn.type = "button";
+        offBtn.textContent = "Off";
+        offTrack.appendChild(saveBtn);
+        offTrack.appendChild(offBtn);
+        offTrack.appendChild(ce("span", "slide-confirm-thumb"));
 
-      const onTrack = ce("div", "slide-confirm-track room-slide-track room-slide-on");
-      const onBtn = ce("button", "btn-on");
-      onBtn.type = "button";
-      onBtn.textContent = "On";
-      const restoreBtn = ce("button", "slide-confirm-action room-snap-action room-snap-restore");
-      restoreBtn.type = "button";
-      restoreBtn.textContent = "Restore Saved State";
-      restoreBtn.setAttribute("aria-label", "Restore saved state");
-      restoreBtn.tabIndex = -1;
-      restoreBtn.disabled = true;
-      restoreBtn.setAttribute("aria-disabled", "true");
-      onTrack.appendChild(onBtn);
-      onTrack.appendChild(restoreBtn);
-      onTrack.appendChild(ce("span", "slide-confirm-thumb"));
+        onTrack = ce("div", "slide-confirm-track room-slide-track room-slide-on");
+        const onBtn = ce("button", "btn-on");
+        onBtn.type = "button";
+        onBtn.textContent = "On";
+        restoreBtn = ce("button", "slide-confirm-action room-snap-action room-snap-restore");
+        restoreBtn.type = "button";
+        restoreBtn.textContent = "Restore Saved State";
+        restoreBtn.setAttribute("aria-label", "Restore saved state");
+        restoreBtn.tabIndex = -1;
+        restoreBtn.disabled = true;
+        restoreBtn.setAttribute("aria-disabled", "true");
+        onTrack.appendChild(onBtn);
+        onTrack.appendChild(restoreBtn);
+        onTrack.appendChild(ce("span", "slide-confirm-thumb"));
 
-      toggle.appendChild(offTrack);
-      toggle.appendChild(onTrack);
-      head.appendChild(toggle);
+        toggle.appendChild(offTrack);
+        toggle.appendChild(onTrack);
+        head.appendChild(toggle);
 
-      attachRoomSlideAction(offTrack, offBtn, saveBtn, {
-        direction: "left",
-        onTap: () => roomAll(roomKey, "off"),
-        onCommit: () => {
-          snapshotSaveApi("room", roomKey).then((ok) => {
-            if (!ok) return;
-            const snapDevs = M.devicesByRoom.get(roomKey) || [];
-            M.snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: snapDevs.length };
-            updateRoomSnapshotUi();
-            M.flash(roomLabel(roomKey) + " saved");
-          });
-        },
-        canCommit: () => true,
-      });
+        attachRoomSlideAction(offTrack, offBtn, saveBtn, {
+          direction: "left",
+          onTap: () => roomAll(roomKey, "off"),
+          onCommit: () => {
+            snapshotSaveApi("room", roomKey).then((ok) => {
+              if (!ok) return;
+              const snapDevs = M.devicesByRoom.get(roomKey) || [];
+              M.snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: snapDevs.length };
+              updateRoomSnapshotUi();
+              M.flash(roomLabel(roomKey) + " saved");
+            });
+          },
+          canCommit: () => true,
+        });
 
-      attachRoomSlideAction(onTrack, onBtn, restoreBtn, {
-        direction: "right",
-        onTap: () => roomAll(roomKey, "on"),
-        onCommit: () => {
-          snapshotRestoreApi("room", roomKey).then((ok) => {
-            if (ok) M.flash("Restoring " + roomLabel(roomKey) + "…");
-          });
-        },
-        canCommit: () => !!M.snapshots[snapshotRoomKey(roomKey)],
-      });
+        attachRoomSlideAction(onTrack, onBtn, restoreBtn, {
+          direction: "right",
+          onTap: () => roomAll(roomKey, "on"),
+          onCommit: () => {
+            snapshotRestoreApi("room", roomKey).then((ok) => {
+              if (ok) M.flash("Restoring " + roomLabel(roomKey) + "…");
+            });
+          },
+          canCommit: () => !!M.snapshots[snapshotRoomKey(roomKey)],
+        });
+      }
 
       const col = ce("button", "room-collapse"); col.type = "button"; col.setAttribute("aria-label", "Collapse room");
       col.innerHTML = '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>';

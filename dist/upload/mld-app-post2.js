@@ -386,8 +386,14 @@
       e.stopPropagation();
       card.classList.toggle("collapsed");
       persistSensorsCollapsed();
+      updateExpandAllBtn();
     });
     head.appendChild(col);
+    head.addEventListener("click", () => {
+      card.classList.toggle("collapsed");
+      persistSensorsCollapsed();
+      updateExpandAllBtn();
+    });
 
     const body = ce("div", "room-body sensor-room-body");
     card.appendChild(head);
@@ -452,6 +458,7 @@
     body.appendChild(wrap);
     restoreSensorsCollapsed();
     applySensorTypeFilter();
+    updateExpandAllBtn();
   }
 
   function refreshSensorsPopup() {
@@ -948,6 +955,7 @@
       }
     }
     applySearch();
+    updateExpandAllBtn();
     updateCurrentCategoryTitle();
   }
 
@@ -1306,13 +1314,28 @@
     try { localStorage.setItem("mld_sensors_collapsed", sensorsCollapsedSet().join(",")); } catch {}
   }
 
+  function allSensorRoomsCollapsed() {
+    if (M.sensorRoomEls.size === 0) return true;
+    for (const [, rec] of M.sensorRoomEls) if (!rec.card.classList.contains("collapsed")) return false;
+    return true;
+  }
+
+  function expandAllSensorRooms() {
+    for (const [, rec] of M.sensorRoomEls) rec.card.classList.remove("collapsed");
+  }
+
+  function collapseAllSensorRooms() {
+    for (const [, rec] of M.sensorRoomEls) rec.card.classList.add("collapsed");
+  }
+
   function restoreSensorsCollapsed() {
+    for (const [, rec] of M.sensorRoomEls) rec.card.classList.remove("collapsed");
     let raw = null;
     try { raw = localStorage.getItem("mld_sensors_collapsed"); } catch {}
-    if (raw === null) return;
+    if (!raw) return;
     const set = new Set(raw.split(",").filter(Boolean).map(Number));
     for (const [rid, rec] of M.sensorRoomEls) {
-      rec.card.classList.toggle("collapsed", set.has(rid));
+      if (set.has(rid)) rec.card.classList.add("collapsed");
     }
   }
 
@@ -1334,7 +1357,8 @@
 
   function updateExpandAllBtn() {
     if (!M.EXPAND_ALL_BTN) return;
-    const collapsed = allRoomsCollapsed();
+    const useSensors = M.activeTab === "sensors" && M.sensorRoomEls.size > 0;
+    const collapsed = useSensors ? allSensorRoomsCollapsed() : allRoomsCollapsed();
     const label = collapsed ? "Expand all rooms" : "Collapse all rooms";
     M.EXPAND_ALL_BTN.innerHTML = collapsed ? EXPAND_ALL_SVG : COLLAPSE_ALL_SVG;
     M.EXPAND_ALL_BTN.setAttribute("aria-label", label);
@@ -1369,6 +1393,13 @@
 
   if (M.EXPAND_ALL_BTN) {
     M.EXPAND_ALL_BTN.addEventListener("click", () => {
+      if (M.activeTab === "sensors" && M.sensorRoomEls.size) {
+        if (allSensorRoomsCollapsed()) expandAllSensorRooms();
+        else collapseAllSensorRooms();
+        persistSensorsCollapsed();
+        updateExpandAllBtn();
+        return;
+      }
       if (allRoomsCollapsed()) expandAllRooms();
       else collapseAllRooms();
     });
@@ -2068,5 +2099,5 @@
   })();
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
-  Object.assign(M, { sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, fetchAuthStatus, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
+  Object.assign(M, { sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, allSensorRoomsCollapsed, expandAllSensorRooms, collapseAllSensorRooms, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, fetchAuthStatus, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
 })();

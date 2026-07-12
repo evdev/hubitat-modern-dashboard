@@ -4705,65 +4705,71 @@
         climateEls.set(roomKey, { el, iconEl, tempEl, controllable: climate.controllable });
       }
 
-      const toggle = ce("div", "room-toggle");
+      let offTrack = null;
+      let onTrack = null;
+      let saveBtn = null;
+      let restoreBtn = null;
+      if (devs.length > 0) {
+        const toggle = ce("div", "room-toggle");
 
-      const offTrack = ce("div", "slide-confirm-track room-slide-track room-slide-off");
-      const saveBtn = ce("button", "slide-confirm-action room-snap-action room-snap-save");
-      saveBtn.type = "button";
-      saveBtn.textContent = "Save Current State";
-      saveBtn.setAttribute("aria-label", "Save current state");
-      saveBtn.tabIndex = -1;
-      const offBtn = ce("button", "btn-off");
-      offBtn.type = "button";
-      offBtn.textContent = "Off";
-      offTrack.appendChild(saveBtn);
-      offTrack.appendChild(offBtn);
-      offTrack.appendChild(ce("span", "slide-confirm-thumb"));
+        offTrack = ce("div", "slide-confirm-track room-slide-track room-slide-off");
+        saveBtn = ce("button", "slide-confirm-action room-snap-action room-snap-save");
+        saveBtn.type = "button";
+        saveBtn.textContent = "Save Current State";
+        saveBtn.setAttribute("aria-label", "Save current state");
+        saveBtn.tabIndex = -1;
+        const offBtn = ce("button", "btn-off");
+        offBtn.type = "button";
+        offBtn.textContent = "Off";
+        offTrack.appendChild(saveBtn);
+        offTrack.appendChild(offBtn);
+        offTrack.appendChild(ce("span", "slide-confirm-thumb"));
 
-      const onTrack = ce("div", "slide-confirm-track room-slide-track room-slide-on");
-      const onBtn = ce("button", "btn-on");
-      onBtn.type = "button";
-      onBtn.textContent = "On";
-      const restoreBtn = ce("button", "slide-confirm-action room-snap-action room-snap-restore");
-      restoreBtn.type = "button";
-      restoreBtn.textContent = "Restore Saved State";
-      restoreBtn.setAttribute("aria-label", "Restore saved state");
-      restoreBtn.tabIndex = -1;
-      restoreBtn.disabled = true;
-      restoreBtn.setAttribute("aria-disabled", "true");
-      onTrack.appendChild(onBtn);
-      onTrack.appendChild(restoreBtn);
-      onTrack.appendChild(ce("span", "slide-confirm-thumb"));
+        onTrack = ce("div", "slide-confirm-track room-slide-track room-slide-on");
+        const onBtn = ce("button", "btn-on");
+        onBtn.type = "button";
+        onBtn.textContent = "On";
+        restoreBtn = ce("button", "slide-confirm-action room-snap-action room-snap-restore");
+        restoreBtn.type = "button";
+        restoreBtn.textContent = "Restore Saved State";
+        restoreBtn.setAttribute("aria-label", "Restore saved state");
+        restoreBtn.tabIndex = -1;
+        restoreBtn.disabled = true;
+        restoreBtn.setAttribute("aria-disabled", "true");
+        onTrack.appendChild(onBtn);
+        onTrack.appendChild(restoreBtn);
+        onTrack.appendChild(ce("span", "slide-confirm-thumb"));
 
-      toggle.appendChild(offTrack);
-      toggle.appendChild(onTrack);
-      head.appendChild(toggle);
+        toggle.appendChild(offTrack);
+        toggle.appendChild(onTrack);
+        head.appendChild(toggle);
 
-      attachRoomSlideAction(offTrack, offBtn, saveBtn, {
-        direction: "left",
-        onTap: () => roomAll(roomKey, "off"),
-        onCommit: () => {
-          snapshotSaveApi("room", roomKey).then((ok) => {
-            if (!ok) return;
-            const snapDevs = devicesByRoom.get(roomKey) || [];
-            snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: snapDevs.length };
-            updateRoomSnapshotUi();
-            flash(roomLabel(roomKey) + " saved");
-          });
-        },
-        canCommit: () => true,
-      });
+        attachRoomSlideAction(offTrack, offBtn, saveBtn, {
+          direction: "left",
+          onTap: () => roomAll(roomKey, "off"),
+          onCommit: () => {
+            snapshotSaveApi("room", roomKey).then((ok) => {
+              if (!ok) return;
+              const snapDevs = devicesByRoom.get(roomKey) || [];
+              snapshots[snapshotRoomKey(roomKey)] = { ts: Date.now(), count: snapDevs.length };
+              updateRoomSnapshotUi();
+              flash(roomLabel(roomKey) + " saved");
+            });
+          },
+          canCommit: () => true,
+        });
 
-      attachRoomSlideAction(onTrack, onBtn, restoreBtn, {
-        direction: "right",
-        onTap: () => roomAll(roomKey, "on"),
-        onCommit: () => {
-          snapshotRestoreApi("room", roomKey).then((ok) => {
-            if (ok) flash("Restoring " + roomLabel(roomKey) + "…");
-          });
-        },
-        canCommit: () => !!snapshots[snapshotRoomKey(roomKey)],
-      });
+        attachRoomSlideAction(onTrack, onBtn, restoreBtn, {
+          direction: "right",
+          onTap: () => roomAll(roomKey, "on"),
+          onCommit: () => {
+            snapshotRestoreApi("room", roomKey).then((ok) => {
+              if (ok) flash("Restoring " + roomLabel(roomKey) + "…");
+            });
+          },
+          canCommit: () => !!snapshots[snapshotRoomKey(roomKey)],
+        });
+      }
 
       const col = ce("button", "room-collapse"); col.type = "button"; col.setAttribute("aria-label", "Collapse room");
       col.innerHTML = '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>';
@@ -6924,8 +6930,14 @@
       e.stopPropagation();
       card.classList.toggle("collapsed");
       persistSensorsCollapsed();
+      updateExpandAllBtn();
     });
     head.appendChild(col);
+    head.addEventListener("click", () => {
+      card.classList.toggle("collapsed");
+      persistSensorsCollapsed();
+      updateExpandAllBtn();
+    });
 
     const body = ce("div", "room-body sensor-room-body");
     card.appendChild(head);
@@ -6990,6 +7002,7 @@
     body.appendChild(wrap);
     restoreSensorsCollapsed();
     applySensorTypeFilter();
+    updateExpandAllBtn();
   }
 
   function refreshSensorsPopup() {
@@ -7486,6 +7499,7 @@
       }
     }
     applySearch();
+    updateExpandAllBtn();
     updateCurrentCategoryTitle();
   }
 
@@ -7844,13 +7858,28 @@
     try { localStorage.setItem("mld_sensors_collapsed", sensorsCollapsedSet().join(",")); } catch {}
   }
 
+  function allSensorRoomsCollapsed() {
+    if (sensorRoomEls.size === 0) return true;
+    for (const [, rec] of sensorRoomEls) if (!rec.card.classList.contains("collapsed")) return false;
+    return true;
+  }
+
+  function expandAllSensorRooms() {
+    for (const [, rec] of sensorRoomEls) rec.card.classList.remove("collapsed");
+  }
+
+  function collapseAllSensorRooms() {
+    for (const [, rec] of sensorRoomEls) rec.card.classList.add("collapsed");
+  }
+
   function restoreSensorsCollapsed() {
+    for (const [, rec] of sensorRoomEls) rec.card.classList.remove("collapsed");
     let raw = null;
     try { raw = localStorage.getItem("mld_sensors_collapsed"); } catch {}
-    if (raw === null) return;
+    if (!raw) return;
     const set = new Set(raw.split(",").filter(Boolean).map(Number));
     for (const [rid, rec] of sensorRoomEls) {
-      rec.card.classList.toggle("collapsed", set.has(rid));
+      if (set.has(rid)) rec.card.classList.add("collapsed");
     }
   }
 
@@ -7872,7 +7901,8 @@
 
   function updateExpandAllBtn() {
     if (!EXPAND_ALL_BTN) return;
-    const collapsed = allRoomsCollapsed();
+    const useSensors = activeTab === "sensors" && sensorRoomEls.size > 0;
+    const collapsed = useSensors ? allSensorRoomsCollapsed() : allRoomsCollapsed();
     const label = collapsed ? "Expand all rooms" : "Collapse all rooms";
     EXPAND_ALL_BTN.innerHTML = collapsed ? EXPAND_ALL_SVG : COLLAPSE_ALL_SVG;
     EXPAND_ALL_BTN.setAttribute("aria-label", label);
@@ -7907,6 +7937,13 @@
 
   if (EXPAND_ALL_BTN) {
     EXPAND_ALL_BTN.addEventListener("click", () => {
+      if (activeTab === "sensors" && sensorRoomEls.size) {
+        if (allSensorRoomsCollapsed()) expandAllSensorRooms();
+        else collapseAllSensorRooms();
+        persistSensorsCollapsed();
+        updateExpandAllBtn();
+        return;
+      }
       if (allRoomsCollapsed()) expandAllRooms();
       else collapseAllRooms();
     });

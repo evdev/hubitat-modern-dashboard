@@ -1265,7 +1265,7 @@ body {
   padding: 2px 0 4px;
 }
 .tab-view .sensor-rooms { padding-bottom: 4px; }
-.sensor-room .room-head { cursor: default; }
+.sensor-room .room-head { cursor: pointer; }
 .sensor-room-body {
   display: flex;
   flex-direction: column;
