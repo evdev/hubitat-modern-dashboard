@@ -903,7 +903,12 @@
     if (!M.tstatSession) return null;
     if (M.tstatSession.central) return M.tstatSession.centralTstat;
     if (!M.tstatSession.ids?.length) return null;
-    return M.thermostats.find((x) => x.i === M.tstatSession.ids[0]) || null;
+    if (M.tstatSession.ids.length === 1) {
+      return M.thermostats.find((x) => x.i === M.tstatSession.ids[0]) || null;
+    }
+    if (M.tstatSession.multiTstat) return M.tstatSession.multiTstat;
+    const selected = M.tstatSession.ids.map((id) => M.thermostats.find((x) => x.i === id)).filter(Boolean);
+    return M.buildMultiTstatView(selected, M.tstatSession.unit);
   }
 
   function tstatSetpointTarget(t) {
@@ -1636,8 +1641,41 @@
     const roomKey = normalizeRoomId(rid);
     const list = M.thermoByRoom.get(roomKey) || [];
     if (!list.length) return;
-    const t = list[0];
-    M.tstatSession = { rid: roomKey, anchorEl, ids: list.map(x => x.i), unit: normalizeTstatUnit(t.u), edit: "heat" };
+    const ids = list.map((x) => x.i);
+    const unit = normalizeTstatUnit(list[0].u);
+    M.tstatSession = {
+      rid: roomKey,
+      anchorEl,
+      ids,
+      unit,
+      edit: "heat",
+      multiTstat: ids.length > 1 ? M.buildMultiTstatView(list, unit) : null,
+    };
+    const popup = ensureTstatPopup();
+    renderTstatDial();
+    renderTstatControls();
+    updateTstatFavButton();
+    positionTstatPopup(anchorEl);
+    popup.removeAttribute("hidden");
+    popup.classList.add("open");
+    M.publishMld({ tstatSession: M.tstatSession, tstatPopup: popup });
+  }
+
+  function openTstatPopupForDevice(tstatId, anchorEl) {
+    M.cancelAllSlideGestures();
+    closeTstatPopup();
+    if (M.colorSession) closeColorPopup(false);
+    closeMusicMasterPopup();
+    const t = M.thermostats.find((x) => x.i === tstatId);
+    if (!t) return;
+    M.tstatSession = {
+      rid: normalizeRoomId(t.r),
+      anchorEl,
+      ids: [t.i],
+      unit: normalizeTstatUnit(t.u),
+      edit: "heat",
+      multiTstat: null,
+    };
     const popup = ensureTstatPopup();
     renderTstatDial();
     renderTstatControls();
@@ -2273,5 +2311,5 @@
       if (rec?.wrap) nav.appendChild(rec.wrap);
     }
   }
-  Object.assign(M, { ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, trackPctFromEvent, levelFromTrackEvent, updateLevelTrackVisual, bindLevelTrackDrag, makeLevelTrackSlider, updateCtTrackVisual, bindCtTrackDrag, makeCtTrackSlider, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, applyCentralTstatSelection, updateCentralTstatTargetButton, updateTstatHeadExtras, updateTstatFavButton, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatModeButtons, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, closeCentralTstatTargetMenu, repositionCentralTstatTargetMenu, syncCentralTstatTargetMenu, openCentralTstatTargetMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, isCloudOrigin, isLocalOrigin, isAndroid, isStandaloneDisplay, initAndroidLocalImmersive, loadStoredLocalUrl, saveStoredLocalUrl, loadStoredCloudUrl, saveStoredCloudUrl, preferCloudMode, setPreferCloudMode, consumePreferCloudParam, loadLocalOkTs, saveLocalOkTs, localOkFresh, refreshLocalUrlFromConfig, navigateToLocal, maybeRefreshLocalOkFromReferrer, navigateToCloud, updateLocalModeMenuUI, hideLocalModeBanner, showLocalModeBanner, applyLocalModeStrategy, rebuildDevicesByRoom, rebuildOutletsByRoom, applyTstatSessionModeLock, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, outletsInLightsRooms, getDisplayRoomIds, getDefaultNavOrder, getDisplayNavOrder, applyNavOrder });
+  Object.assign(M, { ensureColorPopup, setColorTab, updateColorPopupUI, tileRecsFor, applyLevelChange, applyCtChange, applyRgbChange, attachCtPresets, attachLevelPresets, trackPctFromEvent, levelFromTrackEvent, updateLevelTrackVisual, bindLevelTrackDrag, makeLevelTrackSlider, updateCtTrackVisual, bindCtTrackDrag, makeCtTrackSlider, attachLevelTrackDrag, attachRgbPresets, attachRgbWheel, ensureLightOn, attachCtTrackDrag, kToPct, pctToK, kFromEvent, setCtVisual, setRgbVisual, setLevelVisual, openColorPopup, closeColorPopup, closeCtPopup, applyCentralTstatSelection, updateCentralTstatTargetButton, updateTstatHeadExtras, updateTstatFavButton, ensureTstatPopup, activeTstat, tstatSetpointTarget, commitTstatSetpoint, adjustTstatSetpoint, renderTstatDial, renderTstatModeButtons, renderTstatControls, attachTstatDialDrag, tstatModeLocked, reapplyTstatDeviceModeLocks, tstatModeDisplayLabel, favoriteTstatTarget, favoriteTstatTemps, favoriteTstatState, modeCmdForKey, applyTstatModeOptimistic, sendTstatModeCmd, adjustFavoriteTstat, refreshOpenTstatQuickPopups, closeFavoriteTstatModeMenu, repositionFavoriteTstatModeMenu, syncFavoriteTstatModeMenu, applyFavoriteTstatMode, openFavoriteTstatModeMenu, closeCentralTstatTargetMenu, repositionCentralTstatTargetMenu, syncCentralTstatTargetMenu, openCentralTstatTargetMenu, setTstatMode, setFanMode, setFanSpeed, positionTstatPopup, openCentralTstatPopup, openTstatPopup, openTstatPopupForDevice, closeTstatPopup, ensureMusicMasterPopup, renderMusicMasterBody, openMusicMasterPopup, closeMusicMasterPopup, reconcileTstat, updateClimateWidgets, setStatus, flash, hapticTap, effectiveTheme, updateThemeSegmentUI, applyTheme, applyDashboardName, isCloudOrigin, isLocalOrigin, isAndroid, isStandaloneDisplay, initAndroidLocalImmersive, loadStoredLocalUrl, saveStoredLocalUrl, loadStoredCloudUrl, saveStoredCloudUrl, preferCloudMode, setPreferCloudMode, consumePreferCloudParam, loadLocalOkTs, saveLocalOkTs, localOkFresh, refreshLocalUrlFromConfig, navigateToLocal, maybeRefreshLocalOkFromReferrer, navigateToCloud, updateLocalModeMenuUI, hideLocalModeBanner, showLocalModeBanner, applyLocalModeStrategy, rebuildDevicesByRoom, rebuildOutletsByRoom, applyTstatSessionModeLock, emptyState, loadingState, noDevicesState, sortRoomsByOrder, ensureRoomsFromDevices, contentRoomIds, outletsInLightsRooms, getDisplayRoomIds, getDefaultNavOrder, getDisplayNavOrder, applyNavOrder });
 })();

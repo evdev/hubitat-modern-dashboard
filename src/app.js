@@ -772,8 +772,44 @@
   }
 
   function supportedFanModes(t) {
+    // null/undefined = attribute missing → defaults when device has fan mode.
+    // "" or [] = driver reported none → show no fan mode controls.
     if (t?.supFM == null) return t?.hasFm ? TSTAT_DEFAULT_FAN_MODES : [];
     return parseList(t.supFM);
+  }
+
+  function intersectSupportedLists(lists) {
+    const cleaned = lists.map((list) => (Array.isArray(list) ? list : [])).filter((list) => list.length);
+    if (!cleaned.length) return [];
+    return cleaned.reduce((acc, list) => acc.filter((item) => list.includes(item)));
+  }
+
+  function buildMultiTstatView(selectedThermostats, unitHint) {
+    const first = selectedThermostats[0];
+    return {
+      i: -2,
+      n: selectedThermostats.length === 1 ? (first?.n || "Thermostat") : (selectedThermostats.length + " thermostats"),
+      r: first?.r ?? null,
+      tm: selectedThermostats.length === 1 ? (first?.tm || "") : "",
+      os: selectedThermostats.length === 1 ? (first?.os || "") : "",
+      hsp: selectedThermostats.length === 1 ? first?.hsp : null,
+      csp: selectedThermostats.length === 1 ? first?.csp : null,
+      temp: selectedThermostats.length === 1 ? first?.temp : null,
+      u: first?.u ?? unitHint,
+      hasFm: selectedThermostats.some((t) => t.hasFm),
+      fm: selectedThermostats.length === 1 ? (first?.fm || "") : "",
+      hasFs: selectedThermostats.some(deviceHasFanSpeed),
+      fs: selectedThermostats.length === 1 ? (first?.fs || "") : "",
+      fsLev: intersectSupportedLists(selectedThermostats.map(supportedFanSpeeds)).join(","),
+      // Only modes every selected device supports — avoids offering Cool on a heat-only HVAC.
+      supM: intersectSupportedLists(selectedThermostats.map(supportedModes)).join(","),
+      supFM: (() => {
+        const present = selectedThermostats.filter((t) => t.supFM != null);
+        if (!present.length) return null;
+        return intersectSupportedLists(present.map(supportedFanModes)).join(",");
+      })(),
+      _multi: true,
+    };
   }
 
   function deviceHasFanSpeed(t) {
@@ -2094,7 +2130,12 @@
     if (!tstatSession) return null;
     if (tstatSession.central) return tstatSession.centralTstat;
     if (!tstatSession.ids?.length) return null;
-    return thermostats.find((x) => x.i === tstatSession.ids[0]) || null;
+    if (tstatSession.ids.length === 1) {
+      return thermostats.find((x) => x.i === tstatSession.ids[0]) || null;
+    }
+    if (tstatSession.multiTstat) return tstatSession.multiTstat;
+    const selected = tstatSession.ids.map((id) => thermostats.find((x) => x.i === id)).filter(Boolean);
+    return buildMultiTstatView(selected, tstatSession.unit);
   }
 
   function tstatSetpointTarget(t) {
@@ -2827,8 +2868,41 @@
     const roomKey = normalizeRoomId(rid);
     const list = thermoByRoom.get(roomKey) || [];
     if (!list.length) return;
-    const t = list[0];
-    tstatSession = { rid: roomKey, anchorEl, ids: list.map(x => x.i), unit: normalizeTstatUnit(t.u), edit: "heat" };
+    const ids = list.map((x) => x.i);
+    const unit = normalizeTstatUnit(list[0].u);
+    tstatSession = {
+      rid: roomKey,
+      anchorEl,
+      ids,
+      unit,
+      edit: "heat",
+      multiTstat: ids.length > 1 ? buildMultiTstatView(list, unit) : null,
+    };
+    const popup = ensureTstatPopup();
+    renderTstatDial();
+    renderTstatControls();
+    updateTstatFavButton();
+    positionTstatPopup(anchorEl);
+    popup.removeAttribute("hidden");
+    popup.classList.add("open");
+    publishMld({ tstatSession: tstatSession, tstatPopup: popup });
+  }
+
+  function openTstatPopupForDevice(tstatId, anchorEl) {
+    cancelAllSlideGestures();
+    closeTstatPopup();
+    if (colorSession) closeColorPopup(false);
+    closeMusicMasterPopup();
+    const t = thermostats.find((x) => x.i === tstatId);
+    if (!t) return;
+    tstatSession = {
+      rid: normalizeRoomId(t.r),
+      anchorEl,
+      ids: [t.i],
+      unit: normalizeTstatUnit(t.u),
+      edit: "heat",
+      multiTstat: null,
+    };
     const popup = ensureTstatPopup();
     renderTstatDial();
     renderTstatControls();
@@ -7065,9 +7139,7 @@
       e.stopPropagation();
       hapticTap();
       closeCurrentView();
-      const rid = normalizeRoomId(t.r);
-      const climateRec = climateEls.get(rid);
-      openTstatPopup(rid, climateRec?.el || null);
+      openTstatPopupForDevice(t.i, null);
     });
 
     const temps = favoriteTstatTemps(t);

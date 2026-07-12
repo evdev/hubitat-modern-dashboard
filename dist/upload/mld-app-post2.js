@@ -519,9 +519,7 @@
       e.stopPropagation();
       M.hapticTap();
       closeCurrentView();
-      const rid = normalizeRoomId(t.r);
-      const climateRec = M.climateEls.get(rid);
-      M.openTstatPopup(rid, climateRec?.el || null);
+      M.openTstatPopupForDevice(t.i, null);
     });
 
     const temps = M.favoriteTstatTemps(t);

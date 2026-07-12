@@ -144,7 +144,7 @@ function buildMockData(count) {
   const thermostats = [
     { i: 1001, n: "Living Room Thermostat", r: 1, tm: "heat", os: "heating", hsp: 70, csp: 74, temp: 68, u: "F", hasFm: 1, fm: "auto", hasFs: 1, fs: "medium", supM: "auto,heat,cool,off", supFM: "auto,circulate,on", fsLev: "low,medium,high" },
     { i: 1002, n: "Master Bedroom Thermostat", r: 3, tm: "cool", os: "cooling", hsp: 68, csp: 72, temp: 74, u: "F", hasFm: 1, fm: "on", hasFs: 1, fs: "low", supM: ["cool", "off"], supFM: ["auto", "on"], fsLev: "low,medium,high" },
-    { i: 1003, n: "Office Thermostat", r: 4, tm: "off", os: "idle", hsp: 65, csp: 75, temp: 70, u: "F", hasFm: 1, fm: "circulate", hasFs: 0, fs: null, supM: "heat,cool,off", supFM: "auto,circulate", fsLev: null },
+    { i: 1003, n: "Office Thermostat", r: 4, tm: "off", os: "idle", hsp: 65, csp: 75, temp: 70, u: "F", hasFm: 1, fm: "circulate", hasFs: 0, fs: null, supM: "heat,off", supFM: "", fsLev: null },
   ];
   const tempSensors = [
     { i: 2001, n: "Kitchen Sensor", r: 2, temp: 71, u: "F", bat: 85 },

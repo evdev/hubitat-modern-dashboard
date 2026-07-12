@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.54
+
+- Multi-thermostat popup: mode and fan controls use only capabilities shared by
+  every selected unit (avoids offering Cool on heat-only HVAC).
+- Thermostat fan modes: empty `supFM` from the driver means no fan controls (not
+  “unknown”).
+- Favorites thermostat tap opens that device’s dial, not the room’s first
+  thermostat.
+
 ## 0.2.53
 
 - Thermostat supported modes/fan modes: emit normalized comma-separated strings in
