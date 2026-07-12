@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.51
+
+- Thermostat list attributes: serialize Hubitat collections as a JSON string array
+  via `jsonStr` per item (avoids `JsonOutput` quirks on driver list values).
+
 ## 0.2.50
 
 - Thermostat supported modes/fan modes/fan speeds: serialize Hubitat list attributes

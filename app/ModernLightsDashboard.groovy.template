@@ -1235,8 +1235,12 @@ def jsonStr(s) {
 // JSON_OBJECT / list thermostat attributes (supportedThermostatModes, etc.)
 def jsonListAttr(v) {
     if (v == null) return "null"
-    if (v instanceof Collection || v.getClass().isArray()) {
-        return groovy.json.JsonOutput.toJson(v)
+    if (v instanceof Collection) {
+        def items = []
+        v.each { item ->
+            if (item != null) items << jsonStr(item.toString())
+        }
+        return "[" + items.join(",") + "]"
     }
     def s = v.toString().trim()
     if (!s) return "null"
