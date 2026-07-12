@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.50
+
+- Thermostat supported modes/fan modes/fan speeds: serialize Hubitat list attributes
+  as JSON arrays in `/data` and parse them reliably in the UI (fixes drivers that
+  expose only `cool`/`off` or similar subsets).
+- Thermostat dial: honor empty `supM` / `supFM` from the device instead of
+  substituting default mode lists.
+
 ## 0.2.49
 
 - Thermostat fan modes: read `supportedThermostatFanModes` when drivers expose it

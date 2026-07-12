@@ -446,15 +446,21 @@ function posToHs(cx, cy, x, y, radius) {
 
 function parseList(csv) {
   if (csv == null || csv === "") return [];
+  if (Array.isArray(csv)) {
+    return csv.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
+  }
   const raw = String(csv).trim();
   if (!raw) return [];
   if (raw.startsWith("[")) {
     try {
       const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return arr.map(s => String(s).trim().toLowerCase()).filter(Boolean);
+      if (Array.isArray(arr)) return arr.map((s) => String(s).trim().toLowerCase()).filter(Boolean);
     } catch {}
+    const inner = raw.slice(1, -1).trim();
+    if (!inner) return [];
+    return inner.split(/,\s*/).map((s) => s.trim().replace(/^["']|["']$/g, "").toLowerCase()).filter(Boolean);
   }
-  return raw.split(/[,;|]/).map(s => s.trim().toLowerCase()).filter(Boolean);
+  return raw.split(/[,;|]/).map((s) => s.trim().toLowerCase()).filter(Boolean);
 }
 
 function stripRoomPrefix(deviceName, roomName) {

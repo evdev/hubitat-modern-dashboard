@@ -767,14 +767,13 @@
   }
 
   function supportedModes(t) {
-    const list = parseList(t?.supM);
-    return list.length ? list : TSTAT_DEFAULT_MODES;
+    if (t?.supM == null) return TSTAT_DEFAULT_MODES;
+    return parseList(t.supM);
   }
 
   function supportedFanModes(t) {
-    const list = parseList(t?.supFM);
-    if (list.length) return list;
-    return t?.hasFm ? TSTAT_DEFAULT_FAN_MODES : [];
+    if (t?.supFM == null) return t?.hasFm ? TSTAT_DEFAULT_FAN_MODES : [];
+    return parseList(t.supFM);
   }
 
   function deviceHasFanSpeed(t) {
