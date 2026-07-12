@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.52
+
+- Thermostat list attributes: normalize bracketed string values (JSON or
+  comma-separated) into a properly quoted JSON string array in `/data`.
+
 ## 0.2.51
 
 - Thermostat list attributes: serialize Hubitat collections as a JSON string array
