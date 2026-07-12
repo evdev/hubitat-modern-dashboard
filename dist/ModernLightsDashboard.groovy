@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.45
+// Modern Dashboard v0.2.46
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.45 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.46 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -50,6 +50,8 @@ def mainPage() {
             paragraph "<small>Outlets may also appear in the lights list above. When <b>separate Outlets tab</b> is off, outlet tiles appear in room cards on the Lights view. When on, they appear under the Outlets quick-nav tab instead. Room On/Off never controls outlets.</small>"
             input "thermostats", "capability.thermostat", title: "Select your thermostats",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "thermostatsPopupEnabled", "bool", title: "Show thermostats in dashboard quick menu", defaultValue: true, submitOnChange: true
+            paragraph "<small>When <b>quick menu</b> is off, thermostats only appear in each room card on the Lights tab.</small>"
             input "tempSensors", "capability.temperatureMeasurement", title: "Temperature sensors (display only)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "windowShades", "capability.windowShade", title: "Select motorized shades & blinds",
@@ -65,6 +67,11 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "garageDoors", "capability.garageDoorControl", title: "Garage door openers",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "unlockPinEnabled", "bool", title: "Require PIN to unlock doors / open garage doors from dashboard", defaultValue: false, submitOnChange: true
+            if (unlockPinEnabled) {
+                input "unlockPin", "password", title: "Unlock PIN", required: false
+                paragraph "<small>PIN is validated by this app before sending unlock and garage-open commands. Locking and closing garage doors do not require a PIN.</small>"
+            }
         }
         section("Other sensors") {
             paragraph "<small>Select sensors to show in the Sensors popup. Multi-sensors may also be selected as temperature sensors or other dashboard devices; the richer sensor type is shown once in the Sensors view.</small>"
@@ -118,16 +125,6 @@ def mainPage() {
                 input "dashboardPassword", "password", title: "Dashboard password", required: false
                 paragraph "<small>Visitors must enter this password before the dashboard loads. The unlock lasts seven days while the dashboard is used; after a week of inactivity the password is required again.</small>"
             }
-        }
-        section("Locks") {
-            input "unlockPinEnabled", "bool", title: "Require PIN to unlock doors / open garage doors from dashboard", defaultValue: false, submitOnChange: true
-            if (unlockPinEnabled) {
-                input "unlockPin", "password", title: "Unlock PIN", required: false
-                paragraph "<small>PIN is validated by this app before sending unlock and garage-open commands. Locking and closing garage doors do not require a PIN.</small>"
-            }
-        }
-        section("Thermostats") {
-            input "thermostatsPopupEnabled", "bool", title: "Show thermostats in dashboard quick menu", defaultValue: true, submitOnChange: true
         }
         section("Security (HSM)") {
             input "hsmEnabled", "bool", title: "Enable HSM security control", defaultValue: false, submitOnChange: true

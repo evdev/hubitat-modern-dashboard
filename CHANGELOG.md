@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.46
+
+- Companion app preferences cleanup: unlock PIN lives under **Locks / garage
+  doors**; thermostat quick-menu toggle sits with the thermostat picker (removed
+  separate Locks and Thermostats sections).
+
 ## 0.2.45
 
 - Companion app: locks and garage door openers moved to a dedicated **Locks /
