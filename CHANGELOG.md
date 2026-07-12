@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.55
+
+- Thermostat dial mode/fan controls always follow the open device’s own
+  `supportedThermostatModes` / `supportedThermostatFanModes` (not a merge of
+  other units in the room).
+
 ## 0.2.54
 
 - Multi-thermostat popup: mode and fan controls use only capabilities shared by

@@ -903,12 +903,7 @@
     if (!M.tstatSession) return null;
     if (M.tstatSession.central) return M.tstatSession.centralTstat;
     if (!M.tstatSession.ids?.length) return null;
-    if (M.tstatSession.ids.length === 1) {
-      return M.thermostats.find((x) => x.i === M.tstatSession.ids[0]) || null;
-    }
-    if (M.tstatSession.multiTstat) return M.tstatSession.multiTstat;
-    const selected = M.tstatSession.ids.map((id) => M.thermostats.find((x) => x.i === id)).filter(Boolean);
-    return M.buildMultiTstatView(selected, M.tstatSession.unit);
+    return M.thermostats.find((x) => x.i === M.tstatSession.ids[0]) || null;
   }
 
   function tstatSetpointTarget(t) {
@@ -1641,16 +1636,8 @@
     const roomKey = normalizeRoomId(rid);
     const list = M.thermoByRoom.get(roomKey) || [];
     if (!list.length) return;
-    const ids = list.map((x) => x.i);
-    const unit = normalizeTstatUnit(list[0].u);
-    M.tstatSession = {
-      rid: roomKey,
-      anchorEl,
-      ids,
-      unit,
-      edit: "heat",
-      multiTstat: ids.length > 1 ? M.buildMultiTstatView(list, unit) : null,
-    };
+    const t = list[0];
+    M.tstatSession = { rid: roomKey, anchorEl, ids: list.map(x => x.i), unit: normalizeTstatUnit(t.u), edit: "heat" };
     const popup = ensureTstatPopup();
     renderTstatDial();
     renderTstatControls();
@@ -1674,7 +1661,6 @@
       ids: [t.i],
       unit: normalizeTstatUnit(t.u),
       edit: "heat",
-      multiTstat: null,
     };
     const popup = ensureTstatPopup();
     renderTstatDial();

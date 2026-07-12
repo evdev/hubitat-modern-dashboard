@@ -778,40 +778,6 @@
     return parseList(t.supFM);
   }
 
-  function intersectSupportedLists(lists) {
-    const cleaned = lists.map((list) => (Array.isArray(list) ? list : [])).filter((list) => list.length);
-    if (!cleaned.length) return [];
-    return cleaned.reduce((acc, list) => acc.filter((item) => list.includes(item)));
-  }
-
-  function buildMultiTstatView(selectedThermostats, unitHint) {
-    const first = selectedThermostats[0];
-    return {
-      i: -2,
-      n: selectedThermostats.length === 1 ? (first?.n || "Thermostat") : (selectedThermostats.length + " thermostats"),
-      r: first?.r ?? null,
-      tm: selectedThermostats.length === 1 ? (first?.tm || "") : "",
-      os: selectedThermostats.length === 1 ? (first?.os || "") : "",
-      hsp: selectedThermostats.length === 1 ? first?.hsp : null,
-      csp: selectedThermostats.length === 1 ? first?.csp : null,
-      temp: selectedThermostats.length === 1 ? first?.temp : null,
-      u: first?.u ?? unitHint,
-      hasFm: selectedThermostats.some((t) => t.hasFm),
-      fm: selectedThermostats.length === 1 ? (first?.fm || "") : "",
-      hasFs: selectedThermostats.some(deviceHasFanSpeed),
-      fs: selectedThermostats.length === 1 ? (first?.fs || "") : "",
-      fsLev: intersectSupportedLists(selectedThermostats.map(supportedFanSpeeds)).join(","),
-      // Only modes every selected device supports — avoids offering Cool on a heat-only HVAC.
-      supM: intersectSupportedLists(selectedThermostats.map(supportedModes)).join(","),
-      supFM: (() => {
-        const present = selectedThermostats.filter((t) => t.supFM != null);
-        if (!present.length) return null;
-        return intersectSupportedLists(present.map(supportedFanModes)).join(",");
-      })(),
-      _multi: true,
-    };
-  }
-
   function deviceHasFanSpeed(t) {
     return !!(t?.hasFs || parseList(t?.fsLev).length);
   }
@@ -2130,12 +2096,7 @@
     if (!tstatSession) return null;
     if (tstatSession.central) return tstatSession.centralTstat;
     if (!tstatSession.ids?.length) return null;
-    if (tstatSession.ids.length === 1) {
-      return thermostats.find((x) => x.i === tstatSession.ids[0]) || null;
-    }
-    if (tstatSession.multiTstat) return tstatSession.multiTstat;
-    const selected = tstatSession.ids.map((id) => thermostats.find((x) => x.i === id)).filter(Boolean);
-    return buildMultiTstatView(selected, tstatSession.unit);
+    return thermostats.find((x) => x.i === tstatSession.ids[0]) || null;
   }
 
   function tstatSetpointTarget(t) {
@@ -2868,16 +2829,8 @@
     const roomKey = normalizeRoomId(rid);
     const list = thermoByRoom.get(roomKey) || [];
     if (!list.length) return;
-    const ids = list.map((x) => x.i);
-    const unit = normalizeTstatUnit(list[0].u);
-    tstatSession = {
-      rid: roomKey,
-      anchorEl,
-      ids,
-      unit,
-      edit: "heat",
-      multiTstat: ids.length > 1 ? buildMultiTstatView(list, unit) : null,
-    };
+    const t = list[0];
+    tstatSession = { rid: roomKey, anchorEl, ids: list.map(x => x.i), unit: normalizeTstatUnit(t.u), edit: "heat" };
     const popup = ensureTstatPopup();
     renderTstatDial();
     renderTstatControls();
@@ -2901,7 +2854,6 @@
       ids: [t.i],
       unit: normalizeTstatUnit(t.u),
       edit: "heat",
-      multiTstat: null,
     };
     const popup = ensureTstatPopup();
     renderTstatDial();
