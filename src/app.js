@@ -849,22 +849,13 @@
       dashSession = "";
       dashSessionExpiresAt = 0;
     }
-    // Signed tokens embed expiry as the prefix before "."; use it if storage expiry is missing.
-    if (dashSession && !(dashSessionExpiresAt > Date.now())) {
-      const prefix = Number(String(dashSession).split(".")[0]);
-      if (Number.isFinite(prefix) && prefix > Date.now()) dashSessionExpiresAt = prefix;
-    }
     publishMld({ dashSession: dashSession, dashSessionExpiresAt: dashSessionExpiresAt });
   }
 
   function saveDashSession(session, expiresAt) {
     dashSession = String(session || "");
-    let exp = Number(expiresAt);
-    if (!Number.isFinite(exp) || exp <= 0) {
-      const prefix = Number(String(dashSession).split(".")[0]);
-      exp = Number.isFinite(prefix) && prefix > 0 ? prefix : 0;
-    }
-    dashSessionExpiresAt = exp;
+    const exp = Number(expiresAt);
+    dashSessionExpiresAt = Number.isFinite(exp) && exp > 0 ? exp : 0;
     try {
       if (dashSession) {
         localStorage.setItem(DASH_SESSION_STORAGE_KEY, dashSession);
@@ -882,23 +873,46 @@
   }
 
   function isDashSessionFresh() {
-    if (!dashSession) return false;
-    if (dashSessionExpiresAt > Date.now()) return true;
-    const prefix = Number(String(dashSession).split(".")[0]);
-    if (Number.isFinite(prefix) && prefix > Date.now()) {
-      dashSessionExpiresAt = prefix;
-      publishMld({ dashSessionExpiresAt: dashSessionExpiresAt });
-      return true;
-    }
-    return false;
+    return !!dashSession && dashSessionExpiresAt > Date.now();
+  }
+
+  let dashSessionRenewInFlight = null;
+  let dashSessionLastRenewAt = 0;
+  const DASH_SESSION_RENEW_MIN_INTERVAL_MS = 60 * 60 * 1000; // at most hourly
+
+  async function renewDashSessionFromServer(force) {
+    if (!dashSession || !isDashSessionFresh()) return false;
+    const now = Date.now();
+    if (!force && now - dashSessionLastRenewAt < DASH_SESSION_RENEW_MIN_INTERVAL_MS) return true;
+    if (dashSessionRenewInFlight) return dashSessionRenewInFlight;
+    dashSessionRenewInFlight = (async () => {
+      try {
+        const r = await fetchWithTimeout(withToken("auth/renew"), {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        if (r.status === 401) {
+          clearDashSession();
+          return false;
+        }
+        if (!r.ok) return false;
+        const data = await r.json();
+        applyDashSessionFromResponse(data);
+        dashSessionLastRenewAt = Date.now();
+        return isDashSessionFresh();
+      } catch {
+        return false;
+      } finally {
+        dashSessionRenewInFlight = null;
+      }
+    })();
+    return dashSessionRenewInFlight;
   }
 
   function slideDashSessionExpiry() {
     if (!dashSession) return;
-    // Local UX extension only; server expiry is authoritative and renewed on API calls.
-    dashSessionExpiresAt = Date.now() + DASH_SESSION_MAX_AGE_MS;
-    try { localStorage.setItem(DASH_SESSION_EXPIRES_KEY, String(dashSessionExpiresAt)); } catch {}
-    publishMld({ dashSessionExpiresAt: dashSessionExpiresAt });
+    // Server is authoritative — ask it to slide the 7-day window (throttled).
+    renewDashSessionFromServer(false);
   }
 
   function applyDashSessionFromResponse(data) {
@@ -923,7 +937,7 @@
     document.addEventListener("pointerdown", renew, { passive: true });
     document.addEventListener("keydown", renew);
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") renew();
+      if (document.visibilityState === "visible") renewDashSessionFromServer(true);
     });
   }
 
@@ -3976,10 +3990,6 @@
       if (outlet) { out.push({ type: "outlet", dev: outlet }); continue; }
       const t = thermostats.find(x => x.i === id);
       if (t) { out.push({ type: "thermostat", dev: t }); continue; }
-      const ts = tempSensors.find(x => x.i === id);
-      if (ts) { out.push({ type: "sensor", dev: normalizeTempSensorForCard(ts) }); continue; }
-      const sen = sensors.find(x => x.i === id);
-      if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
       const valve = valves.find(x => x.i === id);
       if (valve) { out.push({ type: "sensor", dev: normalizeValveForCard(valve) }); continue; }
       const mp = music.find(x => x.i === id);
@@ -3987,7 +3997,11 @@
       const lk = locks.find(x => x.i === id);
       if (lk) { out.push({ type: "lock", dev: lk }); continue; }
       const shade = windowShades.find(x => x.i === id);
-      if (shade) out.push({ type: "shade", dev: shade });
+      if (shade) { out.push({ type: "shade", dev: shade }); continue; }
+      const sen = sensors.find(x => x.i === id);
+      if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
+      const ts = tempSensors.find(x => x.i === id);
+      if (ts) out.push({ type: "sensor", dev: normalizeTempSensorForCard(ts) });
     }
     return out;
   }
@@ -5301,7 +5315,13 @@
         return;
       }
       const s = tempSensors.find(x => x.i === Number(d.i));
-      if (s) {
+      const sen = sensors.find(x => x.i === Number(d.i));
+      const lock = locks.find(x => x.i === Number(d.i));
+      const shade = windowShades.find(x => x.i === Number(d.i));
+      const valve = valves.find(x => x.i === Number(d.i));
+      const mp = music.find(x => x.i === Number(d.i));
+      const hasControlRole = !!(lock || shade || valve || mp);
+      if (s && !sen && !hasControlRole) {
         if (d.temp != null) s.temp = Number(d.temp);
         updateClimateWidgets();
         updateRoomMeta();
@@ -5309,14 +5329,12 @@
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
-      const sen = sensors.find(x => x.i === Number(d.i));
-      if (sen) {
+      if (sen && !hasControlRole) {
         applySensorPayload(sen, d);
         if (currentCategory() === "sensors") refreshSensorsPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
-      const lock = locks.find(x => x.i === Number(d.i));
       if (lock) {
         if (d.lk != null) lock.lk = d.lk ? 1 : 0;
         if (d.st != null) lock.st = d.st;
@@ -5326,7 +5344,6 @@
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
-      const shade = windowShades.find(x => x.i === Number(d.i));
       if (shade) {
         if (d.st != null) shade.st = d.st;
         if (d.pos != null) shade.pos = d.pos;
@@ -5341,7 +5358,6 @@
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
-      const valve = valves.find(x => x.i === Number(d.i));
       if (valve) {
         if (d.st != null) valve.st = d.st;
         const opt = valveOptimistic.get(Number(d.i));
@@ -5350,7 +5366,6 @@
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
-      const mp = music.find(x => x.i === Number(d.i));
       if (mp) {
         if (d.st != null) mp.st = d.st;
         if (d.v != null) mp.v = d.v;
@@ -6362,10 +6377,18 @@
 
   // ---------- sensors popup ----------
   function mergedSensorList() {
-    const out = [];
-    for (const s of tempSensors) out.push({ i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s });
-    for (const s of sensors) out.push({ i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
-    for (const v of valves) out.push(normalizeValveForCard(v));
+    const byId = new Map();
+    for (const s of tempSensors) {
+      byId.set(String(s.i), { i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s });
+    }
+    // A multi-sensor may also be in tempSensors. Prefer its explicitly selected
+    // sensor type so motion/contact/etc. is not reduced to a temperature card.
+    for (const s of sensors) {
+      byId.set(String(s.i), { i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
+    }
+    // Valve controls take priority if a valve also exposes a sensor capability.
+    for (const v of valves) byId.set(String(v.i), normalizeValveForCard(v));
+    const out = [...byId.values()];
     out.sort((a, b) => {
       const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
       if (ra !== 0) return ra;

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.42
+
+- Dashboard password sessions: use `dashSessionTtlMs()` method instead of a Groovy
+  field (Hubitat could leave the constant null); safer session sequence handling.
+
+## 0.2.41
+
+- Dashboard password sessions: store opaque tokens in hub state with sliding 7-day
+  renewal via new `/auth/renew` endpoint (replaces signed tokens that broke on hub
+  password changes and sandbox limits). Client renews server-side on activity.
+
+## 0.2.40
+
+- Fix multi-sensors disappearing from the Sensors view when they are also
+  authorized as temperature sensors or another dashboard device type.
+- Add an **Other / generic sensors** picker for devices that only expose
+  Hubitat's base Sensor capability.
+
 ## 0.2.39
 
 - Remove optional offline device indicator (deferred; see

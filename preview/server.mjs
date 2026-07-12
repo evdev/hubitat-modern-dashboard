@@ -23,7 +23,6 @@ const NAMES = ["Ceiling", "Recessed", "Pendant", "Lamp", "Sconce", "Strip", "Spo
 const MOCK_HSM_PIN = "1234";
 const MOCK_UNLOCK_PIN = "5678";
 const MOCK_DASH_PASSWORD = "dashpass";
-const MOCK_ACCESS_TOKEN = "preview-token";
 const DASH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MOCK_TRACKS = [
   "Daft Punk — Get Lucky",
@@ -310,33 +309,39 @@ function dashboardPasswordRequired() {
   return state.dashboardPasswordEnabled === true && state.dashboardPasswordRequired === true;
 }
 
-function dashboardSessionSecret() {
-  return `${MOCK_DASH_PASSWORD}|${MOCK_ACCESS_TOKEN}`;
-}
+const dashSessions = new Map(); // token -> expiresAt
+let dashSessionSeq = 0;
 
-function dashboardSessionSig(expiryMs) {
-  const input = `${dashboardSessionSecret()}|${expiryMs}`;
-  let hash = 5381;
-  for (let i = 0; i < input.length; i++) {
-    hash = ((hash << 5) + hash + input.charCodeAt(i)) | 0;
+function pruneDashSessions(nowMs = Date.now()) {
+  for (const [token, exp] of dashSessions) {
+    if (!exp || exp <= nowMs) dashSessions.delete(token);
   }
-  return hash.toString();
 }
 
 function issueDashboardSession() {
-  const expiresAt = Date.now() + DASH_SESSION_TTL_MS;
-  const session = `${expiresAt}.${dashboardSessionSig(expiresAt)}`;
+  const nowMs = Date.now();
+  pruneDashSessions(nowMs);
+  dashSessionSeq += 1;
+  const expiresAt = nowMs + DASH_SESSION_TTL_MS;
+  const session = `ds-${nowMs}-${dashSessionSeq}`;
+  dashSessions.set(session, expiresAt);
   return { session, expiresAt };
 }
 
 function validateAndRenewDashboardSession(token) {
   if (!token || !dashboardPasswordRequired()) return null;
-  const parts = String(token).split(".", 2);
-  if (parts.length !== 2) return null;
-  const expiry = Number(parts[0]);
-  if (!Number.isFinite(expiry) || expiry <= Date.now()) return null;
-  if (parts[1] !== dashboardSessionSig(expiry)) return null;
-  return issueDashboardSession();
+  const key = String(token).trim();
+  if (!key) return null;
+  const nowMs = Date.now();
+  pruneDashSessions(nowMs);
+  const expiry = dashSessions.get(key);
+  if (!expiry || expiry <= nowMs) {
+    dashSessions.delete(key);
+    return null;
+  }
+  const renewedExpiry = nowMs + DASH_SESSION_TTL_MS;
+  dashSessions.set(key, renewedExpiry);
+  return { session: key, expiresAt: renewedExpiry };
 }
 
 function dashSessionFromUrl(url, body) {
@@ -460,6 +465,16 @@ const server = createServer(async (req, res) => {
     const issued = issueDashboardSession();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({ ok: true, session: issued.session, expiresAt: issued.expiresAt }));
+  }
+  if (p === "/auth/renew") {
+    const auth = requireDashAuth(res, url, null);
+    if (!auth) return;
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({
+      ok: true,
+      session: auth.renewed.session,
+      expiresAt: auth.renewed.expiresAt,
+    }));
   }
   if (p === "/data") {
     const auth = requireDashAuth(res, url, null);

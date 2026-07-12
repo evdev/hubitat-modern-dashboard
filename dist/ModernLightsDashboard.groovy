@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.39
+// Modern Dashboard v0.2.42
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.39 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.42 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -62,7 +62,7 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Other sensors") {
-            paragraph "<small>Select sensors to show in the Sensors popup. A device selected in multiple pickers below appears once, using the first matching type.</small>"
+            paragraph "<small>Select sensors to show in the Sensors popup. Multi-sensors may also be selected as temperature sensors or other dashboard devices; the richer sensor type is shown once in the Sensors view.</small>"
             input "motionSensors", "capability.motionSensor", title: "Motion sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "contactSensors", "capability.contactSensor", title: "Contact / door / window sensors",
@@ -76,6 +76,8 @@ def mainPage() {
             input "illuminanceSensors", "capability.illuminanceMeasurement", title: "Illuminance / light sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "smokeSensors", "capability.smokeDetector", title: "Smoke / CO detectors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "genericSensors", "capability.sensor", title: "Other / generic sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "valves", "capability.valve", title: "Valves (water shutoff, irrigation)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
@@ -223,7 +225,8 @@ def SENSOR_TYPE_INPUTS = [
     [name: "motionSensors",    t: "motion",     attr: "motion",       alerts: ["active"]],
     [name: "presenceSensors",  t: "presence",   attr: "presence",     alerts: ["present"]],
     [name: "humiditySensors",  t: "humidity",   attr: "humidity",     alerts: []],
-    [name: "illuminanceSensors", t: "illuminance", attr: "illuminance", alerts: []]
+    [name: "illuminanceSensors", t: "illuminance", attr: "illuminance", alerts: []],
+    [name: "genericSensors",   t: "generic",    attr: null,           alerts: []]
 ]
 
 // Noisy / internal attributes to skip when building the generic fallback's ex list.
@@ -544,6 +547,7 @@ mappings {
     path("/icons/icon-512.png") { action: [GET: "renderIcon512"] }
     path("/auth/status") { action: [GET: "authStatus"] }
     path("/auth/unlock") { action: [GET: "authUnlock", POST: "authUnlock"] }
+    path("/auth/renew") { action: [GET: "authRenew", POST: "authRenew"] }
     path("/data")      { action: [GET: "renderData"] }
     path("/device")    { action: [GET: "renderDevice"] }
     path("/cmd")       { action: [GET: "doCmd"] }
@@ -836,20 +840,10 @@ def renderData() {
     }
     out << "],\"sensors\":["
     first = true
-    def excludeIds = [] as Set
-    if (lights) for (d in lights) excludeIds << d.id.toString()
-    if (outletSwitches) for (d in outletSwitches) excludeIds << d.id.toString()
-    if (thermostats) for (d in thermostats) excludeIds << d.id.toString()
-    if (tempSensors) for (d in tempSensors) excludeIds << d.id.toString()
-    if (locks) for (d in locks) excludeIds << d.id.toString()
-    if (windowShades) for (d in windowShades) excludeIds << d.id.toString()
-    if (valves) for (d in valves) excludeIds << d.id.toString()
-    for (d in allAudioDevices()) excludeIds << d.id.toString()
     def sensorDevs = allSensorDevices()
     if (sensorDevs) {
         for (entry in sensorDevs) {
             def d = entry.device
-            if (excludeIds.contains(d.id.toString())) continue
             if (!first) out << ","; first = false
             appendSensorJson(out, d, entry, roomsList)
         }
@@ -1085,7 +1079,7 @@ def resolveSensorReading(d, entry) {
     def alerts = entry.alerts as Set
     def primaryAttr = entry.attr
     def rawVal = null
-    def candidates = [entry.attr]
+    def candidates = entry.attr ? [entry.attr] : []
     def extra = SENSOR_ATTR_CANDIDATES[t]
     if (extra) {
         for (a in extra) {
@@ -1238,8 +1232,14 @@ def renderDevice() {
         out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
+    def senEntry = allSensorDevices()?.find { it.device.id.toString() == id.toString() }
+    def hasControlRole =
+        locks?.any { it.id.toString() == id.toString() } ||
+        windowShades?.any { it.id.toString() == id.toString() } ||
+        valves?.any { it.id.toString() == id.toString() } ||
+        allAudioDevices()?.any { it.id.toString() == id.toString() }
     def s = tempSensors?.find { it.id.toString() == id.toString() }
-    if (s != null) {
+    if (s != null && senEntry == null && !hasControlRole) {
         try { s.refresh() } catch (e) {}
         def out = new StringBuilder()
         out << "{\"i\":" << s.id
@@ -1247,8 +1247,7 @@ def renderDevice() {
         out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
-    def senEntry = allSensorDevices()?.find { it.device.id.toString() == id.toString() }
-    if (senEntry != null) {
+    if (senEntry != null && !hasControlRole) {
         def sd = senEntry.device
         try { sd.refresh() } catch (e) {}
         def roomsList = app.getRooms() ?: []
@@ -2288,51 +2287,105 @@ def pinsMatch(expected, provided) {
     return diff == 0
 }
 
-def DASH_SESSION_TTL_MS = 604800000L
-
 def authRenewed = null
 
 def dashboardPasswordRequired() {
     return dashboardPasswordEnabled == true && (dashboardPassword?.toString()?.trim() ?: "") != ""
 }
 
-// Stateless signed sessions (Hubitat sandbox blocks MessageDigest/HMAC/Random/Long.toHexString).
-def dashboardSessionSecret() {
-    def pw = dashboardPassword?.toString()?.trim() ?: ""
-    def tok = state.accessToken?.toString()?.trim() ?: ""
-    return pw + "|" + tok
+// 7 days in ms — method (not a field) so Hubitat cannot leave it null.
+def dashSessionTtlMs() {
+    return 604800000L
 }
 
-def dashboardSessionSig(expiryMs) {
-    def input = dashboardSessionSecret() + "|" + expiryMs.toString()
-    // djb2 — keep to plain arithmetic/strings; Hubitat blocks crypto helpers.
-    long hash = 5381L
-    int len = input.length()
-    for (int i = 0; i < len; i++) {
-        int ch = (int) input.charAt(i)
-        hash = ((hash << 5) + hash) + ch
+// Opaque sessions in app state. Sliding expiry: each validated request extends to now+7d.
+// (Signed/HMAC tokens were unreliable in Hubitat sandbox and tied to access_token.)
+def parseDashSessionsMap() {
+    if (!state.dashSessionsJson) return [:]
+    try {
+        return new groovy.json.JsonSlurper().parseText(state.dashSessionsJson.toString()) ?: [:]
+    } catch (e) {
+        return [:]
     }
-    // Decimal string avoids Long.toHexString (blocked in Hubitat sandbox).
-    return hash.toString()
+}
+
+def saveDashSessionsMap(map) {
+    state.dashSessionsJson = groovy.json.JsonOutput.toJson(map ?: [:])
+}
+
+def syncDashPasswordEpoch() {
+    def fp = dashboardPassword?.toString()?.trim() ?: ""
+    if (state.dashPwFp != fp) {
+        state.dashPwFp = fp
+        state.dashSessionsJson = "{}"
+    }
+}
+
+def pruneDashSessionsMap(map, long nowMs) {
+    def out = [:]
+    map?.each { k, v ->
+        try {
+            long exp = (v instanceof Number) ? v.longValue() : v.toString().toLong()
+            if (k && exp > nowMs) out[k.toString()] = exp
+        } catch (e) {}
+    }
+    return out
+}
+
+def newDashSessionToken() {
+    long seq = 0L
+    try {
+        if (state.dashSessionSeq != null) seq = state.dashSessionSeq.toString().toLong()
+    } catch (e) {
+        seq = 0L
+    }
+    seq = seq + 1L
+    if (seq > 2000000000L) seq = 1L
+    state.dashSessionSeq = seq
+    return "ds-" + now().toString() + "-" + seq.toString()
 }
 
 def issueDashboardSession() {
-    long expiry = now() + 604800000L
-    def sig = dashboardSessionSig(expiry)
-    def session = expiry.toString() + "." + sig
-    return [session: session, expiresAt: expiry]
+    syncDashPasswordEpoch()
+    long nowMs = now()
+    long expiry = nowMs + dashSessionTtlMs()
+    def token = newDashSessionToken()
+    def map = pruneDashSessionsMap(parseDashSessionsMap(), nowMs)
+    map[token] = expiry
+    saveDashSessionsMap(map)
+    return [session: token, expiresAt: expiry]
 }
 
 def validateAndRenewDashboardSession(token) {
     if (!token || !dashboardPasswordRequired()) return null
-    def parts = token.toString().split("\\.", 2)
-    if (parts.length != 2) return null
+    syncDashPasswordEpoch()
+    def key = token.toString().trim()
+    if (!key) return null
+    long nowMs = now()
+    def map = pruneDashSessionsMap(parseDashSessionsMap(), nowMs)
+    def expVal = map[key]
+    if (expVal == null) {
+        saveDashSessionsMap(map)
+        return null
+    }
     long expiry
-    try { expiry = parts[0].toLong() } catch (e) { return null }
-    if (expiry <= now()) return null
-    def expectedSig = dashboardSessionSig(expiry)
-    if (!pinsMatch(expectedSig, parts[1])) return null
-    return issueDashboardSession()
+    try {
+        expiry = (expVal instanceof Number) ? expVal.longValue() : expVal.toString().toLong()
+    } catch (e) {
+        map.remove(key)
+        saveDashSessionsMap(map)
+        return null
+    }
+    if (expiry <= nowMs) {
+        map.remove(key)
+        saveDashSessionsMap(map)
+        return null
+    }
+    // Slide window: activity extends expiry another 7 days from now.
+    long renewedExpiry = nowMs + dashSessionTtlMs()
+    map[key] = renewedExpiry
+    saveDashSessionsMap(map)
+    return [session: key, expiresAt: renewedExpiry]
 }
 
 def extractDashSession() {
@@ -2411,6 +2464,17 @@ def authUnlock() {
         log.error "Modern Dashboard authUnlock: ${e.message}"
         return render(contentType: "application/json", data: '{"ok":false,"error":"unlock failed","detail":' + jsonStr(e.message ?: e.toString()) + '}', status: 500)
     }
+}
+
+def authRenew() {
+    if (!dashboardPasswordRequired()) {
+        return render(contentType: "application/json", data: '{"ok":true,"required":false}', status: 200)
+    }
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def out = new StringBuilder()
+    out << '{"ok":true,"session":' << jsonStr(authRenewed.session)
+    out << ',"expiresAt":' << authRenewed.expiresAt << '}'
+    return render(contentType: "application/json", data: out.toString(), status: 200)
 }
 
 def initializeHsm() {

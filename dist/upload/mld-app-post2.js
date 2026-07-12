@@ -34,10 +34,18 @@
 
   // ---------- M.sensors popup ----------
   function mergedSensorList() {
-    const out = [];
-    for (const s of M.tempSensors) out.push({ i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s });
-    for (const s of M.sensors) out.push({ i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
-    for (const v of M.valves) out.push(M.normalizeValveForCard(v));
+    const byId = new Map();
+    for (const s of M.tempSensors) {
+      byId.set(String(s.i), { i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: [], bat: s.bat ?? null, _ref: s });
+    }
+    // A multi-sensor may also be in M.tempSensors. Prefer its explicitly selected
+    // sensor type so motion/contact/etc. is not reduced to a temperature card.
+    for (const s of M.sensors) {
+      byId.set(String(s.i), { i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
+    }
+    // Valve controls take priority if a valve also exposes a sensor capability.
+    for (const v of M.valves) byId.set(String(v.i), M.normalizeValveForCard(v));
+    const out = [...byId.values()];
     out.sort((a, b) => {
       const ra = M.roomLabel(a.r).localeCompare(M.roomLabel(b.r));
       if (ra !== 0) return ra;
