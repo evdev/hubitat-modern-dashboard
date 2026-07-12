@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.40
+
+- Fix multi-sensors disappearing from the Sensors view when they are also
+  authorized as temperature sensors or another dashboard device type.
+- Add an **Other / generic sensors** picker for devices that only expose
+  Hubitat's base Sensor capability.
+
 ## 0.2.39
 
 - Remove optional offline device indicator (deferred; see

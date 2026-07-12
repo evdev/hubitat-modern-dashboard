@@ -602,10 +602,6 @@
       if (outlet) { out.push({ type: "outlet", dev: outlet }); continue; }
       const t = M.thermostats.find(x => x.i === id);
       if (t) { out.push({ type: "thermostat", dev: t }); continue; }
-      const ts = M.tempSensors.find(x => x.i === id);
-      if (ts) { out.push({ type: "sensor", dev: normalizeTempSensorForCard(ts) }); continue; }
-      const sen = M.sensors.find(x => x.i === id);
-      if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
       const valve = M.valves.find(x => x.i === id);
       if (valve) { out.push({ type: "sensor", dev: M.normalizeValveForCard(valve) }); continue; }
       const mp = M.music.find(x => x.i === id);
@@ -613,7 +609,11 @@
       const lk = M.locks.find(x => x.i === id);
       if (lk) { out.push({ type: "lock", dev: lk }); continue; }
       const shade = M.windowShades.find(x => x.i === id);
-      if (shade) out.push({ type: "shade", dev: shade });
+      if (shade) { out.push({ type: "shade", dev: shade }); continue; }
+      const sen = M.sensors.find(x => x.i === id);
+      if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
+      const ts = M.tempSensors.find(x => x.i === id);
+      if (ts) out.push({ type: "sensor", dev: normalizeTempSensorForCard(ts) });
     }
     return out;
   }
@@ -1927,7 +1927,13 @@
         return;
       }
       const s = M.tempSensors.find(x => x.i === Number(d.i));
-      if (s) {
+      const sen = M.sensors.find(x => x.i === Number(d.i));
+      const lock = M.locks.find(x => x.i === Number(d.i));
+      const shade = M.windowShades.find(x => x.i === Number(d.i));
+      const valve = M.valves.find(x => x.i === Number(d.i));
+      const mp = M.music.find(x => x.i === Number(d.i));
+      const hasControlRole = !!(lock || shade || valve || mp);
+      if (s && !sen && !hasControlRole) {
         if (d.temp != null) s.temp = Number(d.temp);
         M.updateClimateWidgets();
         updateRoomMeta();
@@ -1935,14 +1941,12 @@
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
-      const sen = M.sensors.find(x => x.i === Number(d.i));
-      if (sen) {
+      if (sen && !hasControlRole) {
         applySensorPayload(sen, d);
         if (M.currentCategory() === "sensors") M.refreshSensorsPopup();
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
-      const lock = M.locks.find(x => x.i === Number(d.i));
       if (lock) {
         if (d.lk != null) lock.lk = d.lk ? 1 : 0;
         if (d.st != null) lock.st = d.st;
@@ -1952,7 +1956,6 @@
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
-      const shade = M.windowShades.find(x => x.i === Number(d.i));
       if (shade) {
         if (d.st != null) shade.st = d.st;
         if (d.pos != null) shade.pos = d.pos;
@@ -1967,7 +1970,6 @@
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
-      const valve = M.valves.find(x => x.i === Number(d.i));
       if (valve) {
         if (d.st != null) valve.st = d.st;
         const opt = M.valveOptimistic.get(Number(d.i));
@@ -1976,7 +1978,6 @@
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
-      const mp = M.music.find(x => x.i === Number(d.i));
       if (mp) {
         if (d.st != null) mp.st = d.st;
         if (d.v != null) mp.v = d.v;

@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.39
+// Modern Dashboard v0.2.40
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.39 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.40 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -62,7 +62,7 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Other sensors") {
-            paragraph "<small>Select sensors to show in the Sensors popup. A device selected in multiple pickers below appears once, using the first matching type.</small>"
+            paragraph "<small>Select sensors to show in the Sensors popup. Multi-sensors may also be selected as temperature sensors or other dashboard devices; the richer sensor type is shown once in the Sensors view.</small>"
             input "motionSensors", "capability.motionSensor", title: "Motion sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "contactSensors", "capability.contactSensor", title: "Contact / door / window sensors",
@@ -76,6 +76,8 @@ def mainPage() {
             input "illuminanceSensors", "capability.illuminanceMeasurement", title: "Illuminance / light sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "smokeSensors", "capability.smokeDetector", title: "Smoke / CO detectors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "genericSensors", "capability.sensor", title: "Other / generic sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "valves", "capability.valve", title: "Valves (water shutoff, irrigation)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
@@ -223,7 +225,8 @@ def SENSOR_TYPE_INPUTS = [
     [name: "motionSensors",    t: "motion",     attr: "motion",       alerts: ["active"]],
     [name: "presenceSensors",  t: "presence",   attr: "presence",     alerts: ["present"]],
     [name: "humiditySensors",  t: "humidity",   attr: "humidity",     alerts: []],
-    [name: "illuminanceSensors", t: "illuminance", attr: "illuminance", alerts: []]
+    [name: "illuminanceSensors", t: "illuminance", attr: "illuminance", alerts: []],
+    [name: "genericSensors",   t: "generic",    attr: null,           alerts: []]
 ]
 
 // Noisy / internal attributes to skip when building the generic fallback's ex list.
@@ -836,20 +839,10 @@ def renderData() {
     }
     out << "],\"sensors\":["
     first = true
-    def excludeIds = [] as Set
-    if (lights) for (d in lights) excludeIds << d.id.toString()
-    if (outletSwitches) for (d in outletSwitches) excludeIds << d.id.toString()
-    if (thermostats) for (d in thermostats) excludeIds << d.id.toString()
-    if (tempSensors) for (d in tempSensors) excludeIds << d.id.toString()
-    if (locks) for (d in locks) excludeIds << d.id.toString()
-    if (windowShades) for (d in windowShades) excludeIds << d.id.toString()
-    if (valves) for (d in valves) excludeIds << d.id.toString()
-    for (d in allAudioDevices()) excludeIds << d.id.toString()
     def sensorDevs = allSensorDevices()
     if (sensorDevs) {
         for (entry in sensorDevs) {
             def d = entry.device
-            if (excludeIds.contains(d.id.toString())) continue
             if (!first) out << ","; first = false
             appendSensorJson(out, d, entry, roomsList)
         }
@@ -1085,7 +1078,7 @@ def resolveSensorReading(d, entry) {
     def alerts = entry.alerts as Set
     def primaryAttr = entry.attr
     def rawVal = null
-    def candidates = [entry.attr]
+    def candidates = entry.attr ? [entry.attr] : []
     def extra = SENSOR_ATTR_CANDIDATES[t]
     if (extra) {
         for (a in extra) {
@@ -1238,8 +1231,14 @@ def renderDevice() {
         out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
+    def senEntry = allSensorDevices()?.find { it.device.id.toString() == id.toString() }
+    def hasControlRole =
+        locks?.any { it.id.toString() == id.toString() } ||
+        windowShades?.any { it.id.toString() == id.toString() } ||
+        valves?.any { it.id.toString() == id.toString() } ||
+        allAudioDevices()?.any { it.id.toString() == id.toString() }
     def s = tempSensors?.find { it.id.toString() == id.toString() }
-    if (s != null) {
+    if (s != null && senEntry == null && !hasControlRole) {
         try { s.refresh() } catch (e) {}
         def out = new StringBuilder()
         out << "{\"i\":" << s.id
@@ -1247,8 +1246,7 @@ def renderDevice() {
         out << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
-    def senEntry = allSensorDevices()?.find { it.device.id.toString() == id.toString() }
-    if (senEntry != null) {
+    if (senEntry != null && !hasControlRole) {
         def sd = senEntry.device
         try { sd.refresh() } catch (e) {}
         def roomsList = app.getRooms() ?: []
