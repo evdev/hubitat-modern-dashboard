@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.42
+
+- Dashboard password sessions: use `dashSessionTtlMs()` method instead of a Groovy
+  field (Hubitat could leave the constant null); safer session sequence handling.
+
 ## 0.2.41
 
 - Dashboard password sessions: store opaque tokens in hub state with sliding 7-day

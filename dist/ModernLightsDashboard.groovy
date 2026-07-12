@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.41
+// Modern Dashboard v0.2.42
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.41 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.42 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -2287,12 +2287,15 @@ def pinsMatch(expected, provided) {
     return diff == 0
 }
 
-def DASH_SESSION_TTL_MS = 604800000L // 7 days
-
 def authRenewed = null
 
 def dashboardPasswordRequired() {
     return dashboardPasswordEnabled == true && (dashboardPassword?.toString()?.trim() ?: "") != ""
+}
+
+// 7 days in ms — method (not a field) so Hubitat cannot leave it null.
+def dashSessionTtlMs() {
+    return 604800000L
 }
 
 // Opaque sessions in app state. Sliding expiry: each validated request extends to now+7d.
@@ -2330,18 +2333,22 @@ def pruneDashSessionsMap(map, long nowMs) {
 }
 
 def newDashSessionToken() {
-    long seq = 0
-    try { seq = (state.dashSessionSeq ?: 0) as long } catch (e) { seq = 0 }
-    seq = seq + 1
-    if (seq > 2000000000L) seq = 1
+    long seq = 0L
+    try {
+        if (state.dashSessionSeq != null) seq = state.dashSessionSeq.toString().toLong()
+    } catch (e) {
+        seq = 0L
+    }
+    seq = seq + 1L
+    if (seq > 2000000000L) seq = 1L
     state.dashSessionSeq = seq
-    return "ds-" + now() + "-" + seq
+    return "ds-" + now().toString() + "-" + seq.toString()
 }
 
 def issueDashboardSession() {
     syncDashPasswordEpoch()
     long nowMs = now()
-    long expiry = nowMs + DASH_SESSION_TTL_MS
+    long expiry = nowMs + dashSessionTtlMs()
     def token = newDashSessionToken()
     def map = pruneDashSessionsMap(parseDashSessionsMap(), nowMs)
     map[token] = expiry
@@ -2375,7 +2382,7 @@ def validateAndRenewDashboardSession(token) {
         return null
     }
     // Slide window: activity extends expiry another 7 days from now.
-    long renewedExpiry = nowMs + DASH_SESSION_TTL_MS
+    long renewedExpiry = nowMs + dashSessionTtlMs()
     map[key] = renewedExpiry
     saveDashSessionsMap(map)
     return [session: key, expiresAt: renewedExpiry]
