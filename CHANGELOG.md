@@ -2,11 +2,15 @@
 
 ## 0.2.56
 
-- Thermostat dial mode/fan controls always follow a single device’s own supported
-  modes (never a merge of roommates). Rooms with several thermostats open one
-  unit at a time with a target picker; mode/fan controls hide if more than one
-  unit is selected.
-- Favorites / Thermostats card tap opens that device’s dial.
+- **Sensors:** grouped by room with collapsible sections, type labels, search, and
+  expand/collapse-all.
+- **Lights:** room On/Off controls are hidden when a room has no lights.
+- **Thermostats:** mode and fan buttons match what each device actually supports,
+  including heat-only or cool-only units and drivers that report limited fan modes.
+- **Thermostats:** tap a thermostat in Favorites or the Thermostats view to open
+  that unit’s controls. In rooms with more than one thermostat, use the target
+  picker to switch units; mode and fan controls apply to one selected unit at a
+  time.
 
 ## 0.2.55
 
