@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.44
+// Modern Dashboard v0.2.45
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.44 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.45 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -52,15 +52,18 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "tempSensors", "capability.temperatureMeasurement", title: "Temperature sensors (display only)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "locks", "capability.lock", title: "Select your locks",
-                multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "garageDoors", "capability.garageDoorControl", title: "Select your garage doors",
-                multiple: true, required: false, showFilter: true, submitOnChange: true
             input "windowShades", "capability.windowShade", title: "Select motorized shades & blinds",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "musicPlayers", "capability.musicPlayer", title: "Music / media players (Sonos, Echo Speaks, AirPlay, …)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, …)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+        }
+        section("Locks / garage doors") {
+            paragraph "<small>Select locks and garage door openers to show in the Locks dashboard popup.</small>"
+            input "locks", "capability.lock", title: "Locks",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "garageDoors", "capability.garageDoorControl", title: "Garage door openers",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Other sensors") {

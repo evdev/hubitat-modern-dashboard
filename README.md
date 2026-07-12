@@ -173,9 +173,9 @@ quick-nav popup and as tiles grouped by room on that view.
 
 ### Locks & garage doors
 
-Select lock devices and garage door openers in app preferences. The **Locks**
-quick-nav popup lists all locks and garage doors with lock/unlock or open/close
-controls.
+Select lock devices and garage door openers in the **Locks / garage doors** app
+preferences section. The **Locks** quick-nav popup lists all selected locks and
+garage doors with lock/unlock or open/close controls.
 
 - **Unlock PIN** (optional, app preference): when enabled, unlocking a lock or
   opening a garage door from the dashboard requires entering a PIN on an on-screen

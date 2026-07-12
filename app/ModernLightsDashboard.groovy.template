@@ -52,15 +52,18 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "tempSensors", "capability.temperatureMeasurement", title: "Temperature sensors (display only)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "locks", "capability.lock", title: "Select your locks",
-                multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "garageDoors", "capability.garageDoorControl", title: "Select your garage doors",
-                multiple: true, required: false, showFilter: true, submitOnChange: true
             input "windowShades", "capability.windowShade", title: "Select motorized shades & blinds",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "musicPlayers", "capability.musicPlayer", title: "Music / media players (Sonos, Echo Speaks, AirPlay, …)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, …)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+        }
+        section("Locks / garage doors") {
+            paragraph "<small>Select locks and garage door openers to show in the Locks dashboard popup.</small>"
+            input "locks", "capability.lock", title: "Locks",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "garageDoors", "capability.garageDoorControl", title: "Garage door openers",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Other sensors") {

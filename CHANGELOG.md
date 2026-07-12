@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.45
+
+- Companion app: locks and garage door openers moved to a dedicated **Locks /
+  garage doors** preferences section (clearer than mixing with other device types).
+
 ## 0.2.44
 
 - Garage door support in the **Locks** quick-nav popup: select devices with
