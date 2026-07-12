@@ -216,31 +216,43 @@ def allAudioDevices() {
     return out
 }
 
-// Sensor type descriptors: ordered for dedup priority (safety first).
-// [settingName, typeKey, primaryAttr, alertValues (lowercase set)]
-def SENSOR_TYPE_INPUTS = [
-    [name: "smokeSensors",     t: "smoke",      attr: "smoke",        alerts: ["detected"]],
-    [name: "waterSensors",     t: "leak",       attr: "water",        alerts: ["wet"]],
-    [name: "contactSensors",   t: "contact",    attr: "contact",      alerts: ["open"]],
-    [name: "motionSensors",    t: "motion",     attr: "motion",       alerts: ["active"]],
-    [name: "presenceSensors",  t: "presence",   attr: "presence",     alerts: ["present"]],
-    [name: "humiditySensors",  t: "humidity",   attr: "humidity",     alerts: []],
-    [name: "illuminanceSensors", t: "illuminance", attr: "illuminance", alerts: []],
-    [name: "genericSensors",   t: "generic",    attr: null,           alerts: []]
-]
+// Sensor descriptors as methods (not fields) — Hubitat can leave Groovy field
+// initializers null (same class of bug as dashSessionTtlMs).
+// Ordered for dedup priority (safety first).
+def sensorTypeInputs() {
+    return [
+        [list: smokeSensors,       t: "smoke",       attr: "smoke",        alerts: ["detected"]],
+        [list: waterSensors,       t: "leak",        attr: "water",        alerts: ["wet"]],
+        [list: contactSensors,     t: "contact",     attr: "contact",      alerts: ["open"]],
+        [list: motionSensors,      t: "motion",      attr: "motion",       alerts: ["active"]],
+        [list: presenceSensors,    t: "presence",    attr: "presence",     alerts: ["present"]],
+        [list: humiditySensors,    t: "humidity",    attr: "humidity",     alerts: []],
+        [list: illuminanceSensors, t: "illuminance", attr: "illuminance",  alerts: []],
+        [list: genericSensors,     t: "generic",     attr: null,           alerts: []]
+    ]
+}
 
 // Noisy / internal attributes to skip when building the generic fallback's ex list.
-def SENSOR_SKIP_ATTRS = ["lastupdate","lastevent","epevent","devicewatch-devicestatus","devicewatch-devicestatus","checkinterval","status","name"] as Set
+def sensorSkipAttrs() {
+    return ["lastupdate","lastevent","epevent","devicewatch-devicestatus","checkinterval","status","name"] as Set
+}
+
+// Normalize a device input to a List (Hubitat may return a single DeviceWrapper).
+def asDeviceList(val) {
+    if (val == null) return []
+    if (val instanceof Collection) return val as List
+    return [val]
+}
 
 def allSensorDevices() {
     def out = []
     def seen = [:]
-    for (spec in SENSOR_TYPE_INPUTS) {
-        def list = settings[spec.name]
-        if (!list) continue
-        for (d in list) {
-            def key = d.id.toString()
-            if (seen[key]) continue
+    for (spec in sensorTypeInputs()) {
+        for (d in asDeviceList(spec.list)) {
+            if (d == null) continue
+            def key = null
+            try { key = d.id?.toString() } catch (e) { key = null }
+            if (!key || seen[key]) continue
             seen[key] = true
             out << [device: d, type: spec.t, attr: spec.attr, alerts: spec.alerts]
         }
@@ -274,7 +286,7 @@ def sensorExtraAttrs(d, primaryAttr, int max) {
     try {
         for (st in states) {
             def nm = st?.name?.toString()?.toLowerCase()
-            if (nm && nm != primaryAttr && !SENSOR_SKIP_ATTRS.contains(nm)) present << nm
+            if (nm && nm != primaryAttr && !sensorSkipAttrs().contains(nm)) present << nm
         }
     } catch (e) {}
     for (nm in ((present as Set).sort())) {
@@ -840,13 +852,24 @@ def renderData() {
     }
     out << "],\"sensors\":["
     first = true
-    def sensorDevs = allSensorDevices()
-    if (sensorDevs) {
-        for (entry in sensorDevs) {
-            def d = entry.device
-            if (!first) out << ","; first = false
-            appendSensorJson(out, d, entry, roomsList)
+    try {
+        def sensorDevs = allSensorDevices()
+        if (sensorDevs) {
+            for (entry in sensorDevs) {
+                def d = entry.device
+                try {
+                    def chunk = new StringBuilder()
+                    appendSensorJson(chunk, d, entry, roomsList)
+                    if (!first) out << ","
+                    first = false
+                    out << chunk
+                } catch (e) {
+                    log.warn "Modern Dashboard: skip sensor ${d?.id}: ${e.message ?: e}"
+                }
+            }
         }
+    } catch (e) {
+        log.warn "Modern Dashboard: sensors list failed: ${e.message ?: e}"
     }
     out << "],\"music\":["
     first = true
@@ -1021,7 +1044,7 @@ def firstMeaningfulAttr(d, skipAttr) {
             def nm = st?.name?.toString()?.toLowerCase()
             if (!nm) continue
             if (nm == skipAttr) continue
-            if (SENSOR_SKIP_ATTRS.contains(nm)) continue
+            if (sensorSkipAttrs().contains(nm)) continue
             def v = st?.value
             if (v == null) continue
             def s = v.toString()
@@ -1033,15 +1056,17 @@ def firstMeaningfulAttr(d, skipAttr) {
 }
 
 // Alternate Hubitat attribute names per sensor type (tried after the picker's primary attr).
-def SENSOR_ATTR_CANDIDATES = [
-    smoke: ["smoke", "carbonMonoxide"],
-    leak: ["water"],
-    contact: ["contact"],
-    motion: ["motion", "motionStatus"],
-    presence: ["presence"],
-    humidity: ["humidity", "relativeHumidity"],
-    illuminance: ["illuminance"]
-]
+def sensorAttrCandidates() {
+    return [
+        smoke: ["smoke", "carbonMonoxide"],
+        leak: ["water"],
+        contact: ["contact"],
+        motion: ["motion", "motionStatus"],
+        presence: ["presence"],
+        humidity: ["humidity", "relativeHumidity"],
+        illuminance: ["illuminance"]
+    ]
+}
 
 def normalizeSensorValue(t, attrName, raw) {
     if (raw == null) return null
@@ -1080,7 +1105,7 @@ def resolveSensorReading(d, entry) {
     def primaryAttr = entry.attr
     def rawVal = null
     def candidates = entry.attr ? [entry.attr] : []
-    def extra = SENSOR_ATTR_CANDIDATES[t]
+    def extra = sensorAttrCandidates()[t]
     if (extra) {
         for (a in extra) {
             if (!candidates.contains(a)) candidates << a

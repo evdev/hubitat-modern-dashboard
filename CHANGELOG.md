@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.43
+
+- Fix Sensors tab empty for authorized non-temperature sensors: Hubitat can leave
+  Groovy field constants null (same class of bug as session TTL). Sensor type
+  tables are now methods, and device pickers are read via direct input fields
+  instead of `settings[name]`.
+
 ## 0.2.42
 
 - Dashboard password sessions: use `dashSessionTtlMs()` method instead of a Groovy
