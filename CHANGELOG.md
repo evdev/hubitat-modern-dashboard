@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.44
+
+- Garage door support in the **Locks** quick-nav popup: select devices with
+  `capability.garageDoorControl`, open/close controls, favorites, and optional
+  unlock PIN on open (same PIN as locks).
+
 ## 0.2.43
 
 - Fix Sensors tab empty for authorized non-temperature sensors: Hubitat can leave

@@ -171,14 +171,16 @@ quick-nav popup and as tiles grouped by room on that view.
 - Drag the position slider to set shade level
 - Favorites star works on shade tiles
 
-### Locks
+### Locks & garage doors
 
-Select lock devices in app preferences. The **Locks** quick-nav popup lists all
-locks with lock/unlock controls.
+Select lock devices and garage door openers in app preferences. The **Locks**
+quick-nav popup lists all locks and garage doors with lock/unlock or open/close
+controls.
 
-- **Unlock PIN** (optional, app preference): when enabled, unlocking from the
-  dashboard requires entering a PIN on an on-screen pad. Locking never requires
-  a PIN. The PIN is validated by this app before the unlock command is sent.
+- **Unlock PIN** (optional, app preference): when enabled, unlocking a lock or
+  opening a garage door from the dashboard requires entering a PIN on an on-screen
+  pad. Locking and closing garage doors never requires a PIN. The PIN is validated
+  by this app before the command is sent.
 
 ### Hubitat Safety Monitor (HSM)
 
@@ -264,7 +266,7 @@ as 24h for reliable firing).
 
 ### Favorites
 
-Tap the star on a supported device tile (lights, shades, locks, music, sensors,
+Tap the star on a supported device tile (lights, shades, locks, garage doors, music, sensors,
 etc.) to add it to favorites. The list is stored on the hub and syncs across
 devices. Open the **Favorites** quick-nav icon for a cross-category view of
 starred devices.
@@ -540,7 +542,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 
 | Section | Setting | Default | Notes |
 | ------- | ------- | ------- | ----- |
-| Devices | Lights, switches, outlets, thermostats, sensors, locks, shades, music, speakers | — | See [device selection](#device-selection) |
+| Devices | Lights, switches, outlets, thermostats, sensors, locks, garage doors, shades, music, speakers | — | See [device selection](#device-selection) |
 | Options | Dashboard name | `mDash` | Browser tab and PWA title |
 | Options | Refresh interval | 5 s (2–60) | `/data` poll interval |
 | Options | Enable eventsocket | On | LAN WebSocket; see [WebSocket](#real-time-updates-websocket) |
@@ -550,7 +552,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Light control | On/off optimization | Off | Skip on/off if device already in target state |
 | Light control | Activation optimization | Off | Skip level/CT/RGB on snapshot restore if already correct |
 | Dashboard access | Dashboard password | Off | Password required to open dashboard (7-day sliding session) |
-| Locks | Unlock PIN | Off | PIN required to unlock from dashboard |
+| Locks | Unlock PIN | Off | PIN required to unlock / open garage from dashboard |
 | Thermostats | Show in quick menu | On | Hide thermostats nav icon when off |
 | Security | HSM enabled | Off | Show Security quick-nav icon |
 | Security | HSM PIN | Off | PIN required to arm/disarm |
@@ -564,7 +566,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Outlets | Socket tiles by room, or separate Outlets tab (preference) | On/off only | Favorites |
 | Thermostats | Room header + Thermostats popup | Mode, setpoints, fan | All thermostats bulk |
 | Temperature sensors | Room header (read-only) | — | Sensors popup |
-| Locks | — | — | Locks popup |
+| Locks | — | — | Locks popup (locks + garage doors) |
 | Shades | — | — | Blinds popup |
 | Music / speakers | — | — | Music popup |
 | Motion, contact, water, etc. | — | — | Sensors popup |

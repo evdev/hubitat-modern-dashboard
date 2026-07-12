@@ -171,6 +171,10 @@ function buildMockData(count) {
     { i: 3002, n: "Garage Entry", r: 6, lk: 0, st: "unlocked" },
     { i: 3003, n: "Back Door", r: 7, lk: 1, st: "locked" },
   ];
+  const garageDoors = [
+    { i: 3101, n: "Main Garage", r: 6, st: "closed" },
+    { i: 3102, n: "Shop Garage", r: 7, st: "open" },
+  ];
   const music = [
     { i: 4001, n: "Living Room Sonos", r: 1, st: "playing", v: 35, tr: "Daft Punk — Get Lucky", m: "unmuted", trackIdx: 0, f: AUDIO_F_FULL },
     { i: 4002, n: "Kitchen Echo", r: 2, st: "paused", v: 50, tr: "Fleetwood Mac — Dreams", m: "unmuted", trackIdx: 1, f: AUDIO_F_FULL },
@@ -181,7 +185,7 @@ function buildMockData(count) {
   return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", roomOrder: [], navOrder: [], favorites: [1, 5, 1001, 2103, 2201] }, rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
+  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
 }
 
 function tstatOstateForMode(tm) {
@@ -264,6 +268,17 @@ function applyCmd(id, c, v, pin) {
       if (!pinResult.ok) return pinResult;
       lock.lk = 0; lock.st = "unlocked";
     }
+    else return { ok: false, error: "unknown command" };
+    return { ok: true };
+  }
+  const garage = state.garageDoors?.find(d => d.i === id);
+  if (garage) {
+    if (c === "open") {
+      const pinResult = validateUnlockPin(pin ?? "");
+      if (!pinResult.ok) return pinResult;
+      garage.st = "open";
+    }
+    else if (c === "close") garage.st = "closed";
     else return { ok: false, error: "unknown command" };
     return { ok: true };
   }
@@ -564,6 +579,11 @@ const server = createServer(async (req, res) => {
     if (lock) {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       return res.end(JSON.stringify({ i: lock.i, lk: lock.lk, st: lock.st }));
+    }
+    const garage = state.garageDoors?.find(d => d.i === id);
+    if (garage) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ i: garage.i, st: garage.st }));
     }
     const mp = state.music?.find(d => d.i === id);
     if (mp) {

@@ -608,6 +608,8 @@
       if (mp) { out.push({ type: "music", dev: mp }); continue; }
       const lk = M.locks.find(x => x.i === id);
       if (lk) { out.push({ type: "lock", dev: lk }); continue; }
+      const garage = M.garageDoors.find(x => x.i === id);
+      if (garage) { out.push({ type: "garage", dev: garage }); continue; }
       const shade = M.windowShades.find(x => x.i === id);
       if (shade) { out.push({ type: "shade", dev: shade }); continue; }
       const sen = M.sensors.find(x => x.i === id);
@@ -626,6 +628,7 @@
     for (const [, rec] of M.favSensorMap) M.syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of M.favMusicMap) M.syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of M.favLockMap) M.syncFavButton(rec.favBtn, rec.i);
+    for (const [, rec] of M.favGarageMap) M.syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of M.favShadeMap) M.syncFavButton(rec.favBtn, rec.i);
     M.updateTstatFavButton();
   }
@@ -1092,12 +1095,14 @@
     M.unlockPinRequired = !!d.unlockPinRequired;
     M.replaceList(M.scenes, d.scenes);
     M.replaceList(M.locks, d.locks);
+    M.replaceList(M.garageDoors, d.garageDoors);
     M.replaceList(M.windowShades, d.windowShades);
     if (!Array.isArray(M.valves)) M.valves = [];
     M.replaceList(M.valves, Array.isArray(d.valves) ? d.valves : []);
     M.replaceList(M.music, d.music);
     if (Array.isArray(d.config?.favorites)) M.replaceList(M.favorites, d.config.favorites.map(Number));
     M.reapplyLockOptimistic();
+    M.reapplyGarageOptimistic();
     M.reapplyShadeOptimistic();
     try { M.reapplyValveOptimistic(); } catch {}
     M.reapplyMusicOptimistic();
@@ -1929,10 +1934,11 @@
       const s = M.tempSensors.find(x => x.i === Number(d.i));
       const sen = M.sensors.find(x => x.i === Number(d.i));
       const lock = M.locks.find(x => x.i === Number(d.i));
+      const garage = M.garageDoors.find(x => x.i === Number(d.i));
       const shade = M.windowShades.find(x => x.i === Number(d.i));
       const valve = M.valves.find(x => x.i === Number(d.i));
       const mp = M.music.find(x => x.i === Number(d.i));
-      const hasControlRole = !!(lock || shade || valve || mp);
+      const hasControlRole = !!(lock || garage || shade || valve || mp);
       if (s && !sen && !hasControlRole) {
         if (d.temp != null) s.temp = Number(d.temp);
         M.updateClimateWidgets();
@@ -1952,6 +1958,14 @@
         if (d.st != null) lock.st = d.st;
         const opt = M.lockOptimistic.get(Number(d.i));
         if (opt && !!lock.lk === !!opt.lk) M.clearLockOptimistic(Number(d.i));
+        if (M.currentCategory() === "locks") renderLocksPopup();
+        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+        return;
+      }
+      if (garage) {
+        if (d.st != null) garage.st = d.st;
+        const opt = M.garageOptimistic.get(Number(d.i));
+        if (opt?.st != null && garage.st === opt.st) M.clearGarageOptimistic(Number(d.i));
         if (M.currentCategory() === "locks") renderLocksPopup();
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
@@ -2070,6 +2084,33 @@
     }
     if (M.currentCategory() === "music") renderMusicPopup();
     else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+  }
+
+  function reconcileGarage(id) {
+    setTimeout(() => refreshDevice(id), 700);
+    setTimeout(() => refreshDevice(id), 2200);
+  }
+
+  async function sendGarageCmd(id, cmd, pin) {
+    const door = M.garageDoors.find((g) => g.i === id);
+    if (!door) return { ok: false };
+    M.hapticTap();
+    const patch = cmd === "open" ? { st: "opening" } : cmd === "close" ? { st: "closing" } : null;
+    if (patch) {
+      M.setGarageOptimistic(id, patch);
+      if (M.currentCategory() === "locks") renderLocksPopup();
+      else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+    }
+    const result = await M.sendCmd(id, cmd, null, pin);
+    if (!result.ok) {
+      M.clearGarageOptimistic(id);
+      reconcileGarage(id);
+      if (M.currentCategory() === "locks") renderLocksPopup();
+      else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+    } else {
+      reconcileGarage(id);
+    }
+    return result;
   }
 
   async function sendLockCmd(id, cmd, pin) {
@@ -2196,6 +2237,62 @@
     if (type) syncQuickPopupWidth(popup, type);
   }
 
+  function updateFavoriteGarageRow(door) {
+    const rec = M.favGarageMap.get(door.i);
+    if (!rec) return;
+    rec.meta.textContent = roomLabel(door.r) + " · " + M.garageStatusLabel(door);
+    const isOpen = M.garageIsOpen(door);
+    rec.closeBtn.classList.toggle("active", !isOpen);
+    rec.openBtn.classList.toggle("active", isOpen);
+  }
+
+  function makeGarageRow(door, context) {
+    const inFav = context === "favorites";
+    const row = ce("div", "quick-lock-row" + (inFav ? " quick-fav-span" : ""));
+    row.dataset.name = String(door.n || "").toLowerCase();
+    const head = ce("div", "quick-fav-row-head");
+    const info = ce("div", "quick-lock-info");
+    const name = ce("span", "quick-fav-name");
+    name.textContent = door.n || ("Garage " + door.i);
+    const meta = ce("span", "quick-fav-meta");
+    meta.textContent = roomLabel(door.r) + " · " + M.garageStatusLabel(door);
+    info.appendChild(name);
+    info.appendChild(meta);
+    head.appendChild(info);
+    const fav = ce("button", "tile-fav");
+    fav.type = "button";
+    attachFavButton(fav, door.i);
+    head.appendChild(fav);
+    row.appendChild(head);
+
+    const actions = ce("div", "quick-lock-actions");
+    const closeBtn = ce("button", "quick-lock-btn");
+    closeBtn.type = "button";
+    closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
+    const openBtn = ce("button", "quick-lock-btn");
+    openBtn.type = "button";
+    openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
+    const isOpen = M.garageIsOpen(door);
+    if (!isOpen) closeBtn.classList.add("active");
+    else openBtn.classList.add("active");
+    closeBtn.addEventListener("click", () => {
+      if (!M.garageIsMoving(door) && M.garageIsOpen(door)) sendGarageCmd(door.i, "close");
+    });
+    openBtn.addEventListener("click", () => {
+      if (M.garageIsMoving(door) || M.garageIsOpen(door)) return;
+      if (M.unlockPinRequired) promptGarageOpenPin(door.i, door.n);
+      else sendGarageCmd(door.i, "open");
+    });
+    actions.appendChild(closeBtn);
+    actions.appendChild(openBtn);
+    row.appendChild(actions);
+
+    if (inFav) {
+      M.favGarageMap.set(door.i, { el: row, meta, closeBtn, openBtn, favBtn: fav, i: door.i });
+    }
+    return row;
+  }
+
   function makeLockRow(lock, context) {
     const inFav = context === "favorites";
     const row = ce("div", "quick-lock-row" + (inFav ? " quick-fav-span" : ""));
@@ -2258,8 +2355,8 @@
     const body = popup._body;
     body.className = "quick-body quick-body-locks";
     body.innerHTML = "";
-    if (!M.locks.length) {
-      body.textContent = "No locks selected — add locks in the Hubitat app settings";
+    if (!M.locks.length && !M.garageDoors.length) {
+      body.textContent = "No locks or garage doors selected — add them in the Hubitat app settings";
       return;
     }
     if (M.unlockPinEnabled && !M.unlockPinRequired) {
@@ -2267,13 +2364,19 @@
       hint.textContent = "Set unlock PIN in Hubitat app settings";
       body.appendChild(hint);
     }
-    const sorted = M.locks.slice().sort((a, b) => {
-      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
+    const entries = [];
+    for (const lock of M.locks) entries.push({ kind: "lock", dev: lock });
+    for (const door of M.garageDoors) entries.push({ kind: "garage", dev: door });
+    entries.sort((a, b) => {
+      const ra = roomLabel(a.dev.r).localeCompare(roomLabel(b.dev.r));
       if (ra !== 0) return ra;
-      return String(a.n || "").localeCompare(String(b.n || ""));
+      return String(a.dev.n || "").localeCompare(String(b.dev.n || ""));
     });
     const list = ce("div", "quick-list");
-    for (const lock of sorted) list.appendChild(makeLockRow(lock, "popup"));
+    for (const entry of entries) {
+      if (entry.kind === "lock") list.appendChild(makeLockRow(entry.dev, "popup"));
+      else list.appendChild(makeGarageRow(entry.dev, "popup"));
+    }
     body.appendChild(list);
   }
 
@@ -2832,6 +2935,26 @@
     };
   }
 
+  function promptGarageOpenPin(garageId, garageName) {
+    M.hapticTap();
+    const pad = openPinPad({
+      title: "Enter PIN to open" + (garageName ? " " + garageName : ""),
+      onSubmit: async (pin) => {
+        const result = await sendGarageCmd(garageId, "open", pin);
+        if (!result?.ok && (result?.status === 403 || result?.error === "wrong pin")) {
+          pad.shake();
+          return;
+        }
+        if (result?.ok) {
+          pad.close();
+          return;
+        }
+        if (result?.error === "pin not configured") M.flash("Set unlock PIN in Hubitat app settings", true);
+        pad.close();
+      },
+    });
+  }
+
   function promptUnlockPin(lockId, lockName) {
     M.hapticTap();
     const pad = openPinPad({
@@ -2957,5 +3080,5 @@
     ruleSection.appendChild(ruleModes);
     body.appendChild(ruleSection);
   }
-  Object.assign(M, { saveRoomOrder, currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, renderOutletsPopup, normalizeTempSensorForCard, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
+  Object.assign(M, { saveRoomOrder, currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, reconcileGarage, sendGarageCmd, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, updateFavoriteGarageRow, makeGarageRow, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, renderOutletsPopup, normalizeTempSensorForCard, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
 })();

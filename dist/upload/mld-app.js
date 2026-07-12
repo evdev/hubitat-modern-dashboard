@@ -133,6 +133,7 @@
   const levelOptimistic = new Map(); // device id -> { level, until, timer }
   const switchOptimistic = new Map(); // device id -> { s, l?, until, timer }
   const lockOptimistic = new Map(); // lock id -> { lk, st, until, timer }
+  const garageOptimistic = new Map(); // garage id -> { st, until, timer }
   const shadeOptimistic = new Map(); // shade id -> { st?, pos?, until, timer }
   const valveOptimistic = new Map(); // valve id -> { st?, until, timer }
   const musicOptimistic = new Map(); // music id -> { st, v?, until, timer }
@@ -157,6 +158,7 @@
   let currentHubMode = "";
   let scenes = [];
   let locks = [];
+  let garageDoors = [];
   let windowShades = [];
   let valves = [];
   let outlets = [];              // [{i,n,r,s}] outlet devices from companion app
@@ -338,6 +340,73 @@
     if (st === "unknown") return "Unknown";
     if (st === "unavailable") return "Unavailable";
     return effectiveLock(lock) ? "Locked" : "Unlocked";
+  }
+
+  function setGarageOptimistic(id, patch) {
+    const prev = garageOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    const door = garageDoors.find((g) => g.i === id);
+    if (door && patch.st != null) door.st = patch.st;
+    const entry = {
+      st: patch.st != null ? patch.st : prev?.st,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      timer: null,
+    };
+    entry.timer = setTimeout(() => {
+      garageOptimistic.delete(id);
+      if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
+    }, LEVEL_OPTIMISTIC_MS);
+    garageOptimistic.set(id, entry);
+  }
+
+  function clearGarageOptimistic(id) {
+    const prev = garageOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    garageOptimistic.delete(id);
+  }
+
+  function reapplyGarageOptimistic() {
+    for (const [id, opt] of garageOptimistic) {
+      if (Date.now() >= opt.until) {
+        if (opt.timer) clearTimeout(opt.timer);
+        garageOptimistic.delete(id);
+        continue;
+      }
+      const door = garageDoors.find((g) => g.i === id);
+      if (!door) continue;
+      if (opt.st != null && door.st === opt.st) {
+        if (opt.timer) clearTimeout(opt.timer);
+        garageOptimistic.delete(id);
+        continue;
+      }
+      if (opt.st != null) door.st = opt.st;
+    }
+  }
+
+  function effectiveGarageState(door) {
+    const opt = garageOptimistic.get(door.i);
+    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    return door.st || "unknown";
+  }
+
+  function garageIsOpen(door) {
+    const st = effectiveGarageState(door);
+    return st === "open" || st === "opening";
+  }
+
+  function garageIsMoving(door) {
+    const st = effectiveGarageState(door);
+    return st === "opening" || st === "closing";
+  }
+
+  function garageStatusLabel(door) {
+    const st = effectiveGarageState(door);
+    if (st === "opening") return "Opening…";
+    if (st === "closing") return "Closing…";
+    if (st === "open") return "Open";
+    if (st === "closed") return "Closed";
+    if (st === "unknown" || st === "unavailable") return st.charAt(0).toUpperCase() + st.slice(1);
+    return st || "—";
   }
 
   function setShadeOptimistic(id, patch) {
@@ -804,6 +873,7 @@
       || sensors.some((s) => s.i === numId)
       || music.some((m) => m.i === numId)
       || locks.some((l) => l.i === numId)
+      || garageDoors.some((g) => g.i === numId)
       || windowShades.some((s) => s.i === numId)
       || valves.some((v) => v.i === numId);
   }
@@ -1084,6 +1154,7 @@
   const favSensorMap = new Map(); // id -> sensor card rec (favorites popup)
   const favMusicMap = new Map(); // id -> music row rec (favorites popup)
   const favLockMap = new Map(); // id -> lock row rec (favorites popup)
+  const favGarageMap = new Map(); // id -> garage row rec (favorites popup)
   const favShadeMap = new Map(); // id -> shade tile rec (favorites popup)
   let sensorsPopupSig = "";
   const sensorTypeFilter = new Set(); // empty = show all types
@@ -1123,5 +1194,5 @@
   }
 
   // ---------- render ----------
-  globalThis.__MLD = { ROOMS_EL, SEARCH_EL, STATUS_EL, ALL_ON_BTN, ALL_OFF_BTN, ALL_ON_TRACK, ALL_OFF_TRACK, ALL_ON_RESTORE_BTN, ALL_OFF_SAVE_BTN, CENTRAL_TSTAT_BTN, CENTRAL_MUSIC_BTN, EXPAND_ALL_BTN, REORDER_DONE_BTN, REORDER_CANCEL_BTN, OVERFLOW_BTN, OVERFLOW_MENU, MENU_REORDER_BTN, MENU_HAPTICS_EL, MENU_TABS_EL, MENU_DRAWER_EL, MENU_THEME_SEGMENT, MENU_OPEN_LOCAL_BTN, MENU_OPEN_CLOUD_BTN, MENU_LOCAL_URL_EL, HAPTICS_STORAGE_KEY, THEME_STORAGE_KEY, TABS_STORAGE_KEY, DRAWER_STORAGE_KEY, LOCAL_URL_STORAGE_KEY, LOCAL_OK_STORAGE_KEY, CLOUD_URL_STORAGE_KEY, PREFER_CLOUD_STORAGE_KEY, DASH_SESSION_STORAGE_KEY, DASH_SESSION_EXPIRES_KEY, LOCAL_OK_MAX_AGE_MS, DASH_SESSION_MAX_AGE_MS, THEME_OPTIONS, APP_EL, REORDER_DRAG_THRESHOLD, DASHBOARD_TITLE_EL, CURRENT_CATEGORY_TITLE_EL, POLL_DEFAULT, POLL_WS_FALLBACK, loadHapticsPref, saveHapticsPref, loadThemePref, saveThemePref, loadTabsPref, saveTabsPref, loadDrawerPref, saveDrawerPref, cfg, localModeBannerEl, localBannerDismissed, rooms, roomMap, devices, devicesByRoom, outletsByRoom, devMap, outletMap, favDevMap, roomEls, lastDataSig, pollTimer, ws, wsConnected, wsRetry, wsReconnectTimer, pageWasHidden, reorderMode, reorderBusy, reorderSnapshot, reorderDraftOrder, navReorderSnapshot, navReorderDraftOrder, navReorderDrawerRelocated, navEls, colorPopup, colorSession, levelOptimistic, switchOptimistic, lockOptimistic, shadeOptimistic, valveOptimistic, musicOptimistic, setpointOptimistic, rgbWheelCache, thermostats, tempSensors, thermoByRoom, sensorByRoom, climateEls, tstatPopup, tstatSession, tstatDeviceModeLock, musicMasterPopup, MUSIC_VOL_STEP, hubModes, currentHubMode, scenes, locks, windowShades, valves, outlets, music, favorites, snapshots, roomGestureLockCount, hubModeLockUntil, hsmStatus, hsmAlert, hsmAlertDesc, hsmEnabled, hsmPinRequired, thermostatsPopupEnabled, outletsSeparateTab, unlockPinEnabled, unlockPinRequired, hsmLockUntil, pinPadPopup, pinPadState, gatePopup, gateState, dashSession, dashSessionExpiresAt, dashboardPasswordRequired, dashSessionActivityBound, ensureDashboardAccessTask, confirmPopup, confirmPending, quickPopup, quickPopupOpenType, syncQuickPopupRef, TAB_CATEGORIES, TAB_LABELS, tabMode, activeTab, tabViewEl, QUICK_LIGHTS_BTN, favTstatModeMenu, favTstatModeMenuCleanup, favTstatModeMenuId, favTstatModeMenuAnchor, centralTstatTargetMenu, centralTstatTargetMenuCleanup, centralTstatTargetMenuAnchor, favTstatMap, favPopupSig, tstatsPopupMap, tstatsPopupSig, setLevelOptimistic, setSwitchOptimistic, clearSwitchOptimistic, reapplySwitchOptimistic, effectiveSwitch, effectiveLevel, setLockOptimistic, clearLockOptimistic, reapplyLockOptimistic, effectiveLock, lockStatusLabel, setShadeOptimistic, clearShadeOptimistic, reapplyShadeOptimistic, effectiveShadeState, effectiveShadePosition, shadeIsMoving, shadeStatusLabel, setValveOptimistic, clearValveOptimistic, reapplyValveOptimistic, effectiveValveState, valveIsMoving, normalizeValveForCard, isMusicPlaying, musicControls, effectiveMusicStatus, effectiveMusicVolume, musicStatusLabel, setMusicOptimistic, clearMusicOptimistic, reapplyMusicOptimistic, setSetpointOptimistic, clearSetpointOptimistic, reapplySetpointOptimistic, applyTstatSetpoints, drawRgbWheel, activeSlideGestures, cancelAllSlideGestures, appendPopup, bindPopupDismiss, supportedModes, supportedFanModes, deviceHasFanSpeed, supportedFanSpeeds, showFanSpeedControls, fanModeActive, tstatSectionLabel, tstatStateClass, formatRoomTemp, roomClimateInfo, roomHasClimate, roomTstatState, isFavorite, syncFavButton, isFavoriteableDeviceId, centralThermostatsSorted, buildCentralTstat, postCall, loadDashSession, saveDashSession, clearDashSession, isDashSessionFresh, dashSessionRenewInFlight, dashSessionLastRenewAt, DASH_SESSION_RENEW_MIN_INTERVAL_MS, renewDashSessionFromServer, slideDashSessionExpiry, applyDashSessionFromResponse, isDashboardGateOpen, setupDashSessionActivityRenewal, ACCESS_TOKEN, withToken, fetchWithTimeout, getJson, fetchData, sendCmd, sendCmdBatch, publishMld, sensors, sensorCardMap, favSensorMap, favMusicMap, favLockMap, favShadeMap, sensorsPopupSig, sensorTypeFilter, sensorFilterOpen, sensorFilterChipsEl, sensorFilterBtnEl, sensorFilterEmptyEl, replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap };
+  globalThis.__MLD = { ROOMS_EL, SEARCH_EL, STATUS_EL, ALL_ON_BTN, ALL_OFF_BTN, ALL_ON_TRACK, ALL_OFF_TRACK, ALL_ON_RESTORE_BTN, ALL_OFF_SAVE_BTN, CENTRAL_TSTAT_BTN, CENTRAL_MUSIC_BTN, EXPAND_ALL_BTN, REORDER_DONE_BTN, REORDER_CANCEL_BTN, OVERFLOW_BTN, OVERFLOW_MENU, MENU_REORDER_BTN, MENU_HAPTICS_EL, MENU_TABS_EL, MENU_DRAWER_EL, MENU_THEME_SEGMENT, MENU_OPEN_LOCAL_BTN, MENU_OPEN_CLOUD_BTN, MENU_LOCAL_URL_EL, HAPTICS_STORAGE_KEY, THEME_STORAGE_KEY, TABS_STORAGE_KEY, DRAWER_STORAGE_KEY, LOCAL_URL_STORAGE_KEY, LOCAL_OK_STORAGE_KEY, CLOUD_URL_STORAGE_KEY, PREFER_CLOUD_STORAGE_KEY, DASH_SESSION_STORAGE_KEY, DASH_SESSION_EXPIRES_KEY, LOCAL_OK_MAX_AGE_MS, DASH_SESSION_MAX_AGE_MS, THEME_OPTIONS, APP_EL, REORDER_DRAG_THRESHOLD, DASHBOARD_TITLE_EL, CURRENT_CATEGORY_TITLE_EL, POLL_DEFAULT, POLL_WS_FALLBACK, loadHapticsPref, saveHapticsPref, loadThemePref, saveThemePref, loadTabsPref, saveTabsPref, loadDrawerPref, saveDrawerPref, cfg, localModeBannerEl, localBannerDismissed, rooms, roomMap, devices, devicesByRoom, outletsByRoom, devMap, outletMap, favDevMap, roomEls, lastDataSig, pollTimer, ws, wsConnected, wsRetry, wsReconnectTimer, pageWasHidden, reorderMode, reorderBusy, reorderSnapshot, reorderDraftOrder, navReorderSnapshot, navReorderDraftOrder, navReorderDrawerRelocated, navEls, colorPopup, colorSession, levelOptimistic, switchOptimistic, lockOptimistic, garageOptimistic, shadeOptimistic, valveOptimistic, musicOptimistic, setpointOptimistic, rgbWheelCache, thermostats, tempSensors, thermoByRoom, sensorByRoom, climateEls, tstatPopup, tstatSession, tstatDeviceModeLock, musicMasterPopup, MUSIC_VOL_STEP, hubModes, currentHubMode, scenes, locks, garageDoors, windowShades, valves, outlets, music, favorites, snapshots, roomGestureLockCount, hubModeLockUntil, hsmStatus, hsmAlert, hsmAlertDesc, hsmEnabled, hsmPinRequired, thermostatsPopupEnabled, outletsSeparateTab, unlockPinEnabled, unlockPinRequired, hsmLockUntil, pinPadPopup, pinPadState, gatePopup, gateState, dashSession, dashSessionExpiresAt, dashboardPasswordRequired, dashSessionActivityBound, ensureDashboardAccessTask, confirmPopup, confirmPending, quickPopup, quickPopupOpenType, syncQuickPopupRef, TAB_CATEGORIES, TAB_LABELS, tabMode, activeTab, tabViewEl, QUICK_LIGHTS_BTN, favTstatModeMenu, favTstatModeMenuCleanup, favTstatModeMenuId, favTstatModeMenuAnchor, centralTstatTargetMenu, centralTstatTargetMenuCleanup, centralTstatTargetMenuAnchor, favTstatMap, favPopupSig, tstatsPopupMap, tstatsPopupSig, setLevelOptimistic, setSwitchOptimistic, clearSwitchOptimistic, reapplySwitchOptimistic, effectiveSwitch, effectiveLevel, setLockOptimistic, clearLockOptimistic, reapplyLockOptimistic, effectiveLock, lockStatusLabel, setGarageOptimistic, clearGarageOptimistic, reapplyGarageOptimistic, effectiveGarageState, garageIsOpen, garageIsMoving, garageStatusLabel, setShadeOptimistic, clearShadeOptimistic, reapplyShadeOptimistic, effectiveShadeState, effectiveShadePosition, shadeIsMoving, shadeStatusLabel, setValveOptimistic, clearValveOptimistic, reapplyValveOptimistic, effectiveValveState, valveIsMoving, normalizeValveForCard, isMusicPlaying, musicControls, effectiveMusicStatus, effectiveMusicVolume, musicStatusLabel, setMusicOptimistic, clearMusicOptimistic, reapplyMusicOptimistic, setSetpointOptimistic, clearSetpointOptimistic, reapplySetpointOptimistic, applyTstatSetpoints, drawRgbWheel, activeSlideGestures, cancelAllSlideGestures, appendPopup, bindPopupDismiss, supportedModes, supportedFanModes, deviceHasFanSpeed, supportedFanSpeeds, showFanSpeedControls, fanModeActive, tstatSectionLabel, tstatStateClass, formatRoomTemp, roomClimateInfo, roomHasClimate, roomTstatState, isFavorite, syncFavButton, isFavoriteableDeviceId, centralThermostatsSorted, buildCentralTstat, postCall, loadDashSession, saveDashSession, clearDashSession, isDashSessionFresh, dashSessionRenewInFlight, dashSessionLastRenewAt, DASH_SESSION_RENEW_MIN_INTERVAL_MS, renewDashSessionFromServer, slideDashSessionExpiry, applyDashSessionFromResponse, isDashboardGateOpen, setupDashSessionActivityRenewal, ACCESS_TOKEN, withToken, fetchWithTimeout, getJson, fetchData, sendCmd, sendCmdBatch, publishMld, sensors, sensorCardMap, favSensorMap, favMusicMap, favLockMap, favGarageMap, favShadeMap, sensorsPopupSig, sensorTypeFilter, sensorFilterOpen, sensorFilterChipsEl, sensorFilterBtnEl, sensorFilterEmptyEl, replaceList, repopulateThermoByRoom, repopulateSensorByRoom, syncRoomMap };
 })();

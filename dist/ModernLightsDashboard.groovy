@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.43
+// Modern Dashboard v0.2.44
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.43 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.44 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -53,6 +53,8 @@ def mainPage() {
             input "tempSensors", "capability.temperatureMeasurement", title: "Temperature sensors (display only)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "locks", "capability.lock", title: "Select your locks",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "garageDoors", "capability.garageDoorControl", title: "Select your garage doors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "windowShades", "capability.windowShade", title: "Select motorized shades & blinds",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
@@ -115,10 +117,10 @@ def mainPage() {
             }
         }
         section("Locks") {
-            input "unlockPinEnabled", "bool", title: "Require PIN to unlock doors from dashboard", defaultValue: false, submitOnChange: true
+            input "unlockPinEnabled", "bool", title: "Require PIN to unlock doors / open garage doors from dashboard", defaultValue: false, submitOnChange: true
             if (unlockPinEnabled) {
                 input "unlockPin", "password", title: "Unlock PIN", required: false
-                paragraph "<small>PIN is validated by this app before sending unlock commands. Locking does not require a PIN.</small>"
+                paragraph "<small>PIN is validated by this app before sending unlock and garage-open commands. Locking and closing garage doors do not require a PIN.</small>"
             }
         }
         section("Thermostats") {
@@ -194,6 +196,7 @@ def logInit() {
     if (audioCount) { log.info "Modern Dashboard: ${audioCount} audio device(s) authorized" }
     if (windowShades) { log.info "Modern Dashboard: ${windowShades.size()} shade(s) authorized" }
     if (valves) { log.info "Modern Dashboard: ${valves.size()} valve(s) authorized" }
+    if (garageDoors) { log.info "Modern Dashboard: ${garageDoors.size()} garage door(s) authorized" }
     if (state.accessToken == null) { state.accessToken = createAccessToken() }
     if (!assetsPresent()) { log.warn "Modern Dashboard: upload all mld-* dashboard files to File Manager (see app setup page)" }
 }
@@ -901,6 +904,26 @@ def renderData() {
             out << "}"
         }
     }
+    out << "],\"garageDoors\":["
+    first = true
+    if (garageDoors) {
+        for (d in garageDoors) {
+            if (!first) out << ","; first = false
+            def roomName = null
+            try { roomName = d.getRoomName() } catch (e) { roomName = null }
+            def rid = null
+            if (roomName) {
+                def rm = roomsList.find { it.name == roomName }
+                if (rm) rid = rm.id
+            }
+            def doorSt = safeCurrent(d, "door")
+            out << "{\"i\":" << d.id
+            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+            out << ",\"st\":" << jsonStr(doorSt)
+            out << "}"
+        }
+    }
     out << "],\"windowShades\":["
     first = true
     if (windowShades) {
@@ -1260,6 +1283,7 @@ def renderDevice() {
     def senEntry = allSensorDevices()?.find { it.device.id.toString() == id.toString() }
     def hasControlRole =
         locks?.any { it.id.toString() == id.toString() } ||
+        garageDoors?.any { it.id.toString() == id.toString() } ||
         windowShades?.any { it.id.toString() == id.toString() } ||
         valves?.any { it.id.toString() == id.toString() } ||
         allAudioDevices()?.any { it.id.toString() == id.toString() }
@@ -1288,6 +1312,14 @@ def renderDevice() {
         out << "{\"i\":" << lk.id
         out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
         out << ",\"st\":" << jsonStr(lockSt) << "}"
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    }
+    def garage = garageDoors?.find { it.id.toString() == id.toString() }
+    if (garage != null) {
+        try { garage.refresh() } catch (e) {}
+        def out = new StringBuilder()
+        out << "{\"i\":" << garage.id
+        out << ",\"st\":" << jsonStr(safeCurrent(garage, "door")) << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def shade = windowShades?.find { it.id.toString() == id.toString() }
@@ -1390,6 +1422,15 @@ def runLockCmd(dev, c, v) {
     }
 }
 
+def runGarageDoorCmd(dev, c, v) {
+    switch (c) {
+        case "open":  dev.open(); break
+        case "close": dev.close(); break
+        default:
+            throw new IllegalArgumentException("unknown command")
+    }
+}
+
 def runShadeCmd(dev, c, v) {
     switch (c) {
         case "open":  dev.open(); break
@@ -1475,10 +1516,11 @@ def executeOneCmd(id, c, v, pin) {
     def outletDev = outletSwitches?.find { it.id.toString() == id.toString() }
     def t = thermostats?.find { it.id.toString() == id.toString() }
     def lk = locks?.find { it.id.toString() == id.toString() }
+    def garage = garageDoors?.find { it.id.toString() == id.toString() }
     def shade = windowShades?.find { it.id.toString() == id.toString() }
     def valve = valves?.find { it.id.toString() == id.toString() }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
-    if (dev == null && outletDev == null && t == null && lk == null && shade == null && valve == null && mp == null) {
+    if (dev == null && outletDev == null && t == null && lk == null && garage == null && shade == null && valve == null && mp == null) {
         return [ok: false, error: "device not found"]
     }
     try {
@@ -1494,6 +1536,12 @@ def executeOneCmd(id, c, v, pin) {
                 if (!pinResult.ok) return pinResult
             }
             runLockCmd(lk, c, v)
+        } else if (garage != null) {
+            if (c == "open") {
+                def pinResult = validateUnlockPin(pin)
+                if (!pinResult.ok) return pinResult
+            }
+            runGarageDoorCmd(garage, c, v)
         } else if (shade != null) {
             runShadeCmd(shade, c, v)
         } else if (valve != null) {
@@ -2251,6 +2299,7 @@ def validFavoriteIdSet() {
     tempSensors?.each { set.add(it.id.toString()) }
     allSensorDevices()?.each { set.add(it.device.id.toString()) }
     locks?.each { set.add(it.id.toString()) }
+    garageDoors?.each { set.add(it.id.toString()) }
     windowShades?.each { set.add(it.id.toString()) }
     valves?.each { set.add(it.id.toString()) }
     allAudioDevices()?.each { set.add(it.id.toString()) }

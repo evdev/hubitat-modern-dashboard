@@ -133,6 +133,7 @@
   const levelOptimistic = new Map(); // device id -> { level, until, timer }
   const switchOptimistic = new Map(); // device id -> { s, l?, until, timer }
   const lockOptimistic = new Map(); // lock id -> { lk, st, until, timer }
+  const garageOptimistic = new Map(); // garage id -> { st, until, timer }
   const shadeOptimistic = new Map(); // shade id -> { st?, pos?, until, timer }
   const valveOptimistic = new Map(); // valve id -> { st?, until, timer }
   const musicOptimistic = new Map(); // music id -> { st, v?, until, timer }
@@ -157,6 +158,7 @@
   let currentHubMode = "";
   let scenes = [];
   let locks = [];
+  let garageDoors = [];
   let windowShades = [];
   let valves = [];
   let outlets = [];              // [{i,n,r,s}] outlet devices from companion app
@@ -338,6 +340,73 @@
     if (st === "unknown") return "Unknown";
     if (st === "unavailable") return "Unavailable";
     return effectiveLock(lock) ? "Locked" : "Unlocked";
+  }
+
+  function setGarageOptimistic(id, patch) {
+    const prev = garageOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    const door = garageDoors.find((g) => g.i === id);
+    if (door && patch.st != null) door.st = patch.st;
+    const entry = {
+      st: patch.st != null ? patch.st : prev?.st,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      timer: null,
+    };
+    entry.timer = setTimeout(() => {
+      garageOptimistic.delete(id);
+      if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
+    }, LEVEL_OPTIMISTIC_MS);
+    garageOptimistic.set(id, entry);
+  }
+
+  function clearGarageOptimistic(id) {
+    const prev = garageOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    garageOptimistic.delete(id);
+  }
+
+  function reapplyGarageOptimistic() {
+    for (const [id, opt] of garageOptimistic) {
+      if (Date.now() >= opt.until) {
+        if (opt.timer) clearTimeout(opt.timer);
+        garageOptimistic.delete(id);
+        continue;
+      }
+      const door = garageDoors.find((g) => g.i === id);
+      if (!door) continue;
+      if (opt.st != null && door.st === opt.st) {
+        if (opt.timer) clearTimeout(opt.timer);
+        garageOptimistic.delete(id);
+        continue;
+      }
+      if (opt.st != null) door.st = opt.st;
+    }
+  }
+
+  function effectiveGarageState(door) {
+    const opt = garageOptimistic.get(door.i);
+    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    return door.st || "unknown";
+  }
+
+  function garageIsOpen(door) {
+    const st = effectiveGarageState(door);
+    return st === "open" || st === "opening";
+  }
+
+  function garageIsMoving(door) {
+    const st = effectiveGarageState(door);
+    return st === "opening" || st === "closing";
+  }
+
+  function garageStatusLabel(door) {
+    const st = effectiveGarageState(door);
+    if (st === "opening") return "Opening…";
+    if (st === "closing") return "Closing…";
+    if (st === "open") return "Open";
+    if (st === "closed") return "Closed";
+    if (st === "unknown" || st === "unavailable") return st.charAt(0).toUpperCase() + st.slice(1);
+    return st || "—";
   }
 
   function setShadeOptimistic(id, patch) {
@@ -804,6 +873,7 @@
       || sensors.some((s) => s.i === numId)
       || music.some((m) => m.i === numId)
       || locks.some((l) => l.i === numId)
+      || garageDoors.some((g) => g.i === numId)
       || windowShades.some((s) => s.i === numId)
       || valves.some((v) => v.i === numId);
   }
@@ -1084,6 +1154,7 @@
   const favSensorMap = new Map(); // id -> sensor card rec (favorites popup)
   const favMusicMap = new Map(); // id -> music row rec (favorites popup)
   const favLockMap = new Map(); // id -> lock row rec (favorites popup)
+  const favGarageMap = new Map(); // id -> garage row rec (favorites popup)
   const favShadeMap = new Map(); // id -> shade tile rec (favorites popup)
   let sensorsPopupSig = "";
   const sensorTypeFilter = new Set(); // empty = show all types
@@ -3996,6 +4067,8 @@
       if (mp) { out.push({ type: "music", dev: mp }); continue; }
       const lk = locks.find(x => x.i === id);
       if (lk) { out.push({ type: "lock", dev: lk }); continue; }
+      const garage = garageDoors.find(x => x.i === id);
+      if (garage) { out.push({ type: "garage", dev: garage }); continue; }
       const shade = windowShades.find(x => x.i === id);
       if (shade) { out.push({ type: "shade", dev: shade }); continue; }
       const sen = sensors.find(x => x.i === id);
@@ -4014,6 +4087,7 @@
     for (const [, rec] of favSensorMap) syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of favMusicMap) syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of favLockMap) syncFavButton(rec.favBtn, rec.i);
+    for (const [, rec] of favGarageMap) syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of favShadeMap) syncFavButton(rec.favBtn, rec.i);
     updateTstatFavButton();
   }
@@ -4480,12 +4554,14 @@
     unlockPinRequired = !!d.unlockPinRequired;
     replaceList(scenes, d.scenes);
     replaceList(locks, d.locks);
+    replaceList(garageDoors, d.garageDoors);
     replaceList(windowShades, d.windowShades);
     if (!Array.isArray(valves)) valves = [];
     replaceList(valves, Array.isArray(d.valves) ? d.valves : []);
     replaceList(music, d.music);
     if (Array.isArray(d.config?.favorites)) replaceList(favorites, d.config.favorites.map(Number));
     reapplyLockOptimistic();
+    reapplyGarageOptimistic();
     reapplyShadeOptimistic();
     try { reapplyValveOptimistic(); } catch {}
     reapplyMusicOptimistic();
@@ -5317,10 +5393,11 @@
       const s = tempSensors.find(x => x.i === Number(d.i));
       const sen = sensors.find(x => x.i === Number(d.i));
       const lock = locks.find(x => x.i === Number(d.i));
+      const garage = garageDoors.find(x => x.i === Number(d.i));
       const shade = windowShades.find(x => x.i === Number(d.i));
       const valve = valves.find(x => x.i === Number(d.i));
       const mp = music.find(x => x.i === Number(d.i));
-      const hasControlRole = !!(lock || shade || valve || mp);
+      const hasControlRole = !!(lock || garage || shade || valve || mp);
       if (s && !sen && !hasControlRole) {
         if (d.temp != null) s.temp = Number(d.temp);
         updateClimateWidgets();
@@ -5340,6 +5417,14 @@
         if (d.st != null) lock.st = d.st;
         const opt = lockOptimistic.get(Number(d.i));
         if (opt && !!lock.lk === !!opt.lk) clearLockOptimistic(Number(d.i));
+        if (currentCategory() === "locks") renderLocksPopup();
+        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        return;
+      }
+      if (garage) {
+        if (d.st != null) garage.st = d.st;
+        const opt = garageOptimistic.get(Number(d.i));
+        if (opt?.st != null && garage.st === opt.st) clearGarageOptimistic(Number(d.i));
         if (currentCategory() === "locks") renderLocksPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
@@ -5458,6 +5543,33 @@
     }
     if (currentCategory() === "music") renderMusicPopup();
     else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+  }
+
+  function reconcileGarage(id) {
+    setTimeout(() => refreshDevice(id), 700);
+    setTimeout(() => refreshDevice(id), 2200);
+  }
+
+  async function sendGarageCmd(id, cmd, pin) {
+    const door = garageDoors.find((g) => g.i === id);
+    if (!door) return { ok: false };
+    hapticTap();
+    const patch = cmd === "open" ? { st: "opening" } : cmd === "close" ? { st: "closing" } : null;
+    if (patch) {
+      setGarageOptimistic(id, patch);
+      if (currentCategory() === "locks") renderLocksPopup();
+      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+    }
+    const result = await sendCmd(id, cmd, null, pin);
+    if (!result.ok) {
+      clearGarageOptimistic(id);
+      reconcileGarage(id);
+      if (currentCategory() === "locks") renderLocksPopup();
+      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+    } else {
+      reconcileGarage(id);
+    }
+    return result;
   }
 
   async function sendLockCmd(id, cmd, pin) {
@@ -5584,6 +5696,62 @@
     if (type) syncQuickPopupWidth(popup, type);
   }
 
+  function updateFavoriteGarageRow(door) {
+    const rec = favGarageMap.get(door.i);
+    if (!rec) return;
+    rec.meta.textContent = roomLabel(door.r) + " · " + garageStatusLabel(door);
+    const isOpen = garageIsOpen(door);
+    rec.closeBtn.classList.toggle("active", !isOpen);
+    rec.openBtn.classList.toggle("active", isOpen);
+  }
+
+  function makeGarageRow(door, context) {
+    const inFav = context === "favorites";
+    const row = ce("div", "quick-lock-row" + (inFav ? " quick-fav-span" : ""));
+    row.dataset.name = String(door.n || "").toLowerCase();
+    const head = ce("div", "quick-fav-row-head");
+    const info = ce("div", "quick-lock-info");
+    const name = ce("span", "quick-fav-name");
+    name.textContent = door.n || ("Garage " + door.i);
+    const meta = ce("span", "quick-fav-meta");
+    meta.textContent = roomLabel(door.r) + " · " + garageStatusLabel(door);
+    info.appendChild(name);
+    info.appendChild(meta);
+    head.appendChild(info);
+    const fav = ce("button", "tile-fav");
+    fav.type = "button";
+    attachFavButton(fav, door.i);
+    head.appendChild(fav);
+    row.appendChild(head);
+
+    const actions = ce("div", "quick-lock-actions");
+    const closeBtn = ce("button", "quick-lock-btn");
+    closeBtn.type = "button";
+    closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
+    const openBtn = ce("button", "quick-lock-btn");
+    openBtn.type = "button";
+    openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
+    const isOpen = garageIsOpen(door);
+    if (!isOpen) closeBtn.classList.add("active");
+    else openBtn.classList.add("active");
+    closeBtn.addEventListener("click", () => {
+      if (!garageIsMoving(door) && garageIsOpen(door)) sendGarageCmd(door.i, "close");
+    });
+    openBtn.addEventListener("click", () => {
+      if (garageIsMoving(door) || garageIsOpen(door)) return;
+      if (unlockPinRequired) promptGarageOpenPin(door.i, door.n);
+      else sendGarageCmd(door.i, "open");
+    });
+    actions.appendChild(closeBtn);
+    actions.appendChild(openBtn);
+    row.appendChild(actions);
+
+    if (inFav) {
+      favGarageMap.set(door.i, { el: row, meta, closeBtn, openBtn, favBtn: fav, i: door.i });
+    }
+    return row;
+  }
+
   function makeLockRow(lock, context) {
     const inFav = context === "favorites";
     const row = ce("div", "quick-lock-row" + (inFav ? " quick-fav-span" : ""));
@@ -5646,8 +5814,8 @@
     const body = popup._body;
     body.className = "quick-body quick-body-locks";
     body.innerHTML = "";
-    if (!locks.length) {
-      body.textContent = "No locks selected — add locks in the Hubitat app settings";
+    if (!locks.length && !garageDoors.length) {
+      body.textContent = "No locks or garage doors selected — add them in the Hubitat app settings";
       return;
     }
     if (unlockPinEnabled && !unlockPinRequired) {
@@ -5655,13 +5823,19 @@
       hint.textContent = "Set unlock PIN in Hubitat app settings";
       body.appendChild(hint);
     }
-    const sorted = locks.slice().sort((a, b) => {
-      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
+    const entries = [];
+    for (const lock of locks) entries.push({ kind: "lock", dev: lock });
+    for (const door of garageDoors) entries.push({ kind: "garage", dev: door });
+    entries.sort((a, b) => {
+      const ra = roomLabel(a.dev.r).localeCompare(roomLabel(b.dev.r));
       if (ra !== 0) return ra;
-      return String(a.n || "").localeCompare(String(b.n || ""));
+      return String(a.dev.n || "").localeCompare(String(b.dev.n || ""));
     });
     const list = ce("div", "quick-list");
-    for (const lock of sorted) list.appendChild(makeLockRow(lock, "popup"));
+    for (const entry of entries) {
+      if (entry.kind === "lock") list.appendChild(makeLockRow(entry.dev, "popup"));
+      else list.appendChild(makeGarageRow(entry.dev, "popup"));
+    }
     body.appendChild(list);
   }
 
@@ -6218,6 +6392,26 @@
         renderPinPadDots();
       },
     };
+  }
+
+  function promptGarageOpenPin(garageId, garageName) {
+    hapticTap();
+    const pad = openPinPad({
+      title: "Enter PIN to open" + (garageName ? " " + garageName : ""),
+      onSubmit: async (pin) => {
+        const result = await sendGarageCmd(garageId, "open", pin);
+        if (!result?.ok && (result?.status === 403 || result?.error === "wrong pin")) {
+          pad.shake();
+          return;
+        }
+        if (result?.ok) {
+          pad.close();
+          return;
+        }
+        if (result?.error === "pin not configured") flash("Set unlock PIN in Hubitat app settings", true);
+        pad.close();
+      },
+    });
   }
 
   function promptUnlockPin(lockId, lockName) {
@@ -6863,6 +7057,9 @@
       } else if (entry.type === "lock") {
         const lk = locks.find((x) => x.i === entry.dev.i) || entry.dev;
         updateFavoriteLockRow(lk);
+      } else if (entry.type === "garage") {
+        const door = garageDoors.find((x) => x.i === entry.dev.i) || entry.dev;
+        updateFavoriteGarageRow(door);
       } else if (entry.type === "shade") {
         const sh = windowShades.find((x) => x.i === entry.dev.i) || entry.dev;
         updateFavoriteShadeTile(sh);
@@ -6885,6 +7082,7 @@
     sensorCardMap.clear();
     favMusicMap.clear();
     favLockMap.clear();
+    favGarageMap.clear();
     favShadeMap.clear();
     const entries = getFavoriteEntries();
     favPopupSig = favoritesPopupSignature();
@@ -6906,6 +7104,8 @@
         grid.appendChild(makeMusicRow(entry.dev, "favorites"));
       } else if (entry.type === "lock") {
         grid.appendChild(makeLockRow(entry.dev, "favorites"));
+      } else if (entry.type === "garage") {
+        grid.appendChild(makeGarageRow(entry.dev, "favorites"));
       } else if (entry.type === "shade") {
         grid.appendChild(makeShadeTile(entry.dev, "favorites"));
       }
@@ -6955,7 +7155,7 @@
 
   function quickNavPopupHasContent(popup) {
     switch (popup) {
-      case "locks": return locks.length > 0;
+      case "locks": return locks.length > 0 || garageDoors.length > 0;
       case "scenes": return scenes.length > 0;
       case "hub-mode": return hubModes.length > 0;
       case "security": return hsmEnabled;
@@ -7083,6 +7283,7 @@
     favSensorMap.clear();
     favMusicMap.clear();
     favLockMap.clear();
+    favGarageMap.clear();
     favShadeMap.clear();
     favPopupSig = "";
     tstatsPopupMap.clear();
@@ -7829,6 +8030,15 @@
           if (opt && opt.until > Date.now()) return;
           lock.st = val;
           lock.lk = val === "locked" ? 1 : 0;
+          if (currentCategory() === "locks") renderLocksPopup();
+          else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+          return;
+        }
+        const garage = garageDoors.find(x => x.i === Number(m.deviceId));
+        if (garage && String(m.name || "") === "door") {
+          const opt = garageOptimistic.get(garage.i);
+          if (opt && opt.until > Date.now()) return;
+          garage.st = String(m.value || "");
           if (currentCategory() === "locks") renderLocksPopup();
           else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
           return;

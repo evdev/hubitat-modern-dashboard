@@ -520,6 +520,9 @@
       } else if (entry.type === "lock") {
         const lk = M.locks.find((x) => x.i === entry.dev.i) || entry.dev;
         M.updateFavoriteLockRow(lk);
+      } else if (entry.type === "garage") {
+        const door = M.garageDoors.find((x) => x.i === entry.dev.i) || entry.dev;
+        M.updateFavoriteGarageRow(door);
       } else if (entry.type === "shade") {
         const sh = M.windowShades.find((x) => x.i === entry.dev.i) || entry.dev;
         M.updateFavoriteShadeTile(sh);
@@ -542,6 +545,7 @@
     M.sensorCardMap.clear();
     M.favMusicMap.clear();
     M.favLockMap.clear();
+    M.favGarageMap.clear();
     M.favShadeMap.clear();
     const entries = M.getFavoriteEntries();
     M.favPopupSig = favoritesPopupSignature();
@@ -563,6 +567,8 @@
         grid.appendChild(M.makeMusicRow(entry.dev, "favorites"));
       } else if (entry.type === "lock") {
         grid.appendChild(M.makeLockRow(entry.dev, "favorites"));
+      } else if (entry.type === "garage") {
+        grid.appendChild(M.makeGarageRow(entry.dev, "favorites"));
       } else if (entry.type === "shade") {
         grid.appendChild(M.makeShadeTile(entry.dev, "favorites"));
       }
@@ -612,7 +618,7 @@
 
   function quickNavPopupHasContent(popup) {
     switch (popup) {
-      case "locks": return M.locks.length > 0;
+      case "locks": return M.locks.length > 0 || M.garageDoors.length > 0;
       case "scenes": return M.scenes.length > 0;
       case "hub-mode": return M.hubModes.length > 0;
       case "security": return M.hsmEnabled;
@@ -740,6 +746,7 @@
     M.favSensorMap.clear();
     M.favMusicMap.clear();
     M.favLockMap.clear();
+    M.favGarageMap.clear();
     M.favShadeMap.clear();
     M.favPopupSig = "";
     M.tstatsPopupMap.clear();
@@ -1486,6 +1493,15 @@
           if (opt && opt.until > Date.now()) return;
           lock.st = val;
           lock.lk = val === "locked" ? 1 : 0;
+          if (currentCategory() === "locks") M.renderLocksPopup();
+          else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+          return;
+        }
+        const garage = M.garageDoors.find(x => x.i === Number(m.deviceId));
+        if (garage && String(m.name || "") === "door") {
+          const opt = M.garageOptimistic.get(garage.i);
+          if (opt && opt.until > Date.now()) return;
+          garage.st = String(m.value || "");
           if (currentCategory() === "locks") M.renderLocksPopup();
           else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
           return;
