@@ -413,7 +413,7 @@
     M.syncQuickPopupRef(popup);
     M.syncQuickPopupWidthForOpen(popup);
     const body = M.currentBody();
-    body.className = "quick-body quick-body-scheduler" + (M.inTabView() ? " tab-body" : "");
+    M.setQuickBodyClass(body, "quick-body quick-body-scheduler");
     body.innerHTML = "";
     if (schedDraft) {
       body.appendChild(renderSchedWorkflow());

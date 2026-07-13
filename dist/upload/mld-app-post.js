@@ -658,8 +658,8 @@
     if (M.currentCategory() === "favorites") M.renderFavoritesPopup();
     else if (M.quickPopupOpenType === "locks") renderLocksPopup();
     else if (M.quickPopupOpenType === "music") renderMusicPopup();
-    else if (M.quickPopupOpenType === "blinds") renderBlindsPopup();
-    else if (M.quickPopupOpenType === "fans") renderFansPopup();
+    else if (M.quickPopupOpenType === "blinds") refreshBlindsPopup();
+    else if (M.quickPopupOpenType === "fans") refreshFansPopup();
     const ok = await saveFavorites(M.favorites);
     if (!ok) {
       if (wasFav) M.favorites.push(numId);
@@ -669,8 +669,8 @@
       if (M.currentCategory() === "favorites") M.renderFavoritesPopup();
       else if (M.quickPopupOpenType === "locks") renderLocksPopup();
       else if (M.quickPopupOpenType === "music") renderMusicPopup();
-      else if (M.quickPopupOpenType === "blinds") renderBlindsPopup();
-      else if (M.quickPopupOpenType === "fans") renderFansPopup();
+      else if (M.quickPopupOpenType === "blinds") refreshBlindsPopup();
+      else if (M.quickPopupOpenType === "fans") refreshFansPopup();
     }
   }
 
@@ -1084,6 +1084,34 @@
     M.navReorderDrawerRelocated = false;
   }
 
+  function captureUiScroll() {
+    const snap = { y: window.scrollY || document.documentElement.scrollTop || 0 };
+    const panel = document.querySelector(".quick-popup.open .quick-panel");
+    if (panel) snap.panelY = panel.scrollTop;
+    const scrollBody = (M.tabMode && M.activeTab !== "lights" && M.tabViewEl)
+      ? M.tabViewEl
+      : document.querySelector(".quick-popup.open .quick-body");
+    const list = scrollBody?.querySelector(".quick-list");
+    if (list) snap.listY = list.scrollTop;
+    return snap;
+  }
+
+  function restoreUiScroll(snap) {
+    if (!snap) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const scrollBody = (M.tabMode && M.activeTab !== "lights" && M.tabViewEl)
+          ? M.tabViewEl
+          : document.querySelector(".quick-popup.open .quick-body");
+        const list = scrollBody?.querySelector(".quick-list");
+        if (snap.listY != null && list) list.scrollTop = snap.listY;
+        const panel = document.querySelector(".quick-popup.open .quick-panel");
+        if (snap.panelY != null && panel) panel.scrollTop = snap.panelY;
+        if (snap.y > 0) window.scrollTo(0, snap.y);
+      });
+    });
+  }
+
   function render(d) {
     M.replaceList(M.hubModes, d.hubModes);
     if (!hubModeLocked()) M.currentHubMode = d.currentHubMode || "";
@@ -1151,12 +1179,14 @@
     const fullRerender = sig !== M.lastDataSig;
     M.lastDataSig = sig;
 
+    const scrollSnap = captureUiScroll();
     if (fullRerender && !M.reorderMode) buildDom();
     updateRoomSnapshotUi();
     updateStates();
     M.updateClimateWidgets();
     M.applySearch();
     M.refreshQuickPopupIfOpen();
+    restoreUiScroll(scrollSnap);
   }
 
   function buildDom() {
@@ -1994,7 +2024,7 @@
           if (opt.pos != null && shade.pos !== opt.pos) matched = false;
           if (matched) M.clearShadeOptimistic(Number(d.i));
         }
-        if (M.currentCategory() === "blinds") renderBlindsPopup();
+        if (M.currentCategory() === "blinds") refreshBlindsPopup();
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
@@ -2008,8 +2038,8 @@
           if (opt.sp != null && String(fan.sp || "").toLowerCase() !== String(opt.sp).toLowerCase()) matched = false;
           if (matched) M.clearFanOptimistic(Number(d.i));
         }
-        if (M.currentCategory() === "fans") renderFansPopup();
-        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+        updateFanTile(fan);
+        if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
       if (valve) {
@@ -2177,14 +2207,14 @@
     else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
     if (patch.st != null || patch.pos != null) {
       M.setShadeOptimistic(id, patch);
-      if (M.currentCategory() === "blinds") renderBlindsPopup();
+      if (M.currentCategory() === "blinds") refreshBlindsPopup();
       else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
     }
     const result = await M.sendCmd(id, cmd, val);
     if (!result.ok) {
       M.clearShadeOptimistic(id);
       reconcileShade(id);
-      if (M.currentCategory() === "blinds") renderBlindsPopup();
+      if (M.currentCategory() === "blinds") refreshBlindsPopup();
       else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
     } else {
       reconcileShade(id);
@@ -2205,15 +2235,15 @@
     }
     if (patch) {
       M.setFanOptimistic(id, patch);
-      if (M.currentCategory() === "fans") renderFansPopup();
-      else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+      updateFanTile(fan);
+      if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
     }
     const result = await M.sendCmd(id, cmd, val);
     if (!result.ok) {
       M.clearFanOptimistic(id);
       reconcileFan(id);
-      if (M.currentCategory() === "fans") renderFansPopup();
-      else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+      updateFanTile(fan);
+      if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
     } else {
       reconcileFan(id);
     }
@@ -2518,14 +2548,14 @@
     }
     tile.appendChild(actions);
 
-    if (inFav) {
-      M.favShadeMap.set(shade.i, { el: tile, meta, levelLabel, slider, openBtn, closeBtn, stopBtn, favBtn: fav });
-    }
+    const shadeRec = { el: tile, meta, levelLabel, slider, openBtn, closeBtn, stopBtn, favBtn: fav };
+    if (inFav) M.favShadeMap.set(shade.i, shadeRec);
+    else if (context === "popup") M.shadePopupMap.set(shade.i, shadeRec);
     return tile;
   }
 
-  function updateFavoriteShadeTile(shade) {
-    const rec = M.favShadeMap.get(shade.i);
+  function updateShadeTile(shade) {
+    const rec = M.shadePopupMap.get(shade.i) || M.favShadeMap.get(shade.i);
     if (!rec) return;
     const moving = M.shadeIsMoving(shade);
     const pos = M.effectiveShadePosition(shade);
@@ -2544,12 +2574,33 @@
     rec.closeBtn.disabled = moving;
   }
 
+  function updateFavoriteShadeTile(shade) {
+    updateShadeTile(shade);
+  }
+
+  function shadesListSignature() {
+    return M.windowShades.map((s) => s.i).join(",");
+  }
+
+  function refreshBlindsPopup() {
+    if (M.currentCategory() !== "blinds") return;
+    const listSig = shadesListSignature();
+    const body = M.currentBody();
+    if (!body.querySelector(".quick-list") || listSig !== M.blindsPopupSig) {
+      renderBlindsPopup();
+      return;
+    }
+    for (const shade of M.windowShades) updateShadeTile(shade);
+  }
+
   function renderBlindsPopup() {
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = M.currentBody();
-    body.className = "quick-body quick-body-blinds" + (M.inTabView() ? " tab-body" : "");
+    M.setQuickBodyClass(body, "quick-body quick-body-blinds");
     body.innerHTML = "";
+    M.shadePopupMap.clear();
+    M.blindsPopupSig = shadesListSignature();
     if (!M.windowShades.length) {
       body.textContent = "No shades selected — add shades in the Hubitat app settings";
       return;
@@ -2635,6 +2686,7 @@
     power.setAttribute("aria-label", on ? "Turn fan off" : "Turn fan on");
     power.setAttribute("aria-pressed", on ? "true" : "false");
     power.addEventListener("click", () => toggleCeilingFan(fan.i));
+    M.syncFanBladeSpin(power, fan, on, sp);
 
     const plus = ce("button", "fan-step");
     plus.type = "button";
@@ -2654,12 +2706,14 @@
 
     if (inFav) {
       M.favFanMap.set(fan.i, { el: tile, meta, speedLabel, minus, plus, power, favBtn: fav });
+    } else if (context === "popup") {
+      M.fansPopupMap.set(fan.i, { el: tile, meta, speedLabel, minus, plus, power, favBtn: fav });
     }
     return tile;
   }
 
-  function updateFavoriteFanTile(fan) {
-    const rec = M.favFanMap.get(fan.i);
+  function updateFanTile(fan) {
+    const rec = M.fansPopupMap.get(fan.i) || M.favFanMap.get(fan.i);
     if (!rec) return;
     const on = M.effectiveFanOn(fan);
     const sp = String(M.effectiveFanSpeed(fan) || "").toLowerCase();
@@ -2673,14 +2727,32 @@
     rec.plus.disabled = on && idx >= 0 && idx >= speeds.length - 1;
     rec.power.setAttribute("aria-label", on ? "Turn fan off" : "Turn fan on");
     rec.power.setAttribute("aria-pressed", on ? "true" : "false");
+    M.syncFanBladeSpin(rec.power, fan, on, sp);
+  }
+
+  function fansListSignature() {
+    return M.ceilingFans.map((f) => f.i).join(",");
+  }
+
+  function refreshFansPopup() {
+    if (M.currentCategory() !== "fans") return;
+    const listSig = fansListSignature();
+    const body = M.currentBody();
+    if (!body.querySelector(".quick-list") || listSig !== M.fansPopupSig) {
+      renderFansPopup();
+      return;
+    }
+    for (const fan of M.ceilingFans) updateFanTile(fan);
   }
 
   function renderFansPopup() {
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = M.currentBody();
-    body.className = "quick-body quick-body-fans" + (M.inTabView() ? " tab-body" : "");
+    M.setQuickBodyClass(body, "quick-body quick-body-fans");
     body.innerHTML = "";
+    M.fansPopupMap.clear();
+    M.fansPopupSig = fansListSignature();
     if (!M.ceilingFans.length) {
       body.textContent = "No fans selected — add ceiling fans in the Hubitat app settings";
       return;
@@ -2699,7 +2771,7 @@
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = M.currentBody();
-    body.className = "quick-body quick-body-outlets" + (M.inTabView() ? " tab-body" : "");
+    M.setQuickBodyClass(body, "quick-body quick-body-outlets");
     body.innerHTML = "";
     M.outletMap.clear();
     if (!M.outlets.length) {
@@ -2900,7 +2972,7 @@
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = M.currentBody();
-    body.className = "quick-body quick-body-music" + (M.inTabView() ? " tab-body" : "");
+    M.setQuickBodyClass(body, "quick-body quick-body-music");
     body.innerHTML = "";
     if (!M.music.length) {
       body.textContent = "No speakers selected — add music players or additional speakers in the Hubitat app settings";
@@ -3272,5 +3344,5 @@
     ruleSection.appendChild(ruleModes);
     body.appendChild(ruleSection);
   }
-  Object.assign(M, { saveRoomOrder, currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileFan, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, reconcileGarage, sendGarageCmd, sendLockCmd, sendShadeCmd, sendFanCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, updateFavoriteGarageRow, makeGarageRow, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, toggleCeilingFan, stepCeilingFanSpeed, makeFanTile, updateFavoriteFanTile, renderFansPopup, renderOutletsPopup, normalizeTempSensorForCard, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
+  Object.assign(M, { saveRoomOrder, currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, captureUiScroll, restoreUiScroll, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileFan, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, reconcileGarage, sendGarageCmd, sendLockCmd, sendShadeCmd, sendFanCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, updateFavoriteGarageRow, makeGarageRow, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateShadeTile, updateFavoriteShadeTile, shadesListSignature, refreshBlindsPopup, renderBlindsPopup, toggleCeilingFan, stepCeilingFanSpeed, makeFanTile, updateFanTile, fansListSignature, refreshFansPopup, renderFansPopup, renderOutletsPopup, normalizeTempSensorForCard, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
 })();

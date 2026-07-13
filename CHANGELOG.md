@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.58
+
+- **Fans & Blinds:** live status updates without rebuilding the whole list; scroll
+  position is kept when the dashboard refreshes.
+- **Fans:** blade animation speed matches the selected speed (works with multi-step
+  DC fans, not just low/medium/high).
+- **Category tabs:** Fans and Blinds lists use full tab height instead of a short
+  clipped scroll area.
+
 ## 0.2.57
 
 - **Ceiling fans:** new Fans tab for `FanControl` devices with on/off (hub

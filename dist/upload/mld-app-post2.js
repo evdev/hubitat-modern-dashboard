@@ -420,7 +420,7 @@
     const popup = M.ensureQuickPopup();
     M.syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-sensors" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-sensors");
     body.innerHTML = "";
     M.sensorCardMap.clear();
     M.sensorRoomEls.clear();
@@ -636,7 +636,7 @@
         M.updateFavoriteShadeTile(sh);
       } else if (entry.type === "fan") {
         const f = M.ceilingFans.find((x) => x.i === entry.dev.i) || entry.dev;
-        M.updateFavoriteFanTile(f);
+        M.updateFanTile(f);
       }
     }
     M.updateStates();
@@ -648,7 +648,7 @@
     const popup = M.ensureQuickPopup();
     M.syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-favorites" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-favorites");
     body.innerHTML = "";
     M.favDevMap.clear();
     M.favTstatMap.clear();
@@ -712,7 +712,7 @@
     const popup = M.ensureQuickPopup();
     M.syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-thermostats" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-thermostats");
     body.innerHTML = "";
     M.tstatsPopupMap.clear();
     M.tstatsPopupSig = thermostatsListSignature();
@@ -783,8 +783,8 @@
         case "favorites": refreshFavoritesPopup(); break;
         case "thermostats": refreshThermostatsPopup(); break;
         case "sensors": refreshSensorsPopup(); break;
-        case "blinds": M.renderBlindsPopup(); break;
-        case "fans": M.renderFansPopup(); break;
+        case "blinds": M.refreshBlindsPopup(); break;
+        case "fans": M.refreshFansPopup(); break;
         case "outlets": M.renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
@@ -796,8 +796,8 @@
     switch (M.quickPopupOpenType) {
       case "hub-mode": M.renderHubModePopup(); break;
       case "locks": M.renderLocksPopup(); break;
-      case "blinds": M.renderBlindsPopup(); break;
-      case "fans": M.renderFansPopup(); break;
+      case "blinds": M.refreshBlindsPopup(); break;
+      case "fans": M.refreshFansPopup(); break;
       case "music": M.renderMusicPopup(); break;
       case "favorites": refreshFavoritesPopup(); break;
       case "thermostats": refreshThermostatsPopup(); break;
@@ -825,8 +825,8 @@
       case "scenes": renderScenesPopup(); break;
       case "favorites": renderFavoritesPopup(); break;
       case "locks": M.renderLocksPopup(); break;
-      case "blinds": M.renderBlindsPopup(); break;
-      case "fans": M.renderFansPopup(); break;
+      case "blinds": M.refreshBlindsPopup(); break;
+      case "fans": M.refreshFansPopup(); break;
       case "outlets": M.renderOutletsPopup(); break;
       case "music": M.renderMusicPopup(); break;
       case "security": M.renderSecurityPopup(); break;
@@ -867,6 +867,10 @@
     M.favGarageMap.clear();
     M.favShadeMap.clear();
     M.favFanMap.clear();
+    M.fansPopupMap.clear();
+    M.fansPopupSig = "";
+    M.shadePopupMap.clear();
+    M.blindsPopupSig = "";
     M.favPopupSig = "";
     M.tstatsPopupMap.clear();
     M.tstatsPopupSig = "";
@@ -888,6 +892,11 @@
     // place it right after the M.rooms main element
     if (M.ROOMS_EL && M.ROOMS_EL.parentNode) M.ROOMS_EL.parentNode.insertBefore(M.tabViewEl, M.ROOMS_EL.nextSibling);
     return M.tabViewEl;
+  }
+
+  function setQuickBodyClass(body, classes) {
+    if (body === M.tabViewEl) body.className = "tab-view " + classes + " tab-body";
+    else body.className = classes;
   }
 
   function currentBody() {
@@ -956,8 +965,8 @@
         case "sensors": renderSensorsPopup(); break;
         case "thermostats": renderThermostatsPopup(); break;
         case "music": M.renderMusicPopup(); break;
-        case "blinds": M.renderBlindsPopup(); break;
-        case "fans": M.renderFansPopup(); break;
+        case "blinds": M.refreshBlindsPopup(); break;
+        case "fans": M.refreshFansPopup(); break;
         case "outlets": M.renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
@@ -1597,7 +1606,6 @@
     M.cancelAllSlideGestures();
     closeConfirm(false);
     if (drawerOpen) closeDrawer();
-    if (M.quickPopupOpenType) closeQuickPopup();
     if (M.colorSession) M.closeColorPopup(false);
   }
 
@@ -1723,7 +1731,7 @@
             const pos = Math.round(Number(m.value));
             if (!isNaN(pos)) shade.pos = pos;
           } else return;
-          if (currentCategory() === "blinds") M.renderBlindsPopup();
+          if (currentCategory() === "blinds") M.refreshBlindsPopup();
           else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
           return;
         }
@@ -1741,8 +1749,8 @@
             if (sp === "off") fan.s = 0;
             else if (sp) fan.s = 1;
           } else return;
-          if (currentCategory() === "fans") M.renderFansPopup();
-          else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+          M.updateFanTile(fan);
+          if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
           return;
         }
         // thermostat / sensor events
@@ -2127,5 +2135,5 @@
   })();
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
-  Object.assign(M, { sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, allSensorRoomsCollapsed, expandAllSensorRooms, collapseAllSensorRooms, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, fetchAuthStatus, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
+  Object.assign(M, { sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, setQuickBodyClass, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, allSensorRoomsCollapsed, expandAllSensorRooms, collapseAllSensorRooms, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, fetchAuthStatus, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
 })();

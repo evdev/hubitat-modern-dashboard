@@ -1711,6 +1711,11 @@ body {
   .sensor-card.is-alert .sensor-card-dot.is-active { animation: none; }
 }
 .quick-list { display: flex; flex-direction: column; gap: 8px; max-height: min(50dvh, 360px); overflow-y: auto; }
+.tab-view .quick-list,
+.tab-body .quick-list {
+  max-height: none;
+  overflow: visible;
+}
 .quick-list-btn {
   appearance: none; width: 100%; text-align: left;
   border: 1px solid var(--stroke); background: var(--panel-2);
@@ -2104,11 +2109,6 @@ body {
 .fan-tile.is-on .fan-power .fan-blades {
   animation: fan-spin 1.6s linear infinite;
 }
-.fan-tile.is-on[data-speed="low"] .fan-power .fan-blades { animation-duration: 2.4s; }
-.fan-tile.is-on[data-speed="medium-low"] .fan-power .fan-blades { animation-duration: 2s; }
-.fan-tile.is-on[data-speed="medium"] .fan-power .fan-blades { animation-duration: 1.6s; }
-.fan-tile.is-on[data-speed="medium-high"] .fan-power .fan-blades { animation-duration: 1.2s; }
-.fan-tile.is-on[data-speed="high"] .fan-power .fan-blades { animation-duration: 0.9s; }
 .fan-power:hover { border-color: color-mix(in srgb, #2dd4bf 50%, var(--stroke)); transform: scale(1.04); }
 .fan-power:active { transform: scale(.94); }
 .fan-speed-label {

@@ -427,7 +427,7 @@
     };
     entry.timer = setTimeout(() => {
       shadeOptimistic.delete(id);
-      if (postCall("currentCategory") === "blinds") postCall("renderBlindsPopup");
+      if (postCall("currentCategory") === "blinds") postCall("refreshBlindsPopup");
       else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
     }, LEVEL_OPTIMISTIC_MS);
     shadeOptimistic.set(id, entry);
@@ -507,7 +507,7 @@
     };
     entry.timer = setTimeout(() => {
       fanOptimistic.delete(id);
-      if (postCall("currentCategory") === "fans") postCall("renderFansPopup");
+      if (postCall("currentCategory") === "fans") postCall("refreshFansPopup");
       else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
     }, LEVEL_OPTIMISTIC_MS);
     fanOptimistic.set(id, entry);
@@ -574,6 +574,37 @@
       });
     }
     return CEILING_FAN_SPEED_ORDER.slice(0, 3); // low, medium, high
+  }
+
+  const NAMED_FAN_SPIN_SEC = {
+    low: 2.4,
+    "medium-low": 2,
+    medium: 1.6,
+    "medium-high": 1.2,
+    high: 0.9,
+  };
+
+  function fanSpinDuration(fan, speedKey) {
+    const key = String(speedKey || "").toLowerCase();
+    if (NAMED_FAN_SPIN_SEC[key] != null) return NAMED_FAN_SPIN_SEC[key];
+    const speeds = ceilingFanSpeeds(fan);
+    const idx = speeds.indexOf(key);
+    const i = idx >= 0 ? idx : 0;
+    const n = speeds.length;
+    if (n <= 1) return 1.6;
+    const slow = 2.4;
+    const fast = 0.9;
+    return slow - (i / (n - 1)) * (slow - fast);
+  }
+
+  function syncFanBladeSpin(powerEl, fan, on, speedKey) {
+    const blades = powerEl?.querySelector(".fan-blades");
+    if (!blades) return;
+    if (!on) {
+      blades.style.removeProperty("animation-duration");
+      return;
+    }
+    blades.style.animationDuration = fanSpinDuration(fan, speedKey) + "s";
   }
 
   function fanStatusLabel(fan) {
@@ -1252,6 +1283,10 @@
   const favGarageMap = new Map(); // id -> garage row rec (favorites popup)
   const favShadeMap = new Map(); // id -> shade tile rec (favorites popup)
   const favFanMap = new Map(); // id -> fan tile rec (favorites popup)
+  const fansPopupMap = new Map(); // id -> fan tile rec (fans popup/tab)
+  let fansPopupSig = "";
+  const shadePopupMap = new Map(); // id -> shade tile rec (blinds popup/tab)
+  let blindsPopupSig = "";
   let sensorsPopupSig = "";
   const sensorTypeFilter = new Set(); // empty = show all types
   let sensorFilterOpen = false;
@@ -4283,8 +4318,8 @@
     if (currentCategory() === "favorites") renderFavoritesPopup();
     else if (quickPopupOpenType === "locks") renderLocksPopup();
     else if (quickPopupOpenType === "music") renderMusicPopup();
-    else if (quickPopupOpenType === "blinds") renderBlindsPopup();
-    else if (quickPopupOpenType === "fans") renderFansPopup();
+    else if (quickPopupOpenType === "blinds") refreshBlindsPopup();
+    else if (quickPopupOpenType === "fans") refreshFansPopup();
     const ok = await saveFavorites(favorites);
     if (!ok) {
       if (wasFav) favorites.push(numId);
@@ -4294,8 +4329,8 @@
       if (currentCategory() === "favorites") renderFavoritesPopup();
       else if (quickPopupOpenType === "locks") renderLocksPopup();
       else if (quickPopupOpenType === "music") renderMusicPopup();
-      else if (quickPopupOpenType === "blinds") renderBlindsPopup();
-      else if (quickPopupOpenType === "fans") renderFansPopup();
+      else if (quickPopupOpenType === "blinds") refreshBlindsPopup();
+      else if (quickPopupOpenType === "fans") refreshFansPopup();
     }
   }
 
@@ -4709,6 +4744,34 @@
     navReorderDrawerRelocated = false;
   }
 
+  function captureUiScroll() {
+    const snap = { y: window.scrollY || document.documentElement.scrollTop || 0 };
+    const panel = document.querySelector(".quick-popup.open .quick-panel");
+    if (panel) snap.panelY = panel.scrollTop;
+    const scrollBody = (tabMode && activeTab !== "lights" && tabViewEl)
+      ? tabViewEl
+      : document.querySelector(".quick-popup.open .quick-body");
+    const list = scrollBody?.querySelector(".quick-list");
+    if (list) snap.listY = list.scrollTop;
+    return snap;
+  }
+
+  function restoreUiScroll(snap) {
+    if (!snap) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const scrollBody = (tabMode && activeTab !== "lights" && tabViewEl)
+          ? tabViewEl
+          : document.querySelector(".quick-popup.open .quick-body");
+        const list = scrollBody?.querySelector(".quick-list");
+        if (snap.listY != null && list) list.scrollTop = snap.listY;
+        const panel = document.querySelector(".quick-popup.open .quick-panel");
+        if (snap.panelY != null && panel) panel.scrollTop = snap.panelY;
+        if (snap.y > 0) window.scrollTo(0, snap.y);
+      });
+    });
+  }
+
   function render(d) {
     replaceList(hubModes, d.hubModes);
     if (!hubModeLocked()) currentHubMode = d.currentHubMode || "";
@@ -4776,12 +4839,14 @@
     const fullRerender = sig !== lastDataSig;
     lastDataSig = sig;
 
+    const scrollSnap = captureUiScroll();
     if (fullRerender && !reorderMode) buildDom();
     updateRoomSnapshotUi();
     updateStates();
     updateClimateWidgets();
     applySearch();
     refreshQuickPopupIfOpen();
+    restoreUiScroll(scrollSnap);
   }
 
   function buildDom() {
@@ -5619,7 +5684,7 @@
           if (opt.pos != null && shade.pos !== opt.pos) matched = false;
           if (matched) clearShadeOptimistic(Number(d.i));
         }
-        if (currentCategory() === "blinds") renderBlindsPopup();
+        if (currentCategory() === "blinds") refreshBlindsPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
@@ -5633,8 +5698,8 @@
           if (opt.sp != null && String(fan.sp || "").toLowerCase() !== String(opt.sp).toLowerCase()) matched = false;
           if (matched) clearFanOptimistic(Number(d.i));
         }
-        if (currentCategory() === "fans") renderFansPopup();
-        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        updateFanTile(fan);
+        if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
       if (valve) {
@@ -5802,14 +5867,14 @@
     else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
     if (patch.st != null || patch.pos != null) {
       setShadeOptimistic(id, patch);
-      if (currentCategory() === "blinds") renderBlindsPopup();
+      if (currentCategory() === "blinds") refreshBlindsPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
     }
     const result = await sendCmd(id, cmd, val);
     if (!result.ok) {
       clearShadeOptimistic(id);
       reconcileShade(id);
-      if (currentCategory() === "blinds") renderBlindsPopup();
+      if (currentCategory() === "blinds") refreshBlindsPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
     } else {
       reconcileShade(id);
@@ -5830,15 +5895,15 @@
     }
     if (patch) {
       setFanOptimistic(id, patch);
-      if (currentCategory() === "fans") renderFansPopup();
-      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+      updateFanTile(fan);
+      if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
     }
     const result = await sendCmd(id, cmd, val);
     if (!result.ok) {
       clearFanOptimistic(id);
       reconcileFan(id);
-      if (currentCategory() === "fans") renderFansPopup();
-      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+      updateFanTile(fan);
+      if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
     } else {
       reconcileFan(id);
     }
@@ -6143,14 +6208,14 @@
     }
     tile.appendChild(actions);
 
-    if (inFav) {
-      favShadeMap.set(shade.i, { el: tile, meta, levelLabel, slider, openBtn, closeBtn, stopBtn, favBtn: fav });
-    }
+    const shadeRec = { el: tile, meta, levelLabel, slider, openBtn, closeBtn, stopBtn, favBtn: fav };
+    if (inFav) favShadeMap.set(shade.i, shadeRec);
+    else if (context === "popup") shadePopupMap.set(shade.i, shadeRec);
     return tile;
   }
 
-  function updateFavoriteShadeTile(shade) {
-    const rec = favShadeMap.get(shade.i);
+  function updateShadeTile(shade) {
+    const rec = shadePopupMap.get(shade.i) || favShadeMap.get(shade.i);
     if (!rec) return;
     const moving = shadeIsMoving(shade);
     const pos = effectiveShadePosition(shade);
@@ -6169,12 +6234,33 @@
     rec.closeBtn.disabled = moving;
   }
 
+  function updateFavoriteShadeTile(shade) {
+    updateShadeTile(shade);
+  }
+
+  function shadesListSignature() {
+    return windowShades.map((s) => s.i).join(",");
+  }
+
+  function refreshBlindsPopup() {
+    if (currentCategory() !== "blinds") return;
+    const listSig = shadesListSignature();
+    const body = currentBody();
+    if (!body.querySelector(".quick-list") || listSig !== blindsPopupSig) {
+      renderBlindsPopup();
+      return;
+    }
+    for (const shade of windowShades) updateShadeTile(shade);
+  }
+
   function renderBlindsPopup() {
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-blinds" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-blinds");
     body.innerHTML = "";
+    shadePopupMap.clear();
+    blindsPopupSig = shadesListSignature();
     if (!windowShades.length) {
       body.textContent = "No shades selected — add shades in the Hubitat app settings";
       return;
@@ -6260,6 +6346,7 @@
     power.setAttribute("aria-label", on ? "Turn fan off" : "Turn fan on");
     power.setAttribute("aria-pressed", on ? "true" : "false");
     power.addEventListener("click", () => toggleCeilingFan(fan.i));
+    syncFanBladeSpin(power, fan, on, sp);
 
     const plus = ce("button", "fan-step");
     plus.type = "button";
@@ -6279,12 +6366,14 @@
 
     if (inFav) {
       favFanMap.set(fan.i, { el: tile, meta, speedLabel, minus, plus, power, favBtn: fav });
+    } else if (context === "popup") {
+      fansPopupMap.set(fan.i, { el: tile, meta, speedLabel, minus, plus, power, favBtn: fav });
     }
     return tile;
   }
 
-  function updateFavoriteFanTile(fan) {
-    const rec = favFanMap.get(fan.i);
+  function updateFanTile(fan) {
+    const rec = fansPopupMap.get(fan.i) || favFanMap.get(fan.i);
     if (!rec) return;
     const on = effectiveFanOn(fan);
     const sp = String(effectiveFanSpeed(fan) || "").toLowerCase();
@@ -6298,14 +6387,32 @@
     rec.plus.disabled = on && idx >= 0 && idx >= speeds.length - 1;
     rec.power.setAttribute("aria-label", on ? "Turn fan off" : "Turn fan on");
     rec.power.setAttribute("aria-pressed", on ? "true" : "false");
+    syncFanBladeSpin(rec.power, fan, on, sp);
+  }
+
+  function fansListSignature() {
+    return ceilingFans.map((f) => f.i).join(",");
+  }
+
+  function refreshFansPopup() {
+    if (currentCategory() !== "fans") return;
+    const listSig = fansListSignature();
+    const body = currentBody();
+    if (!body.querySelector(".quick-list") || listSig !== fansPopupSig) {
+      renderFansPopup();
+      return;
+    }
+    for (const fan of ceilingFans) updateFanTile(fan);
   }
 
   function renderFansPopup() {
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-fans" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-fans");
     body.innerHTML = "";
+    fansPopupMap.clear();
+    fansPopupSig = fansListSignature();
     if (!ceilingFans.length) {
       body.textContent = "No fans selected — add ceiling fans in the Hubitat app settings";
       return;
@@ -6324,7 +6431,7 @@
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-outlets" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-outlets");
     body.innerHTML = "";
     outletMap.clear();
     if (!outlets.length) {
@@ -6525,7 +6632,7 @@
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-music" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-music");
     body.innerHTML = "";
     if (!music.length) {
       body.textContent = "No speakers selected — add music players or additional speakers in the Hubitat app settings";
@@ -7315,7 +7422,7 @@
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-sensors" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-sensors");
     body.innerHTML = "";
     sensorCardMap.clear();
     sensorRoomEls.clear();
@@ -7531,7 +7638,7 @@
         updateFavoriteShadeTile(sh);
       } else if (entry.type === "fan") {
         const f = ceilingFans.find((x) => x.i === entry.dev.i) || entry.dev;
-        updateFavoriteFanTile(f);
+        updateFanTile(f);
       }
     }
     updateStates();
@@ -7543,7 +7650,7 @@
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-favorites" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-favorites");
     body.innerHTML = "";
     favDevMap.clear();
     favTstatMap.clear();
@@ -7607,7 +7714,7 @@
     const popup = ensureQuickPopup();
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-thermostats" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-thermostats");
     body.innerHTML = "";
     tstatsPopupMap.clear();
     tstatsPopupSig = thermostatsListSignature();
@@ -7678,8 +7785,8 @@
         case "favorites": refreshFavoritesPopup(); break;
         case "thermostats": refreshThermostatsPopup(); break;
         case "sensors": refreshSensorsPopup(); break;
-        case "blinds": renderBlindsPopup(); break;
-        case "fans": renderFansPopup(); break;
+        case "blinds": refreshBlindsPopup(); break;
+        case "fans": refreshFansPopup(); break;
         case "outlets": renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
@@ -7691,8 +7798,8 @@
     switch (quickPopupOpenType) {
       case "hub-mode": renderHubModePopup(); break;
       case "locks": renderLocksPopup(); break;
-      case "blinds": renderBlindsPopup(); break;
-      case "fans": renderFansPopup(); break;
+      case "blinds": refreshBlindsPopup(); break;
+      case "fans": refreshFansPopup(); break;
       case "music": renderMusicPopup(); break;
       case "favorites": refreshFavoritesPopup(); break;
       case "thermostats": refreshThermostatsPopup(); break;
@@ -7720,8 +7827,8 @@
       case "scenes": renderScenesPopup(); break;
       case "favorites": renderFavoritesPopup(); break;
       case "locks": renderLocksPopup(); break;
-      case "blinds": renderBlindsPopup(); break;
-      case "fans": renderFansPopup(); break;
+      case "blinds": refreshBlindsPopup(); break;
+      case "fans": refreshFansPopup(); break;
       case "outlets": renderOutletsPopup(); break;
       case "music": renderMusicPopup(); break;
       case "security": renderSecurityPopup(); break;
@@ -7762,6 +7869,10 @@
     favGarageMap.clear();
     favShadeMap.clear();
     favFanMap.clear();
+    fansPopupMap.clear();
+    fansPopupSig = "";
+    shadePopupMap.clear();
+    blindsPopupSig = "";
     favPopupSig = "";
     tstatsPopupMap.clear();
     tstatsPopupSig = "";
@@ -7783,6 +7894,11 @@
     // place it right after the rooms main element
     if (ROOMS_EL && ROOMS_EL.parentNode) ROOMS_EL.parentNode.insertBefore(tabViewEl, ROOMS_EL.nextSibling);
     return tabViewEl;
+  }
+
+  function setQuickBodyClass(body, classes) {
+    if (body === tabViewEl) body.className = "tab-view " + classes + " tab-body";
+    else body.className = classes;
   }
 
   function currentBody() {
@@ -7851,8 +7967,8 @@
         case "sensors": renderSensorsPopup(); break;
         case "thermostats": renderThermostatsPopup(); break;
         case "music": renderMusicPopup(); break;
-        case "blinds": renderBlindsPopup(); break;
-        case "fans": renderFansPopup(); break;
+        case "blinds": refreshBlindsPopup(); break;
+        case "fans": refreshFansPopup(); break;
         case "outlets": renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
@@ -8492,7 +8608,6 @@
     cancelAllSlideGestures();
     closeConfirm(false);
     if (drawerOpen) closeDrawer();
-    if (quickPopupOpenType) closeQuickPopup();
     if (colorSession) closeColorPopup(false);
   }
 
@@ -8618,7 +8733,7 @@
             const pos = Math.round(Number(m.value));
             if (!isNaN(pos)) shade.pos = pos;
           } else return;
-          if (currentCategory() === "blinds") renderBlindsPopup();
+          if (currentCategory() === "blinds") refreshBlindsPopup();
           else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
           return;
         }
@@ -8636,8 +8751,8 @@
             if (sp === "off") fan.s = 0;
             else if (sp) fan.s = 1;
           } else return;
-          if (currentCategory() === "fans") renderFansPopup();
-          else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+          updateFanTile(fan);
+          if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
           return;
         }
         // thermostat / sensor events
@@ -9433,7 +9548,7 @@
     syncQuickPopupRef(popup);
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
-    body.className = "quick-body quick-body-scheduler" + (inTabView() ? " tab-body" : "");
+    setQuickBodyClass(body, "quick-body quick-body-scheduler");
     body.innerHTML = "";
     if (schedDraft) {
       body.appendChild(renderSchedWorkflow());
