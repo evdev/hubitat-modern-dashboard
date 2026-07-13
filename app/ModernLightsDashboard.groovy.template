@@ -1276,6 +1276,13 @@ def stripListToken(s) {
     return t ?: null
 }
 
+def isNumericListToken(v) {
+    if (v == null) return false
+    if (v instanceof Number) return true
+    def s = v.toString().trim()
+    return s ==~ /^\d+(\.\d+)?$/
+}
+
 def normalizeListTokens(v) {
     if (v == null) return null
     def tokens = []
@@ -1287,10 +1294,12 @@ def normalizeListTokens(v) {
         return tokens
     }
     if (v instanceof Map) {
-        // Some drivers store JSON_OBJECT maps; prefer values, fall back to keys.
-        def vals = v.values() ?: []
-        def useVals = vals.any { it != null && it.toString().trim() }
-        (useVals ? vals : v.keySet()).each { item ->
+        // Fan speed maps often use names as keys and dim levels as values — send names, not levels.
+        def keys = (v.keySet() ?: []) as List
+        def vals = (v.values() ?: []) as List
+        def valsAllNumeric = !vals.isEmpty() && vals.every { isNumericListToken(it) }
+        def source = (valsAllNumeric ? keys : (vals.any { it != null && it.toString().trim() } ? vals : keys))
+        source.each { item ->
             def tok = stripListToken(item)
             if (tok) tokens << tok
         }
@@ -1583,21 +1592,87 @@ def runFanCmd(dev, c, v) {
         case "on":
             if (dev.hasCommand("on")) dev.on()
             else if (dev.hasCommand("setSpeed")) dev.setSpeed("on")
+            else if (dev.hasCommand("setFanSpeed")) dev.setFanSpeed("on")
             else throw new IllegalArgumentException("unsupported command")
             break
         case "off":
             if (dev.hasCommand("off")) dev.off()
             else if (dev.hasCommand("setSpeed")) dev.setSpeed("off")
+            else if (dev.hasCommand("setFanSpeed")) dev.setFanSpeed("off")
             else throw new IllegalArgumentException("unsupported command")
             break
         case "setSpeed":
-            if (!dev.hasCommand("setSpeed")) throw new IllegalArgumentException("unsupported command")
-            if (v == null || !v.toString().trim()) throw new IllegalArgumentException("missing speed")
-            dev.setSpeed(v.toString().trim())
+            def speed = resolveFanSpeed(dev, v)
+            if (!speed) throw new IllegalArgumentException("missing speed")
+            if (dev.hasCommand("setSpeed")) {
+                dev.setSpeed(speed)
+            } else if (dev.hasCommand("setFanSpeed")) {
+                dev.setFanSpeed(speed)
+            } else if (dev.hasCommand("setLevel")) {
+                def lvl = fanSpeedLevel(dev, speed)
+                if (lvl == null) throw new IllegalArgumentException("unsupported speed")
+                dev.setLevel(lvl)
+            } else {
+                throw new IllegalArgumentException("unsupported command")
+            }
             break
         default:
             throw new IllegalArgumentException("unknown command")
     }
+}
+
+def fanSpeedTokens(dev) {
+    def fromAttr = normalizeListTokens(safeCurrent(dev, "supportedFanSpeeds"))
+    if (fromAttr) return fromAttr
+    def cur = safeCurrent(dev, "speed")
+    return cur ? [cur.toString()] : []
+}
+
+def resolveFanSpeed(dev, v) {
+    if (v == null || !v.toString().trim()) return null
+    def req = v.toString().trim()
+    def reqLower = req.toLowerCase()
+    def tokens = fanSpeedTokens(dev)
+    if (tokens) {
+        for (tok in tokens) {
+            if (tok.toString().equalsIgnoreCase(req)) return tok.toString()
+        }
+    }
+    // Common aliases when supportedFanSpeeds is missing or incomplete.
+    def aliases = [
+        "med": "medium",
+        "medium": "medium",
+        "hi": "high",
+        "high": "high",
+        "lo": "low",
+        "low": "low",
+    ]
+    def canonical = aliases[reqLower] ?: reqLower
+    if (tokens) {
+        for (tok in tokens) {
+            if (tok.toString().equalsIgnoreCase(canonical)) return tok.toString()
+        }
+    }
+    return req
+}
+
+def fanSpeedLevel(dev, speed) {
+    def raw = safeCurrent(dev, "supportedFanSpeeds")
+    if (raw instanceof Map) {
+        def direct = raw[speed]
+        if (direct == null) {
+            raw.each { k, val ->
+                if (k.toString().equalsIgnoreCase(speed.toString())) {
+                    direct = val
+                }
+            }
+        }
+        if (isNumericListToken(direct)) return Math.max(0, Math.min(100, direct.toInteger()))
+    }
+    def defaults = [low: 25, "medium-low": 33, medium: 50, "medium-high": 67, high: 99, on: 99]
+    def key = speed?.toString()?.toLowerCase()
+    if (key && defaults.containsKey(key)) return defaults[key]
+    return null
 }
 
 def runValveCmd(dev, c, v) {
@@ -1677,7 +1752,9 @@ def executeOneCmd(id, c, v, pin) {
         return [ok: false, error: "device not found"]
     }
     try {
-        if (dev != null) {
+        if (fan != null && (c == "on" || c == "off" || c == "setSpeed")) {
+            runFanCmd(fan, c, v)
+        } else if (dev != null) {
             runLightCmd(dev, c, v)
         } else if (outletDev != null) {
             runLightCmd(outletDev, c, v)

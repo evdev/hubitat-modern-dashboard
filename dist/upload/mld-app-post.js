@@ -606,6 +606,9 @@
   function getFavoriteEntries() {
     const out = [];
     for (const id of M.favorites) {
+      // Prefer fan over light when the same device is in both pickers.
+      const fan = M.ceilingFans.find(x => x.i === id);
+      if (fan) { out.push({ type: "fan", dev: fan }); continue; }
       const dev = M.devices.find(d => d.i === id);
       if (dev) { out.push({ type: "light", dev }); continue; }
       const outlet = M.outlets.find(o => o.i === id);
@@ -622,8 +625,6 @@
       if (garage) { out.push({ type: "garage", dev: garage }); continue; }
       const shade = M.windowShades.find(x => x.i === id);
       if (shade) { out.push({ type: "shade", dev: shade }); continue; }
-      const fan = M.ceilingFans.find(x => x.i === id);
-      if (fan) { out.push({ type: "fan", dev: fan }); continue; }
       const sen = M.sensors.find(x => x.i === id);
       if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
       const ts = M.tempSensors.find(x => x.i === id);
@@ -2245,8 +2246,9 @@
     if (cmd === "on") patch = { s: 1 };
     else if (cmd === "off") patch = { s: 0, sp: "off" };
     else if (cmd === "setSpeed") {
-      const sp = String(val || "").toLowerCase();
-      patch = { sp, s: sp === "off" ? 0 : 1 };
+      const sp = String(val || "").trim();
+      const spLower = sp.toLowerCase();
+      patch = { sp: spLower, s: spLower === "off" ? 0 : 1 };
     }
     if (patch) {
       M.setFanOptimistic(id, patch);

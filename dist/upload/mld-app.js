@@ -564,6 +564,11 @@
     const list = parseList(fan?.supSp).map((s) => String(s).toLowerCase());
     const filtered = list.filter((s) => s && s !== "off" && s !== "on" && s !== "auto");
     if (filtered.length) {
+      // Misparsed dim-level maps (e.g. 25,50,75) are not valid FanControl speeds.
+      // Keep small numeric lists (1–6 DC fans). Anything >10 is almost certainly levels.
+      const allNumeric = filtered.every((s) => /^\d+(\.\d+)?$/.test(s));
+      const max = allNumeric ? Math.max(...filtered.map(Number)) : 0;
+      if (allNumeric && max > 10) return CEILING_FAN_SPEED_ORDER.slice(0, 3);
       return filtered.slice().sort((a, b) => {
         const ia = CEILING_FAN_SPEED_ORDER.indexOf(a);
         const ib = CEILING_FAN_SPEED_ORDER.indexOf(b);

@@ -2,10 +2,10 @@
 	"packageName": "Modern Dashboard",
 	"minimumHEVersion": "2.3.0",
 	"author": "Ephrayim (evdev)",
-	"version": "0.2.61",
+	"version": "0.2.62",
 	"dateReleased": "2026-07-13",
 	"licenseFile": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/LICENSE",
-	"releaseNotes": "0.2.61: **Lights:** devices in each room sort alphabetically by their displayed name.; **Sorting:** case-insensitive alphabetical order across category tabs (Fans,;   Blinds, Outlets, Music, Thermostats, Locks, and more).; **Favorites & Outlets:** light and outlet tiles show the full device name;   instead of the shortened room-stripped label.\nControl-first, minimal-effort Hubitat dashboard (mDash): pick devices and go — rooms and layout are automatic. Optimized for control (not just status): bulk room/house on/off, multi-thermostat control, drag-to-dim. Installable PWA from the cloud URL. Built-in scheduler (daily/weekly/once/sunrise/sunset/mode) managed from the dashboard without Hubitat admin login. Lights, shades, ceiling fans, thermostats, locks, HSM, scenes, hub mode, music/media, and sensors. Snapshots, favorites, and reorderable rooms/nav. Fully hosted on your hub — no Maker API or third-party cloud.",
+	"releaseNotes": "0.2.62: **Ceiling fans:** improved speed handling for drivers that store speeds as a;   name→level map (sends speed names, not dim levels). Supports `setFanSpeed` and;   `setLevel` fallbacks when `setSpeed` is unavailable.; **Ceiling fans:** UI ignores misparsed numeric level lists and falls back to;   low/medium/high when appropriate.; **Favorites:** if a device is in both the Lights and Fans pickers, it appears as;   a fan tile.\nControl-first, minimal-effort Hubitat dashboard (mDash): pick devices and go — rooms and layout are automatic. Optimized for control (not just status): bulk room/house on/off, multi-thermostat control, drag-to-dim. Installable PWA from the cloud URL. Built-in scheduler (daily/weekly/once/sunrise/sunset/mode) managed from the dashboard without Hubitat admin login. Lights, shades, ceiling fans, thermostats, locks, HSM, scenes, hub mode, music/media, and sensors. Snapshots, favorites, and reorderable rooms/nav. Fully hosted on your hub — no Maker API or third-party cloud.",
 	"documentationLink": "https://github.com/evdev/hubitat-modern-dashboard#readme",
 	"communityLink": "https://community.hubitat.com/t/release-modern-dashboard-mdash-minimal-setup-pwa-with-built-in-scheduler-runs-entirely-on-your-hub/165028",
 	"gitHubUrl": "https://github.com/evdev/hubitat-modern-dashboard",
@@ -14,7 +14,7 @@
 			"id": "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f",
 			"name": "Modern Dashboard",
 			"namespace": "modernlights",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/ModernLightsDashboard.groovy",
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/ModernLightsDashboard.groovy",
 			"required": true,
 			"oauth": true,
 			"primary": true
@@ -24,62 +24,62 @@
 		{
 			"id": "b1a2c3d4-e5f6-7890-abcd-ef1234567890",
 			"name": "mld-index.html",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-index.html"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-index.html"
 		},
 		{
 			"id": "c2b3d4e5-f6a7-8901-bcde-f12345678901",
 			"name": "mld-app.css",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app.css"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-app.css"
 		},
 		{
 			"id": "d3c4e5f6-a7b8-9012-cdef-123456789012",
 			"name": "mld-app-pre.js",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app-pre.js"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-app-pre.js"
 		},
 		{
 			"id": "e4d5f6a7-b8c9-0123-def0-234567890123",
 			"name": "mld-app.js",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app.js"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-app.js"
 		},
 		{
 			"id": "a1b2c3d4-e5f6-7890-abcd-ef1234567891",
 			"name": "mld-app-core.js",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app-core.js"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-app-core.js"
 		},
 		{
 			"id": "f5e6a7b8-c9d0-1234-ef01-345678901234",
 			"name": "mld-app-post.js",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app-post.js"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-app-post.js"
 		},
 		{
 			"id": "e7f8a9b0-c1d2-3456-7890-abcdef123456",
 			"name": "mld-app-post2.js",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app-post2.js"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-app-post2.js"
 		},
 		{
 			"id": "f8a9b0c1-d2e3-4567-8901-bcdef1234567",
 			"name": "mld-app-post3.js",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-app-post3.js"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-app-post3.js"
 		},
 		{
 			"id": "a6f7b8c9-d0e1-2345-f012-456789012345",
 			"name": "mld-manifest.webmanifest",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-manifest.webmanifest"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-manifest.webmanifest"
 		},
 		{
 			"id": "b7a8c9d0-e1f2-3456-0123-567890123456",
 			"name": "mld-sw.js",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-sw.js"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-sw.js"
 		},
 		{
 			"id": "c8b9d0e1-f2a3-4567-1234-678901234567",
 			"name": "mld-icon-192.b64",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-192.b64"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192.b64"
 		},
 		{
 			"id": "d9c0e1f2-a3b4-5678-2345-789012345678",
 			"name": "mld-icon-512.b64",
-			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-512.b64"
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-512.b64"
 		}
 	]
 }

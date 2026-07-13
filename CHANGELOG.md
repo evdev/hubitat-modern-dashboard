@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.62
+
+- **Ceiling fans:** improved speed handling for drivers that store speeds as a
+  name→level map (sends speed names, not dim levels). Supports `setFanSpeed` and
+  `setLevel` fallbacks when `setSpeed` is unavailable.
+- **Ceiling fans:** UI ignores misparsed numeric level lists and falls back to
+  low/medium/high when appropriate.
+- **Favorites:** if a device is in both the Lights and Fans pickers, it appears as
+  a fan tile.
+
 ## 0.2.61
 
 - **Lights:** devices in each room sort alphabetically by their displayed name.

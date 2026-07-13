@@ -564,6 +564,11 @@
     const list = parseList(fan?.supSp).map((s) => String(s).toLowerCase());
     const filtered = list.filter((s) => s && s !== "off" && s !== "on" && s !== "auto");
     if (filtered.length) {
+      // Misparsed dim-level maps (e.g. 25,50,75) are not valid FanControl speeds.
+      // Keep small numeric lists (1–6 DC fans). Anything >10 is almost certainly levels.
+      const allNumeric = filtered.every((s) => /^\d+(\.\d+)?$/.test(s));
+      const max = allNumeric ? Math.max(...filtered.map(Number)) : 0;
+      if (allNumeric && max > 10) return CEILING_FAN_SPEED_ORDER.slice(0, 3);
       return filtered.slice().sort((a, b) => {
         const ia = CEILING_FAN_SPEED_ORDER.indexOf(a);
         const ib = CEILING_FAN_SPEED_ORDER.indexOf(b);
@@ -4266,6 +4271,9 @@
   function getFavoriteEntries() {
     const out = [];
     for (const id of favorites) {
+      // Prefer fan over light when the same device is in both pickers.
+      const fan = ceilingFans.find(x => x.i === id);
+      if (fan) { out.push({ type: "fan", dev: fan }); continue; }
       const dev = devices.find(d => d.i === id);
       if (dev) { out.push({ type: "light", dev }); continue; }
       const outlet = outlets.find(o => o.i === id);
@@ -4282,8 +4290,6 @@
       if (garage) { out.push({ type: "garage", dev: garage }); continue; }
       const shade = windowShades.find(x => x.i === id);
       if (shade) { out.push({ type: "shade", dev: shade }); continue; }
-      const fan = ceilingFans.find(x => x.i === id);
-      if (fan) { out.push({ type: "fan", dev: fan }); continue; }
       const sen = sensors.find(x => x.i === id);
       if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
       const ts = tempSensors.find(x => x.i === id);
@@ -5905,8 +5911,9 @@
     if (cmd === "on") patch = { s: 1 };
     else if (cmd === "off") patch = { s: 0, sp: "off" };
     else if (cmd === "setSpeed") {
-      const sp = String(val || "").toLowerCase();
-      patch = { sp, s: sp === "off" ? 0 : 1 };
+      const sp = String(val || "").trim();
+      const spLower = sp.toLowerCase();
+      patch = { sp: spLower, s: spLower === "off" ? 0 : 1 };
     }
     if (patch) {
       setFanOptimistic(id, patch);
