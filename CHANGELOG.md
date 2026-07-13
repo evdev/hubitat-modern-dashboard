@@ -2,10 +2,11 @@
 
 ## 0.2.61
 
-- **Sorting:** case-insensitive alphabetical order for devices within rooms and
-  across category lists (Fans, Blinds, Outlets, Music, Thermostats, Locks).
-- **Favorites:** light and outlet tiles show the full device name (room prefix
-  no longer stripped). Outlets tab also shows full names.
+- **Lights:** devices in each room sort alphabetically by their displayed name.
+- **Sorting:** case-insensitive alphabetical order across category tabs (Fans,
+  Blinds, Outlets, Music, Thermostats, Locks, and more).
+- **Favorites & Outlets:** light and outlet tiles show the full device name
+  instead of the shortened room-stripped label.
 
 ## 0.2.60
 
