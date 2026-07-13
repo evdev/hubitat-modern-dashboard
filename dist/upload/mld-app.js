@@ -598,7 +598,7 @@
   }
 
   function syncFanBladeSpin(powerEl, fan, on, speedKey) {
-    const blades = powerEl?.querySelector(".fan-blades");
+    const blades = powerEl && powerEl.querySelector(".fan-blades");
     if (!blades) return;
     if (!on) {
       blades.style.removeProperty("animation-duration");

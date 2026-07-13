@@ -598,7 +598,7 @@
   }
 
   function syncFanBladeSpin(powerEl, fan, on, speedKey) {
-    const blades = powerEl?.querySelector(".fan-blades");
+    const blades = powerEl && powerEl.querySelector(".fan-blades");
     if (!blades) return;
     if (!on) {
       blades.style.removeProperty("animation-duration");
@@ -4751,7 +4751,7 @@
     const scrollBody = (tabMode && activeTab !== "lights" && tabViewEl)
       ? tabViewEl
       : document.querySelector(".quick-popup.open .quick-body");
-    const list = scrollBody?.querySelector(".quick-list");
+    const list = scrollBody && scrollBody.querySelector(".quick-list");
     if (list) snap.listY = list.scrollTop;
     return snap;
   }
@@ -4763,7 +4763,7 @@
         const scrollBody = (tabMode && activeTab !== "lights" && tabViewEl)
           ? tabViewEl
           : document.querySelector(".quick-popup.open .quick-body");
-        const list = scrollBody?.querySelector(".quick-list");
+        const list = scrollBody && scrollBody.querySelector(".quick-list");
         if (snap.listY != null && list) list.scrollTop = snap.listY;
         const panel = document.querySelector(".quick-popup.open .quick-panel");
         if (snap.panelY != null && panel) panel.scrollTop = snap.panelY;
@@ -6131,6 +6131,8 @@
     body.appendChild(list);
   }
 
+  // __MLD_SPLIT2__
+
   function makeShadeTile(shade, context) {
     const inFav = context === "favorites";
     const tile = ce("div", "shade-tile" + (inFav ? " quick-fav-span" : ""));
@@ -7004,8 +7006,6 @@
     ruleSection.appendChild(ruleModes);
     body.appendChild(ruleSection);
   }
-
-  // __MLD_SPLIT2__
 
   async function sendValveCmd(id, cmd) {
     const valve = valves.find((v) => v.i === id);

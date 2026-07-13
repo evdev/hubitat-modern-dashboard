@@ -22,7 +22,7 @@ const MLD_SPLIT_CORE = "// __MLD_SPLIT_CORE__";
 const MLD_SPLIT = "// __MLD_SPLIT__";
 const MLD_SPLIT2 = "// __MLD_SPLIT2__";
 const MLD_SPLIT3 = "// __MLD_SPLIT3__";
-const HUB_MAX_BLOB = 128 * 1024;
+const HUB_MAX_BLOB = 124 * 1024;
 
 // Must match definition(namespace:, name:) in the Groovy template
 const NS = "modernlights";
@@ -377,7 +377,7 @@ function assertUnderHubLimit(label, content) {
   const size = typeof content === "string" ? content.length : content;
   if (size >= HUB_MAX_BLOB) {
     throw new Error(
-      `${label} is ${size} bytes (limit ${HUB_MAX_BLOB} / 128 KB). Split src/app.js further or trim the asset.`
+      `${label} is ${size} bytes (limit ${HUB_MAX_BLOB} / 124 KB). Split src/app.js further or trim the asset.`
     );
   }
 }

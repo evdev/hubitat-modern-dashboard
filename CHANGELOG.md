@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.59
+
+- Fix HPM/File Manager deploy: rebalance dashboard JS chunks so every file stays
+  safely under the hub’s per-file size limit (0.2.58 could fail to upload on some
+  hubs).
+
 ## 0.2.58
 
 - **Fans & Blinds:** live status updates without rebuilding the whole list; scroll
