@@ -634,6 +634,9 @@
       } else if (entry.type === "shade") {
         const sh = M.windowShades.find((x) => x.i === entry.dev.i) || entry.dev;
         M.updateFavoriteShadeTile(sh);
+      } else if (entry.type === "fan") {
+        const f = M.ceilingFans.find((x) => x.i === entry.dev.i) || entry.dev;
+        M.updateFavoriteFanTile(f);
       }
     }
     M.updateStates();
@@ -655,6 +658,7 @@
     M.favLockMap.clear();
     M.favGarageMap.clear();
     M.favShadeMap.clear();
+    M.favFanMap.clear();
     const entries = M.getFavoriteEntries();
     M.favPopupSig = favoritesPopupSignature();
     if (!entries.length) {
@@ -679,6 +683,8 @@
         grid.appendChild(M.makeGarageRow(entry.dev, "favorites"));
       } else if (entry.type === "shade") {
         grid.appendChild(M.makeShadeTile(entry.dev, "favorites"));
+      } else if (entry.type === "fan") {
+        grid.appendChild(M.makeFanTile(entry.dev, "favorites"));
       }
     }
     body.appendChild(grid);
@@ -731,6 +737,7 @@
       case "hub-mode": return M.hubModes.length > 0;
       case "security": return M.hsmEnabled;
       case "blinds": return M.windowShades.length > 0;
+      case "fans": return M.ceilingFans.length > 0;
       case "outlets": return M.outletsSeparateTab && M.outlets.length > 0;
       case "scheduling": return true;
       case "sensors": return mergedSensorList().length > 0;
@@ -777,6 +784,7 @@
         case "thermostats": refreshThermostatsPopup(); break;
         case "sensors": refreshSensorsPopup(); break;
         case "blinds": M.renderBlindsPopup(); break;
+        case "fans": M.renderFansPopup(); break;
         case "outlets": M.renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
@@ -789,6 +797,7 @@
       case "hub-mode": M.renderHubModePopup(); break;
       case "locks": M.renderLocksPopup(); break;
       case "blinds": M.renderBlindsPopup(); break;
+      case "fans": M.renderFansPopup(); break;
       case "music": M.renderMusicPopup(); break;
       case "favorites": refreshFavoritesPopup(); break;
       case "thermostats": refreshThermostatsPopup(); break;
@@ -817,6 +826,7 @@
       case "favorites": renderFavoritesPopup(); break;
       case "locks": M.renderLocksPopup(); break;
       case "blinds": M.renderBlindsPopup(); break;
+      case "fans": M.renderFansPopup(); break;
       case "outlets": M.renderOutletsPopup(); break;
       case "music": M.renderMusicPopup(); break;
       case "security": M.renderSecurityPopup(); break;
@@ -856,6 +866,7 @@
     M.favLockMap.clear();
     M.favGarageMap.clear();
     M.favShadeMap.clear();
+    M.favFanMap.clear();
     M.favPopupSig = "";
     M.tstatsPopupMap.clear();
     M.tstatsPopupSig = "";
@@ -946,6 +957,7 @@
         case "thermostats": renderThermostatsPopup(); break;
         case "music": M.renderMusicPopup(); break;
         case "blinds": M.renderBlindsPopup(); break;
+        case "fans": M.renderFansPopup(); break;
         case "outlets": M.renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
@@ -1712,6 +1724,24 @@
             if (!isNaN(pos)) shade.pos = pos;
           } else return;
           if (currentCategory() === "blinds") M.renderBlindsPopup();
+          else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+          return;
+        }
+        const fan = M.ceilingFans.find(x => x.i === Number(m.deviceId));
+        if (fan) {
+          const name = String(m.name || "");
+          const opt = M.fanOptimistic.get(fan.i);
+          if (opt && opt.until > Date.now()) return;
+          if (name === "switch") {
+            fan.s = (m.value === "on") ? 1 : 0;
+            if (fan.s === 0) fan.sp = "off";
+          } else if (name === "speed") {
+            fan.sp = String(m.value || "");
+            const sp = fan.sp.toLowerCase();
+            if (sp === "off") fan.s = 0;
+            else if (sp) fan.s = 1;
+          } else return;
+          if (currentCategory() === "fans") M.renderFansPopup();
           else if (currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
           return;
         }

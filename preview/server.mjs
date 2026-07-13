@@ -182,10 +182,19 @@ function buildMockData(count) {
     { i: 4004, n: "Office HomePod", r: 4, st: "playing", v: 28, tr: "Khruangbin — Texas Sun", m: "unmuted", trackIdx: 3, f: AUDIO_F_AIRPLAY },
     { i: 4005, n: "Patio Speaker", r: 7, st: "stopped", v: 0, tr: "", m: "muted", trackIdx: 2, f: AUDIO_F_FULL },
   ];
-  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", roomOrder: [], navOrder: [], favorites: [1, 5, 1001, 2103, 2201] }, rooms, devices, outlets: [
+  const windowShades = [
+    { i: 5001, n: "Living Room Shade", r: 1, st: "open", pos: 100 },
+    { i: 5002, n: "Master Bedroom Shade", r: 3, st: "closed", pos: 0 },
+  ];
+  const ceilingFans = [
+    { i: 5101, n: "Living Room Fan", r: 1, s: 1, sp: "medium", supSp: "low,medium,high", hasSw: 1 },
+    { i: 5102, n: "Master Bedroom Fan", r: 3, s: 0, sp: "off", supSp: "low,medium-low,medium,medium-high,high", hasSw: 1 },
+    { i: 5103, n: "Patio DC Fan", r: 7, s: 1, sp: "4", supSp: "1,2,3,4,5,6", hasSw: 1 },
+  ];
+  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", roomOrder: [], navOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101] }, rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
+  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
 }
 
 function tstatOstateForMode(tm) {
@@ -301,6 +310,37 @@ function applyCmd(id, c, v, pin) {
     if (c === "open") valve.st = "open";
     else if (c === "close") valve.st = "closed";
     else return { ok: false, error: "unknown command" };
+    return { ok: true };
+  }
+  const shade = state.windowShades?.find(d => d.i === id);
+  if (shade) {
+    if (c === "open") { shade.st = "open"; shade.pos = 100; }
+    else if (c === "close") { shade.st = "closed"; shade.pos = 0; }
+    else if (c === "setPosition") {
+      const pos = Math.max(0, Math.min(100, Math.round(Number(v))));
+      shade.pos = pos;
+      shade.st = pos <= 0 ? "closed" : pos >= 100 ? "open" : "partially open";
+    }
+    else if (c === "stop") { /* no-op in mock */ }
+    else return { ok: false, error: "unknown command" };
+    return { ok: true };
+  }
+  const fan = state.ceilingFans?.find(d => d.i === id);
+  if (fan) {
+    const speeds = String(fan.supSp || "low,medium,high").split(",").map(s => s.trim()).filter(Boolean);
+    if (c === "on") {
+      fan.s = 1;
+      if (!fan.sp || fan.sp === "off") fan.sp = fan._lastSp || speeds[0] || "medium";
+    } else if (c === "off") {
+      if (fan.sp && fan.sp !== "off") fan._lastSp = fan.sp;
+      fan.s = 0;
+      fan.sp = "off";
+    } else if (c === "setSpeed") {
+      const sp = String(v || "").trim();
+      fan.sp = sp;
+      fan.s = sp.toLowerCase() === "off" ? 0 : 1;
+      if (fan.s) fan._lastSp = sp;
+    } else return { ok: false, error: "unknown command" };
     return { ok: true };
   }
   return { ok: false, error: "device not found" };
@@ -585,6 +625,16 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
       return res.end(JSON.stringify({ i: garage.i, st: garage.st }));
     }
+    const shade = state.windowShades?.find(d => d.i === id);
+    if (shade) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ i: shade.i, st: shade.st, pos: shade.pos }));
+    }
+    const fan = state.ceilingFans?.find(d => d.i === id);
+    if (fan) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ i: fan.i, s: fan.s, sp: fan.sp }));
+    }
     const mp = state.music?.find(d => d.i === id);
     if (mp) {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -859,6 +909,7 @@ const server = createServer(async (req, res) => {
       ...(state.music || []).map(m => m.i),
       ...(state.locks || []).map(l => l.i),
       ...(state.windowShades || []).map(s => s.i),
+      ...(state.ceilingFans || []).map(f => f.i),
     ]);
     const validateIds = (raw) => {
       const validated = [];

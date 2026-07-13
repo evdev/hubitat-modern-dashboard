@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.56
+// Modern Dashboard v0.2.57
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.56 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.57 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -56,6 +56,9 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "windowShades", "capability.windowShade", title: "Select motorized shades & blinds",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "ceilingFans", "capability.fanControl", title: "Ceiling fans",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            paragraph "<small>Fans use Hubitat <b>FanControl</b> speeds (typically low/medium/high for AC fans, or a device-reported list for DC fans). On restores the last speed on the hub.</small>"
             input "musicPlayers", "capability.musicPlayer", title: "Music / media players (Sonos, Echo Speaks, AirPlay, …)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, …)",
@@ -195,6 +198,7 @@ def logInit() {
     def audioCount = allAudioDevices()?.size() ?: 0
     if (audioCount) { log.info "Modern Dashboard: ${audioCount} audio device(s) authorized" }
     if (windowShades) { log.info "Modern Dashboard: ${windowShades.size()} shade(s) authorized" }
+    if (ceilingFans) { log.info "Modern Dashboard: ${ceilingFans.size()} ceiling fan(s) authorized" }
     if (valves) { log.info "Modern Dashboard: ${valves.size()} valve(s) authorized" }
     if (garageDoors) { log.info "Modern Dashboard: ${garageDoors.size()} garage door(s) authorized" }
     if (state.accessToken == null) { state.accessToken = createAccessToken() }
@@ -949,6 +953,35 @@ def renderData() {
             out << "}"
         }
     }
+    out << "],\"ceilingFans\":["
+    first = true
+    if (ceilingFans) {
+        for (d in ceilingFans) {
+            if (!first) out << ","; first = false
+            def roomName = null
+            try { roomName = d.getRoomName() } catch (e) { roomName = null }
+            def rid = null
+            if (roomName) {
+                def rm = roomsList.find { it.name == roomName }
+                if (rm) rid = rm.id
+            }
+            def speed = safeCurrent(d, "speed")
+            def sw = safeCurrent(d, "switch")
+            def hasSw = d.hasCapability("Switch") || d.hasCommand("on") || d.hasCommand("off")
+            def on = false
+            if (sw != null) on = (sw == "on")
+            else if (speed != null) on = (speed.toString().toLowerCase() != "off")
+            def supSpeeds = safeCurrent(d, "supportedFanSpeeds")
+            out << "{\"i\":" << d.id
+            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"r\":" << (rid == null ? "null" : rid.toString())
+            out << ",\"s\":" << (on ? 1 : 0)
+            out << ",\"sp\":" << jsonStr(speed)
+            out << ",\"supSp\":" << jsonListAttr(supSpeeds)
+            out << ",\"hasSw\":" << (hasSw ? 1 : 0)
+            out << "}"
+        }
+    }
     out << "],\"valves\":["
     first = true
     if (valves) {
@@ -1253,6 +1286,16 @@ def normalizeListTokens(v) {
         }
         return tokens
     }
+    if (v instanceof Map) {
+        // Some drivers store JSON_OBJECT maps; prefer values, fall back to keys.
+        def vals = v.values() ?: []
+        def useVals = vals.any { it != null && it.toString().trim() }
+        (useVals ? vals : v.keySet()).each { item ->
+            def tok = stripListToken(item)
+            if (tok) tokens << tok
+        }
+        return tokens
+    }
     def s = v.toString().trim()
     if (!s) return tokens
     if (s.startsWith("[")) {
@@ -1265,6 +1308,9 @@ def normalizeListTokens(v) {
                 }
                 return tokens
             }
+            if (parsed instanceof Map) {
+                return normalizeListTokens(parsed)
+            }
         } catch (e) {
             def inner = s.length() > 2 ? s.substring(1, s.length() - 1).trim() : ""
             if (inner) {
@@ -1275,6 +1321,11 @@ def normalizeListTokens(v) {
             }
             return tokens
         }
+    } else if (s.startsWith("{")) {
+        try {
+            def parsed = new groovy.json.JsonSlurper().parseText(s)
+            return normalizeListTokens(parsed)
+        } catch (e) {}
     } else {
         s.split(/[,;|]/).each { part ->
             def tok = stripListToken(part)
@@ -1349,6 +1400,7 @@ def renderDevice() {
         locks?.any { it.id.toString() == id.toString() } ||
         garageDoors?.any { it.id.toString() == id.toString() } ||
         windowShades?.any { it.id.toString() == id.toString() } ||
+        ceilingFans?.any { it.id.toString() == id.toString() } ||
         valves?.any { it.id.toString() == id.toString() } ||
         allAudioDevices()?.any { it.id.toString() == id.toString() }
     def s = tempSensors?.find { it.id.toString() == id.toString() }
@@ -1395,6 +1447,20 @@ def renderDevice() {
         out << "{\"i\":" << shade.id
         out << ",\"st\":" << jsonStr(shadeSt)
         out << ",\"pos\":" << numOrNull(shadePos) << "}"
+        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    }
+    def fan = ceilingFans?.find { it.id.toString() == id.toString() }
+    if (fan != null) {
+        try { fan.refresh() } catch (e) {}
+        def speed = safeCurrent(fan, "speed")
+        def sw = safeCurrent(fan, "switch")
+        def on = false
+        if (sw != null) on = (sw == "on")
+        else if (speed != null) on = (speed.toString().toLowerCase() != "off")
+        def out = new StringBuilder()
+        out << "{\"i\":" << fan.id
+        out << ",\"s\":" << (on ? 1 : 0)
+        out << ",\"sp\":" << jsonStr(speed) << "}"
         return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
     }
     def valve = valves?.find { it.id.toString() == id.toString() }
@@ -1512,6 +1578,28 @@ def runShadeCmd(dev, c, v) {
     }
 }
 
+def runFanCmd(dev, c, v) {
+    switch (c) {
+        case "on":
+            if (dev.hasCommand("on")) dev.on()
+            else if (dev.hasCommand("setSpeed")) dev.setSpeed("on")
+            else throw new IllegalArgumentException("unsupported command")
+            break
+        case "off":
+            if (dev.hasCommand("off")) dev.off()
+            else if (dev.hasCommand("setSpeed")) dev.setSpeed("off")
+            else throw new IllegalArgumentException("unsupported command")
+            break
+        case "setSpeed":
+            if (!dev.hasCommand("setSpeed")) throw new IllegalArgumentException("unsupported command")
+            if (v == null || !v.toString().trim()) throw new IllegalArgumentException("missing speed")
+            dev.setSpeed(v.toString().trim())
+            break
+        default:
+            throw new IllegalArgumentException("unknown command")
+    }
+}
+
 def runValveCmd(dev, c, v) {
     switch (c) {
         case "open":  dev.open(); break
@@ -1582,9 +1670,10 @@ def executeOneCmd(id, c, v, pin) {
     def lk = locks?.find { it.id.toString() == id.toString() }
     def garage = garageDoors?.find { it.id.toString() == id.toString() }
     def shade = windowShades?.find { it.id.toString() == id.toString() }
+    def fan = ceilingFans?.find { it.id.toString() == id.toString() }
     def valve = valves?.find { it.id.toString() == id.toString() }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
-    if (dev == null && outletDev == null && t == null && lk == null && garage == null && shade == null && valve == null && mp == null) {
+    if (dev == null && outletDev == null && t == null && lk == null && garage == null && shade == null && fan == null && valve == null && mp == null) {
         return [ok: false, error: "device not found"]
     }
     try {
@@ -1608,6 +1697,8 @@ def executeOneCmd(id, c, v, pin) {
             runGarageDoorCmd(garage, c, v)
         } else if (shade != null) {
             runShadeCmd(shade, c, v)
+        } else if (fan != null) {
+            runFanCmd(fan, c, v)
         } else if (valve != null) {
             runValveCmd(valve, c, v)
         } else {
@@ -2365,6 +2456,7 @@ def validFavoriteIdSet() {
     locks?.each { set.add(it.id.toString()) }
     garageDoors?.each { set.add(it.id.toString()) }
     windowShades?.each { set.add(it.id.toString()) }
+    ceilingFans?.each { set.add(it.id.toString()) }
     valves?.each { set.add(it.id.toString()) }
     allAudioDevices()?.each { set.add(it.id.toString()) }
     return set

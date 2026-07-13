@@ -32,7 +32,7 @@ const APP_DISPLAY_NAME = "Modern Dashboard";
 
 const HPM_BASE_URL =
   process.env.HPM_BASE_URL ??
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist";
 
 const APP_AUTHOR = "Ephrayim (evdev)";
 const GITHUB_URL = "https://github.com/evdev/hubitat-modern-dashboard";
@@ -42,17 +42,17 @@ const LICENSE_URL =
 const PACKAGE_DESCRIPTION =
   "Control-first Hubitat dashboard: select your devices and you're done. Optimized for acting on devices — bulk room/house lights, multi-thermostat control. Installable PWA, built-in remote scheduler (no Hubitat login), runs entirely on your hub.";
 const FEATURE_SUMMARY =
-  "Control-first, minimal-effort Hubitat dashboard (mDash): pick devices and go — rooms and layout are automatic. Optimized for control (not just status): bulk room/house on/off, multi-thermostat control, drag-to-dim. Installable PWA from the cloud URL. Built-in scheduler (daily/weekly/once/sunrise/sunset/mode) managed from the dashboard without Hubitat admin login. Lights, shades, thermostats, locks, HSM, scenes, hub mode, music/media, and sensors. Snapshots, favorites, and reorderable rooms/nav. Fully hosted on your hub — no Maker API or third-party cloud.";
+  "Control-first, minimal-effort Hubitat dashboard (mDash): pick devices and go — rooms and layout are automatic. Optimized for control (not just status): bulk room/house on/off, multi-thermostat control, drag-to-dim. Installable PWA from the cloud URL. Built-in scheduler (daily/weekly/once/sunrise/sunset/mode) managed from the dashboard without Hubitat admin login. Lights, shades, ceiling fans, thermostats, locks, HSM, scenes, hub mode, music/media, and sensors. Snapshots, favorites, and reorderable rooms/nav. Fully hosted on your hub — no Maker API or third-party cloud.";
 // Set to your Hubitat Community thread URL after posting docs/hubitat-community-post.md
 const COMMUNITY_LINK =
   process.env.COMMUNITY_LINK ??
   "https://community.hubitat.com/t/release-modern-dashboard-mdash-minimal-setup-pwa-with-built-in-scheduler-runs-entirely-on-your-hub/165028";
 const HPM_REPO_PACKAGE_ID = "e8f4a1c2-3b5d-4e9f-a7c6-1d2e3f4a5b6c";
 const REPOSITORY_JSON_URL =
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/repository.json";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/hubitat/repository.json";
 const PACKAGE_MANIFEST_URL =
   process.env.HPM_PACKAGE_MANIFEST_URL ??
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/packageManifest.json";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/hubitat/packageManifest.json";
 
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";

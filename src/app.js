@@ -135,6 +135,7 @@
   const lockOptimistic = new Map(); // lock id -> { lk, st, until, timer }
   const garageOptimistic = new Map(); // garage id -> { st, until, timer }
   const shadeOptimistic = new Map(); // shade id -> { st?, pos?, until, timer }
+  const fanOptimistic = new Map(); // fan id -> { s?, sp?, until, timer }
   const valveOptimistic = new Map(); // valve id -> { st?, until, timer }
   const musicOptimistic = new Map(); // music id -> { st, v?, until, timer }
   const setpointOptimistic = new Map(); // tstat id -> { hsp?, csp?, until, timer }
@@ -160,6 +161,7 @@
   let locks = [];
   let garageDoors = [];
   let windowShades = [];
+  let ceilingFans = [];           // [{i,n,r,s,sp,supSp,hasSw}]
   let valves = [];
   let outlets = [];              // [{i,n,r,s}] outlet devices from companion app
   let music = [];
@@ -197,8 +199,8 @@
   }
 
   // ---------- tab mode (inline tabs instead of popups) ----------
-  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "blinds", "outlets", "scheduling"]);
-  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", blinds: "Blinds", outlets: "Outlets", scheduling: "Scheduler" };
+  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "blinds", "fans", "outlets", "scheduling"]);
+  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", blinds: "Blinds", fans: "Fans", outlets: "Outlets", scheduling: "Scheduler" };
   let tabMode = cfg.enableTabs;
   let activeTab = "lights";
   let tabViewEl = null;
@@ -487,6 +489,96 @@
     if (st === "partially open") return posText ? posText + " · Partially open" : "Partially open";
     if (st === "unknown" || st === "unavailable") return st.charAt(0).toUpperCase() + st.slice(1);
     return posText || st || "—";
+  }
+
+  function setFanOptimistic(id, patch) {
+    const prev = fanOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    const fan = ceilingFans.find((f) => f.i === id);
+    if (fan) {
+      if (patch.s != null) fan.s = patch.s ? 1 : 0;
+      if (patch.sp != null) fan.sp = patch.sp;
+    }
+    const entry = {
+      s: patch.s != null ? (patch.s ? 1 : 0) : prev?.s,
+      sp: patch.sp != null ? patch.sp : prev?.sp,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      timer: null,
+    };
+    entry.timer = setTimeout(() => {
+      fanOptimistic.delete(id);
+      if (postCall("currentCategory") === "fans") postCall("renderFansPopup");
+      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
+    }, LEVEL_OPTIMISTIC_MS);
+    fanOptimistic.set(id, entry);
+  }
+
+  function clearFanOptimistic(id) {
+    const prev = fanOptimistic.get(id);
+    if (prev?.timer) clearTimeout(prev.timer);
+    fanOptimistic.delete(id);
+  }
+
+  function reapplyFanOptimistic() {
+    for (const [id, opt] of fanOptimistic) {
+      if (Date.now() >= opt.until) {
+        if (opt.timer) clearTimeout(opt.timer);
+        fanOptimistic.delete(id);
+        continue;
+      }
+      const fan = ceilingFans.find((f) => f.i === id);
+      if (!fan) continue;
+      let matched = true;
+      if (opt.s != null && !!fan.s !== !!opt.s) matched = false;
+      if (opt.sp != null && String(fan.sp || "").toLowerCase() !== String(opt.sp).toLowerCase()) matched = false;
+      if (matched) {
+        if (opt.timer) clearTimeout(opt.timer);
+        fanOptimistic.delete(id);
+        continue;
+      }
+      if (opt.s != null) fan.s = opt.s ? 1 : 0;
+      if (opt.sp != null) fan.sp = opt.sp;
+    }
+  }
+
+  function effectiveFanOn(fan) {
+    const opt = fanOptimistic.get(fan.i);
+    if (opt && Date.now() < opt.until && opt.s != null) return !!opt.s;
+    return !!fan.s;
+  }
+
+  function effectiveFanSpeed(fan) {
+    const opt = fanOptimistic.get(fan.i);
+    if (opt && Date.now() < opt.until && opt.sp != null) return opt.sp;
+    return fan.sp;
+  }
+
+  function ceilingFanSpeedLabel(sp) {
+    const key = String(sp || "").trim().toLowerCase();
+    if (!key) return "—";
+    if (CEILING_FAN_SPEED_LABELS[key]) return CEILING_FAN_SPEED_LABELS[key];
+    return key.replace(/(^|[-_\s])([a-z])/g, (_, a, b) => (a === "-" ? "-" : " ") + b.toUpperCase()).replace(/^ /, "");
+  }
+
+  function ceilingFanSpeeds(fan) {
+    const list = parseList(fan?.supSp).map((s) => String(s).toLowerCase());
+    const filtered = list.filter((s) => s && s !== "off" && s !== "on" && s !== "auto");
+    if (filtered.length) {
+      return filtered.slice().sort((a, b) => {
+        const ia = CEILING_FAN_SPEED_ORDER.indexOf(a);
+        const ib = CEILING_FAN_SPEED_ORDER.indexOf(b);
+        if (ia >= 0 && ib >= 0) return ia - ib;
+        if (ia >= 0) return -1;
+        if (ib >= 0) return 1;
+        return a.localeCompare(b, undefined, { numeric: true });
+      });
+    }
+    return CEILING_FAN_SPEED_ORDER.slice(0, 3); // low, medium, high
+  }
+
+  function fanStatusLabel(fan) {
+    if (!effectiveFanOn(fan)) return "Off";
+    return ceilingFanSpeedLabel(effectiveFanSpeed(fan));
   }
 
   function setValveOptimistic(id, patch) {
@@ -876,6 +968,7 @@
       || locks.some((l) => l.i === numId)
       || garageDoors.some((g) => g.i === numId)
       || windowShades.some((s) => s.i === numId)
+      || ceilingFans.some((f) => f.i === numId)
       || valves.some((v) => v.i === numId);
   }
 
@@ -1158,6 +1251,7 @@
   const favLockMap = new Map(); // id -> lock row rec (favorites popup)
   const favGarageMap = new Map(); // id -> garage row rec (favorites popup)
   const favShadeMap = new Map(); // id -> shade tile rec (favorites popup)
+  const favFanMap = new Map(); // id -> fan tile rec (favorites popup)
   let sensorsPopupSig = "";
   const sensorTypeFilter = new Set(); // empty = show all types
   let sensorFilterOpen = false;
@@ -4143,6 +4237,8 @@
       if (garage) { out.push({ type: "garage", dev: garage }); continue; }
       const shade = windowShades.find(x => x.i === id);
       if (shade) { out.push({ type: "shade", dev: shade }); continue; }
+      const fan = ceilingFans.find(x => x.i === id);
+      if (fan) { out.push({ type: "fan", dev: fan }); continue; }
       const sen = sensors.find(x => x.i === id);
       if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
       const ts = tempSensors.find(x => x.i === id);
@@ -4161,6 +4257,7 @@
     for (const [, rec] of favLockMap) syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of favGarageMap) syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of favShadeMap) syncFavButton(rec.favBtn, rec.i);
+    for (const [, rec] of favFanMap) syncFavButton(rec.favBtn, rec.i);
     updateTstatFavButton();
   }
 
@@ -4187,6 +4284,7 @@
     else if (quickPopupOpenType === "locks") renderLocksPopup();
     else if (quickPopupOpenType === "music") renderMusicPopup();
     else if (quickPopupOpenType === "blinds") renderBlindsPopup();
+    else if (quickPopupOpenType === "fans") renderFansPopup();
     const ok = await saveFavorites(favorites);
     if (!ok) {
       if (wasFav) favorites.push(numId);
@@ -4197,6 +4295,7 @@
       else if (quickPopupOpenType === "locks") renderLocksPopup();
       else if (quickPopupOpenType === "music") renderMusicPopup();
       else if (quickPopupOpenType === "blinds") renderBlindsPopup();
+      else if (quickPopupOpenType === "fans") renderFansPopup();
     }
   }
 
@@ -4628,6 +4727,7 @@
     replaceList(locks, d.locks);
     replaceList(garageDoors, d.garageDoors);
     replaceList(windowShades, d.windowShades);
+    replaceList(ceilingFans, d.ceilingFans);
     if (!Array.isArray(valves)) valves = [];
     replaceList(valves, Array.isArray(d.valves) ? d.valves : []);
     replaceList(music, d.music);
@@ -4635,6 +4735,7 @@
     reapplyLockOptimistic();
     reapplyGarageOptimistic();
     reapplyShadeOptimistic();
+    reapplyFanOptimistic();
     try { reapplyValveOptimistic(); } catch {}
     reapplyMusicOptimistic();
     reapplySetpointOptimistic();
@@ -5473,9 +5574,10 @@
       const lock = locks.find(x => x.i === Number(d.i));
       const garage = garageDoors.find(x => x.i === Number(d.i));
       const shade = windowShades.find(x => x.i === Number(d.i));
+      const fan = ceilingFans.find(x => x.i === Number(d.i));
       const valve = valves.find(x => x.i === Number(d.i));
       const mp = music.find(x => x.i === Number(d.i));
-      const hasControlRole = !!(lock || garage || shade || valve || mp);
+      const hasControlRole = !!(lock || garage || shade || fan || valve || mp);
       if (s && !sen && !hasControlRole) {
         if (d.temp != null) s.temp = Number(d.temp);
         updateClimateWidgets();
@@ -5521,6 +5623,20 @@
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
       }
+      if (fan) {
+        if (d.s != null) fan.s = d.s ? 1 : 0;
+        if (d.sp != null) fan.sp = d.sp;
+        const opt = fanOptimistic.get(Number(d.i));
+        if (opt) {
+          let matched = true;
+          if (opt.s != null && !!fan.s !== !!opt.s) matched = false;
+          if (opt.sp != null && String(fan.sp || "").toLowerCase() !== String(opt.sp).toLowerCase()) matched = false;
+          if (matched) clearFanOptimistic(Number(d.i));
+        }
+        if (currentCategory() === "fans") renderFansPopup();
+        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        return;
+      }
       if (valve) {
         if (d.st != null) valve.st = d.st;
         const opt = valveOptimistic.get(Number(d.i));
@@ -5550,6 +5666,11 @@
   }
 
   function reconcileShade(id) {
+    setTimeout(() => refreshDevice(id), 700);
+    setTimeout(() => refreshDevice(id), 2200);
+  }
+
+  function reconcileFan(id) {
     setTimeout(() => refreshDevice(id), 700);
     setTimeout(() => refreshDevice(id), 2200);
   }
@@ -5696,6 +5817,34 @@
     return result;
   }
 
+  async function sendFanCmd(id, cmd, val) {
+    const fan = ceilingFans.find((f) => f.i === id);
+    if (!fan) return { ok: false };
+    hapticTap();
+    let patch = null;
+    if (cmd === "on") patch = { s: 1 };
+    else if (cmd === "off") patch = { s: 0, sp: "off" };
+    else if (cmd === "setSpeed") {
+      const sp = String(val || "").toLowerCase();
+      patch = { sp, s: sp === "off" ? 0 : 1 };
+    }
+    if (patch) {
+      setFanOptimistic(id, patch);
+      if (currentCategory() === "fans") renderFansPopup();
+      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+    }
+    const result = await sendCmd(id, cmd, val);
+    if (!result.ok) {
+      clearFanOptimistic(id);
+      reconcileFan(id);
+      if (currentCategory() === "fans") renderFansPopup();
+      else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+    } else {
+      reconcileFan(id);
+    }
+    return result;
+  }
+
   function applySwitchCmdOptimistic(dev, cmd) {
     const id = dev.i;
     if (cmd === "on") {
@@ -5761,7 +5910,7 @@
     return el;
   }
 
-  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "outlets", "scheduling"]);
+  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "fans", "outlets", "scheduling"]);
   const HUB_MODE_POPUP_TYPE = "hub-mode";
 
   function syncQuickPopupWidth(popup, type) {
@@ -6037,6 +6186,137 @@
     });
     const list = ce("div", "quick-list");
     for (const shade of sorted) list.appendChild(makeShadeTile(shade, "popup"));
+    body.appendChild(list);
+  }
+
+  function toggleCeilingFan(id) {
+    const fan = ceilingFans.find((f) => f.i === id);
+    if (!fan) return;
+    sendFanCmd(id, effectiveFanOn(fan) ? "off" : "on");
+  }
+
+  function stepCeilingFanSpeed(id, delta) {
+    const fan = ceilingFans.find((f) => f.i === id);
+    if (!fan) return;
+    const speeds = ceilingFanSpeeds(fan);
+    if (!speeds.length) return;
+    const on = effectiveFanOn(fan);
+    const cur = String(effectiveFanSpeed(fan) || "").toLowerCase();
+    let idx = speeds.indexOf(cur);
+    if (!on || cur === "off") {
+      if (delta > 0) sendFanCmd(id, "on");
+      return;
+    }
+    if (idx < 0) {
+      if (delta < 0) sendFanCmd(id, "off");
+      else sendFanCmd(id, "setSpeed", speeds[0]);
+      return;
+    }
+    const next = idx + delta;
+    if (next < 0) {
+      sendFanCmd(id, "off");
+      return;
+    }
+    if (next >= speeds.length) return;
+    sendFanCmd(id, "setSpeed", speeds[next]);
+  }
+
+  function makeFanTile(fan, context) {
+    const inFav = context === "favorites";
+    const on = effectiveFanOn(fan);
+    const sp = String(effectiveFanSpeed(fan) || "").toLowerCase();
+    const speeds = ceilingFanSpeeds(fan);
+    const idx = speeds.indexOf(sp);
+    const tile = ce("div", "fan-tile" + (on ? " is-on" : "") + (inFav ? " quick-fav-span" : ""));
+    tile.dataset.name = String(fan.n || "").toLowerCase();
+    tile.dataset.speed = on ? sp : "off";
+
+    const head = ce("div", "quick-fav-row-head");
+    const info = ce("div", "shade-info");
+    const name = ce("span", "quick-fav-name");
+    name.textContent = fan.n || ("Fan " + fan.i);
+    const meta = ce("span", "quick-fav-meta");
+    meta.textContent = roomLabel(fan.r) + " · " + fanStatusLabel(fan);
+    info.appendChild(name);
+    info.appendChild(meta);
+    head.appendChild(info);
+    const fav = ce("button", "tile-fav");
+    fav.type = "button";
+    attachFavButton(fav, fan.i);
+    head.appendChild(fav);
+    tile.appendChild(head);
+
+    const controls = ce("div", "fan-controls");
+    const minus = ce("button", "fan-step");
+    minus.type = "button";
+    minus.textContent = "−";
+    minus.setAttribute("aria-label", "Decrease fan speed");
+    minus.disabled = !on;
+    minus.addEventListener("click", () => stepCeilingFanSpeed(fan.i, -1));
+
+    const power = ce("button", "fan-power");
+    power.type = "button";
+    power.innerHTML = FAN_BTN_SVG;
+    power.setAttribute("aria-label", on ? "Turn fan off" : "Turn fan on");
+    power.setAttribute("aria-pressed", on ? "true" : "false");
+    power.addEventListener("click", () => toggleCeilingFan(fan.i));
+
+    const plus = ce("button", "fan-step");
+    plus.type = "button";
+    plus.textContent = "+";
+    plus.setAttribute("aria-label", "Increase fan speed");
+    plus.disabled = on && idx >= 0 && idx >= speeds.length - 1;
+    plus.addEventListener("click", () => stepCeilingFanSpeed(fan.i, 1));
+
+    controls.appendChild(minus);
+    controls.appendChild(power);
+    controls.appendChild(plus);
+    tile.appendChild(controls);
+
+    const speedLabel = ce("div", "fan-speed-label");
+    speedLabel.textContent = fanStatusLabel(fan);
+    tile.appendChild(speedLabel);
+
+    if (inFav) {
+      favFanMap.set(fan.i, { el: tile, meta, speedLabel, minus, plus, power, favBtn: fav });
+    }
+    return tile;
+  }
+
+  function updateFavoriteFanTile(fan) {
+    const rec = favFanMap.get(fan.i);
+    if (!rec) return;
+    const on = effectiveFanOn(fan);
+    const sp = String(effectiveFanSpeed(fan) || "").toLowerCase();
+    const speeds = ceilingFanSpeeds(fan);
+    const idx = speeds.indexOf(sp);
+    rec.el.classList.toggle("is-on", on);
+    rec.el.dataset.speed = on ? sp : "off";
+    rec.meta.textContent = roomLabel(fan.r) + " · " + fanStatusLabel(fan);
+    rec.speedLabel.textContent = fanStatusLabel(fan);
+    rec.minus.disabled = !on;
+    rec.plus.disabled = on && idx >= 0 && idx >= speeds.length - 1;
+    rec.power.setAttribute("aria-label", on ? "Turn fan off" : "Turn fan on");
+    rec.power.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function renderFansPopup() {
+    const popup = ensureQuickPopup();
+    syncQuickPopupWidthForOpen(popup);
+    const body = currentBody();
+    body.className = "quick-body quick-body-fans" + (inTabView() ? " tab-body" : "");
+    body.innerHTML = "";
+    if (!ceilingFans.length) {
+      body.textContent = "No fans selected — add ceiling fans in the Hubitat app settings";
+      return;
+    }
+    const sorted = ceilingFans.slice().sort((a, b) => {
+      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
+      if (ra !== 0) return ra;
+      return String(a.n || "").localeCompare(String(b.n || ""));
+    });
+    const list = ce("div", "quick-list");
+    for (const fan of sorted) list.appendChild(makeFanTile(fan, "popup"));
     body.appendChild(list);
   }
 
@@ -7249,6 +7529,9 @@
       } else if (entry.type === "shade") {
         const sh = windowShades.find((x) => x.i === entry.dev.i) || entry.dev;
         updateFavoriteShadeTile(sh);
+      } else if (entry.type === "fan") {
+        const f = ceilingFans.find((x) => x.i === entry.dev.i) || entry.dev;
+        updateFavoriteFanTile(f);
       }
     }
     updateStates();
@@ -7270,6 +7553,7 @@
     favLockMap.clear();
     favGarageMap.clear();
     favShadeMap.clear();
+    favFanMap.clear();
     const entries = getFavoriteEntries();
     favPopupSig = favoritesPopupSignature();
     if (!entries.length) {
@@ -7294,6 +7578,8 @@
         grid.appendChild(makeGarageRow(entry.dev, "favorites"));
       } else if (entry.type === "shade") {
         grid.appendChild(makeShadeTile(entry.dev, "favorites"));
+      } else if (entry.type === "fan") {
+        grid.appendChild(makeFanTile(entry.dev, "favorites"));
       }
     }
     body.appendChild(grid);
@@ -7346,6 +7632,7 @@
       case "hub-mode": return hubModes.length > 0;
       case "security": return hsmEnabled;
       case "blinds": return windowShades.length > 0;
+      case "fans": return ceilingFans.length > 0;
       case "outlets": return outletsSeparateTab && outlets.length > 0;
       case "scheduling": return true;
       case "sensors": return mergedSensorList().length > 0;
@@ -7392,6 +7679,7 @@
         case "thermostats": refreshThermostatsPopup(); break;
         case "sensors": refreshSensorsPopup(); break;
         case "blinds": renderBlindsPopup(); break;
+        case "fans": renderFansPopup(); break;
         case "outlets": renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
@@ -7404,6 +7692,7 @@
       case "hub-mode": renderHubModePopup(); break;
       case "locks": renderLocksPopup(); break;
       case "blinds": renderBlindsPopup(); break;
+      case "fans": renderFansPopup(); break;
       case "music": renderMusicPopup(); break;
       case "favorites": refreshFavoritesPopup(); break;
       case "thermostats": refreshThermostatsPopup(); break;
@@ -7432,6 +7721,7 @@
       case "favorites": renderFavoritesPopup(); break;
       case "locks": renderLocksPopup(); break;
       case "blinds": renderBlindsPopup(); break;
+      case "fans": renderFansPopup(); break;
       case "outlets": renderOutletsPopup(); break;
       case "music": renderMusicPopup(); break;
       case "security": renderSecurityPopup(); break;
@@ -7471,6 +7761,7 @@
     favLockMap.clear();
     favGarageMap.clear();
     favShadeMap.clear();
+    favFanMap.clear();
     favPopupSig = "";
     tstatsPopupMap.clear();
     tstatsPopupSig = "";
@@ -7561,6 +7852,7 @@
         case "thermostats": renderThermostatsPopup(); break;
         case "music": renderMusicPopup(); break;
         case "blinds": renderBlindsPopup(); break;
+        case "fans": renderFansPopup(); break;
         case "outlets": renderOutletsPopup(); break;
         case "scheduling":
           if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
@@ -8327,6 +8619,24 @@
             if (!isNaN(pos)) shade.pos = pos;
           } else return;
           if (currentCategory() === "blinds") renderBlindsPopup();
+          else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+          return;
+        }
+        const fan = ceilingFans.find(x => x.i === Number(m.deviceId));
+        if (fan) {
+          const name = String(m.name || "");
+          const opt = fanOptimistic.get(fan.i);
+          if (opt && opt.until > Date.now()) return;
+          if (name === "switch") {
+            fan.s = (m.value === "on") ? 1 : 0;
+            if (fan.s === 0) fan.sp = "off";
+          } else if (name === "speed") {
+            fan.sp = String(m.value || "");
+            const sp = fan.sp.toLowerCase();
+            if (sp === "off") fan.s = 0;
+            else if (sp) fan.s = 1;
+          } else return;
+          if (currentCategory() === "fans") renderFansPopup();
           else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
           return;
         }

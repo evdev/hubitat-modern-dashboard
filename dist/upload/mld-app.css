@@ -2048,6 +2048,85 @@ body {
 .shade-btn.moving { opacity: 0.55; }
 .shade-stop-btn { flex: 0.8; }
 
+/* ---- Fans popup ---- */
+.quick-body-fans .quick-list { gap: 12px; }
+.fan-tile {
+  display: flex; flex-direction: column; gap: 12px;
+  border: 1px solid var(--stroke); background: var(--panel-2);
+  padding: 12px 14px; border-radius: 14px;
+}
+.fan-tile.is-on {
+  border-color: color-mix(in srgb, #2dd4bf 45%, var(--stroke));
+  background: linear-gradient(180deg, color-mix(in srgb, #2dd4bf 10%, var(--panel-2)), var(--panel-2));
+}
+.fan-controls {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+}
+.fan-step {
+  width: 44px; height: 44px; padding: 0;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid color-mix(in srgb, #2dd4bf 35%, var(--stroke));
+  background: var(--panel);
+  color: #2dd4bf;
+  font-size: 22px; line-height: 1; font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation; -webkit-touch-callout: none;
+  transition: transform .14s var(--ease), background .18s var(--ease), border-color .18s var(--ease), opacity .18s var(--ease);
+}
+.fan-step:hover:not(:disabled) {
+  background: color-mix(in srgb, #2dd4bf 14%, var(--panel));
+  border-color: #2dd4bf;
+}
+.fan-step:active:not(:disabled) { transform: scale(.92); }
+.fan-step:disabled { opacity: 0.35; cursor: default; }
+.fan-power {
+  width: 72px; height: 72px; padding: 0; margin: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, #2dd4bf 30%, var(--stroke));
+  background: var(--panel);
+  color: var(--text-faint);
+  display: grid; place-items: center;
+  cursor: pointer;
+  touch-action: manipulation; -webkit-touch-callout: none;
+  transition: transform .14s var(--ease), background .18s var(--ease), border-color .18s var(--ease), color .18s var(--ease), box-shadow .22s var(--ease);
+}
+.fan-power svg { width: 40px; height: 40px; }
+.fan-power .fan-blades {
+  transform-box: view-box;
+  transform-origin: center;
+}
+.fan-tile.is-on .fan-power {
+  color: #2dd4bf;
+  border-color: color-mix(in srgb, #2dd4bf 55%, var(--stroke));
+  box-shadow: 0 0 0 1px color-mix(in srgb, #2dd4bf 22%, transparent), 0 6px 18px color-mix(in srgb, #2dd4bf 18%, transparent);
+}
+.fan-tile.is-on .fan-power .fan-blades {
+  animation: fan-spin 1.6s linear infinite;
+}
+.fan-tile.is-on[data-speed="low"] .fan-power .fan-blades { animation-duration: 2.4s; }
+.fan-tile.is-on[data-speed="medium-low"] .fan-power .fan-blades { animation-duration: 2s; }
+.fan-tile.is-on[data-speed="medium"] .fan-power .fan-blades { animation-duration: 1.6s; }
+.fan-tile.is-on[data-speed="medium-high"] .fan-power .fan-blades { animation-duration: 1.2s; }
+.fan-tile.is-on[data-speed="high"] .fan-power .fan-blades { animation-duration: 0.9s; }
+.fan-power:hover { border-color: color-mix(in srgb, #2dd4bf 50%, var(--stroke)); transform: scale(1.04); }
+.fan-power:active { transform: scale(.94); }
+.fan-speed-label {
+  text-align: center;
+  font-size: 13px; font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+.fan-tile.is-on .fan-speed-label { color: #5eead4; }
+
+@keyframes fan-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fan-tile.is-on .fan-power .fan-blades { animation: none; }
+}
+
 /* ---- Music popup ---- */
 .quick-body-music { padding-bottom: 4px; }
 .music-list { gap: 10px; max-height: none; overflow: visible; }

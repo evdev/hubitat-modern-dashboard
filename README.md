@@ -31,6 +31,7 @@ cap.
   - [Light snapshots](#light-snapshots)
   - [Thermostats](#thermostats)
   - [Motorized shades & blinds](#motorized-shades--blinds)
+  - [Ceiling fans](#ceiling-fans)
   - [Locks](#locks)
   - [Hubitat Safety Monitor (HSM)](#hubitat-safety-monitor-hsm)
   - [Hub mode & scenes](#hub-mode--scenes)
@@ -170,6 +171,17 @@ quick-nav popup and as tiles grouped by room on that view.
 - Open / close / pause buttons
 - Drag the position slider to set shade level
 - Favorites star works on shade tiles
+
+### Ceiling fans
+
+Select devices with the `FanControl` capability. They appear on their own
+**Fans** tab (or popup). Hubitat exposes discrete speeds (typically
+low/medium/high for AC fans; DC fans report whatever list the driver supports
+via `supportedFanSpeeds`).
+
+- Tap the fan icon to turn on or off (on restores the last speed on the hub)
+- Use **+** / **−** to step through supported speeds
+- Favorites star works on fan tiles
 
 ### Locks & garage doors
 

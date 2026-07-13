@@ -45,6 +45,8 @@ const FAVORITES_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 
 const FAV_NAV_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnFav" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#f0a93a"/></linearGradient></defs><path d="M12 2.6l2.9 5.9 6.5.95-4.7 4.58 1.1 6.47L12 17.5l-5.8 3.05 1.1-6.47L2.6 9.45l6.5-.95L12 2.6z" fill="url(#qnFav)" stroke="#c98a2a" stroke-width="0.7" stroke-linejoin="round"/><path d="M12 2.6l2.9 5.9 3.1.46" fill="none" stroke="#fff4cc" stroke-width="1" stroke-linecap="round" opacity="0.75"/></svg>';
 const SECURITY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnSec" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7aa2ff"/><stop offset="1" stop-color="#3b6bff"/></linearGradient></defs><path d="M12 2.2l8 3.8v6c0 5-3.5 9.3-8 9.8-4.5-.5-8-4.8-8-9.8V6l8-3.8z" fill="url(#qnSec)" stroke="#2b54e6" stroke-width="0.8" stroke-linejoin="round"/><path d="M8.5 12l2.4 2.4L15.8 9.6" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const BLINDS_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnBlinds" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd08a"/><stop offset="1" stop-color="#cf8f3a"/></linearGradient></defs><rect x="4" y="4.5" width="16" height="14.8" rx="1.4" fill="url(#qnBlinds)" stroke="#a96a22" stroke-width="0.8"/><path d="M4 8.1h16M4 11.1h16M4 14.1h16" stroke="#9c5f24" stroke-width="0.9" opacity="0.65"/><path d="M12 19.3v1.9" stroke="#c9cedb" stroke-width="1.2" stroke-linecap="round"/><circle cx="12" cy="21.7" r="0.95" fill="#c9cedb"/></svg>';
+const FANS_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnFans" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6ee7c5"/><stop offset="1" stop-color="#0d9488"/></linearGradient></defs><g fill="url(#qnFans)" stroke="#0f766e" stroke-width="0.55" stroke-linejoin="round"><ellipse cx="12" cy="6.2" rx="2.6" ry="5.4"/><ellipse cx="12" cy="6.2" rx="2.6" ry="5.4" transform="rotate(120 12 12)"/><ellipse cx="12" cy="6.2" rx="2.6" ry="5.4" transform="rotate(240 12 12)"/></g><circle cx="12" cy="12" r="2.35" fill="#134e4a" stroke="#0f766e" stroke-width="0.6"/><circle cx="12" cy="12" r="0.85" fill="#99f6e4"/></svg>';
+const FAN_BTN_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><g class="fan-blades" fill="currentColor" opacity="0.92"><ellipse cx="12" cy="5.8" rx="2.5" ry="5.2"/><ellipse cx="12" cy="5.8" rx="2.5" ry="5.2" transform="rotate(120 12 12)"/><ellipse cx="12" cy="5.8" rx="2.5" ry="5.2" transform="rotate(240 12 12)"/></g><circle cx="12" cy="12" r="2.2" fill="currentColor"/><circle cx="12" cy="12" r="0.8" fill="var(--panel-2, #1a1f2e)"/></svg>';
 const SENSORS_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnSensors" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7aa2ff"/><stop offset="1" stop-color="#3b6bff"/></linearGradient></defs><path d="M6 9a9 9 0 0 1 12 0" fill="none" stroke="url(#qnSensors)" stroke-width="2" stroke-linecap="round"/><path d="M9 12.5a4.5 4.5 0 0 1 6 0" fill="none" stroke="url(#qnSensors)" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.9" fill="url(#qnSensors)" stroke="#2b54e6" stroke-width="0.5"/></svg>';
 const TSTAT_NAV_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnTstat" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5fd3b0"/><stop offset="1" stop-color="#2b6bff"/></linearGradient></defs><circle cx="12" cy="12" r="10.5" fill="url(#qnTstat)" stroke="#2b54e6" stroke-width="0.7"/><circle cx="12" cy="12" r="8.8" fill="none" stroke="#ffffff" stroke-width="0.9" opacity="0.7"/><text x="12" y="12.2" font-size="8.4" font-weight="800" fill="#ffffff" stroke="none" text-anchor="middle" dominant-baseline="central" font-family="system-ui, sans-serif">72°</text></svg>';
 const CENTRAL_TSTAT_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnCentralTstat" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5fd3b0"/><stop offset="1" stop-color="#2b6bff"/></linearGradient></defs><circle cx="12" cy="12" r="10.5" fill="url(#qnCentralTstat)" stroke="#2b54e6" stroke-width="0.7"/><circle cx="12" cy="12" r="8.8" fill="none" stroke="#ffffff" stroke-width="0.9" opacity="0.7"/><text x="12" y="12.2" font-size="8.4" font-weight="800" fill="#ffffff" stroke="none" text-anchor="middle" dominant-baseline="central" font-family="system-ui, sans-serif">72°</text></svg>';
@@ -216,6 +218,7 @@ const QUICK_NAV = [
   { id: "quick-hub-mode", popup: "hub-mode", title: "Hub mode", svg: HUB_MODE_SVG },
   { id: "quick-security", popup: "security", title: "Security", svg: SECURITY_SVG },
   { id: "quick-blinds", popup: "blinds", title: "Blinds", svg: BLINDS_SVG },
+  { id: "quick-fans", popup: "fans", title: "Fans", svg: FANS_SVG },
   { id: "quick-outlets", popup: "outlets", title: "Outlets", svg: OUTLET_SVG },
   { id: "quick-scheduling", popup: "scheduling", title: "Scheduling", svg: SCHEDULE_SVG },
   { id: "quick-sensors", popup: "sensors", title: "Sensors", svg: SENSORS_SVG },
@@ -261,6 +264,17 @@ const FAN_SPEED_OPTS = [
   { key: "medium", label: "Med", aria: "Fan speed medium" },
   { key: "high", label: "High", aria: "Fan speed high" },
 ];
+const CEILING_FAN_SPEED_ORDER = ["low", "medium-low", "medium", "medium-high", "high"];
+const CEILING_FAN_SPEED_LABELS = {
+  off: "Off",
+  on: "On",
+  auto: "Auto",
+  low: "Low",
+  "medium-low": "Med-Low",
+  medium: "Medium",
+  "medium-high": "Med-High",
+  high: "High",
+};
 const TSTAT_MODE_DEFS = [
   { key: "auto", label: "Auto", cmd: "modeAuto" },
   { key: "heat", label: "Heat", cmd: "modeHeat" },

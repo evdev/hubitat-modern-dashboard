@@ -612,6 +612,8 @@
       if (garage) { out.push({ type: "garage", dev: garage }); continue; }
       const shade = M.windowShades.find(x => x.i === id);
       if (shade) { out.push({ type: "shade", dev: shade }); continue; }
+      const fan = M.ceilingFans.find(x => x.i === id);
+      if (fan) { out.push({ type: "fan", dev: fan }); continue; }
       const sen = M.sensors.find(x => x.i === id);
       if (sen) { out.push({ type: "sensor", dev: sen }); continue; }
       const ts = M.tempSensors.find(x => x.i === id);
@@ -630,6 +632,7 @@
     for (const [, rec] of M.favLockMap) M.syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of M.favGarageMap) M.syncFavButton(rec.favBtn, rec.i);
     for (const [, rec] of M.favShadeMap) M.syncFavButton(rec.favBtn, rec.i);
+    for (const [, rec] of M.favFanMap) M.syncFavButton(rec.favBtn, rec.i);
     M.updateTstatFavButton();
   }
 
@@ -656,6 +659,7 @@
     else if (M.quickPopupOpenType === "locks") renderLocksPopup();
     else if (M.quickPopupOpenType === "music") renderMusicPopup();
     else if (M.quickPopupOpenType === "blinds") renderBlindsPopup();
+    else if (M.quickPopupOpenType === "fans") renderFansPopup();
     const ok = await saveFavorites(M.favorites);
     if (!ok) {
       if (wasFav) M.favorites.push(numId);
@@ -666,6 +670,7 @@
       else if (M.quickPopupOpenType === "locks") renderLocksPopup();
       else if (M.quickPopupOpenType === "music") renderMusicPopup();
       else if (M.quickPopupOpenType === "blinds") renderBlindsPopup();
+      else if (M.quickPopupOpenType === "fans") renderFansPopup();
     }
   }
 
@@ -1097,6 +1102,7 @@
     M.replaceList(M.locks, d.locks);
     M.replaceList(M.garageDoors, d.garageDoors);
     M.replaceList(M.windowShades, d.windowShades);
+    M.replaceList(M.ceilingFans, d.ceilingFans);
     if (!Array.isArray(M.valves)) M.valves = [];
     M.replaceList(M.valves, Array.isArray(d.valves) ? d.valves : []);
     M.replaceList(M.music, d.music);
@@ -1104,6 +1110,7 @@
     M.reapplyLockOptimistic();
     M.reapplyGarageOptimistic();
     M.reapplyShadeOptimistic();
+    M.reapplyFanOptimistic();
     try { M.reapplyValveOptimistic(); } catch {}
     M.reapplyMusicOptimistic();
     M.reapplySetpointOptimistic();
@@ -1942,9 +1949,10 @@
       const lock = M.locks.find(x => x.i === Number(d.i));
       const garage = M.garageDoors.find(x => x.i === Number(d.i));
       const shade = M.windowShades.find(x => x.i === Number(d.i));
+      const fan = M.ceilingFans.find(x => x.i === Number(d.i));
       const valve = M.valves.find(x => x.i === Number(d.i));
       const mp = M.music.find(x => x.i === Number(d.i));
-      const hasControlRole = !!(lock || garage || shade || valve || mp);
+      const hasControlRole = !!(lock || garage || shade || fan || valve || mp);
       if (s && !sen && !hasControlRole) {
         if (d.temp != null) s.temp = Number(d.temp);
         M.updateClimateWidgets();
@@ -1990,6 +1998,20 @@
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
         return;
       }
+      if (fan) {
+        if (d.s != null) fan.s = d.s ? 1 : 0;
+        if (d.sp != null) fan.sp = d.sp;
+        const opt = M.fanOptimistic.get(Number(d.i));
+        if (opt) {
+          let matched = true;
+          if (opt.s != null && !!fan.s !== !!opt.s) matched = false;
+          if (opt.sp != null && String(fan.sp || "").toLowerCase() !== String(opt.sp).toLowerCase()) matched = false;
+          if (matched) M.clearFanOptimistic(Number(d.i));
+        }
+        if (M.currentCategory() === "fans") renderFansPopup();
+        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+        return;
+      }
       if (valve) {
         if (d.st != null) valve.st = d.st;
         const opt = M.valveOptimistic.get(Number(d.i));
@@ -2019,6 +2041,11 @@
   }
 
   function reconcileShade(id) {
+    setTimeout(() => refreshDevice(id), 700);
+    setTimeout(() => refreshDevice(id), 2200);
+  }
+
+  function reconcileFan(id) {
     setTimeout(() => refreshDevice(id), 700);
     setTimeout(() => refreshDevice(id), 2200);
   }
@@ -2165,6 +2192,34 @@
     return result;
   }
 
+  async function sendFanCmd(id, cmd, val) {
+    const fan = M.ceilingFans.find((f) => f.i === id);
+    if (!fan) return { ok: false };
+    M.hapticTap();
+    let patch = null;
+    if (cmd === "on") patch = { s: 1 };
+    else if (cmd === "off") patch = { s: 0, sp: "off" };
+    else if (cmd === "setSpeed") {
+      const sp = String(val || "").toLowerCase();
+      patch = { sp, s: sp === "off" ? 0 : 1 };
+    }
+    if (patch) {
+      M.setFanOptimistic(id, patch);
+      if (M.currentCategory() === "fans") renderFansPopup();
+      else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+    }
+    const result = await M.sendCmd(id, cmd, val);
+    if (!result.ok) {
+      M.clearFanOptimistic(id);
+      reconcileFan(id);
+      if (M.currentCategory() === "fans") renderFansPopup();
+      else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+    } else {
+      reconcileFan(id);
+    }
+    return result;
+  }
+
   function applySwitchCmdOptimistic(dev, cmd) {
     const id = dev.i;
     if (cmd === "on") {
@@ -2230,7 +2285,7 @@
     return el;
   }
 
-  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "outlets", "scheduling"]);
+  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "fans", "outlets", "scheduling"]);
   const HUB_MODE_POPUP_TYPE = "hub-mode";
 
   function syncQuickPopupWidth(popup, type) {
@@ -2506,6 +2561,137 @@
     });
     const list = ce("div", "quick-list");
     for (const shade of sorted) list.appendChild(makeShadeTile(shade, "popup"));
+    body.appendChild(list);
+  }
+
+  function toggleCeilingFan(id) {
+    const fan = M.ceilingFans.find((f) => f.i === id);
+    if (!fan) return;
+    sendFanCmd(id, M.effectiveFanOn(fan) ? "off" : "on");
+  }
+
+  function stepCeilingFanSpeed(id, delta) {
+    const fan = M.ceilingFans.find((f) => f.i === id);
+    if (!fan) return;
+    const speeds = M.ceilingFanSpeeds(fan);
+    if (!speeds.length) return;
+    const on = M.effectiveFanOn(fan);
+    const cur = String(M.effectiveFanSpeed(fan) || "").toLowerCase();
+    let idx = speeds.indexOf(cur);
+    if (!on || cur === "off") {
+      if (delta > 0) sendFanCmd(id, "on");
+      return;
+    }
+    if (idx < 0) {
+      if (delta < 0) sendFanCmd(id, "off");
+      else sendFanCmd(id, "setSpeed", speeds[0]);
+      return;
+    }
+    const next = idx + delta;
+    if (next < 0) {
+      sendFanCmd(id, "off");
+      return;
+    }
+    if (next >= speeds.length) return;
+    sendFanCmd(id, "setSpeed", speeds[next]);
+  }
+
+  function makeFanTile(fan, context) {
+    const inFav = context === "favorites";
+    const on = M.effectiveFanOn(fan);
+    const sp = String(M.effectiveFanSpeed(fan) || "").toLowerCase();
+    const speeds = M.ceilingFanSpeeds(fan);
+    const idx = speeds.indexOf(sp);
+    const tile = ce("div", "fan-tile" + (on ? " is-on" : "") + (inFav ? " quick-fav-span" : ""));
+    tile.dataset.name = String(fan.n || "").toLowerCase();
+    tile.dataset.speed = on ? sp : "off";
+
+    const head = ce("div", "quick-fav-row-head");
+    const info = ce("div", "shade-info");
+    const name = ce("span", "quick-fav-name");
+    name.textContent = fan.n || ("Fan " + fan.i);
+    const meta = ce("span", "quick-fav-meta");
+    meta.textContent = roomLabel(fan.r) + " · " + M.fanStatusLabel(fan);
+    info.appendChild(name);
+    info.appendChild(meta);
+    head.appendChild(info);
+    const fav = ce("button", "tile-fav");
+    fav.type = "button";
+    attachFavButton(fav, fan.i);
+    head.appendChild(fav);
+    tile.appendChild(head);
+
+    const controls = ce("div", "fan-controls");
+    const minus = ce("button", "fan-step");
+    minus.type = "button";
+    minus.textContent = "−";
+    minus.setAttribute("aria-label", "Decrease fan speed");
+    minus.disabled = !on;
+    minus.addEventListener("click", () => stepCeilingFanSpeed(fan.i, -1));
+
+    const power = ce("button", "fan-power");
+    power.type = "button";
+    power.innerHTML = FAN_BTN_SVG;
+    power.setAttribute("aria-label", on ? "Turn fan off" : "Turn fan on");
+    power.setAttribute("aria-pressed", on ? "true" : "false");
+    power.addEventListener("click", () => toggleCeilingFan(fan.i));
+
+    const plus = ce("button", "fan-step");
+    plus.type = "button";
+    plus.textContent = "+";
+    plus.setAttribute("aria-label", "Increase fan speed");
+    plus.disabled = on && idx >= 0 && idx >= speeds.length - 1;
+    plus.addEventListener("click", () => stepCeilingFanSpeed(fan.i, 1));
+
+    controls.appendChild(minus);
+    controls.appendChild(power);
+    controls.appendChild(plus);
+    tile.appendChild(controls);
+
+    const speedLabel = ce("div", "fan-speed-label");
+    speedLabel.textContent = M.fanStatusLabel(fan);
+    tile.appendChild(speedLabel);
+
+    if (inFav) {
+      M.favFanMap.set(fan.i, { el: tile, meta, speedLabel, minus, plus, power, favBtn: fav });
+    }
+    return tile;
+  }
+
+  function updateFavoriteFanTile(fan) {
+    const rec = M.favFanMap.get(fan.i);
+    if (!rec) return;
+    const on = M.effectiveFanOn(fan);
+    const sp = String(M.effectiveFanSpeed(fan) || "").toLowerCase();
+    const speeds = M.ceilingFanSpeeds(fan);
+    const idx = speeds.indexOf(sp);
+    rec.el.classList.toggle("is-on", on);
+    rec.el.dataset.speed = on ? sp : "off";
+    rec.meta.textContent = roomLabel(fan.r) + " · " + M.fanStatusLabel(fan);
+    rec.speedLabel.textContent = M.fanStatusLabel(fan);
+    rec.minus.disabled = !on;
+    rec.plus.disabled = on && idx >= 0 && idx >= speeds.length - 1;
+    rec.power.setAttribute("aria-label", on ? "Turn fan off" : "Turn fan on");
+    rec.power.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function renderFansPopup() {
+    const popup = ensureQuickPopup();
+    syncQuickPopupWidthForOpen(popup);
+    const body = M.currentBody();
+    body.className = "quick-body quick-body-fans" + (M.inTabView() ? " tab-body" : "");
+    body.innerHTML = "";
+    if (!M.ceilingFans.length) {
+      body.textContent = "No fans selected — add ceiling fans in the Hubitat app settings";
+      return;
+    }
+    const sorted = M.ceilingFans.slice().sort((a, b) => {
+      const ra = roomLabel(a.r).localeCompare(roomLabel(b.r));
+      if (ra !== 0) return ra;
+      return String(a.n || "").localeCompare(String(b.n || ""));
+    });
+    const list = ce("div", "quick-list");
+    for (const fan of sorted) list.appendChild(makeFanTile(fan, "popup"));
     body.appendChild(list);
   }
 
@@ -3086,5 +3272,5 @@
     ruleSection.appendChild(ruleModes);
     body.appendChild(ruleSection);
   }
-  Object.assign(M, { saveRoomOrder, currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, reconcileGarage, sendGarageCmd, sendLockCmd, sendShadeCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, updateFavoriteGarageRow, makeGarageRow, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, renderOutletsPopup, normalizeTempSensorForCard, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
+  Object.assign(M, { saveRoomOrder, currentNavOrderFromDom, updateNavDraftOrderFromDom, showAllNavForReorder, cleanupNavDragState, saveNavOrder, postJson, postJsonSilent, setHsmApi, setHubModeApi, activateSceneApi, bulkLightsApi, snapshotSaveApi, snapshotRestoreApi, saveFavorites, hubModeLocked, hsmLocked, roomLabel, snapshotRoomKey, snapshotHouseKey, setRoomGestureLock, attachRoomSlideAction, updateRoomSnapshotUi, getFavoriteEntries, updateAllFavButtons, attachFavButton, toggleFavorite, currentRoomOrderFromDom, updateDraftOrderFromDom, updateMoveButtons, moveRoom, enterReorderMode, exitReorderMode, finishReorderMode, cancelReorderMode, closeTopbarOverflowMenu, openTopbarOverflowMenu, toggleTopbarOverflowMenu, attachRoomReorder, attachNavReorder, setupNavReorderItems, relocateNavForReorder, restoreNavAfterReorder, render, buildDom, makeTile, makeOutletTile, attachOutletSocketTap, attachSwitchTap, attachBulbTap, attachColorNameClick, clampLevel, setSliderLevel, syncTileState, updateStates, updateRoomMeta, attachDrag, attachShadeDrag, testHaptics, toggleSwitch, toggleOutlet, toggleDimmer, reconcileDevice, refreshDevice, reconcileLock, reconcileShade, reconcileFan, reconcileMusic, sendMusicCmd, broadcastMusic, broadcastMusicVolume, reconcileGarage, sendGarageCmd, sendLockCmd, sendShadeCmd, sendFanCmd, applySwitchCmdOptimistic, roomAll, allLights, ensureQuickPopup, syncQuickPopupWidth, syncQuickPopupWidthForOpen, updateFavoriteGarageRow, makeGarageRow, makeLockRow, updateFavoriteLockRow, renderLocksPopup, makeShadeTile, updateFavoriteShadeTile, renderBlindsPopup, toggleCeilingFan, stepCeilingFanSpeed, makeFanTile, updateFavoriteFanTile, renderFansPopup, renderOutletsPopup, normalizeTempSensorForCard, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup });
 })();

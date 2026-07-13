@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.57
+
+- **Ceiling fans:** new Fans tab for `FanControl` devices with on/off (hub
+  restores last speed) and +/− to step through supported speeds. Works with
+  typical AC 3/4-speed fans and DC fans that report a speed list.
+
 ## 0.2.56
 
 - **Sensors:** grouped by room with collapsible sections, type labels, search, and
