@@ -2,9 +2,14 @@
 
 ## 0.2.59
 
-- Fix HPM/File Manager deploy: rebalance dashboard JS chunks so every file stays
-  safely under the hub’s per-file size limit (0.2.58 could fail to upload on some
-  hubs).
+- **Ceiling fans:** new Fans tab for `FanControl` devices — tap to turn on/off (hub
+  restores last speed), use +/− to step through supported speeds. Works with typical
+  3/4-speed AC fans and DC fans that report their own speed list.
+- **Fans & Blinds:** smoother live updates, scroll position kept on refresh, and
+  full-height lists in category tabs.
+- **Fans:** blade animation speed matches the selected speed.
+- **Deploy fix:** JS files rebalanced so HPM/File Manager upload stays under the
+  hub’s per-file size limit.
 
 ## 0.2.58
 
