@@ -5,6 +5,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { buildMergedSensorCard } from "./merge-sensor-card.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = String(18000 + Math.floor(Math.random() * 2000));
@@ -84,7 +85,7 @@ async function main() {
     assert(Array.isArray(data.valves) && data.valves.length >= 2, "valves present");
 
     const types = new Set(data.sensors.map((s) => s.t));
-    for (const t of ["motion", "contact", "leak", "presence", "humidity", "illuminance", "smoke", "generic"]) {
+    for (const t of ["motion", "shock", "contact", "leak", "presence", "humidity", "illuminance", "smoke", "generic"]) {
       assert(types.has(t), `sensor type "${t}" in /data`);
     }
 
@@ -94,6 +95,11 @@ async function main() {
     }
     const motionMulti = data.sensors.find((s) => s.i === 2103);
     assert(motionMulti && motionMulti.ex.filter((e) => e.k !== "battery").length >= 3, "motion multisensor carries multiple secondary readings");
+    assert(motionMulti?.le != null && motionMulti.le > 0, "motion sensor exposes last event timestamp");
+    const contact = data.sensors.find((s) => s.i === 2101);
+    assert(contact?.le != null && contact.le > 0, "contact sensor exposes last event timestamp");
+    const shock = data.sensors.find((s) => s.i === 2110);
+    assert(shock?.le != null && shock.le > 0, "shock sensor exposes last event timestamp");
     const tempOnlyMulti = data.tempSensors.find((s) => s.i === 2010);
     assert(tempOnlyMulti?.ex?.some((e) => e.k === "humidity"), "temp-only multisensor exposes humidity in ex[]");
     const genericMulti = data.sensors.find((s) => s.i === 2199);
@@ -109,10 +115,23 @@ async function main() {
     const dualTemp = data.tempSensors.find((t) => t.i === 2105);
     const dualHum = data.sensors.find((s) => s.i === 2105 && s.t === "humidity");
     assert(dualTemp && dualHum, "dual temp+humidity device in both arrays");
-    const mergedEx = [{ k: "humidity", v: dualHum.v, u: dualHum.u ?? null }];
-    const merged = { t: "temp", v: dualTemp.temp, ex: mergedEx };
-    assert(merged.t === "temp", "merged temp+humidity card is temperature-primary");
-    assert(merged.ex.some((e) => e.k === "humidity" && e.v === dualHum.v), "merged card carries humidity as secondary");
+    const mergedHum = buildMergedSensorCard(dualTemp, dualHum);
+    assert(mergedHum.t === "temp", "merged temp+humidity card is temperature-primary");
+    assert(mergedHum.ex.some((e) => e.k === "humidity" && e.v === dualHum.v), "merged card carries humidity as secondary");
+
+    const dualIllTemp = data.tempSensors.find((t) => t.i === 2106);
+    const dualIll = data.sensors.find((s) => s.i === 2106 && s.t === "illuminance");
+    assert(dualIllTemp && dualIll, "dual temp+illuminance device in both arrays");
+    const mergedIll = buildMergedSensorCard(dualIllTemp, dualIll);
+    assert(mergedIll.t === "temp", "merged temp+illuminance card is temperature-primary");
+    assert(mergedIll.ex.some((e) => e.k === "illuminance" && e.v === dualIll.v), "merged card carries illuminance as secondary");
+
+    const dualGenericTemp = data.tempSensors.find((t) => t.i === 2199);
+    const dualGeneric = data.sensors.find((s) => s.i === 2199 && s.t === "generic");
+    assert(dualGenericTemp && dualGeneric, "dual temp+generic device in both arrays");
+    const mergedGeneric = buildMergedSensorCard(dualGenericTemp, dualGeneric);
+    assert(mergedGeneric.t === "generic", "merged temp+generic card keeps generic primary");
+    assert(mergedGeneric.ex.some((e) => e.k === "temperature" && e.v === dualGenericTemp.temp), "merged generic card folds temperature into ex[]");
 
     const motion = data.sensors.find((s) => s.t === "motion");
     const motionDev = await getJson(`/device?id=${motion.i}`);

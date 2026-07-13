@@ -77,8 +77,10 @@ def mainPage() {
             }
         }
         section("Other sensors") {
-            paragraph "<small>Select sensors to show in the Sensors popup. Multi-sensors may also be selected as temperature sensors or other dashboard devices. Devices selected as both temperature and humidity sensors appear once as a Temperature tile with humidity secondary; other overlaps use the richer sensor type once in the Sensors view.</small>"
+            paragraph "<small>Select sensors to show in the Sensors popup. Multi-sensors may also be selected as temperature sensors or other dashboard devices. Temperature + humidity or illuminance selections merge into one Temperature tile; temperature + generic keeps the generic primary. Alert types (motion, contact, shock, etc.) stay primary with other readings in the footer. Motion, contact, shock, leak, smoke, and presence tiles show when the device last reported activity.</small>"
             input "motionSensors", "capability.motionSensor", title: "Motion sensors",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "shockSensors", "capability.accelerationSensor", title: "Shock / glass-break sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "contactSensors", "capability.contactSensor", title: "Contact / door / window sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
@@ -232,6 +234,7 @@ def sensorTypeInputs() {
         [list: waterSensors,       t: "leak",        attr: "water",        alerts: ["wet"]],
         [list: contactSensors,     t: "contact",     attr: "contact",      alerts: ["open"]],
         [list: motionSensors,      t: "motion",      attr: "motion",       alerts: ["active"]],
+        [list: shockSensors,       t: "shock",       attr: "acceleration", alerts: ["active"]],
         [list: presenceSensors,    t: "presence",    attr: "presence",     alerts: ["present"]],
         [list: humiditySensors,    t: "humidity",    attr: "humidity",     alerts: []],
         [list: illuminanceSensors, t: "illuminance", attr: "illuminance",  alerts: []],
@@ -243,7 +246,7 @@ def sensorTypeInputs() {
 def sensorSkipAttrs() {
     return [
         "lastupdate", "lastevent", "epevent", "devicewatch-devicestatus", "checkinterval", "status", "name",
-        "switch", "power", "energy", "rssi", "lqi", "lastactivity", "datatype", "level", "healthstatus",
+        "switch", "power", "energy", "rssi", "lqi", "lastactivity", "lastopened", "lastclosed", "datatype", "level", "healthstatus",
         "tamper", "enrollment", "encap", "destinationendpoint", "cluster", "fccdeviceclass", "firmware",
         "hardware", "software", "supportedthermostatmodes", "supportedfanmodes"
     ] as Set
@@ -348,6 +351,62 @@ def sensorExtraAttrs(d, primaryAttr, int maxNonBattery) {
 
 def sensorExMaxForType(t) {
     return (t == "generic") ? 5 : 4
+}
+
+def sensorShowsLastEvent(t) {
+    return ["motion", "contact", "shock", "smoke", "leak", "presence"].contains(t)
+}
+
+def sensorLastEventAttrCandidates(t) {
+    switch (t) {
+        case "contact": return ["lastOpened", "lastClosed", "lastActivity", "lastEvent"]
+        case "motion": return ["lastActivity", "lastEvent"]
+        case "shock": return ["lastActivity", "lastEvent"]
+        default: return ["lastActivity", "lastEvent"]
+    }
+}
+
+def parseSensorEventTimeMs(raw) {
+    if (raw == null) return null
+    try {
+        String v = raw.toString().trim()
+        if (v.isEmpty()) return null
+        if (v ==~ /^\d+$/) {
+            long n = Long.parseLong(v)
+            if (n < 10000000000L) return n * 1000L
+            return n
+        }
+        def tz = location.timeZone
+        def patterns = [
+            "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+            "yyyy-MM-dd'T'HH:mm:ssZ",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm",
+            "yyyy-MM-dd HH:mm:ss",
+            "MMM d, yyyy h:mm:ss a",
+            "MMM d, yyyy h:mm a"
+        ]
+        for (pat in patterns) {
+            try {
+                def fmt = new java.text.SimpleDateFormat(pat, java.util.Locale.US)
+                if (tz) fmt.setTimeZone(tz)
+                return fmt.parse(v).getTime()
+            } catch (e) {}
+        }
+    } catch (e) {}
+    return null
+}
+
+def resolveSensorLastEventMs(d, t) {
+    if (!sensorShowsLastEvent(t)) return null
+    Long best = null
+    for (attr in sensorLastEventAttrCandidates(t)) {
+        def raw = safeCurrent(d, attr)
+        def ms = parseSensorEventTimeMs(raw)
+        if (ms != null && (best == null || ms > best)) best = ms
+    }
+    return best
 }
 
 def appendExJsonArray(out, extras) {
@@ -1171,6 +1230,7 @@ def sensorAttrCandidates() {
         leak: ["water"],
         contact: ["contact"],
         motion: ["motion", "motionStatus"],
+        shock: ["acceleration", "shock", "vibration", "moving"],
         presence: ["presence"],
         humidity: ["humidity", "relativeHumidity"],
         illuminance: ["illuminance"]
@@ -1186,6 +1246,15 @@ def normalizeSensorValue(t, attrName, raw) {
         case "motion":
             if (lower == "on" || lower == "true") return "active"
             if (lower == "off" || lower == "false") return "inactive"
+            return lower
+        case "shock":
+            if (lower == "on" || lower == "true" || lower == "active") return "active"
+            if (lower == "off" || lower == "false" || lower == "inactive") return "inactive"
+            if (isNumberLike(raw)) {
+                def n = raw.toDouble()
+                if (n >= 1.5d) return "active"
+                return "inactive"
+            }
             return lower
         case "contact":
             if (lower == "on" || lower == "true") return "open"
@@ -1263,6 +1332,8 @@ def appendSensorJson(out, d, entry, roomsList) {
         out << ",\"v\":" << jsonStr(rawVal)
     }
     out << ",\"a\":" << aFlag
+    def leMs = resolveSensorLastEventMs(d, t)
+    if (leMs != null) out << ",\"le\":" << leMs
     def extras = sensorExtraAttrs(d, primaryAttr, sensorExMaxForType(t))
     appendExJsonArray(out, extras)
     out << "}"

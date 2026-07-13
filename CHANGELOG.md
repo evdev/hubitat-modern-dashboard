@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.64
+
+- **Sensors:** new Shock / glass-break picker and tile type.
+- **Sensors:** motion, contact, shock, leak, smoke, and presence tiles show when
+  the device last reported activity (for example, "Last · 3 min ago").
+- **Sensors:** improved multi-picker merge — temperature + humidity or illuminance
+  stays temperature-primary; temperature + generic keeps the generic primary with
+  temperature in the footer; alert types stay primary with other readings secondary.
+- **Sensors:** filter chips reflect the merged tile type (temp+humidity counts as
+  Temperature).
+
 ## 0.2.63
 
 - **Sensors:** multi-capability devices show one tile with the primary reading large

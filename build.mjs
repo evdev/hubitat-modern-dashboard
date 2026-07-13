@@ -433,6 +433,7 @@ const indexHtml = readFileSync(join(root, "src", "index.html"), "utf8")
   .replaceAll("__APP_VERSION__", pkg.version);
 writeFileSync(join(upload, "mld-index.html"), indexHtml);
 copyFileSync(join(root, "src", "styles.css"), join(upload, "mld-app.css"));
+assertUnderHubLimit("mld-app.css", readFileSync(join(upload, "mld-app.css"), "utf8"));
 copyFileSync(join(root, "src", "app-pre.js"), join(upload, "mld-app-pre.js"));
 copyFileSync(join(root, "src", "manifest.webmanifest"), join(upload, "mld-manifest.webmanifest"));
 copyFileSync(join(root, "src", "sw.js"), join(upload, "mld-sw.js"));

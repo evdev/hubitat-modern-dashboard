@@ -627,7 +627,7 @@
       if (shade) { out.push({ type: "shade", dev: shade }); continue; }
       const ts = M.tempSensors.find(x => x.i === id);
       const sen = M.sensors.find(x => x.i === id);
-      const sensorDev = M.buildSensorCardDev(ts, sen);
+      const sensorDev = buildMergedSensorCard(ts, sen);
       if (sensorDev) { out.push({ type: "sensor", dev: sensorDev }); continue; }
     }
     return out;
@@ -1999,27 +1999,23 @@
       const valve = M.valves.find(x => x.i === Number(d.i));
       const mp = M.music.find(x => x.i === Number(d.i));
       const hasControlRole = !!(lock || garage || shade || fan || valve || mp);
-      if (s && sen && !hasControlRole && sen.t === "humidity") {
-        if (d.temp != null) s.temp = Number(d.temp);
-        applySensorPayload(sen, d);
+      if (s && sen && !hasControlRole) {
+        M.syncDualSensorSources(s, sen, d);
         M.updateClimateWidgets();
         updateRoomMeta();
-        if (M.currentCategory() === "sensors") M.refreshSensorsPopup();
-        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+        M.refreshSensorViews();
         return;
       }
       if (s && !sen && !hasControlRole) {
         applyTempSensorPayload(s, d);
         M.updateClimateWidgets();
         updateRoomMeta();
-        if (M.currentCategory() === "sensors") M.refreshSensorsPopup();
-        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+        M.refreshSensorViews();
         return;
       }
       if (sen && !hasControlRole) {
         applySensorPayload(sen, d);
-        if (M.currentCategory() === "sensors") M.refreshSensorsPopup();
-        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+        M.refreshSensorViews();
         return;
       }
       if (lock) {

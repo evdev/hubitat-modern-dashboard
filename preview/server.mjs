@@ -151,12 +151,15 @@ function buildMockData(count) {
     { i: 2002, n: "Hallway Sensor", r: 5, temp: 69, u: "F", bat: 91, ex: [{ k: "battery", v: 91, u: "%" }] },
     { i: 2010, n: "Bedroom Climate", r: 3, temp: 70, u: "F", bat: 77, ex: [{ k: "battery", v: 77, u: "%" }, { k: "humidity", v: 52, u: null }, { k: "illuminance", v: 140, u: "lx" }] },
     { i: 2105, n: "Attic Humidity", r: 9, temp: 78, u: "F", bat: 80, ex: [{ k: "battery", v: 80, u: "%" }, { k: "humidity", v: 54, u: null }] },
+    { i: 2106, n: "Desk Light Sensor", r: 4, temp: 72, u: "F", bat: 88, ex: [{ k: "battery", v: 88, u: "%" }] },
+    { i: 2199, n: "Air Quality Monitor", r: 4, temp: 71, u: "F", bat: 60, ex: [{ k: "battery", v: 60, u: "%" }, { k: "humidity", v: 44, u: null }] },
   ];
   const sensors = [
-    { i: 2101, n: "Front Door", r: 11, t: "contact", v: "closed", a: 0, ex: [{ k: "battery", v: 92, u: "%" }] },
-    { i: 2102, n: "Back Door", r: 7, t: "contact", v: "open", a: 1, ex: [{ k: "battery", v: 88, u: "%" }] },
-    { i: 2103, n: "Garage Motion", r: 6, t: "motion", v: "active", a: 1, ex: [{ k: "battery", v: 74, u: "%" }, { k: "temperature", v: 68, u: "F" }, { k: "humidity", v: 45, u: null }, { k: "illuminance", v: 210, u: "lx" }] },
+    { i: 2101, n: "Front Door", r: 11, t: "contact", v: "closed", a: 0, le: Date.now() - 12 * 60 * 1000, ex: [{ k: "battery", v: 92, u: "%" }] },
+    { i: 2102, n: "Back Door", r: 7, t: "contact", v: "open", a: 1, le: Date.now() - 3 * 60 * 1000, ex: [{ k: "battery", v: 88, u: "%" }] },
+    { i: 2103, n: "Garage Motion", r: 6, t: "motion", v: "active", a: 1, le: Date.now() - 90 * 1000, ex: [{ k: "battery", v: 74, u: "%" }, { k: "temperature", v: 68, u: "F" }, { k: "humidity", v: 45, u: null }, { k: "illuminance", v: 210, u: "lx" }] },
     { i: 2104, n: "Basement Leak", r: 8, t: "leak", v: "dry", a: 0, ex: [{ k: "battery", v: 99, u: "%" }] },
+    { i: 2110, n: "Living Room Glass", r: 1, t: "shock", v: "inactive", a: 0, le: Date.now() - 45 * 60 * 1000, ex: [{ k: "battery", v: 81, u: "%" }] },
     { i: 2105, n: "Attic Humidity", r: 9, t: "humidity", v: 54, a: 0, ex: [{ k: "temperature", v: 78, u: "F" }] },
     { i: 2106, n: "Desk Light Sensor", r: 4, t: "illuminance", v: 320, a: 0, ex: [] },
     { i: 2107, n: "Car Presence", r: 11, t: "presence", v: "present", a: 1, ex: [] },
@@ -610,7 +613,7 @@ const server = createServer(async (req, res) => {
     const sen = state.sensors?.find(d => d.i === id);
     if (sen) {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      return res.end(JSON.stringify({ i: sen.i, t: sen.t, v: sen.v, a: sen.a ?? 0, ex: sen.ex || [] }));
+      return res.end(JSON.stringify({ i: sen.i, t: sen.t, v: sen.v, a: sen.a ?? 0, le: sen.le ?? null, ex: sen.ex || [] }));
     }
     const valve = state.valves?.find(d => d.i === id);
     if (valve) {

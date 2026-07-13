@@ -4292,7 +4292,7 @@
       if (shade) { out.push({ type: "shade", dev: shade }); continue; }
       const ts = tempSensors.find(x => x.i === id);
       const sen = sensors.find(x => x.i === id);
-      const sensorDev = buildSensorCardDev(ts, sen);
+      const sensorDev = buildMergedSensorCard(ts, sen);
       if (sensorDev) { out.push({ type: "sensor", dev: sensorDev }); continue; }
     }
     return out;
@@ -5664,27 +5664,23 @@
       const valve = valves.find(x => x.i === Number(d.i));
       const mp = music.find(x => x.i === Number(d.i));
       const hasControlRole = !!(lock || garage || shade || fan || valve || mp);
-      if (s && sen && !hasControlRole && sen.t === "humidity") {
-        if (d.temp != null) s.temp = Number(d.temp);
-        applySensorPayload(sen, d);
+      if (s && sen && !hasControlRole) {
+        syncDualSensorSources(s, sen, d);
         updateClimateWidgets();
         updateRoomMeta();
-        if (currentCategory() === "sensors") refreshSensorsPopup();
-        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        refreshSensorViews();
         return;
       }
       if (s && !sen && !hasControlRole) {
         applyTempSensorPayload(s, d);
         updateClimateWidgets();
         updateRoomMeta();
-        if (currentCategory() === "sensors") refreshSensorsPopup();
-        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        refreshSensorViews();
         return;
       }
       if (sen && !hasControlRole) {
         applySensorPayload(sen, d);
-        if (currentCategory() === "sensors") refreshSensorsPopup();
-        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        refreshSensorViews();
         return;
       }
       if (lock) {
@@ -6467,41 +6463,58 @@
   }
 
   function normalizeTempSensorForCard(s) {
-    return { i: s.i, n: s.n, r: s.r, t: "temp", v: s.temp, u: s.u, a: 0, ex: s.ex || [], bat: s.bat ?? null, _ref: s };
+    return tempPrimaryCardFromRec(s);
   }
 
-  function sensorExEntry(ex, k) {
-    return (ex || []).find((e) => e.k === k);
-  }
-
-  function mergeTempHumidityForCard(tempRec, sensorRec) {
-    const ex = [];
-    const humVal = sensorRec.v;
-    if (humVal != null && humVal !== "") ex.push({ k: "humidity", v: humVal, u: sensorRec.u ?? null });
-    const batEx = sensorExEntry(sensorRec.ex, "battery");
-    if (batEx && batEx.v != null && batEx.v !== "") ex.push({ k: batEx.k, v: batEx.v, u: batEx.u ?? null });
-    const bat = tempRec.bat ?? sensorRec.bat ?? (batEx ? batEx.v : null);
-    return {
-      i: tempRec.i,
-      n: tempRec.n || sensorRec.n,
-      r: tempRec.r ?? sensorRec.r,
-      t: "temp",
-      v: tempRec.temp,
-      u: tempRec.u,
-      a: 0,
-      ex,
-      bat: bat != null && bat !== "" ? bat : null,
-      _ref: tempRec,
-    };
-  }
-
-  function buildSensorCardDev(tempRec, sensorRec) {
-    if (tempRec && sensorRec && sensorRec.t === "humidity") return mergeTempHumidityForCard(tempRec, sensorRec);
-    if (sensorRec) {
-      return { i: sensorRec.i, n: sensorRec.n, r: sensorRec.r, t: sensorRec.t, v: sensorRec.v, a: sensorRec.a, ex: sensorRec.ex || [], _ref: sensorRec };
+  function syncDualSensorSources(s, sen, d) {
+    if (sen && d) applySensorPayload(sen, d);
+    if (s && d) {
+      if (d.temp != null) s.temp = Number(d.temp);
+      if (d.bat != null) s.bat = Number(d.bat);
+      if (Array.isArray(d.ex) && !sen) {
+        s.ex = d.ex.map((e) => ({ k: e.k, v: e.v, u: e.u ?? null }));
+      }
     }
-    if (tempRec) return normalizeTempSensorForCard(tempRec);
-    return null;
+    if (s && sen) syncTempSensorFromSensorEntry(s, sen);
+  }
+
+  function applySensorLiveAttr(deviceId, attrName, value, unit) {
+    const id = Number(deviceId);
+    const s = tempSensors.find((x) => x.i === id);
+    const sen = sensors.find((x) => x.i === id);
+    const nm = String(attrName || "");
+    let changed = false;
+    let climate = false;
+    if (s) {
+      if (nm === "temperature") {
+        const n = Number(value);
+        if (!isNaN(n)) {
+          s.temp = Math.round(n);
+          changed = true;
+          climate = true;
+        }
+      } else if (nm === "battery") {
+        const n = Number(value);
+        if (!isNaN(n)) {
+          s.bat = Math.round(n);
+          changed = true;
+        }
+      } else if (applyTempSensorWsAttr(s, nm, value, unit)) {
+        changed = true;
+      }
+    }
+    if (sen && applySensorWsAttr(sen, nm, value, unit)) changed = true;
+    if (s && sen && nm !== "temperature") syncTempSensorFromSensorEntry(s, sen);
+    if (changed && climate) {
+      updateClimateWidgets();
+      updateRoomMeta();
+    }
+    return changed;
+  }
+
+  function refreshSensorViews() {
+    if (currentCategory() === "sensors") refreshSensorsPopup();
+    else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
   }
 
 
@@ -7123,13 +7136,9 @@
     for (const s of tempSensors) {
       byId.set(String(s.i), normalizeTempSensorForCard(s));
     }
-    // A multi-sensor may also be in tempSensors. Prefer its explicitly selected
-    // sensor type so motion/contact/etc. is not reduced to a temperature card.
-    // Temp + humidity dual selection merges into one temperature-primary tile.
     for (const s of sensors) {
       const tempRec = tempSensors.find((x) => x.i === s.i);
-      if (tempRec && s.t === "humidity") byId.set(String(s.i), mergeTempHumidityForCard(tempRec, s));
-      else byId.set(String(s.i), { i: s.i, n: s.n, r: s.r, t: s.t, v: s.v, a: s.a, ex: s.ex || [], _ref: s });
+      byId.set(String(s.i), buildMergedSensorCard(tempRec, s));
     }
     // Valve controls take priority if a valve also exposes a sensor capability.
     for (const v of valves) byId.set(String(v.i), normalizeValveForCard(v));
@@ -7143,7 +7152,7 @@
   }
 
   function sensorsPopupSignature() {
-    return mergedSensorList().map((d) => `${d.i}:${d.r}:${d.t}:${d.v}:${d.a}:${sensorBatteryPct(d)}:${(d.ex || []).map((e) => e.k + e.v).join(".")}`).join("|");
+    return mergedSensorList().map((d) => `${d.i}:${d.r}:${d.t}:${d.v}:${d.a}:${d.le ?? ""}:${sensorBatteryPct(d)}:${(d.ex || []).map((e) => e.k + e.v).join(".")}`).join("|");
   }
 
   function sensorTypesWithCounts() {
@@ -7273,8 +7282,7 @@
   }
 
   function sensorExFooter(dev) {
-    const exclude = dev.t === "temp" ? ["temperature"] : [];
-    const ex = sortSensorExForDisplay(dev.ex, exclude);
+    const ex = sortSensorExForDisplay(dev.ex, sensorExFooterExcludeForType(dev.t));
     if (!ex.length) return "";
     const parts = [];
     for (const e of ex.slice(0, 4)) {
@@ -7315,12 +7323,13 @@
     } else {
       rec.pillEl.hidden = true;
     }
-    rec.footEl.textContent = sensorExFooter(dev);
+    rec.footEl.textContent = sensorCardFootText(dev, sensorExFooter);
     rec.footEl.hidden = !rec.footEl.textContent;
     const batTxt = sensorBatteryLabel(dev);
     rec.batteryEl.textContent = batTxt;
     rec.batteryEl.hidden = !batTxt;
-    card.setAttribute("aria-label", (dev.n || "Sensor") + ", " + roomLabel(dev.r) + ", " + sensorTypeLabel(dev.t) + (pill ? ", " + pill : "") + (batTxt ? ", " + batTxt : ""));
+    const lastTxt = sensorLastEventLine(dev);
+    card.setAttribute("aria-label", (dev.n || "Sensor") + ", " + roomLabel(dev.r) + ", " + sensorTypeLabel(dev.t) + (pill ? ", " + pill : "") + (lastTxt ? ", " + lastTxt : "") + (batTxt ? ", " + batTxt : ""));
     if (dev.t === "valve" && rec.openBtn && rec.closeBtn) {
       const valve = dev._ref || dev;
       const moving = valveIsMoving(valve);
@@ -8820,31 +8829,8 @@
         }
         const s = tempSensors.find(x => x.i === Number(m.deviceId));
         const sen = sensors.find(x => x.i === Number(m.deviceId));
-        if (s) {
-          const nm = String(m.name || "");
-          if (nm === "temperature") {
-            const n = Number(m.value);
-            if (!isNaN(n)) {
-              s.temp = Math.round(n);
-              updateClimateWidgets();
-              updateRoomMeta();
-            }
-          } else if (nm === "battery") {
-            const n = Number(m.value);
-            if (!isNaN(n)) s.bat = Math.round(n);
-            if (sen) applySensorWsAttr(sen, m.name, m.value, m.unit);
-          } else if (sen) {
-            if (!applySensorWsAttr(sen, m.name, m.value, m.unit)) return;
-          } else if (!applyTempSensorWsAttr(s, m.name, m.value, m.unit)) return;
-          if (currentCategory() === "sensors") refreshSensorsPopup();
-          else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-          return;
-        }
-        if (sen) {
-          if (applySensorWsAttr(sen, m.name, m.value, m.unit)) {
-            if (currentCategory() === "sensors") refreshSensorsPopup();
-            else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-          }
+        if (s || sen) {
+          if (applySensorLiveAttr(m.deviceId, m.name, m.value, m.unit)) refreshSensorViews();
           return;
         }
         const valve = valves.find(x => x.i === Number(m.deviceId));

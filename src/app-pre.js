@@ -57,6 +57,7 @@ const CENTRAL_MUSIC_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><li
 const SENSOR_TYPE_META = {
   temp: { label: "Temperature", accent: "#5b9cff", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 13.6V5a2 2 0 1 0-4 0v8.6a4.5 4.5 0 1 0 4 0Z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="17" r="2.1" fill="currentColor"/></svg>' },
   motion: { label: "Motion", accent: "#f0a93a", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 0 1 16 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="15" r="1.8" fill="currentColor"/></svg>' },
+  shock: { label: "Shock", accent: "#f0a93a", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 14h5l-1 7 7-12h-5l1-6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>' },
   contact: { label: "Contact", accent: "#ff6b4a", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="4" width="7" height="16" rx="1.5" fill="currentColor" opacity="0.25"/><path d="M11 12h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>' },
   leak: { label: "Water", accent: "#ff6b4a", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>' },
   smoke: { label: "Smoke", accent: "#ff6b4a", svg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 14a4 4 0 0 1 1-7.5A5 5 0 0 1 16 6a4 4 0 0 1 1 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M7 18h2M11 18h2M15 18h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>' },
@@ -71,6 +72,9 @@ const SENSOR_ALERT_WORDS = { wet: 1, open: 1, active: 1, detected: 1, present: 1
 
 const SECONDARY_ATTR_ORDER = ["temperature", "humidity", "illuminance", "pressure", "co2", "carbonmonoxide"];
 const SENSOR_EX_MAX = 6;
+const SENSOR_ALERT_TYPES = new Set(["smoke", "leak", "contact", "motion", "presence", "shock"]);
+const SENSOR_LAST_EVENT_TYPES = new Set(["smoke", "leak", "contact", "motion", "presence", "shock"]);
+const SENSOR_TEMP_PROMOTE_TYPES = new Set(["humidity", "illuminance"]);
 
 function secondaryAttrRank(k) {
   const n = String(k || "").toLowerCase();
@@ -90,6 +94,112 @@ function sortSensorExForDisplay(ex, excludeKeys) {
     });
 }
 
+function sensorExFooterExcludeForType(t) {
+  if (t === "temp") return ["temperature"];
+  if (t === "humidity") return ["humidity"];
+  if (t === "illuminance") return ["illuminance"];
+  return [];
+}
+
+function mergeSensorExEntries(parts, excludeKeys) {
+  const exclude = new Set((excludeKeys || []).map((k) => String(k).toLowerCase()));
+  const out = [];
+  const seen = new Set();
+  for (const list of parts) {
+    for (const e of list || []) {
+      const k = String(e.k || "").toLowerCase();
+      if (!k || exclude.has(k) || seen.has(k)) continue;
+      seen.add(k);
+      out.push({ k: e.k, v: e.v, u: e.u ?? null });
+    }
+  }
+  return out;
+}
+
+function resolveMergedSensorBattery(tempRec, sensorRec, ex) {
+  const batEx = (ex || []).find((e) => e.k === "battery");
+  const bat = tempRec?.bat ?? sensorRec?.bat ?? (batEx ? batEx.v : null);
+  return bat != null && bat !== "" ? bat : null;
+}
+
+function tempPrimaryCardFromRec(tempRec) {
+  return {
+    i: tempRec.i,
+    n: tempRec.n,
+    r: tempRec.r,
+    t: "temp",
+    v: tempRec.temp,
+    u: tempRec.u,
+    a: 0,
+    ex: tempRec.ex || [],
+    bat: tempRec.bat ?? null,
+    _ref: tempRec,
+  };
+}
+
+function environmentalTempPrimaryCard(tempRec, sensorRec) {
+  const exclude = ["temperature"];
+  const exParts = [];
+  if (sensorRec.v != null && sensorRec.v !== "") {
+    exParts.push([{ k: sensorRec.t, v: sensorRec.v, u: sensorRec.u ?? null }]);
+  }
+  exParts.push(sensorRec.ex || [], tempRec.ex || []);
+  const ex = mergeSensorExEntries(exParts, exclude);
+  return {
+    i: tempRec.i,
+    n: tempRec.n || sensorRec.n,
+    r: tempRec.r ?? sensorRec.r,
+    t: "temp",
+    v: tempRec.temp,
+    u: tempRec.u,
+    a: 0,
+    ex,
+    bat: resolveMergedSensorBattery(tempRec, sensorRec, ex),
+    le: sensorRec.le ?? null,
+    _ref: tempRec,
+    _senRef: sensorRec,
+  };
+}
+
+function sensorPrimaryCard(sensorRec, tempRec) {
+  const exclude = sensorExFooterExcludeForType(sensorRec.t);
+  const exParts = [sensorRec.ex || []];
+  if (tempRec) {
+    exParts.push([{ k: "temperature", v: tempRec.temp, u: tempRec.u ?? null }]);
+    exParts.push(tempRec.ex || []);
+  }
+  const ex = mergeSensorExEntries(exParts, exclude);
+  return {
+    i: sensorRec.i,
+    n: sensorRec.n || tempRec?.n,
+    r: sensorRec.r ?? tempRec?.r,
+    t: sensorRec.t,
+    v: sensorRec.v,
+    a: sensorRec.a,
+    ex,
+    bat: resolveMergedSensorBattery(tempRec, sensorRec, ex),
+    le: sensorRec.le ?? null,
+    _ref: sensorRec,
+    _tempRef: tempRec || null,
+  };
+}
+
+function buildMergedSensorCard(tempRec, sensorRec) {
+  if (tempRec && sensorRec && SENSOR_TEMP_PROMOTE_TYPES.has(sensorRec.t)) {
+    return environmentalTempPrimaryCard(tempRec, sensorRec);
+  }
+  if (sensorRec) return sensorPrimaryCard(sensorRec, tempRec);
+  if (tempRec) return tempPrimaryCardFromRec(tempRec);
+  return null;
+}
+
+function syncTempSensorFromSensorEntry(tempRec, sensorRec) {
+  if (!tempRec || !sensorRec) return;
+  const tempEx = (sensorRec.ex || []).find((e) => e.k === "temperature");
+  if (tempEx?.v == null || tempEx.v === "") return;
+  tempRec.temp = Number(tempEx.v);
+}
+
 function sensorTypeLabel(t) {
   return (SENSOR_TYPE_META[t] || SENSOR_TYPE_META.generic).label;
 }
@@ -106,6 +216,7 @@ function humanizeAttr(k) {
 // Returns { hero, pill, alert } for a sensor device object.
 const SENSOR_PRIMARY_ATTRS = {
   motion: new Set(["motion", "motionstatus"]),
+  shock: new Set(["acceleration", "shock", "vibration", "moving"]),
   contact: new Set(["contact"]),
   leak: new Set(["water"]),
   presence: new Set(["presence"]),
@@ -130,6 +241,10 @@ function normalizeSensorWsValue(t, attr, val) {
       if (lower === "on" || lower === "true") return "active";
       if (lower === "off" || lower === "false") return "inactive";
       return lower;
+    case "shock":
+      if (lower === "on" || lower === "true" || lower === "active") return "active";
+      if (lower === "off" || lower === "false" || lower === "inactive") return "inactive";
+      return lower;
     case "contact":
       if (lower === "on" || lower === "true") return "open";
       if (lower === "off" || lower === "false") return "closed";
@@ -153,7 +268,7 @@ function normalizeSensorWsValue(t, attr, val) {
 
 function sensorAlertFlag(t, v) {
   const s = String(v || "").toLowerCase();
-  const alerts = { motion: ["active"], contact: ["open"], leak: ["wet"], smoke: ["detected"], presence: ["present"], valve: ["open"] };
+  const alerts = { motion: ["active"], shock: ["active"], contact: ["open"], leak: ["wet"], smoke: ["detected"], presence: ["present"], valve: ["open"] };
   return (alerts[t] || []).includes(s) ? 1 : 0;
 }
 
@@ -161,7 +276,63 @@ function applySensorPayload(sen, d) {
   if (d.t != null) sen.t = d.t;
   if (d.v !== undefined) sen.v = d.v;
   if (d.a != null) sen.a = d.a ? 1 : 0;
+  if (d.le != null) sen.le = Number(d.le);
   if (Array.isArray(d.ex)) sen.ex = d.ex.map((e) => ({ k: e.k, v: e.v, u: e.u ?? null }));
+}
+
+function sensorLastEventFromRef(dev) {
+  return dev.le ?? dev._ref?.le ?? dev._senRef?.le ?? null;
+}
+
+function parseSensorEventTimeMsClient(raw) {
+  if (raw == null) return null;
+  const v = String(raw).trim();
+  if (!v) return null;
+  if (/^\d+$/.test(v)) {
+    const n = Number(v);
+    if (isNaN(n)) return null;
+    return n < 10000000000 ? n * 1000 : n;
+  }
+  const t = Date.parse(v);
+  return isNaN(t) ? null : t;
+}
+
+function formatSensorLastEvent(ms) {
+  const n = Number(ms);
+  if (ms == null || isNaN(n)) return "";
+  const now = Date.now();
+  const diff = now - n;
+  if (diff < 45000) return "Just now";
+  if (diff < 3600000) {
+    const mins = Math.max(1, Math.floor(diff / 60000));
+    return mins + " min ago";
+  }
+  if (diff < 86400000) {
+    const hrs = Math.max(1, Math.floor(diff / 3600000));
+    return hrs + " hr ago";
+  }
+  const d = new Date(n);
+  if (isNaN(d.getTime())) return "";
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) {
+    return d.toLocaleString([], { hour: "numeric", minute: "2-digit" });
+  }
+  return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function sensorLastEventLine(dev) {
+  if (!SENSOR_LAST_EVENT_TYPES.has(dev.t)) return "";
+  const txt = formatSensorLastEvent(sensorLastEventFromRef(dev));
+  return txt ? "Last · " + txt : "";
+}
+
+function sensorCardFootText(dev, exFooterFn) {
+  const parts = [];
+  const last = sensorLastEventLine(dev);
+  if (last) parts.push(last);
+  const ex = exFooterFn(dev);
+  if (ex) parts.push(ex);
+  return parts.join(" · ");
 }
 
 function applyTempSensorPayload(s, d) {
@@ -199,6 +370,15 @@ function applySensorWsAttr(sen, attrName, val, unit) {
   const nm = String(attrName || "").toLowerCase();
   const key = nm === "relativehumidity" ? "humidity" : nm;
   const t = sen.t || "generic";
+  const lastEventAttrs = new Set(["lastactivity", "lastevent", "lastopened", "lastclosed"]);
+  if (lastEventAttrs.has(key) && SENSOR_LAST_EVENT_TYPES.has(t)) {
+    const ms = parseSensorEventTimeMsClient(val);
+    if (ms != null) {
+      sen.le = ms;
+      return true;
+    }
+    return false;
+  }
   const secondary = key === "battery" || key === "temperature" || key === "humidity" || key === "illuminance"
     || key === "pressure" || key === "co2" || key === "carbonmonoxide";
   if (secondary && (t === "generic" || !sensorIsPrimaryAttr(t, key))) {
@@ -207,14 +387,18 @@ function applySensorWsAttr(sen, attrName, val, unit) {
     if (entry) {
       entry.v = val;
       if (unit) entry.u = unit;
-    } else if (ex.length < SENSOR_EX_MAX) {
-      ex.push({ k: key, v: val, u: unit || null });
+      return true;
     }
-    return true;
+    if (ex.length < SENSOR_EX_MAX) {
+      ex.push({ k: key, v: val, u: unit || null });
+      return true;
+    }
+    return false;
   }
   if (sensorIsPrimaryAttr(t, key) || t === "generic") {
     sen.v = t === "generic" ? val : normalizeSensorWsValue(t, key, val);
     sen.a = sensorAlertFlag(t, sen.v);
+    if (SENSOR_LAST_EVENT_TYPES.has(t)) sen.le = Date.now();
     return true;
   }
   return false;
@@ -225,6 +409,7 @@ function sensorDisplay(dev) {
   const v = dev.v;
   switch (t) {
     case "motion": return v === "active" ? { hero: "Motion", pill: "Motion", alert: true } : { hero: "Clear", pill: "Clear", alert: false };
+    case "shock": return v === "active" ? { hero: "Shock", pill: "Shock", alert: true } : { hero: "Clear", pill: "Clear", alert: false };
     case "contact": return v === "open" ? { hero: "Open", pill: "Open", alert: true } : { hero: "Closed", pill: "Closed", alert: false };
     case "leak": return v === "wet" ? { hero: "Wet", pill: "Wet", alert: true } : { hero: "Dry", pill: "Dry", alert: false };
     case "smoke": {

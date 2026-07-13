@@ -242,9 +242,16 @@ four additional readings appear as secondary lines on the card (humidity, light
 level, pressure, CO₂, and so on). Temperature-only selections also surface
 other environmental readings when the hardware reports them.
 
-A device selected in both **Temperature sensors** and **Humidity sensors**
-appears once as a Temperature tile with humidity as a secondary reading. Other
-multi-picker overlaps appear once, using the first matching type.
+Security sensors (motion, contact, shock/glass-break, leak, smoke, presence)
+show when the device last reported activity in the card footer (for example,
+"Last · 3 min ago").
+
+A device selected in both **Temperature sensors** and **Humidity sensors** (or
+**Illuminance sensors**) appears once as a Temperature tile with the other
+reading secondary. Selecting both **Temperature** and **Other / generic sensors**
+keeps the generic reading as primary with temperature in the footer. Other
+multi-picker overlaps appear once, using the first matching type. Filter chips
+reflect the merged tile type (for example, temp+humidity counts as Temperature).
 
 ### Scheduler
 
