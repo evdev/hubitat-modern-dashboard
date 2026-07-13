@@ -1220,9 +1220,11 @@
 
     for (const rid of orderedIds) {
       const roomKey = normalizeRoomId(rid);
-      const devs = groups.get(roomKey) || [];
-      const roomOutlets = M.outletsInLightsRooms() ? (outletGroups.get(roomKey) || []) : [];
       const name = roomKey === -1 ? "Unassigned" : (M.roomMap.get(roomKey) || "Room");
+      const devs = sortDevicesInRoom(groups.get(roomKey) || [], name);
+      const roomOutlets = M.outletsInLightsRooms()
+        ? sortDevicesInRoom(outletGroups.get(roomKey) || [], name)
+        : [];
 
       const card = ce("section", "room");
       card.dataset.roomId = roomKey;

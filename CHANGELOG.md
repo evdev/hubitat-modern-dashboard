@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.60
+
+- **Lights:** devices within each room are sorted alphabetically by their displayed
+  name (after room-prefix stripping).
+
 ## 0.2.59
 
 - **Ceiling fans:** new Fans tab for `FanControl` devices — tap to turn on/off (hub

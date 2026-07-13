@@ -498,6 +498,20 @@ function stripRoomPrefix(deviceName, roomName) {
   return remainder || deviceName;
 }
 
+function deviceTruncatedName(dev, roomName) {
+  const full = dev?.n || ("Device " + dev?.i);
+  return (dev?.n ? stripRoomPrefix(dev.n, roomName) : null) || full;
+}
+
+function compareDevicesInRoom(a, b, roomName) {
+  return String(deviceTruncatedName(a, roomName))
+    .localeCompare(String(deviceTruncatedName(b, roomName)), undefined, { sensitivity: "base" });
+}
+
+function sortDevicesInRoom(devs, roomName) {
+  return devs.slice().sort((a, b) => compareDevicesInRoom(a, b, roomName));
+}
+
 function normalizeRoomId(rid) {
   if (rid == null || rid === "null" || rid === "") return -1;
   if (rid === -1 || rid === "-1") return -1;
