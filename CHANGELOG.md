@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.70
+
+- **Thermostats tab:** fix +/- on quick thermostat cards — setpoint changes no longer
+  run full dial-popup rendering when the dial is closed (which could abort the hub
+  command and skip the card refresh).
+
 ## 0.2.69
 
 - **Deploy fix:** build now asserts split JS chunks have no bare cross-chunk

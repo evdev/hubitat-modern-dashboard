@@ -964,6 +964,7 @@
   }
 
   function renderTstatDial() {
+    if (!M.tstatSession) return;
     const popup = ensureTstatPopup();
     const t = activeTstat();
     if (!t) return;
@@ -1063,6 +1064,7 @@
   }
 
   function renderTstatControls() {
+    if (!M.tstatSession) return;
     const popup = ensureTstatPopup();
     const t = activeTstat();
     if (!t) return;

@@ -2364,6 +2364,7 @@
   }
 
   function renderTstatDial() {
+    if (!tstatSession) return;
     const popup = ensureTstatPopup();
     const t = activeTstat();
     if (!t) return;
@@ -2463,6 +2464,7 @@
   }
 
   function renderTstatControls() {
+    if (!tstatSession) return;
     const popup = ensureTstatPopup();
     const t = activeTstat();
     if (!t) return;
@@ -8559,8 +8561,10 @@
 
   function renderThermostatsPopup() {
     closeFavoriteTstatModeMenu();
-    const popup = ensureQuickPopup();
-    syncQuickPopupWidthForOpen(popup);
+    if (!inTabView()) {
+      const popup = ensureQuickPopup();
+      syncQuickPopupWidthForOpen(popup);
+    }
     const body = currentBody();
     setQuickBodyClass(body, "quick-body quick-body-thermostats");
     body.innerHTML = "";

@@ -425,6 +425,7 @@ function splitAppJs(srcPath) {
   );
 
   assertNoBareExportRefs("mld-app-post.js", part2Out, ["activeTab", "tabMode", "tabViewEl", "quickPopupOpenType"]);
+  assertNoBareExportRefs("mld-app-post2.js", part3Out, ["activeTab", "tabMode", "tabViewEl", "quickPopupOpenType"]);
 
   return { part1Out, partCoreOut, part2Out, part3Out, part4Out };
 }

@@ -1633,8 +1633,10 @@
 
   function renderThermostatsPopup() {
     M.closeFavoriteTstatModeMenu();
-    const popup = M.ensureQuickPopup();
-    M.syncQuickPopupWidthForOpen(popup);
+    if (!inTabView()) {
+      const popup = M.ensureQuickPopup();
+      M.syncQuickPopupWidthForOpen(popup);
+    }
     const body = currentBody();
     setQuickBodyClass(body, "quick-body quick-body-thermostats");
     body.innerHTML = "";
