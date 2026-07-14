@@ -2135,14 +2135,10 @@
         if (d.st != null) shade.st = d.st;
         if (d.pos != null) shade.pos = d.pos;
         const opt = M.shadeOptimistic.get(Number(d.i));
-        if (opt) {
-          let matched = true;
-          if (opt.st != null && shade.st !== opt.st) matched = false;
-          if (opt.pos != null && shade.pos !== opt.pos) matched = false;
-          if (matched) M.clearShadeOptimistic(Number(d.i));
-        }
+        if (opt && M.shadeOptimisticSatisfied(opt, shade)) M.clearShadeOptimistic(Number(d.i));
         if (M.currentCategory() === "blinds") M.refreshBlindsPopup();
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+        if (M.shadeMasterPopup?.classList.contains("open")) M.postCall("updateShadeMasterBody");
         return;
       }
       if (fan) {
@@ -2316,18 +2312,21 @@
 
   async function sendShadeCmd(id, cmd, val, opts) {
     const quiet = opts?.quiet;
+    const skipOptimistic = opts?.skipOptimistic;
     const shade = M.windowShades.find(s => s.i === id);
     if (!shade) return { ok: false };
     if (!quiet) M.hapticTap();
-    let patch = {};
-    if (cmd === "open") patch = { st: "opening" };
-    else if (cmd === "close") patch = { st: "closing" };
-    else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
-    if (patch.st != null || patch.pos != null) {
-      M.setShadeOptimistic(id, patch);
-      if (!quiet) {
-        if (M.currentCategory() === "blinds") M.refreshBlindsPopup();
-        else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+    if (!skipOptimistic) {
+      let patch = {};
+      if (cmd === "open") patch = { st: "opening" };
+      else if (cmd === "close") patch = { st: "closing" };
+      else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
+      if (patch.st != null || patch.pos != null) {
+        M.setShadeOptimistic(id, patch);
+        if (!quiet) {
+          if (M.currentCategory() === "blinds") M.refreshBlindsPopup();
+          else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
+        }
       }
     }
     const result = await M.sendCmd(id, cmd, val);
@@ -2338,6 +2337,7 @@
         if (M.currentCategory() === "blinds") M.refreshBlindsPopup();
         else if (M.currentCategory() === "favorites") M.postCall("refreshFavoritesPopup");
       }
+      if (M.shadeMasterPopup?.classList.contains("open")) M.postCall("updateShadeMasterBody");
     } else {
       reconcileShade(id);
     }
@@ -2427,15 +2427,19 @@
     }
     if (!shades.length) return;
 
+    // Bulk Open/Close jump to the settled end-state so the master popup gets
+    // immediate active/slider feedback (individual tiles still use opening/closing).
     for (const shade of shades) {
       let patch = {};
-      if (cmd === "open") patch = { st: "opening" };
-      else if (cmd === "close") patch = { st: "closing" };
+      if (cmd === "open") patch = { st: "open", pos: shade.pos != null ? 100 : undefined };
+      else if (cmd === "close") patch = { st: "closed", pos: shade.pos != null ? 0 : undefined };
       else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
       if (patch.st != null || patch.pos != null) M.setShadeOptimistic(shade.i, patch);
     }
 
-    for (const shade of shades) sendShadeCmd(shade.i, cmd, val, { quiet: true });
+    for (const shade of shades) {
+      sendShadeCmd(shade.i, cmd, val, { quiet: true, skipOptimistic: true });
+    }
 
     if (!skipMasterUpdate && M.shadeMasterPopup?.classList.contains("open")) {
       M.postCall("updateShadeMasterBody");

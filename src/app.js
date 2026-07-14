@@ -455,6 +455,22 @@
     shadeOptimistic.delete(id);
   }
 
+  function shadeOptimisticSatisfied(opt, shade) {
+    if (!opt || !shade) return false;
+    if (opt.st != null) {
+      const want = String(opt.st);
+      const got = String(shade.st || "");
+      if (want !== got) {
+        // Hub often reports the settled state while we still hold opening/closing.
+        if (!(want === "opening" && got === "open") && !(want === "closing" && got === "closed")) {
+          return false;
+        }
+      }
+    }
+    if (opt.pos != null && shade.pos !== opt.pos) return false;
+    return true;
+  }
+
   function reapplyShadeOptimistic() {
     for (const [id, opt] of shadeOptimistic) {
       if (Date.now() >= opt.until) {
@@ -464,10 +480,7 @@
       }
       const shade = windowShades.find((s) => s.i === id);
       if (!shade) continue;
-      let matched = true;
-      if (opt.st != null && shade.st !== opt.st) matched = false;
-      if (opt.pos != null && shade.pos !== opt.pos) matched = false;
-      if (matched) {
+      if (shadeOptimisticSatisfied(opt, shade)) {
         if (opt.timer) clearTimeout(opt.timer);
         shadeOptimistic.delete(id);
         continue;
@@ -3737,18 +3750,12 @@
     openBtn.type = "button";
     openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
     openBtn.disabled = noneSelected;
-    openBtn.addEventListener("click", () => {
-      hapticTap();
-      postCall("broadcastShadeCmd", "open");
-    });
+    openBtn.addEventListener("click", () => postCall("broadcastShadeCmd", "open"));
     const closeBtn = ce("button", "quick-lock-btn shade-btn");
     closeBtn.type = "button";
     closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
     closeBtn.disabled = noneSelected;
-    closeBtn.addEventListener("click", () => {
-      hapticTap();
-      postCall("broadcastShadeCmd", "close");
-    });
+    closeBtn.addEventListener("click", () => postCall("broadcastShadeCmd", "close"));
     actions.appendChild(openBtn);
     actions.appendChild(closeBtn);
     body.appendChild(actions);
@@ -3787,26 +3794,33 @@
 
   function updateShadeMasterBody() {
     const popup = shadeMasterPopup;
-    if (!popup?.classList.contains("open")) return;
+    if (!popup || popup.hidden) return;
     const selectedIds = new Set(shadeMasterSession?.ids || []);
     const selectedShades = windowShades.filter((s) => selectedIds.has(s.i));
     const noneSelected = !selectedShades.length;
+    const allOpen = !noneSelected && selectedShades.every((s) => {
+      const st = effectiveShadeState(s);
+      return st === "open" || st === "opening";
+    });
+    const allClosed = !noneSelected && selectedShades.every((s) => {
+      const st = effectiveShadeState(s);
+      return st === "closed" || st === "closing";
+    });
     const anyMoving = !noneSelected && selectedShades.some((s) => shadeIsMoving(s));
-    const allOpen = !noneSelected && selectedShades.every((s) => effectiveShadeState(s) === "open");
-    const allClosed = !noneSelected && selectedShades.every((s) => effectiveShadeState(s) === "closed");
 
     if (popup._openBtn) {
       popup._openBtn.classList.toggle("active", allOpen);
-      popup._openBtn.classList.toggle("moving", anyMoving);
-      popup._openBtn.disabled = noneSelected || anyMoving;
+      popup._openBtn.classList.toggle("moving", anyMoving && allOpen);
+      // Keep buttons clickable so Open/Close stay responsive (can reverse direction).
+      popup._openBtn.disabled = noneSelected;
     }
     if (popup._closeBtn) {
       popup._closeBtn.classList.toggle("active", allClosed);
-      popup._closeBtn.classList.toggle("moving", anyMoving);
-      popup._closeBtn.disabled = noneSelected || anyMoving;
+      popup._closeBtn.classList.toggle("moving", anyMoving && allClosed);
+      popup._closeBtn.disabled = noneSelected;
     }
 
-    const positioned = selectedShades.filter((s) => s.pos != null);
+    const positioned = selectedShades.filter((s) => s.pos != null || effectiveShadePosition(s) != null);
     if (popup._slider && popup._levelLabel && positioned.length && !popup._slider.classList.contains("dragging")) {
       const pos = averageShadePosition(positioned);
       postCall("setSliderLevel", popup._slider, pos);
@@ -3825,12 +3839,12 @@
     const ids = windowShades.map((s) => s.i);
     shadeMasterSession = { ids: ids.slice(), allIds: ids.slice() };
     publishMld({ shadeMasterSession });
-    renderShadeMasterBody();
-    updateShadeMasterHead();
     const popup = ensureShadeMasterPopup();
     popup.removeAttribute("hidden");
     popup.classList.add("open");
     publishMld({ shadeMasterPopup: popup });
+    renderShadeMasterBody();
+    updateShadeMasterHead();
   }
 
   function closeShadeMasterPopup() {
@@ -6480,14 +6494,10 @@
         if (d.st != null) shade.st = d.st;
         if (d.pos != null) shade.pos = d.pos;
         const opt = shadeOptimistic.get(Number(d.i));
-        if (opt) {
-          let matched = true;
-          if (opt.st != null && shade.st !== opt.st) matched = false;
-          if (opt.pos != null && shade.pos !== opt.pos) matched = false;
-          if (matched) clearShadeOptimistic(Number(d.i));
-        }
+        if (opt && shadeOptimisticSatisfied(opt, shade)) clearShadeOptimistic(Number(d.i));
         if (currentCategory() === "blinds") refreshBlindsPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        if (shadeMasterPopup?.classList.contains("open")) postCall("updateShadeMasterBody");
         return;
       }
       if (fan) {
@@ -6661,18 +6671,21 @@
 
   async function sendShadeCmd(id, cmd, val, opts) {
     const quiet = opts?.quiet;
+    const skipOptimistic = opts?.skipOptimistic;
     const shade = windowShades.find(s => s.i === id);
     if (!shade) return { ok: false };
     if (!quiet) hapticTap();
-    let patch = {};
-    if (cmd === "open") patch = { st: "opening" };
-    else if (cmd === "close") patch = { st: "closing" };
-    else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
-    if (patch.st != null || patch.pos != null) {
-      setShadeOptimistic(id, patch);
-      if (!quiet) {
-        if (currentCategory() === "blinds") refreshBlindsPopup();
-        else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+    if (!skipOptimistic) {
+      let patch = {};
+      if (cmd === "open") patch = { st: "opening" };
+      else if (cmd === "close") patch = { st: "closing" };
+      else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
+      if (patch.st != null || patch.pos != null) {
+        setShadeOptimistic(id, patch);
+        if (!quiet) {
+          if (currentCategory() === "blinds") refreshBlindsPopup();
+          else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        }
       }
     }
     const result = await sendCmd(id, cmd, val);
@@ -6683,6 +6696,7 @@
         if (currentCategory() === "blinds") refreshBlindsPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
       }
+      if (shadeMasterPopup?.classList.contains("open")) postCall("updateShadeMasterBody");
     } else {
       reconcileShade(id);
     }
@@ -6772,15 +6786,19 @@
     }
     if (!shades.length) return;
 
+    // Bulk Open/Close jump to the settled end-state so the master popup gets
+    // immediate active/slider feedback (individual tiles still use opening/closing).
     for (const shade of shades) {
       let patch = {};
-      if (cmd === "open") patch = { st: "opening" };
-      else if (cmd === "close") patch = { st: "closing" };
+      if (cmd === "open") patch = { st: "open", pos: shade.pos != null ? 100 : undefined };
+      else if (cmd === "close") patch = { st: "closed", pos: shade.pos != null ? 0 : undefined };
       else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
       if (patch.st != null || patch.pos != null) setShadeOptimistic(shade.i, patch);
     }
 
-    for (const shade of shades) sendShadeCmd(shade.i, cmd, val, { quiet: true });
+    for (const shade of shades) {
+      sendShadeCmd(shade.i, cmd, val, { quiet: true, skipOptimistic: true });
+    }
 
     if (!skipMasterUpdate && shadeMasterPopup?.classList.contains("open")) {
       postCall("updateShadeMasterBody");

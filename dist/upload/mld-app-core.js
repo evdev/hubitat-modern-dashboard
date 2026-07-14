@@ -2335,18 +2335,12 @@
     openBtn.type = "button";
     openBtn.innerHTML = SHADE_OPEN_SVG + '<span class="quick-lock-btn-label">Open</span>';
     openBtn.disabled = noneSelected;
-    openBtn.addEventListener("click", () => {
-      hapticTap();
-      M.postCall("broadcastShadeCmd", "open");
-    });
+    openBtn.addEventListener("click", () => M.postCall("broadcastShadeCmd", "open"));
     const closeBtn = ce("button", "quick-lock-btn shade-btn");
     closeBtn.type = "button";
     closeBtn.innerHTML = SHADE_CLOSE_SVG + '<span class="quick-lock-btn-label">Close</span>';
     closeBtn.disabled = noneSelected;
-    closeBtn.addEventListener("click", () => {
-      hapticTap();
-      M.postCall("broadcastShadeCmd", "close");
-    });
+    closeBtn.addEventListener("click", () => M.postCall("broadcastShadeCmd", "close"));
     actions.appendChild(openBtn);
     actions.appendChild(closeBtn);
     body.appendChild(actions);
@@ -2385,26 +2379,33 @@
 
   function updateShadeMasterBody() {
     const popup = M.shadeMasterPopup;
-    if (!popup?.classList.contains("open")) return;
+    if (!popup || popup.hidden) return;
     const selectedIds = new Set(M.shadeMasterSession?.ids || []);
     const selectedShades = M.windowShades.filter((s) => selectedIds.has(s.i));
     const noneSelected = !selectedShades.length;
+    const allOpen = !noneSelected && selectedShades.every((s) => {
+      const st = M.effectiveShadeState(s);
+      return st === "open" || st === "opening";
+    });
+    const allClosed = !noneSelected && selectedShades.every((s) => {
+      const st = M.effectiveShadeState(s);
+      return st === "closed" || st === "closing";
+    });
     const anyMoving = !noneSelected && selectedShades.some((s) => M.shadeIsMoving(s));
-    const allOpen = !noneSelected && selectedShades.every((s) => M.effectiveShadeState(s) === "open");
-    const allClosed = !noneSelected && selectedShades.every((s) => M.effectiveShadeState(s) === "closed");
 
     if (popup._openBtn) {
       popup._openBtn.classList.toggle("active", allOpen);
-      popup._openBtn.classList.toggle("moving", anyMoving);
-      popup._openBtn.disabled = noneSelected || anyMoving;
+      popup._openBtn.classList.toggle("moving", anyMoving && allOpen);
+      // Keep buttons clickable so Open/Close stay responsive (can reverse direction).
+      popup._openBtn.disabled = noneSelected;
     }
     if (popup._closeBtn) {
       popup._closeBtn.classList.toggle("active", allClosed);
-      popup._closeBtn.classList.toggle("moving", anyMoving);
-      popup._closeBtn.disabled = noneSelected || anyMoving;
+      popup._closeBtn.classList.toggle("moving", anyMoving && allClosed);
+      popup._closeBtn.disabled = noneSelected;
     }
 
-    const positioned = selectedShades.filter((s) => s.pos != null);
+    const positioned = selectedShades.filter((s) => s.pos != null || M.effectiveShadePosition(s) != null);
     if (popup._slider && popup._levelLabel && positioned.length && !popup._slider.classList.contains("dragging")) {
       const pos = M.averageShadePosition(positioned);
       M.postCall("setSliderLevel", popup._slider, pos);
@@ -2423,12 +2424,12 @@
     const ids = M.windowShades.map((s) => s.i);
     M.shadeMasterSession = { ids: ids.slice(), allIds: ids.slice() };
     M.publishMld({ shadeMasterSession: M.shadeMasterSession });
-    renderShadeMasterBody();
-    updateShadeMasterHead();
     const popup = ensureShadeMasterPopup();
     popup.removeAttribute("hidden");
     popup.classList.add("open");
     M.publishMld({ shadeMasterPopup: popup });
+    renderShadeMasterBody();
+    updateShadeMasterHead();
   }
 
   function closeShadeMasterPopup() {

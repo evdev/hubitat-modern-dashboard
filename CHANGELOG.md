@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.74
+
+- **Blinds master popup:** Open/Close stay clickable while shades move so you can
+  reverse direction; active state and slider update immediately on bulk commands.
+- **Blinds:** optimistic UI clears when the hub reports the settled open/closed state
+  even if we still held opening/closing.
+
 ## 0.2.73
 
 - **Scheduler:** optional "Hide scheduler" app preference — hides the Scheduler tab and stops all schedule jobs on the hub while keeping saved schedules for re-enable.
