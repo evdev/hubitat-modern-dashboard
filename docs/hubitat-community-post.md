@@ -59,7 +59,9 @@ Maker API setup. Rooms and names come from your Hubitat room assignments. You
   thermostat control**
 - **Security & home** — locks (optional PIN), HSM arm/disarm (optional PIN),
   Hubitat scenes, hub mode
-- **Shades / blinds** — open/close/pause and drag-to-position
+- **Shades / blinds** — open/close/pause and drag-to-position; pickers for Window
+  Shade, Window Blind, and Switch Level (dimmer-style) drivers. The Switch Level
+  list also includes ordinary dimmers — select only real shades/blinds there
 - **Ceiling fans** — on/off and speed control on a dedicated Fans tab
 - **Music / media** — Sonos, Echo Speaks, AirPlay, Chromecast (where supported)
 - **Sensors** — motion, contact, shock/glass-break, water, presence, humidity,

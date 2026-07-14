@@ -165,8 +165,26 @@ menu** in app preferences if you only use per-room headers.
 
 ### Motorized shades & blinds
 
-Select devices with the `windowShade` capability. They appear in the **Blinds**
-quick-nav popup and as tiles grouped by room on that view.
+Shades and blinds appear in the **Blinds** quick-nav popup and as tiles grouped
+by room on that view. App preferences use three pickers because Hubitat drivers
+advertise different capabilities:
+
+| Preference picker | Capability | Use when |
+| ----------------- | ---------- | -------- |
+| Window Shade drivers | `windowShade` | Standard motorized shade drivers |
+| Window Blind drivers | `windowBlind` | Drivers that use Window Blind (including tilt) |
+| Dimmer / Switch Level drivers | `switchLevel` | Drivers that only look like a dimmer (no Window Shade) — common for Hubitat Virtual Shade and many community motors |
+
+**Limitation (Switch Level list):** Hubitat device selectors filter by capability
+only. The dimmer / Switch Level picker lists **every** dimmable device on the hub
+(lights, dimmers, and shade drivers that use `setLevel`). Select **only** devices
+that are actually shades or blinds. Do not pick ordinary lights here — put those
+under **Lights**. There is no Hubitat API to hide non-shade dimmers from that list.
+
+Commands prefer shade APIs when present (`open` / `close` / `setPosition` /
+`stopPositionChange`), and fall back to switch/level (`on` / `off` / `setLevel` /
+`stop`) for dimmer-style drivers. Position and status can come from `level` /
+`switch` when `position` / `windowShade` are absent.
 
 - Open / close / pause buttons
 - Drag the position slider to set shade level
@@ -595,7 +613,9 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Thermostats | Room header + Thermostats popup | Mode, setpoints, fan | All thermostats bulk |
 | Temperature sensors | Room header (read-only) | — | Sensors popup |
 | Locks | — | — | Locks popup (locks + garage doors) |
-| Shades | — | — | Blinds popup; All blinds bulk |
+| Shades (Window Shade) | — | — | Blinds popup; All blinds bulk |
+| Blinds (Window Blind) | — | — | Blinds popup; All blinds bulk |
+| Shades (Switch Level) | — | — | Blinds popup; All blinds bulk — pick shades only; list also includes normal dimmers |
 | Ceiling fans | — | — | Fans popup; All fans bulk |
 | Music / speakers | — | — | Music popup |
 | Motion, contact, water, etc. | — | — | Sensors popup |
@@ -606,6 +626,11 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 Outlets may also be selected in the **Lights** picker (they then behave as
 lights, including room/house on/off). The **Outlets** picker and optional
 **separate Outlets tab** only include devices selected under **Outlets**.
+
+The **Shades (Switch Level)** picker is for shade/blind drivers that only
+advertise dimmer capabilities. Hubitat cannot filter that list to shades alone,
+so every Switch Level device appears — select only real shades/blinds, never
+ordinary lights (use **Lights** for those).
 
 ## Community and wider distribution
 
@@ -688,6 +713,11 @@ Kitchen room are not shortened incorrectly.
   dashboard or scheduler. Outlets can appear in room cards or a separate Outlets
   tab (companion app preference); they are excluded from room/house on/off and
   light snapshots either way.
+- Shade/blind drivers that only advertise **Switch Level** (dimmer-style) are
+  selected via a separate picker. Hubitat cannot filter that list to shades
+  alone, so ordinary lights and dimmers appear there too — select **only** real
+  shades/blinds; put lights under **Lights**. See
+  [Motorized shades & blinds](#motorized-shades--blinds).
 - Cloud responses are capped at ~128 KB; the slim API supports ~130 lights on one
   page but very large installs may need device subsetting.
 - Service worker does not cache — refresh always fetches from the hub.

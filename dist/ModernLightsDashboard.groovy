@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.71
+// Modern Dashboard v0.2.72
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -38,7 +38,7 @@ def mainPage() {
             paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
             paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
             paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            paragraph "<small>Version 0.2.71 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.72 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -54,11 +54,13 @@ def mainPage() {
             paragraph "<small>When <b>quick menu</b> is off, thermostats only appear in each room card on the Lights tab.</small>"
             input "tempSensors", "capability.temperatureMeasurement", title: "Temperature sensors (display only)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "windowShades", "capability.windowShade", title: "Select motorized shades & blinds",
+            input "windowShades", "capability.windowShade", title: "Shades & blinds (Window Shade drivers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "windowShadesVirtual", "device.VirtualShade", title: "Virtual shades (Hubitat built-in driver)",
+            input "windowBlinds", "capability.windowBlind", title: "Blinds (Window Blind drivers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            paragraph "<small>Hubitat's built-in <b>Virtual Shade</b> driver advertises Switch Level instead of Window Shade, so it only appears in the second list. Other motorized shades belong in the first list.</small>"
+            input "windowShadesLevel", "capability.switchLevel", title: "Shades & blinds (dimmer / Switch Level drivers)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            paragraph "<small>Use the first two lists for drivers that advertise <b>Window Shade</b> or <b>Window Blind</b>. Many shade/blind drivers (including Hubitat's Virtual Shade and some community motors) only advertise <b>Switch Level</b> like a dimmer — pick those in the third list. <b>Limitation:</b> Hubitat filters by capability only, so the Switch Level list also includes ordinary lights and dimmers. Select <b>only</b> devices that are actually shades or blinds there — put real lights under Lights above. Position uses <code>setPosition</code> when available, otherwise <code>setLevel</code>; open/close fall back to on/off.</small>"
             input "ceilingFans", "capability.fanControl", title: "Ceiling fans",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             paragraph "<small>Fans use Hubitat <b>FanControl</b> speeds (typically low/medium/high for AC fans, or a device-reported list for DC fans). On restores the last speed on the hub.</small>"
@@ -232,17 +234,17 @@ def allAudioDevices() {
 def allWindowShades() {
     def out = []
     def seen = [:]
-    for (d in asDeviceList(windowShades)) {
-        def key = d.id?.toString()
-        if (!key || seen[key]) continue
-        seen[key] = true
-        out << d
-    }
-    for (d in asDeviceList(windowShadesVirtual)) {
-        def key = d.id?.toString()
-        if (!key || seen[key]) continue
-        seen[key] = true
-        out << d
+    // Window Shade, Window Blind, and Switch Level (dimmer-style) shade drivers.
+    // settings.windowShadesVirtual: one-release migration from an earlier Virtual Shade-only picker.
+    for (list in [windowShades, windowBlinds, windowShadesLevel, settings?.windowShadesVirtual]) {
+        for (d in asDeviceList(list)) {
+            if (d == null) continue
+            def key = null
+            try { key = d.id?.toString() } catch (e) { key = null }
+            if (!key || seen[key]) continue
+            seen[key] = true
+            out << d
+        }
     }
     return out
 }
@@ -255,6 +257,8 @@ def shadePosition(dev) {
 
 def shadeStatus(dev) {
     def st = safeCurrent(dev, "windowShade")
+    if (st != null) return st
+    st = safeCurrent(dev, "windowBlind")
     if (st != null) return st
     def pos = shadePosition(dev)
     if (pos != null) {

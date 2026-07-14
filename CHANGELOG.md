@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.72
+
+- **Blinds:** three device pickers — Window Shade, Window Blind, and Switch Level —
+  so dimmer-style shade/blind drivers (Virtual Shade, many community motors) can be
+  selected even when they lack Window Shade. Migrates selections from the prior
+  Virtual Shade-only picker. Position/status fall back to `level` / `switch`;
+  open/close/set/stop fall back to on/off/`setLevel` when needed.
+- **Docs:** Switch Level shade picker limitation documented — Hubitat lists every
+  dimmer there; select only real shades/blinds, not ordinary lights.
+
 ## 0.2.71
 
 - **Blinds:** support Hubitat's built-in **Virtual Shade** driver — separate picker,
