@@ -199,7 +199,7 @@ function buildMockData(count) {
   return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", roomOrder: [], navOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101] }, rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, schedulerEnabled: true, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
+  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes() };
 }
 
 function tstatOstateForMode(tm) {
@@ -371,6 +371,16 @@ function dashboardPasswordRequired() {
 
 const dashSessions = new Map(); // token -> expiresAt
 let dashSessionSeq = 0;
+let dashPwFp = "";
+
+function syncDashPasswordEpoch() {
+  const enabled = state.dashboardPasswordEnabled === true ? "1" : "0";
+  const fp = enabled + "|" + MOCK_DASH_PASSWORD;
+  if (dashPwFp !== fp) {
+    dashPwFp = fp;
+    dashSessions.clear();
+  }
+}
 
 function pruneDashSessions(nowMs = Date.now()) {
   for (const [token, exp] of dashSessions) {
@@ -379,6 +389,7 @@ function pruneDashSessions(nowMs = Date.now()) {
 }
 
 function issueDashboardSession() {
+  syncDashPasswordEpoch();
   const nowMs = Date.now();
   pruneDashSessions(nowMs);
   dashSessionSeq += 1;
@@ -390,6 +401,7 @@ function issueDashboardSession() {
 
 function validateAndRenewDashboardSession(token) {
   if (!token || !dashboardPasswordRequired()) return null;
+  syncDashPasswordEpoch();
   const key = String(token).trim();
   if (!key) return null;
   const nowMs = Date.now();
@@ -511,6 +523,7 @@ const server = createServer(async (req, res) => {
     return res.end(readB64Icon("mld-icon-512.png", 512));
   }
   if (p === "/auth/status") {
+    if (!dashboardPasswordRequired()) syncDashPasswordEpoch();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({ required: dashboardPasswordRequired() }));
   }
@@ -536,6 +549,11 @@ const server = createServer(async (req, res) => {
     return res.end(JSON.stringify({ ok: true, session: issued.session, expiresAt: issued.expiresAt }));
   }
   if (p === "/auth/renew") {
+    if (!dashboardPasswordRequired()) {
+      syncDashPasswordEpoch();
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: true, required: false }));
+    }
     const auth = requireDashAuth(res, url, null);
     if (!auth) return;
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });

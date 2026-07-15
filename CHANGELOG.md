@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.76
+
+- **Rooms:** companion app option to hide temperature and thermostat indicators on
+  room cards (default on); climate-only rooms are hidden from the Lights tab when off.
+- **Dashboard password:** sessions invalidate when the password is disabled or changed;
+  password gate dismisses automatically when protection is turned off (including while
+  the gate is open).
+
 ## 0.2.75
 
 - **Blinds:** shade commands route correctly when a device is also listed as a light

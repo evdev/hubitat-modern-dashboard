@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.75
+// Modern Dashboard v0.2.76
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -42,7 +42,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.2.75 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.76 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -55,9 +55,12 @@ def mainPage() {
             input "thermostats", "capability.thermostat", title: "Select your thermostats",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "thermostatsPopupEnabled", "bool", title: "Show thermostats in dashboard quick menu", defaultValue: true, submitOnChange: true
-            paragraph "<small>When <b>quick menu</b> is off, thermostats only appear in each room card on the Lights tab.</small>"
+            paragraph "<small>When <b>quick menu</b> is off, thermostats only appear in each room card on the Lights tab (unless <b>room cards</b> climate display is off).</small>"
             input "tempSensors", "capability.temperatureMeasurement", title: "Temperature sensors (display only)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "roomClimateEnabled", "bool", title: "Show temperature and thermostat on room cards",
+                defaultValue: true, submitOnChange: true
+            paragraph "<small>When off, room cards on the Lights tab no longer show the climate widget. Thermostats and temperature sensors remain available in their quick-nav tabs when those are enabled.</small>"
             input "windowShades", "capability.windowShade", title: "Shades & blinds (Window Shade drivers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "windowBlinds", "capability.windowBlind", title: "Blinds (Window Blind drivers)",
@@ -201,6 +204,7 @@ def installed() {
 
 def updated() {
     logInit()
+    try { syncDashPasswordEpoch() } catch (e) { log.warn "Modern Dashboard: dash password sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
 }
@@ -1188,6 +1192,7 @@ def renderData() {
     out << ",\"hsmPinRequired\":" << (hsmEnabled == true && hsmPinEnabled == true && hsmPin?.toString()?.trim() ? "true" : "false")
     out << ",\"thermostatsPopupEnabled\":" << (thermostatsPopupEnabled == true ? "true" : "false")
     out << ",\"outletsSeparateTab\":" << (outletsSeparateTab == true ? "true" : "false")
+    out << ",\"roomClimateEnabled\":" << (roomClimateEnabled == null ? "true" : (roomClimateEnabled == true ? "true" : "false"))
     out << ",\"schedulerEnabled\":" << (schedulerIsEnabled() ? "true" : "false")
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
     out << ",\"unlockPinEnabled\":" << (unlockPinEnabled == true ? "true" : "false")
@@ -2813,7 +2818,8 @@ def saveDashSessionsMap(map) {
 }
 
 def syncDashPasswordEpoch() {
-    def fp = dashboardPassword?.toString()?.trim() ?: ""
+    def enabled = dashboardPasswordEnabled == true ? "1" : "0"
+    def fp = enabled + "|" + (dashboardPassword?.toString()?.trim() ?: "")
     if (state.dashPwFp != fp) {
         state.dashPwFp = fp
         state.dashSessionsJson = "{}"
@@ -2931,6 +2937,7 @@ def withAuthJson(baseJson) {
 }
 
 def authStatus() {
+    if (!dashboardPasswordRequired()) syncDashPasswordEpoch()
     render contentType: "application/json", data: '{"required":' + (dashboardPasswordRequired() ? "true" : "false") + '}', status: 200
 }
 

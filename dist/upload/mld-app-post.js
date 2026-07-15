@@ -1140,6 +1140,7 @@
     M.hsmPinRequired = !!d.hsmPinRequired;
     M.thermostatsPopupEnabled = d.thermostatsPopupEnabled !== false;
     M.outletsSeparateTab = !!d.outletsSeparateTab;
+    M.roomClimateEnabled = d.roomClimateEnabled !== false;
     M.schedulerEnabled = d.schedulerEnabled !== false;
     M.unlockPinEnabled = !!d.unlockPinEnabled;
     M.unlockPinRequired = !!d.unlockPinRequired;
@@ -1187,12 +1188,13 @@
       if (!groups.has(rid)) groups.set(rid, []);
       groups.get(rid).push(dev);
     }
-    const hasContent = (rid) => (groups.get(normalizeRoomId(rid))?.length || M.roomHasClimate(rid));
+    const hasContent = (rid) => (groups.get(normalizeRoomId(rid))?.length || M.roomShowsClimate(rid));
     const displayOrder = M.getDisplayRoomIds(groups, hasContent);
 
     const sig = displayOrder.join(",") + "|" + M.devices.map(x => x.i).join(",")
       + "|" + M.outlets.map(x => x.i).join(",") + "|" + (M.outletsSeparateTab ? 1 : 0)
-      + "|" + M.thermostats.map(x => x.i).join(",") + "|" + M.tempSensors.map(x => x.i).join(",");
+      + "|" + M.thermostats.map(x => x.i).join(",") + "|" + M.tempSensors.map(x => x.i).join(",")
+      + "|" + (M.roomClimateEnabled ? 1 : 0);
     const fullRerender = sig !== M.lastDataSig;
     M.lastDataSig = sig;
 
@@ -1230,7 +1232,7 @@
     const hasContent = (rid) => {
       const key = normalizeRoomId(rid);
       const hasOutlets = M.outletsInLightsRooms() && (outletGroups.get(key)?.length || 0) > 0;
-      return (groups.get(key)?.length || hasOutlets || M.roomHasClimate(key));
+      return (groups.get(key)?.length || hasOutlets || M.roomShowsClimate(key));
     };
 
     const orderedIds = M.getDisplayRoomIds(groups, hasContent);
@@ -1275,7 +1277,7 @@
       head.appendChild(moveBtns);
 
       // climate widget (thermostat or temp sensor) — left of Off button
-      const climate = M.roomClimateInfo(roomKey);
+      const climate = M.roomClimateEnabled ? M.roomClimateInfo(roomKey) : null;
       if (climate) {
         const el = ce(climate.controllable ? "button" : "div",
           "room-climate" + (climate.controllable ? " room-climate-control" : " room-climate-sensor"));
@@ -1662,7 +1664,7 @@
       const total = devs.length;
       const outletOn = roomOutlets.filter((o) => M.effectiveSwitch(o)).length;
       const outletTotal = roomOutlets.length;
-      const hasClimate = M.roomHasClimate(rid);
+      const hasClimate = M.roomShowsClimate(rid);
       let text;
       if (total > 0) {
         text = onCount ? onCount + " of " + total + " on" : (total + " light" + (total === 1 ? "" : "s"));
@@ -1674,11 +1676,11 @@
         text = outletOn
           ? outletOn + " of " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s") + " on"
           : (outletTotal + " outlet" + (outletTotal === 1 ? "" : "s"));
-      } else if (M.thermoByRoom.has(rid)) {
+      } else if (hasClimate && M.thermoByRoom.has(rid)) {
         const t = (M.thermoByRoom.get(rid) || [])[0];
         const tm = String(t?.tm || "").toLowerCase();
         text = tm && tm !== "off" ? tm : "Thermostat";
-      } else if (M.sensorByRoom.has(rid)) {
+      } else if (hasClimate && M.sensorByRoom.has(rid)) {
         text = (M.sensorByRoom.get(rid)[0]?.n) || "Temperature";
       } else {
         text = "";

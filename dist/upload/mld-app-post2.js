@@ -2812,6 +2812,31 @@
 
   // Password gate UI lives here (post2) so mld-app.js stays under Hubitat's 128 KB
   // File Manager limit — putting it in part1 previously left only ~3 KB headroom.
+  let dashGateRecheckTimer = null;
+  const DASH_GATE_RECHECK_MS = 8000;
+
+  function stopDashGateRecheck() {
+    if (dashGateRecheckTimer) {
+      clearInterval(dashGateRecheckTimer);
+      dashGateRecheckTimer = null;
+    }
+  }
+
+  function syncDashboardAuthState(required) {
+    if (required) {
+      M.dashboardPasswordRequired = true;
+      return;
+    }
+    M.dashboardPasswordRequired = false;
+    M.clearDashSession();
+    if (M.isDashboardGateOpen()) {
+      const resolve = M.gateState?.resolve;
+      stopDashGateRecheck();
+      closeDashboardGate();
+      resolve?.();
+    }
+  }
+
   async function fetchAuthStatus() {
     const r = await M.fetchWithTimeout(M.withToken("auth/status"), {
       cache: "no-store",
@@ -2820,6 +2845,28 @@
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
   }
+
+  async function recheckDashboardAuthWhileGateOpen() {
+    if (!M.isDashboardGateOpen()) {
+      stopDashGateRecheck();
+      return;
+    }
+    try {
+      const status = await fetchAuthStatus();
+      if (!status?.required) syncDashboardAuthState(false);
+    } catch {}
+  }
+
+  function startDashGateRecheck() {
+    stopDashGateRecheck();
+    dashGateRecheckTimer = setInterval(recheckDashboardAuthWhileGateOpen, DASH_GATE_RECHECK_MS);
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && M.isDashboardGateOpen()) {
+      recheckDashboardAuthWhileGateOpen();
+    }
+  });
 
   async function unlockDashboard(password) {
     async function parseUnlockResponse(r) {
@@ -2836,6 +2883,10 @@
         else if (typeof err === "string" && err.trim()) msg = err.trim();
         else if (err != null && err !== true) msg = String(err);
         return { ok: false, error: msg };
+      }
+      if (data?.required === false) {
+        syncDashboardAuthState(false);
+        return { ok: true };
       }
       if (!data?.session && !data?.dashSession) {
         return { ok: false, error: "Unlock failed" };
@@ -2945,11 +2996,13 @@
     popup.hidden = false;
     popup.classList.remove("shake");
     popup.classList.add("open");
+    startDashGateRecheck();
     if (!alreadyOpen) requestAnimationFrame(() => popup._input.focus());
   }
 
   function closeDashboardGate() {
     if (!M.gatePopup) return;
+    stopDashGateRecheck();
     M.gatePopup.classList.remove("open", "shake");
     M.gatePopup.hidden = true;
     M.gateState = null;
@@ -2970,14 +3023,17 @@
       try {
         status = await fetchAuthStatus();
       } catch {
-        return;
+        try {
+          status = await fetchAuthStatus();
+        } catch {
+          return;
+        }
       }
       if (!status?.required) {
-        M.dashboardPasswordRequired = false;
-        M.clearDashSession();
+        syncDashboardAuthState(false);
         return;
       }
-      M.dashboardPasswordRequired = true;
+      syncDashboardAuthState(true);
       if (M.isDashSessionFresh()) {
         M.setupDashSessionActivityRenewal();
         return;
@@ -3053,5 +3109,5 @@
   })();
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
-  Object.assign(M, { makeShadeTile, updateShadeTile, updateFavoriteShadeTile, shadesListSignature, refreshBlindsPopup, renderBlindsPopup, toggleCeilingFan, stepCeilingFanSpeed, makeFanTile, updateFanTile, fansListSignature, refreshFansPopup, renderFansPopup, renderOutletsPopup, normalizeTempSensorForCard, syncDualSensorSources, applySensorLiveAttr, refreshSensorViews, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, setQuickBodyClass, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, allSensorRoomsCollapsed, expandAllSensorRooms, collapseAllSensorRooms, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, fetchAuthStatus, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
+  Object.assign(M, { makeShadeTile, updateShadeTile, updateFavoriteShadeTile, shadesListSignature, refreshBlindsPopup, renderBlindsPopup, toggleCeilingFan, stepCeilingFanSpeed, makeFanTile, updateFanTile, fansListSignature, refreshFansPopup, renderFansPopup, renderOutletsPopup, normalizeTempSensorForCard, syncDualSensorSources, applySensorLiveAttr, refreshSensorViews, makeMusicRow, updateFavoriteMusicRow, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, setQuickBodyClass, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, allSensorRoomsCollapsed, expandAllSensorRooms, collapseAllSensorRooms, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, stopDashGateRecheck, syncDashboardAuthState, fetchAuthStatus, recheckDashboardAuthWhileGateOpen, startDashGateRecheck, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
 })();

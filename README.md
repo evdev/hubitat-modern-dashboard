@@ -600,6 +600,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Dashboard access | Dashboard password | Off | Password required to open dashboard (7-day sliding session) |
 | Locks | Unlock PIN | Off | PIN required to unlock / open garage from dashboard |
 | Thermostats | Show in quick menu | On | Hide thermostats nav icon when off |
+| Thermostats / temp sensors | Show on room cards | On | Hide climate widget on Lights tab when off |
 | Security | HSM enabled | Off | Show Security quick-nav icon |
 | Security | HSM PIN | Off | PIN required to arm/disarm |
 | Hub file access | Username / password | — | Only if Hub Login Security blocks file reads |
@@ -610,8 +611,8 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | ---------- | ---------------- | --------- | ----------- |
 | Lights (switches & dimmers) | Tiles by room | On/off, dim, CT | — |
 | Outlets | Socket tiles by room, or separate Outlets tab (preference) | On/off only | Favorites |
-| Thermostats | Room header + Thermostats popup | Mode, setpoints, fan | All thermostats bulk |
-| Temperature sensors | Room header (read-only) | — | Sensors popup |
+| Thermostats | Room header + Thermostats popup (when quick menu on) | Mode, setpoints, fan | All thermostats bulk |
+| Temperature sensors | Room header (read-only, when room cards on) | — | Sensors popup |
 | Locks | — | — | Locks popup (locks + garage doors) |
 | Shades (Window Shade) | — | — | Blinds popup; All blinds bulk |
 | Blinds (Window Blind) | — | — | Blinds popup; All blinds bulk |

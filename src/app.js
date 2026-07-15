@@ -190,6 +190,7 @@
   let hsmPinRequired = false;
   let thermostatsPopupEnabled = false;
   let outletsSeparateTab = false;
+  let roomClimateEnabled = true;
   let schedulerEnabled = true;
   let unlockPinEnabled = false;
   let unlockPinRequired = false;
@@ -1213,6 +1214,10 @@
         }
         if (!r.ok) return false;
         const data = await r.json();
+        if (data?.required === false) {
+          postCall("syncDashboardAuthState", false);
+          return false;
+        }
         applyDashSessionFromResponse(data);
         dashSessionLastRenewAt = Date.now();
         return isDashSessionFresh();
@@ -1240,7 +1245,7 @@
   }
 
   function isDashboardGateOpen() {
-    return !!gatePopup?.classList.contains("open");
+    return !!document.querySelector(".dash-gate-popup.open");
   }
 
   function setupDashSessionActivityRenewal() {
@@ -1311,6 +1316,9 @@
 
   async function fetchData() {
     const d = await getJson("data");
+    if (d && typeof d.dashboardPasswordRequired === "boolean") {
+      postCall("syncDashboardAuthState", !!d.dashboardPasswordRequired);
+    }
     if (d && d.config) {
       if (d.config.pollIntervalMs) cfg.pollIntervalMs = d.config.pollIntervalMs;
       if (typeof d.config.useWebSocket === "boolean") cfg.useWebSocket = d.config.useWebSocket;
@@ -4332,11 +4340,15 @@
     return !outletsSeparateTab;
   }
 
+  function roomShowsClimate(rid) {
+    return roomClimateEnabled !== false && roomHasClimate(rid);
+  }
+
   function getDisplayRoomIds(groups, hasContent) {
     const knownIds = new Set(rooms.map(r => r.id));
     const allIds = new Set(knownIds);
     for (const id of contentRoomIds()) allIds.add(id);
-    const hasUnassigned = groups.has(-1) || (outletsInLightsRooms() && outletsByRoom.has(-1)) || roomHasClimate(-1);
+    const hasUnassigned = groups.has(-1) || (outletsInLightsRooms() && outletsByRoom.has(-1)) || roomShowsClimate(-1);
     let order;
     if (cfg.roomOrder?.length) {
       order = cfg.roomOrder.map(normalizeRoomId).filter(id => {
@@ -5527,6 +5539,7 @@
     hsmPinRequired = !!d.hsmPinRequired;
     thermostatsPopupEnabled = d.thermostatsPopupEnabled !== false;
     outletsSeparateTab = !!d.outletsSeparateTab;
+    roomClimateEnabled = d.roomClimateEnabled !== false;
     schedulerEnabled = d.schedulerEnabled !== false;
     unlockPinEnabled = !!d.unlockPinEnabled;
     unlockPinRequired = !!d.unlockPinRequired;
@@ -5574,12 +5587,13 @@
       if (!groups.has(rid)) groups.set(rid, []);
       groups.get(rid).push(dev);
     }
-    const hasContent = (rid) => (groups.get(normalizeRoomId(rid))?.length || roomHasClimate(rid));
+    const hasContent = (rid) => (groups.get(normalizeRoomId(rid))?.length || roomShowsClimate(rid));
     const displayOrder = getDisplayRoomIds(groups, hasContent);
 
     const sig = displayOrder.join(",") + "|" + devices.map(x => x.i).join(",")
       + "|" + outlets.map(x => x.i).join(",") + "|" + (outletsSeparateTab ? 1 : 0)
-      + "|" + thermostats.map(x => x.i).join(",") + "|" + tempSensors.map(x => x.i).join(",");
+      + "|" + thermostats.map(x => x.i).join(",") + "|" + tempSensors.map(x => x.i).join(",")
+      + "|" + (roomClimateEnabled ? 1 : 0);
     const fullRerender = sig !== lastDataSig;
     lastDataSig = sig;
 
@@ -5617,7 +5631,7 @@
     const hasContent = (rid) => {
       const key = normalizeRoomId(rid);
       const hasOutlets = outletsInLightsRooms() && (outletGroups.get(key)?.length || 0) > 0;
-      return (groups.get(key)?.length || hasOutlets || roomHasClimate(key));
+      return (groups.get(key)?.length || hasOutlets || roomShowsClimate(key));
     };
 
     const orderedIds = getDisplayRoomIds(groups, hasContent);
@@ -5662,7 +5676,7 @@
       head.appendChild(moveBtns);
 
       // climate widget (thermostat or temp sensor) — left of Off button
-      const climate = roomClimateInfo(roomKey);
+      const climate = roomClimateEnabled ? roomClimateInfo(roomKey) : null;
       if (climate) {
         const el = ce(climate.controllable ? "button" : "div",
           "room-climate" + (climate.controllable ? " room-climate-control" : " room-climate-sensor"));
@@ -6049,7 +6063,7 @@
       const total = devs.length;
       const outletOn = roomOutlets.filter((o) => effectiveSwitch(o)).length;
       const outletTotal = roomOutlets.length;
-      const hasClimate = roomHasClimate(rid);
+      const hasClimate = roomShowsClimate(rid);
       let text;
       if (total > 0) {
         text = onCount ? onCount + " of " + total + " on" : (total + " light" + (total === 1 ? "" : "s"));
@@ -6061,11 +6075,11 @@
         text = outletOn
           ? outletOn + " of " + outletTotal + " outlet" + (outletTotal === 1 ? "" : "s") + " on"
           : (outletTotal + " outlet" + (outletTotal === 1 ? "" : "s"));
-      } else if (thermoByRoom.has(rid)) {
+      } else if (hasClimate && thermoByRoom.has(rid)) {
         const t = (thermoByRoom.get(rid) || [])[0];
         const tm = String(t?.tm || "").toLowerCase();
         text = tm && tm !== "off" ? tm : "Thermostat";
-      } else if (sensorByRoom.has(rid)) {
+      } else if (hasClimate && sensorByRoom.has(rid)) {
         text = (sensorByRoom.get(rid)[0]?.n) || "Temperature";
       } else {
         text = "";
@@ -9865,6 +9879,31 @@
 
   // Password gate UI lives here (post2) so mld-app.js stays under Hubitat's 128 KB
   // File Manager limit — putting it in part1 previously left only ~3 KB headroom.
+  let dashGateRecheckTimer = null;
+  const DASH_GATE_RECHECK_MS = 8000;
+
+  function stopDashGateRecheck() {
+    if (dashGateRecheckTimer) {
+      clearInterval(dashGateRecheckTimer);
+      dashGateRecheckTimer = null;
+    }
+  }
+
+  function syncDashboardAuthState(required) {
+    if (required) {
+      dashboardPasswordRequired = true;
+      return;
+    }
+    dashboardPasswordRequired = false;
+    clearDashSession();
+    if (isDashboardGateOpen()) {
+      const resolve = gateState?.resolve;
+      stopDashGateRecheck();
+      closeDashboardGate();
+      resolve?.();
+    }
+  }
+
   async function fetchAuthStatus() {
     const r = await fetchWithTimeout(withToken("auth/status"), {
       cache: "no-store",
@@ -9873,6 +9912,28 @@
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
   }
+
+  async function recheckDashboardAuthWhileGateOpen() {
+    if (!isDashboardGateOpen()) {
+      stopDashGateRecheck();
+      return;
+    }
+    try {
+      const status = await fetchAuthStatus();
+      if (!status?.required) syncDashboardAuthState(false);
+    } catch {}
+  }
+
+  function startDashGateRecheck() {
+    stopDashGateRecheck();
+    dashGateRecheckTimer = setInterval(recheckDashboardAuthWhileGateOpen, DASH_GATE_RECHECK_MS);
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && isDashboardGateOpen()) {
+      recheckDashboardAuthWhileGateOpen();
+    }
+  });
 
   async function unlockDashboard(password) {
     async function parseUnlockResponse(r) {
@@ -9889,6 +9950,10 @@
         else if (typeof err === "string" && err.trim()) msg = err.trim();
         else if (err != null && err !== true) msg = String(err);
         return { ok: false, error: msg };
+      }
+      if (data?.required === false) {
+        syncDashboardAuthState(false);
+        return { ok: true };
       }
       if (!data?.session && !data?.dashSession) {
         return { ok: false, error: "Unlock failed" };
@@ -9998,11 +10063,13 @@
     popup.hidden = false;
     popup.classList.remove("shake");
     popup.classList.add("open");
+    startDashGateRecheck();
     if (!alreadyOpen) requestAnimationFrame(() => popup._input.focus());
   }
 
   function closeDashboardGate() {
     if (!gatePopup) return;
+    stopDashGateRecheck();
     gatePopup.classList.remove("open", "shake");
     gatePopup.hidden = true;
     gateState = null;
@@ -10023,14 +10090,17 @@
       try {
         status = await fetchAuthStatus();
       } catch {
-        return;
+        try {
+          status = await fetchAuthStatus();
+        } catch {
+          return;
+        }
       }
       if (!status?.required) {
-        dashboardPasswordRequired = false;
-        clearDashSession();
+        syncDashboardAuthState(false);
         return;
       }
-      dashboardPasswordRequired = true;
+      syncDashboardAuthState(true);
       if (isDashSessionFresh()) {
         setupDashSessionActivityRenewal();
         return;
