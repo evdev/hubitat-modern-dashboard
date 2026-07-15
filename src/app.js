@@ -3,7 +3,6 @@
 
   const ROOMS_EL = document.getElementById("rooms");
   const SEARCH_EL = document.getElementById("search");
-  const SEARCH_WRAP_EL = document.querySelector(".search-wrap");
   const STATUS_EL = document.getElementById("status");
   const ALL_ON_BTN = document.getElementById("all-on");
   const ALL_OFF_BTN = document.getElementById("all-off");
@@ -5167,7 +5166,6 @@
     } else {
       applySearch();
     }
-    syncSearchWrapVisibility();
   }
 
   async function finishReorderMode() {
@@ -9077,9 +9075,8 @@
     }
   }
 
-  function syncSearchWrapVisibility() {
-    if (!SEARCH_WRAP_EL) return;
-    SEARCH_WRAP_EL.hidden = !!(tabMode && activeTab === "cameras");
+  function syncCamerasViewClass(on) {
+    APP_EL?.classList.toggle("cameras-view", !!on);
   }
 
   function showTab(id) {
@@ -9110,7 +9107,7 @@
     if (CENTRAL_BLINDS_BTN) CENTRAL_BLINDS_BTN.hidden = !(tabMode && id === "blinds");
     if (CENTRAL_FAN_BTN) CENTRAL_FAN_BTN.hidden = !(tabMode && id === "fans");
     if (SEARCH_EL) SEARCH_EL.placeholder = nonLights ? "Search " + (TAB_LABELS[id] || "items") : "Search lights or rooms";
-    syncSearchWrapVisibility();
+    syncCamerasViewClass(tabMode && id === "cameras");
     updateTabActiveStates();
     if (nonLights) {
       switch (id) {
@@ -9145,6 +9142,7 @@
     if (QUICK_LIGHTS_BTN) QUICK_LIGHTS_BTN.hidden = !on;
     if (!on) {
       if (activeTab === "cameras") stopCamerasStreams();
+      syncCamerasViewClass(false);
       if (quickPopup && quickPopup.classList.contains("open")) closeQuickPopup();
       activeTab = "lights";
       if (ROOMS_EL) ROOMS_EL.hidden = false;
@@ -9163,7 +9161,6 @@
     }
     updateTabActiveStates();
     updateQuickNavVisibility();
-    syncSearchWrapVisibility();
     updateCurrentCategoryTitle();
   }
 

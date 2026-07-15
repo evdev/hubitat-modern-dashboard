@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.80
+
+- **Cameras:** hide search bar on the Cameras tab via layout class (more reliable than
+  toggling the search element directly).
+
 ## 0.2.79
 
 - **Cameras:** switch to go2rtc **WebRTC** embed (`webrtc.html`) — lower latency than

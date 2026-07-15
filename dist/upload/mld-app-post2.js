@@ -2006,9 +2006,8 @@
     }
   }
 
-  function syncSearchWrapVisibility() {
-    if (!M.SEARCH_WRAP_EL) return;
-    M.SEARCH_WRAP_EL.hidden = !!(M.tabMode && M.activeTab === "cameras");
+  function syncCamerasViewClass(on) {
+    M.APP_EL?.classList.toggle("cameras-view", !!on);
   }
 
   function showTab(id) {
@@ -2039,7 +2038,7 @@
     if (M.CENTRAL_BLINDS_BTN) M.CENTRAL_BLINDS_BTN.hidden = !(M.tabMode && id === "blinds");
     if (M.CENTRAL_FAN_BTN) M.CENTRAL_FAN_BTN.hidden = !(M.tabMode && id === "fans");
     if (M.SEARCH_EL) M.SEARCH_EL.placeholder = nonLights ? "Search " + (M.TAB_LABELS[id] || "items") : "Search lights or rooms";
-    syncSearchWrapVisibility();
+    syncCamerasViewClass(M.tabMode && id === "cameras");
     updateTabActiveStates();
     if (nonLights) {
       switch (id) {
@@ -2074,6 +2073,7 @@
     if (M.QUICK_LIGHTS_BTN) M.QUICK_LIGHTS_BTN.hidden = !on;
     if (!on) {
       if (M.activeTab === "cameras") stopCamerasStreams();
+      syncCamerasViewClass(false);
       if (M.quickPopup && M.quickPopup.classList.contains("open")) closeQuickPopup();
       M.activeTab = "lights";
       if (M.ROOMS_EL) M.ROOMS_EL.hidden = false;
@@ -2092,7 +2092,6 @@
     }
     updateTabActiveStates();
     updateQuickNavVisibility();
-    syncSearchWrapVisibility();
     updateCurrentCategoryTitle();
   }
 
@@ -3276,5 +3275,5 @@
   })();
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
-  Object.assign(M, { makeShadeTile, updateShadeTile, updateFavoriteShadeTile, shadesListSignature, refreshBlindsPopup, renderBlindsPopup, toggleCeilingFan, stepCeilingFanSpeed, makeFanTile, updateFanTile, fansListSignature, refreshFansPopup, renderFansPopup, renderOutletsPopup, normalizeTempSensorForCard, syncDualSensorSources, applySensorLiveAttr, refreshSensorViews, makeMusicRow, updateFavoriteMusicRow, camerasListSig, cameraEmbedUrl, cameraTilePlayUrl, syncCameraMuteBtn, setCameraUnmuted, stopCamerasStreams, refreshCamerasPopup, renderCamerasPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, setQuickBodyClass, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, syncSearchWrapVisibility, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, allSensorRoomsCollapsed, expandAllSensorRooms, collapseAllSensorRooms, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, hasCollapsibleRooms, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, stopDashGateRecheck, syncDashboardAuthState, fetchAuthStatus, recheckDashboardAuthWhileGateOpen, startDashGateRecheck, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
+  Object.assign(M, { makeShadeTile, updateShadeTile, updateFavoriteShadeTile, shadesListSignature, refreshBlindsPopup, renderBlindsPopup, toggleCeilingFan, stepCeilingFanSpeed, makeFanTile, updateFanTile, fansListSignature, refreshFansPopup, renderFansPopup, renderOutletsPopup, normalizeTempSensorForCard, syncDualSensorSources, applySensorLiveAttr, refreshSensorViews, makeMusicRow, updateFavoriteMusicRow, camerasListSig, cameraEmbedUrl, cameraTilePlayUrl, syncCameraMuteBtn, setCameraUnmuted, stopCamerasStreams, refreshCamerasPopup, renderCamerasPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, setQuickBodyClass, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, syncCamerasViewClass, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, allSensorRoomsCollapsed, expandAllSensorRooms, collapseAllSensorRooms, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, hasCollapsibleRooms, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, stopDashGateRecheck, syncDashboardAuthState, fetchAuthStatus, recheckDashboardAuthWhileGateOpen, startDashGateRecheck, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
 })();

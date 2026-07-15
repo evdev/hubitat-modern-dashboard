@@ -766,7 +766,6 @@
     } else {
       M.applySearch();
     }
-    M.syncSearchWrapVisibility();
   }
 
   async function finishReorderMode() {
