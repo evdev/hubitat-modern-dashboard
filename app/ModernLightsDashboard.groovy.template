@@ -2687,8 +2687,8 @@ def cameraStreamEmbedUrl(dev) {
             base = base.replaceAll(/\\/api\\/frame\\.jpeg.*$/, "")
         }
         if (base.endsWith("/")) base = base.substring(0, base.length() - 1)
-        // webrtc.html + media=video: WebRTC with no audio track (unmute via media=video+audio).
-        return base + "/webrtc.html?src=" + URLEncoder.encode(streamName, "UTF-8") + "&media=video"
+        // webrtc.html + media=video+audio: audio track available; go2rtc player starts muted (unmute in iframe controls).
+        return base + "/webrtc.html?src=" + URLEncoder.encode(streamName, "UTF-8") + "&media=video+audio"
     } catch (e) {
         return null
     }

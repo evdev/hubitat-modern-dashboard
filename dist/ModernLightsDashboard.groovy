@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.83
+// Modern Dashboard v0.2.84
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -42,7 +42,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.2.83 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.84 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -2687,8 +2687,8 @@ def cameraStreamEmbedUrl(dev) {
             base = base.replaceAll(/\\/api\\/frame\\.jpeg.*$/, "")
         }
         if (base.endsWith("/")) base = base.substring(0, base.length() - 1)
-        // webrtc.html + media=video: WebRTC with no audio track (unmute via media=video+audio).
-        return base + "/webrtc.html?src=" + URLEncoder.encode(streamName, "UTF-8") + "&media=video"
+        // webrtc.html + media=video+audio: audio track available; go2rtc player starts muted (unmute in iframe controls).
+        return base + "/webrtc.html?src=" + URLEncoder.encode(streamName, "UTF-8") + "&media=video+audio"
     } catch (e) {
         return null
     }

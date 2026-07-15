@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.84
+
+- **Cameras:** always embed `webrtc.html?media=video+audio`; unmute via go2rtc’s own
+  player controls (removed redundant mDash mute toggle that only switched stream tracks).
+
 ## 0.2.83
 
 - **Local mode:** Android cloud no longer shows “You’re home” whenever a local URL

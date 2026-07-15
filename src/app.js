@@ -10238,39 +10238,17 @@
     return cameras.map(c => `${c.i}:${c.n}:${c.u || ""}`).join("|");
   }
 
-  /** go2rtc webrtc.html: media=video (silent) vs media=video+audio. */
-  function cameraEmbedUrl(baseUrl, withAudio) {
+  /** Normalize to go2rtc webrtc.html with audio track available (player starts muted; unmute in iframe). */
+  function cameraEmbedUrl(baseUrl) {
     if (!baseUrl) return "";
     try {
       const u = new URL(baseUrl, location.href);
       if (/stream\.html$/i.test(u.pathname)) u.pathname = u.pathname.replace(/stream\.html$/i, "webrtc.html");
-      u.searchParams.set("media", withAudio ? "video+audio" : "video");
+      u.searchParams.set("media", "video+audio");
       return u.toString();
     } catch {
       return baseUrl;
     }
-  }
-
-  function cameraTilePlayUrl(tile) {
-    return cameraEmbedUrl(tile.dataset.streamUrl, tile.dataset.unmuted === "1");
-  }
-
-  function syncCameraMuteBtn(tile) {
-    const btn = tile.querySelector(".camera-mute-btn");
-    if (!btn) return;
-    const unmuted = tile.dataset.unmuted === "1";
-    btn.classList.toggle("is-unmuted", unmuted);
-    btn.setAttribute("aria-label", unmuted ? "Mute" : "Unmute");
-    btn.title = unmuted ? "Mute" : "Unmute";
-    btn.innerHTML = unmuted ? CAM_UNMUTE_SVG : CAM_MUTE_SVG;
-  }
-
-  function setCameraUnmuted(tile, unmuted) {
-    tile.dataset.unmuted = unmuted ? "1" : "0";
-    syncCameraMuteBtn(tile);
-    const iframe = tile.querySelector("iframe");
-    if (!iframe || iframe.src === "about:blank") return;
-    iframe.src = cameraTilePlayUrl(tile);
   }
 
   function stopCamerasStreams() {
@@ -10310,8 +10288,7 @@
     for (const cam of cameras) {
       const tile = ce("article", "camera-tile");
       tile.dataset.name = String(cam.n || "").toLowerCase();
-      tile.dataset.streamUrl = cam.u || "";
-      tile.dataset.unmuted = "0";
+      tile.dataset.streamUrl = cameraEmbedUrl(cam.u || "");
       const media = ce("div", "camera-media");
       const iframe = ce("iframe", "camera-iframe");
       iframe.setAttribute("title", cam.n || "Camera");
@@ -10319,27 +10296,10 @@
       iframe.loading = "lazy";
       iframe.src = "about:blank";
       media.appendChild(iframe);
-      const chrome = ce("div", "camera-chrome");
       const nameEl = ce("span", "camera-name");
       nameEl.textContent = cam.n || "Camera";
-      const muteBtn = ce("button", "camera-mute-btn");
-      muteBtn.type = "button";
-      muteBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        hapticTap();
-        const wantUnmute = tile.dataset.unmuted !== "1";
-        if (wantUnmute) {
-          for (const other of grid.querySelectorAll(".camera-tile")) {
-            if (other !== tile && other.dataset.unmuted === "1") setCameraUnmuted(other, false);
-          }
-        }
-        setCameraUnmuted(tile, wantUnmute);
-      });
-      chrome.appendChild(nameEl);
-      chrome.appendChild(muteBtn);
-      syncCameraMuteBtn(tile);
+      media.appendChild(nameEl);
       tile.appendChild(media);
-      tile.appendChild(chrome);
       grid.appendChild(tile);
     }
     body.appendChild(grid);
@@ -10347,7 +10307,8 @@
       const tiles = grid.querySelectorAll(".camera-tile");
       for (let i = 0; i < Math.min(3, tiles.length); i++) {
         const iframe = tiles[i].querySelector("iframe");
-        if (iframe) iframe.src = cameraTilePlayUrl(tiles[i]);
+        const url = tiles[i].dataset.streamUrl;
+        if (iframe && url) iframe.src = url;
       }
       return;
     }
@@ -10355,17 +10316,17 @@
       for (const entry of entries) {
         const tile = entry.target;
         const iframe = tile.querySelector("iframe");
-        if (!iframe || !tile.dataset.streamUrl) continue;
-        const key = String(tile.dataset.name || tile.dataset.streamUrl);
+        const url = tile.dataset.streamUrl;
+        if (!iframe || !url) continue;
+        const key = String(tile.dataset.name || url);
         if (entry.isIntersecting) {
           const pending = camerasStopTimers.get(key);
           if (pending) { clearTimeout(pending); camerasStopTimers.delete(key); }
-          if (iframe.src === "about:blank") iframe.src = cameraTilePlayUrl(tile);
+          if (iframe.src === "about:blank") iframe.src = url;
         } else if (!camerasStopTimers.has(key)) {
           camerasStopTimers.set(key, setTimeout(() => {
             camerasStopTimers.delete(key);
             iframe.src = "about:blank";
-            if (tile.dataset.unmuted === "1") setCameraUnmuted(tile, false);
           }, HYSTERESIS_MS));
         }
       }
