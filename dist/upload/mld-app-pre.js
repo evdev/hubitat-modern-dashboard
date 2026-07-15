@@ -79,6 +79,26 @@ const SENSOR_ALERT_TYPES = new Set(["smoke", "leak", "contact", "motion", "prese
 const SENSOR_LAST_EVENT_TYPES = new Set(["smoke", "leak", "contact", "motion", "presence", "shock"]);
 const SENSOR_TEMP_PROMOTE_TYPES = new Set(["humidity", "illuminance"]);
 
+const SENSOR_CARDWORTHY_EX_ATTRS = new Set(["battery", ...SECONDARY_ATTR_ORDER]);
+const SENSOR_SKIP_ATTRS = new Set([
+  "lastupdate", "lastevent", "epevent", "devicewatch-devicestatus", "checkinterval", "status", "name",
+  "switch", "power", "energy", "rssi", "lqi", "lastactivity", "lastopened", "lastclosed", "datatype", "level", "healthstatus",
+  "tamper", "enrollment", "encap", "destinationendpoint", "cluster", "fccdeviceclass", "firmware",
+  "hardware", "software", "supportedthermostatmodes", "supportedfanmodes",
+]);
+
+function sensorExKeyAllowed(key, sensorType) {
+  const k = String(key || "").toLowerCase();
+  if (!k) return false;
+  if (sensorType === "generic") return !SENSOR_SKIP_ATTRS.has(k);
+  return SENSOR_CARDWORTHY_EX_ATTRS.has(k);
+}
+
+function filterSensorExForType(ex, sensorType) {
+  return (ex || []).filter((e) => e && sensorExKeyAllowed(e.k, sensorType));
+}
+
+
 const SENSOR_EX_KEY_TO_FILTER_TYPE = {
   temperature: "temp",
   humidity: "humidity",
@@ -114,10 +134,10 @@ function secondaryAttrRank(k) {
   return idx >= 0 ? idx : SECONDARY_ATTR_ORDER.length;
 }
 
-function sortSensorExForDisplay(ex, excludeKeys) {
+function sortSensorExForDisplay(ex, excludeKeys, sensorType) {
   const skip = new Set([...(excludeKeys || []), "battery"]);
   return (ex || [])
-    .filter((e) => e && !skip.has(String(e.k || "").toLowerCase()))
+    .filter((e) => e && !skip.has(String(e.k || "").toLowerCase()) && sensorExKeyAllowed(e.k, sensorType))
     .slice()
     .sort((a, b) => {
       const ra = secondaryAttrRank(a.k) - secondaryAttrRank(b.k);
@@ -309,7 +329,10 @@ function applySensorPayload(sen, d) {
   if (d.v !== undefined) sen.v = d.v;
   if (d.a != null) sen.a = d.a ? 1 : 0;
   if (d.le != null) sen.le = Number(d.le);
-  if (Array.isArray(d.ex)) sen.ex = d.ex.map((e) => ({ k: e.k, v: e.v, u: e.u ?? null }));
+  if (Array.isArray(d.ex)) {
+    const t = d.t ?? sen.t ?? "generic";
+    sen.ex = filterSensorExForType(d.ex, t).map((e) => ({ k: e.k, v: e.v, u: e.u ?? null }));
+  }
 }
 
 function sensorLastEventFromRef(dev) {
@@ -355,7 +378,7 @@ function formatSensorLastEvent(ms) {
 function sensorLastEventLine(dev) {
   if (!SENSOR_LAST_EVENT_TYPES.has(dev.t)) return "";
   const txt = formatSensorLastEvent(sensorLastEventFromRef(dev));
-  return txt ? "Last · " + txt : "";
+  return txt ? "Last activity · " + txt : "";
 }
 
 function sensorCardFootText(dev, exFooterFn) {
@@ -370,7 +393,9 @@ function sensorCardFootText(dev, exFooterFn) {
 function applyTempSensorPayload(s, d) {
   if (d.temp != null) s.temp = d.temp;
   if (d.bat != null) s.bat = d.bat;
-  if (Array.isArray(d.ex)) s.ex = d.ex.map((e) => ({ k: e.k, v: e.v, u: e.u ?? null }));
+  if (Array.isArray(d.ex)) {
+    s.ex = filterSensorExForType(d.ex, "temp").map((e) => ({ k: e.k, v: e.v, u: e.u ?? null }));
+  }
 }
 
 function applyTempSensorWsAttr(s, attrName, val, unit) {
@@ -385,6 +410,7 @@ function applyTempSensorWsAttr(s, attrName, val, unit) {
     const n = Number(val);
     if (!isNaN(n)) s.bat = Math.round(n);
   }
+  if (!sensorExKeyAllowed(key, "temp")) return false;
   const ex = s.ex || (s.ex = []);
   let entry = ex.find((e) => e.k === key);
   const stored = key === "battery" && !isNaN(Number(val)) ? Math.round(Number(val)) : val;
@@ -411,9 +437,7 @@ function applySensorWsAttr(sen, attrName, val, unit) {
     }
     return false;
   }
-  const secondary = key === "battery" || key === "temperature" || key === "humidity" || key === "illuminance"
-    || key === "pressure" || key === "co2" || key === "carbonmonoxide";
-  if (secondary && (t === "generic" || !sensorIsPrimaryAttr(t, key))) {
+  if (sensorExKeyAllowed(key, t) && (t === "generic" || !sensorIsPrimaryAttr(t, key))) {
     const ex = sen.ex || (sen.ex = []);
     let entry = ex.find((e) => e.k === key);
     if (entry) {

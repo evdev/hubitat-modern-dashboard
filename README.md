@@ -264,7 +264,7 @@ other environmental readings when the hardware reports them.
 
 Security sensors (motion, contact, shock/glass-break, leak, smoke, presence)
 show when the device last reported activity in the card footer (for example,
-"Last · 3 min ago").
+"Last activity · 3 min ago").
 
 A device selected in both **Temperature sensors** and **Humidity sensors** (or
 **Illuminance sensors**) appears once as a Temperature tile with the other

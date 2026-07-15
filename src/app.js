@@ -8239,7 +8239,7 @@
   }
 
   function sensorExFooter(dev) {
-    const ex = sortSensorExForDisplay(dev.ex, sensorExFooterExcludeForType(dev.t));
+    const ex = sortSensorExForDisplay(dev.ex, sensorExFooterExcludeForType(dev.t), dev.t);
     if (!ex.length) return "";
     const parts = [];
     for (const e of ex.slice(0, 4)) {
@@ -10233,12 +10233,19 @@
   let camerasObserver = null;
   const camerasStopTimers = new Map();
   let camerasRenderedSig = "";
+  let cameraExpandOverlay = null;
+  let cameraExpandTile = null;
 
   function camerasListSig() {
-    return cameras.map(c => `${c.i}:${c.n}:${c.u || ""}`).join("|");
+    return cameras.map(c => `${c.i}:${c.n}:${c.u || ""}:${c.uh || ""}`).join("|");
   }
 
   /** Normalize to go2rtc webrtc.html with audio track available (player starts muted; unmute in iframe). */
+  function isBlankIframe(iframe) {
+    const src = iframe?.src || "";
+    return !src || src === "about:blank" || src.endsWith("about:blank");
+  }
+
   function cameraEmbedUrl(baseUrl) {
     if (!baseUrl) return "";
     try {
@@ -10251,7 +10258,63 @@
     }
   }
 
+  function closeCameraExpand() {
+    if (!cameraExpandOverlay) return;
+    const tile = cameraExpandTile;
+    const overlay = cameraExpandOverlay;
+    cameraExpandOverlay = null;
+    cameraExpandTile = null;
+    const iframe = overlay.querySelector(".camera-iframe");
+    if (iframe) iframe.src = "about:blank";
+    overlay.remove();
+    if (tile) {
+      const lowIframe = tile.querySelector("iframe");
+      const url = tile.dataset.streamUrl;
+      if (lowIframe && url && isBlankIframe(lowIframe)) {
+        const rect = tile.getBoundingClientRect();
+        const vis = rect.top < window.innerHeight && rect.bottom > 0;
+        if (vis) lowIframe.src = url;
+      }
+    }
+  }
+
+  function openCameraExpand(tile) {
+    if (!tile || cameraExpandTile === tile) {
+      closeCameraExpand();
+      return;
+    }
+    closeCameraExpand();
+    const hiUrl = tile.dataset.streamUrlHi || tile.dataset.streamUrl;
+    if (!hiUrl) return;
+    const name = tile.querySelector(".camera-name")?.textContent || "Camera";
+    cameraExpandTile = tile;
+    const lowIframe = tile.querySelector("iframe");
+    if (lowIframe) lowIframe.src = "about:blank";
+    const overlay = ce("div", "camera-expand-overlay");
+    const panel = ce("div", "camera-expand-panel");
+    const closeBtn = ce("button", "camera-expand-close");
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.textContent = "\u00d7";
+    const media = ce("div", "camera-expand-media");
+    const iframe = ce("iframe", "camera-iframe");
+    iframe.setAttribute("title", name);
+    iframe.setAttribute("allow", "autoplay; encrypted-media; fullscreen");
+    iframe.src = hiUrl;
+    const nameEl = ce("span", "camera-name");
+    nameEl.textContent = name;
+    media.appendChild(iframe);
+    media.appendChild(nameEl);
+    panel.appendChild(closeBtn);
+    panel.appendChild(media);
+    overlay.appendChild(panel);
+    appendPopup(overlay);
+    bindPopupDismiss(overlay, panel, closeBtn, closeCameraExpand);
+    cameraExpandOverlay = overlay;
+  }
+
   function stopCamerasStreams() {
+    closeCameraExpand();
     if (camerasObserver) {
       camerasObserver.disconnect();
       camerasObserver = null;
@@ -10289,6 +10352,8 @@
       const tile = ce("article", "camera-tile");
       tile.dataset.name = String(cam.n || "").toLowerCase();
       tile.dataset.streamUrl = cameraEmbedUrl(cam.u || "");
+      tile.dataset.streamUrlHi = cameraEmbedUrl(cam.uh || cam.u || "");
+      tile.addEventListener("click", () => openCameraExpand(tile));
       const media = ce("div", "camera-media");
       const iframe = ce("iframe", "camera-iframe");
       iframe.setAttribute("title", cam.n || "Camera");
@@ -10319,10 +10384,11 @@
         const url = tile.dataset.streamUrl;
         if (!iframe || !url) continue;
         const key = String(tile.dataset.name || url);
+        if (cameraExpandTile === tile) continue;
         if (entry.isIntersecting) {
           const pending = camerasStopTimers.get(key);
           if (pending) { clearTimeout(pending); camerasStopTimers.delete(key); }
-          if (iframe.src === "about:blank") iframe.src = url;
+          if (isBlankIframe(iframe)) iframe.src = url;
         } else if (!camerasStopTimers.has(key)) {
           camerasStopTimers.set(key, setTimeout(() => {
             camerasStopTimers.delete(key);

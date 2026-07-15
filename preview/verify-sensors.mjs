@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { buildMergedSensorCard, sensorCardFilterTypes } from "./merge-sensor-card.mjs";
+import { filterSensorExForType, sensorLastEventLine, sensorCardFootText, mockSensorExFooter } from "./sensor-ex-display.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = String(18000 + Math.floor(Math.random() * 2000));
@@ -93,6 +94,19 @@ async function main() {
       assert(s.temp != null && !Number.isNaN(Number(s.temp)), `temp sensor ${s.i} has numeric temp`);
       assert(Array.isArray(s.ex), `temp sensor ${s.i} has ex[] array`);
     }
+    const contactJunk = data.sensors.find((s) => s.i === 2101);
+    assert(contactJunk?.ex?.some((e) => e.k === "enrollment"), "contact mock includes enrollment junk in raw ex[]");
+    const contactFiltered = filterSensorExForType(contactJunk.ex, contactJunk.t);
+    assert(!contactFiltered.some((e) => e.k === "enrollment"), "typed sensor ex[] filters enrollment");
+    const contactFoot = sensorCardFootText(contactJunk, mockSensorExFooter(contactJunk));
+    assert(!/enroll/i.test(contactFoot), "contact footer never shows enrollment");
+    assert(sensorLastEventLine(contactJunk).includes("Last activity"), "contact last-activity label");
+    const leak = data.sensors.find((s) => s.i === 2104);
+    assert(leak?.le != null && leak.le > 0, "leak sensor exposes last event timestamp");
+    const leakFoot = sensorCardFootText(leak, mockSensorExFooter(leak));
+    assert(!/enroll/i.test(leakFoot), "leak footer never shows enrollment");
+    assert(sensorLastEventLine(leak).includes("Last activity"), "leak last-activity label");
+
     const motionMulti = data.sensors.find((s) => s.i === 2103);
     assert(motionMulti && motionMulti.ex.filter((e) => e.k !== "battery").length >= 3, "motion multisensor carries multiple secondary readings");
     assert(motionMulti?.le != null && motionMulti.le > 0, "motion sensor exposes last event timestamp");

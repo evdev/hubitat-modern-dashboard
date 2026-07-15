@@ -1140,7 +1140,7 @@
   }
 
   function sensorExFooter(dev) {
-    const ex = sortSensorExForDisplay(dev.ex, sensorExFooterExcludeForType(dev.t));
+    const ex = sortSensorExForDisplay(dev.ex, sensorExFooterExcludeForType(dev.t), dev.t);
     if (!ex.length) return "";
     const parts = [];
     for (const e of ex.slice(0, 4)) {

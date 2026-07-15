@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.84
+// Modern Dashboard v0.2.86
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -42,7 +42,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.2.84 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.86 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -112,7 +112,7 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Cameras") {
-            paragraph "<small>Select <b>go2rtc Camera</b> devices from the go2rtc Hubitat app. Requires <b>Enable tabs</b> in the dashboard. The <b>Cameras</b> tab appears only when you open the <b>local hub dashboard URL</b> (http://…) — not the cloud HTTPS link (go2rtc streams are HTTP on your LAN). Streams start only on the Cameras tab when each tile scrolls into view.</small>"
+            paragraph "<small>Select <b>go2rtc Camera</b> devices from the go2rtc Hubitat app (grouped main + sub streams). Requires <b>Enable tabs</b>. The <b>Cameras</b> tab appears only on the <b>local hub dashboard URL</b> (http://…). Grid tiles use the sub stream when available; tap a tile for full-screen main stream.</small>"
             input "cameras", "capability.imageCapture", title: "Cameras (go2rtc)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
@@ -374,28 +374,36 @@ def sensorRoomId(d, roomsList) {
     return null
 }
 
+// Card-worthy secondary attrs only (typed sensors); generic may discover more via sensorSkipAttrs.
+def sensorCardworthyExtraAttrNames() {
+    return ["battery", "temperature", "humidity", "relativehumidity", "illuminance", "pressure", "co2", "carbonmonoxide"]
+}
+
 // Build ex[]: battery when present (not counted toward maxNonBattery), then up to maxNonBattery other attrs.
-def sensorExtraAttrs(d, primaryAttr, int maxNonBattery) {
+def sensorExtraAttrs(d, primaryAttr, int maxNonBattery, String sensorType = null) {
     def out = []
     def primary = primaryAttr?.toString()?.toLowerCase()
     def primaryKey = sensorExtraAttrKey(primary)
     def skip = sensorSkipAttrs()
     def ordered = []
-    for (nm in ["battery", "temperature", "humidity", "relativehumidity", "illuminance", "pressure", "co2", "carbonmonoxide"]) {
+    for (nm in sensorCardworthyExtraAttrNames()) {
         if (!ordered.contains(nm)) ordered << nm
     }
-    def present = []
-    try {
-        for (st in d.currentStates) {
-            def nm = st?.name?.toString()?.toLowerCase()
-            if (!nm || skip.contains(nm)) continue
-            def key = sensorExtraAttrKey(nm)
-            if (key == primaryKey) continue
-            if (!ordered.contains(nm)) present << nm
+    boolean genericDiscovery = (sensorType == "generic")
+    if (genericDiscovery) {
+        def present = []
+        try {
+            for (st in d.currentStates) {
+                def nm = st?.name?.toString()?.toLowerCase()
+                if (!nm || skip.contains(nm)) continue
+                def key = sensorExtraAttrKey(nm)
+                if (key == primaryKey) continue
+                if (!ordered.contains(nm)) present << nm
+            }
+        } catch (e) {}
+        for (nm in ((present as Set).sort())) {
+            if (!ordered.contains(nm)) ordered << nm
         }
-    } catch (e) {}
-    for (nm in ((present as Set).sort())) {
-        if (!ordered.contains(nm)) ordered << nm
     }
     int addedNonBattery = 0
     def seenKeys = [] as Set
@@ -473,6 +481,12 @@ def resolveSensorLastEventMs(d, t) {
         def raw = safeCurrent(d, attr)
         def ms = parseSensorEventTimeMs(raw)
         if (ms != null && (best == null || ms > best)) best = ms
+    }
+    if (best == null) {
+        try {
+            def la = d.getLastActivity()
+            if (la) best = la.time
+        } catch (e) {}
     }
     return best
 }
@@ -1047,7 +1061,7 @@ def renderData() {
                 if (st?.unit) tempUnit = st.unit
             } catch (e) {}
             def bat = safeCurrent(d, "battery")
-            def extras = sensorExtraAttrs(d, "temperature", sensorExMaxForType("temp"))
+            def extras = sensorExtraAttrs(d, "temperature", sensorExMaxForType("temp"), "temp")
             out << "{\"i\":" << d.id
             out << ",\"n\":" << jsonStr(d.displayName)
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
@@ -1092,12 +1106,13 @@ def renderData() {
     first = true
     if (cameras) {
         for (d in cameras) {
-            def embedUrl = cameraStreamEmbedUrl(d)
-            if (!embedUrl) continue
+            def urls = cameraStreamUrls(d)
+            if (!urls?.u) continue
             if (!first) out << ","; first = false
             out << "{\"i\":" << d.id
             out << ",\"n\":" << jsonStr(d.displayName)
-            out << ",\"u\":" << jsonStr(embedUrl)
+            out << ",\"u\":" << jsonStr(urls.u)
+            if (urls.uh) out << ",\"uh\":" << jsonStr(urls.uh)
             out << "}"
         }
     }
@@ -1436,7 +1451,7 @@ def appendSensorJson(out, d, entry, roomsList) {
     out << ",\"a\":" << aFlag
     def leMs = resolveSensorLastEventMs(d, t)
     if (leMs != null) out << ",\"le\":" << leMs
-    def extras = sensorExtraAttrs(d, primaryAttr, sensorExMaxForType(t))
+    def extras = sensorExtraAttrs(d, primaryAttr, sensorExMaxForType(t), t)
     appendExJsonArray(out, extras)
     out << "}"
 }
@@ -1633,7 +1648,7 @@ def renderDevice() {
     if (s != null && senEntry == null && !hasControlRole) {
         try { s.refresh() } catch (e) {}
         def out = new StringBuilder()
-        def extras = sensorExtraAttrs(s, "temperature", sensorExMaxForType("temp"))
+        def extras = sensorExtraAttrs(s, "temperature", sensorExMaxForType("temp"), "temp")
         out << "{\"i\":" << s.id
         out << ",\"temp\":" << numOrNull(safeCurrent(s, "temperature"))
         out << ",\"bat\":" << numOrNull(safeCurrent(s, "battery"))
@@ -2663,7 +2678,28 @@ def validNavKeySet() {
     return ["lights", "locks", "scenes", "hub-mode", "security", "blinds", "outlets", "scheduling", "sensors", "thermostats", "music", "cameras", "favorites"] as Set
 }
 
-def cameraStreamEmbedUrl(dev) {
+def cameraGo2rtcServerBase(dev) {
+    def snap = safeCurrent(dev, "snapshotUrl")
+    if (snap == null) snap = safeCurrent(dev, "image")
+    if (snap == null) return null
+    def s = snap.toString().trim()
+    if (!s) return null
+    try {
+        def qIdx = s.indexOf("?")
+        def base = qIdx >= 0 ? s.substring(0, qIdx) : s
+        if (base.endsWith("/api/frame.jpeg")) {
+            base = base.substring(0, base.length() - "/api/frame.jpeg".length())
+        } else {
+            base = base.replaceAll(/\\/api\\/frame\\.jpeg.*$/, "")
+        }
+        if (base.endsWith("/")) base = base.substring(0, base.length() - 1)
+        return base ?: null
+    } catch (e) {
+        return null
+    }
+}
+
+def cameraStreamNameFromSnapshot(dev) {
     def snap = safeCurrent(dev, "snapshotUrl")
     if (snap == null) snap = safeCurrent(dev, "image")
     if (snap == null) return null
@@ -2672,26 +2708,65 @@ def cameraStreamEmbedUrl(dev) {
     try {
         def qIdx = s.indexOf("?")
         def q = qIdx >= 0 ? s.substring(qIdx + 1) : ""
-        def streamName = null
         for (part in q.split("&")) {
             if (part.startsWith("src=")) {
-                streamName = URLDecoder.decode(part.substring(4), "UTF-8")
-                break
+                return URLDecoder.decode(part.substring(4), "UTF-8")
             }
         }
-        if (!streamName) return null
-        def base = qIdx >= 0 ? s.substring(0, qIdx) : s
-        if (base.endsWith("/api/frame.jpeg")) {
-            base = base.substring(0, base.length() - "/api/frame.jpeg".length())
-        } else {
-            base = base.replaceAll(/\\/api\\/frame\\.jpeg.*$/, "")
+    } catch (e) { }
+    def sn = safeCurrent(dev, "streamName")
+    return sn ? sn.toString().trim() : null
+}
+
+def cameraParseStreamRoles(dev) {
+    def raw = safeCurrent(dev, "streamRoles")
+    if (!raw) return [:]
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(raw.toString())
+        if (parsed instanceof Map) {
+            Map out = [:]
+            parsed.each { k, v ->
+                if (v) out[k.toString().toLowerCase()] = v.toString()
+            }
+            return out
         }
-        if (base.endsWith("/")) base = base.substring(0, base.length() - 1)
-        // webrtc.html + media=video+audio: audio track available; go2rtc player starts muted (unmute in iframe controls).
-        return base + "/webrtc.html?src=" + URLEncoder.encode(streamName, "UTF-8") + "&media=video+audio"
-    } catch (e) {
-        return null
+    } catch (e) { }
+    return [:]
+}
+
+def cameraPickRoleName(roles, order) {
+    for (role in order) {
+        if (roles[role]) return roles[role]
     }
+    return null
+}
+
+def cameraWebrtcEmbedUrl(dev, String streamName) {
+    if (!streamName) return null
+    def base = cameraGo2rtcServerBase(dev)
+    if (!base) return null
+    // webrtc.html + media=video+audio: audio track available; go2rtc player starts muted (unmute in iframe controls).
+    return base + "/webrtc.html?src=" + URLEncoder.encode(streamName, "UTF-8") + "&media=video+audio"
+}
+
+def cameraStreamUrls(dev) {
+    Map roles = cameraParseStreamRoles(dev)
+    String mainName = cameraPickRoleName(roles, ['main', 'high', 'hd'])
+    String loName = cameraPickRoleName(roles, ['sub', 'low', 'sd'])
+    String fallback = cameraStreamNameFromSnapshot(dev)
+    if (!mainName) mainName = fallback
+    if (!loName) loName = mainName ?: fallback
+    if (!mainName) mainName = loName
+    String u = cameraWebrtcEmbedUrl(dev, loName)
+    if (!u) return null
+    String uh = cameraWebrtcEmbedUrl(dev, mainName)
+    if (uh == u) uh = null
+    return [u: u, uh: uh]
+}
+
+def cameraStreamEmbedUrl(dev) {
+    def urls = cameraStreamUrls(dev)
+    return urls ? urls.u : null
 }
 
 def parseNavOrderState() {

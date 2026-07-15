@@ -155,10 +155,10 @@ function buildMockData(count) {
     { i: 2199, n: "Air Quality Monitor", r: 4, temp: 71, u: "F", bat: 60, ex: [{ k: "battery", v: 60, u: "%" }, { k: "humidity", v: 44, u: null }] },
   ];
   const sensors = [
-    { i: 2101, n: "Front Door", r: 11, t: "contact", v: "closed", a: 0, le: Date.now() - 12 * 60 * 1000, ex: [{ k: "battery", v: 92, u: "%" }] },
+    { i: 2101, n: "Front Door", r: 11, t: "contact", v: "closed", a: 0, le: Date.now() - 12 * 60 * 1000, ex: [{ k: "battery", v: 92, u: "%" }, { k: "enrollment", v: "enrolled", u: null }] },
     { i: 2102, n: "Back Door", r: 7, t: "contact", v: "open", a: 1, le: Date.now() - 3 * 60 * 1000, ex: [{ k: "battery", v: 88, u: "%" }] },
     { i: 2103, n: "Garage Motion", r: 6, t: "motion", v: "active", a: 1, le: Date.now() - 90 * 1000, ex: [{ k: "battery", v: 74, u: "%" }, { k: "temperature", v: 68, u: "F" }, { k: "humidity", v: 45, u: null }, { k: "illuminance", v: 210, u: "lx" }] },
-    { i: 2104, n: "Basement Leak", r: 8, t: "leak", v: "dry", a: 0, ex: [{ k: "battery", v: 99, u: "%" }] },
+    { i: 2104, n: "Basement Leak", r: 8, t: "leak", v: "dry", a: 0, le: Date.now() - 25 * 60 * 1000, ex: [{ k: "battery", v: 99, u: "%" }, { k: "enrollment", v: "enrolled", u: null }] },
     { i: 2110, n: "Living Room Glass", r: 1, t: "shock", v: "inactive", a: 0, le: Date.now() - 45 * 60 * 1000, ex: [{ k: "battery", v: 81, u: "%" }] },
     { i: 2105, n: "Attic Humidity", r: 9, t: "humidity", v: 54, a: 0, ex: [{ k: "temperature", v: 78, u: "F" }] },
     { i: 2106, n: "Desk Light Sensor", r: 4, t: "illuminance", v: 320, a: 0, ex: [] },
@@ -188,11 +188,11 @@ function buildMockData(count) {
     { i: 4005, n: "Patio Speaker", r: 7, st: "stopped", v: 0, tr: "", m: "muted", trackIdx: 2, f: AUDIO_F_FULL },
   ];
   const cameras = [
-    { i: 4201, n: "Front Door", u: "http://127.0.0.1:1984/webrtc.html?src=front&media=video+audio" },
-    { i: 4202, n: "Driveway", u: "http://127.0.0.1:1984/webrtc.html?src=driveway&media=video+audio" },
-    { i: 4203, n: "Back Yard", u: "http://127.0.0.1:1984/webrtc.html?src=backyard&media=video+audio" },
-    { i: 4204, n: "Garage", u: "http://127.0.0.1:1984/webrtc.html?src=garage&media=video+audio" },
-    { i: 4205, n: "Side Gate", u: "http://127.0.0.1:1984/webrtc.html?src=sidegate&media=video+audio" },
+    { i: 4201, n: "Front Door", u: "http://127.0.0.1:1984/webrtc.html?src=front_door_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=front_door&media=video+audio" },
+    { i: 4202, n: "Driveway", u: "http://127.0.0.1:1984/webrtc.html?src=driveway_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=driveway&media=video+audio" },
+    { i: 4203, n: "Back Yard", u: "http://127.0.0.1:1984/webrtc.html?src=backyard_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=backyard&media=video+audio" },
+    { i: 4204, n: "Garage", u: "http://127.0.0.1:1984/webrtc.html?src=garage_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=garage&media=video+audio" },
+    { i: 4205, n: "Side Gate", u: "http://127.0.0.1:1984/webrtc.html?src=sidegate_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=sidegate&media=video+audio" },
   ];
   const windowShades = [
     { i: 5001, n: "Living Room Shade", r: 1, st: "open", pos: 100 },

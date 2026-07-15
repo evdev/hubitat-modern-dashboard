@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.86
+
+- **Sensors:** security and life-safety tiles show **Last activity ·** (not enrollment or other driver internals).
+- **Sensors:** typed sensor cards only include card-worthy secondary readings in `ex[]` (battery, temperature, humidity, illuminance, pressure, CO₂/CO); generic sensors still discover other non-skipped attrs.
+- **Backend:** fall back to Hubitat `getLastActivity()` when drivers omit `lastActivity` / `lastOpened` timestamp attributes.
+
+## 0.2.85
+
+- **Cameras:** grid tiles use go2rtc sub/low stream (`u`); tap a tile for full-screen main/high stream (`uh`) from grouped go2rtc Camera devices (`streamRoles`).
+- **Backend:** parses `streamRoles` on camera devices and emits separate WebRTC embed URLs for grid vs expand.
+
 ## 0.2.84
 
 - **Cameras:** always embed `webrtc.html?media=video+audio`; unmute via go2rtc’s own
