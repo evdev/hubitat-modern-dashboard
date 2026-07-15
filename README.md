@@ -360,10 +360,19 @@ calls use relative paths, so they stay on whichever origin you opened.
   stored URLs.
 - The **local hub URL** field is pre-filled from the hub on first load; edit it
   if your hub IP changes.
-- On **Android**, when you open the cloud URL after recently using the local URL,
-  a banner offers to switch to faster local mode. Dismiss or tap **Switch**.
-- Choosing cloud mode sets a `prefer cloud` flag so Android does not auto-redirect
-  away from the cloud URL.
+- On **Android**, when you open the cloud URL, the app probes your local hub URL
+  with a one-time nonce. Chrome may ask once for permission to access devices on
+  your local network. If the hub echoes that nonce, a banner offers to switch to
+  faster local mode. Dismiss or tap **Switch**. Away from home the probe fails
+  and no banner appears.
+- Choosing cloud mode sets a `prefer cloud` flag so Android does not suggest
+  local mode on that device.
+
+The nonce is unique on every request, and both client and hub disable caching,
+so a response from a previous visit cannot produce a false match. The LAN probe
+is still best-effort: unsupported browsers or denied local-network permission
+will block it even at home. Use **Open local mode** in the menu if the banner
+does not appear when you expect it.
 
 **iOS PWA and local mode — important limitations**
 

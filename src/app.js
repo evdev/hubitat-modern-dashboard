@@ -32,12 +32,10 @@
   const TABS_STORAGE_KEY = "mld_tabs";
   const DRAWER_STORAGE_KEY = "mld_drawer";
   const LOCAL_URL_STORAGE_KEY = "mld_localUrl";
-  const LOCAL_OK_STORAGE_KEY = "mld_localOk";
   const CLOUD_URL_STORAGE_KEY = "mld_cloudUrl";
   const PREFER_CLOUD_STORAGE_KEY = "mld_preferCloud";
   const DASH_SESSION_STORAGE_KEY = "mld_dashSession";
   const DASH_SESSION_EXPIRES_KEY = "mld_dashSessionExpiresAt";
-  const LOCAL_OK_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
   const DASH_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
   const THEME_OPTIONS = ["dark", "light", "auto"];
   const APP_EL = document.getElementById("app");
@@ -4082,22 +4080,6 @@
     } catch {}
   }
 
-  function loadLocalOkTs() {
-    try {
-      const n = Number(localStorage.getItem(LOCAL_OK_STORAGE_KEY));
-      return Number.isFinite(n) ? n : 0;
-    } catch { return 0; }
-  }
-
-  function saveLocalOkTs(ts) {
-    try { localStorage.setItem(LOCAL_OK_STORAGE_KEY, String(ts || Date.now())); } catch {}
-  }
-
-  function localOkFresh() {
-    const ts = loadLocalOkTs();
-    return ts > 0 && (Date.now() - ts) < LOCAL_OK_MAX_AGE_MS;
-  }
-
   function refreshLocalUrlFromConfig() {
     if (cfg.localUrl) {
       saveStoredLocalUrl(cfg.localUrl);
@@ -4108,25 +4090,12 @@
     if (cfg.cloudUrl) saveStoredCloudUrl(cfg.cloudUrl);
   }
 
-  function navigateToLocal(url, remember) {
+  function navigateToLocal(url) {
     const target = String(url || loadStoredLocalUrl() || "").trim();
     if (!target) return false;
     setPreferCloudMode(false);
-    if (remember !== false && isCloudOrigin()) saveLocalOkTs(Date.now());
     location.replace(target);
     return true;
-  }
-
-  function maybeRefreshLocalOkFromReferrer() {
-    if (!isCloudOrigin()) return;
-    try {
-      const ref = document.referrer;
-      if (!ref || ref.includes("cloud.hubitat.com")) return;
-      const refUrl = new URL(ref);
-      if (refUrl.protocol === "http:" && refUrl.hostname !== "cloud.hubitat.com") {
-        saveLocalOkTs(Date.now());
-      }
-    } catch {}
   }
 
   function navigateToCloud() {
@@ -4161,9 +4130,75 @@
     }
   }
 
-  function showLocalModeBanner() {
-    if (localModeBannerEl || localBannerDismissed || !isCloudOrigin() || !isAndroid()) return;
+  function isPrivateLanHostname(hostname) {
+    const host = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
+    if (host.endsWith(".local")) return true;
+    if (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe8") || host.startsWith("fe9") || host.startsWith("fea") || host.startsWith("feb")) {
+      return true;
+    }
+    const octets = host.split(".").map(Number);
+    if (octets.length !== 4 || octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+    return octets[0] === 10 ||
+      (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+      (octets[0] === 192 && octets[1] === 168) ||
+      (octets[0] === 169 && octets[1] === 254);
+  }
+
+  function buildLocalProbeUrl(localUrl) {
+    try {
+      const src = new URL(localUrl);
+      if (src.protocol !== "http:" || !isPrivateLanHostname(src.hostname)) return "";
+      const probePath = src.pathname.replace(/\/dashboard\/?$/, "/lan-probe");
+      if (probePath === src.pathname) return "";
+      const token = src.searchParams.get("access_token");
+      if (!token) return "";
+      const u = new URL(src.origin + probePath);
+      u.searchParams.set("access_token", token);
+      u.searchParams.set("mld_lan_probe", crypto.randomUUID());
+      return u.href;
+    } catch {
+      return "";
+    }
+  }
+
+  async function probeLocalHubReachable(localUrl, timeoutMs = 30000) {
+    const probeUrl = buildLocalProbeUrl(localUrl);
+    if (!probeUrl) return false;
+    const nonce = new URL(probeUrl).searchParams.get("mld_lan_probe");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(probeUrl, {
+        cache: "no-store",
+        credentials: "omit",
+        signal: controller.signal,
+        targetAddressSpace: "local",
+      });
+      if (!response.ok) return false;
+      return (await response.text()).trim() === nonce;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  let localModeProbeStarted = false;
+
+  function maybeStartLocalModeProbe() {
+    if (localModeProbeStarted || localBannerDismissed || !isCloudOrigin() || !isAndroid()) return;
+    if (preferCloudMode()) return;
     const localUrl = loadStoredLocalUrl();
+    if (!localUrl) return;
+    localModeProbeStarted = true;
+    probeLocalHubReachable(localUrl).then((reachable) => {
+      if (reachable && loadStoredLocalUrl() === localUrl) showLocalModeBanner(localUrl);
+    });
+  }
+
+  function showLocalModeBanner(verifiedLocalUrl) {
+    if (localModeBannerEl || localBannerDismissed || !isCloudOrigin() || !isAndroid()) return;
+    const localUrl = String(verifiedLocalUrl || "").trim();
     if (!localUrl) return;
 
     const banner = document.createElement("div");
@@ -4173,7 +4208,7 @@
 
     const text = document.createElement("span");
     text.className = "local-mode-banner-text";
-    text.textContent = "You're home — switch to faster local mode?";
+    text.textContent = "Local hub reachable — switch to faster mode?";
 
     const switchBtn = document.createElement("button");
     switchBtn.type = "button";
@@ -4221,18 +4256,13 @@
       return false;
     }
 
-    maybeRefreshLocalOkFromReferrer();
-
     const localUrl = loadStoredLocalUrl();
     if (!localUrl) {
       updateLocalModeMenuUI();
       return false;
     }
 
-    if (isAndroid()) {
-      if (localOkFresh()) return navigateToLocal(localUrl, false);
-      showLocalModeBanner();
-    }
+    if (isAndroid()) maybeStartLocalModeProbe();
 
     updateLocalModeMenuUI();
     return false;
@@ -9551,18 +9581,12 @@
       const v = MENU_LOCAL_URL_EL.value.trim();
       saveStoredLocalUrl(v);
       cfg.localUrl = v;
-      if (!v) {
-        try { localStorage.removeItem(LOCAL_OK_STORAGE_KEY); } catch {}
-      }
       updateLocalModeMenuUI();
     });
     MENU_LOCAL_URL_EL.addEventListener("blur", () => {
       const v = MENU_LOCAL_URL_EL.value.trim();
       saveStoredLocalUrl(v);
       cfg.localUrl = v;
-      if (!v) {
-        try { localStorage.removeItem(LOCAL_OK_STORAGE_KEY); } catch {}
-      }
       updateLocalModeMenuUI();
     });
   }

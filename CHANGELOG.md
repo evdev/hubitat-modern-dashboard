@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.83
+
+- **Local mode:** Android cloud no longer shows “You’re home” whenever a local URL
+  is known. An authenticated `/lan-probe` request uses Chrome Local Network Access
+  and a one-time, no-store nonce; the banner appears only when the hub echoes that
+  nonce. Removed silent auto-redirect based on recent local use.
+
 ## 0.2.82
 
 - **Cameras:** hide the Cameras tab unless the dashboard is opened via the local hub URL

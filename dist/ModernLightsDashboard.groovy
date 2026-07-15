@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.82
+// Modern Dashboard v0.2.83
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -42,7 +42,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.2.82 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.83 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         section("Devices") {
             paragraph "<small>Select the devices you want on the dashboard. Rooms and layout are automatic based on your Hubitat room assignments.</small>"
@@ -739,6 +739,7 @@ mappings {
     path("/sw.js") { action: [GET: "renderSw"] }
     path("/icons/icon-192.png") { action: [GET: "renderIcon192"] }
     path("/icons/icon-512.png") { action: [GET: "renderIcon512"] }
+    path("/lan-probe") { action: [GET: "renderLanProbe"] }
     path("/auth/status") { action: [GET: "authStatus"] }
     path("/auth/unlock") { action: [GET: "authUnlock", POST: "authUnlock"] }
     path("/auth/renew") { action: [GET: "authRenew", POST: "authRenew"] }
@@ -885,6 +886,26 @@ def renderIcon192() {
 
 def renderIcon512() {
     return renderPngFromBase64Asset(assetIcon512File(), "Upload mld-icon-512.b64 to File Manager")
+}
+
+// Echoes a one-time nonce so cloud clients can prove this app answered, not a cache or another LAN host.
+def renderLanProbe() {
+    def nonce = params?.mld_lan_probe?.toString()
+    if (!nonce || !(nonce ==~ /[0-9a-fA-F-]{36}/)) {
+        return render(contentType: "text/plain", data: "invalid probe", status: 400)
+    }
+    return render(
+        contentType: "text/plain",
+        data: nonce,
+        status: 200,
+        headers: [
+            "Access-Control-Allow-Origin": "https://cloud.hubitat.com",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Vary": "Origin"
+        ]
+    )
 }
 
 // ---------------------------------------------------------------------------

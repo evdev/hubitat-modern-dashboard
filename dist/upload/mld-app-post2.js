@@ -2482,18 +2482,12 @@
       const v = M.MENU_LOCAL_URL_EL.value.trim();
       M.saveStoredLocalUrl(v);
       M.cfg.localUrl = v;
-      if (!v) {
-        try { localStorage.removeItem(M.LOCAL_OK_STORAGE_KEY); } catch {}
-      }
       M.updateLocalModeMenuUI();
     });
     M.MENU_LOCAL_URL_EL.addEventListener("blur", () => {
       const v = M.MENU_LOCAL_URL_EL.value.trim();
       M.saveStoredLocalUrl(v);
       M.cfg.localUrl = v;
-      if (!v) {
-        try { localStorage.removeItem(M.LOCAL_OK_STORAGE_KEY); } catch {}
-      }
       M.updateLocalModeMenuUI();
     });
   }
