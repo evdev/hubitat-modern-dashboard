@@ -2666,7 +2666,8 @@ def cameraStreamEmbedUrl(dev) {
             base = base.replaceAll(/\\/api\\/frame\\.jpeg.*$/, "")
         }
         if (base.endsWith("/")) base = base.substring(0, base.length() - 1)
-        return base + "/stream.html?src=" + URLEncoder.encode(streamName, "UTF-8")
+        // webrtc.html + media=video: WebRTC with no audio track (unmute via media=video+audio).
+        return base + "/webrtc.html?src=" + URLEncoder.encode(streamName, "UTF-8") + "&media=video"
     } catch (e) {
         return null
     }

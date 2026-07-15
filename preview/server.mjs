@@ -188,11 +188,11 @@ function buildMockData(count) {
     { i: 4005, n: "Patio Speaker", r: 7, st: "stopped", v: 0, tr: "", m: "muted", trackIdx: 2, f: AUDIO_F_FULL },
   ];
   const cameras = [
-    { i: 4201, n: "Front Door", u: "http://127.0.0.1:1984/stream.html?src=front" },
-    { i: 4202, n: "Driveway", u: "http://127.0.0.1:1984/stream.html?src=driveway" },
-    { i: 4203, n: "Back Yard", u: "http://127.0.0.1:1984/stream.html?src=backyard" },
-    { i: 4204, n: "Garage", u: "http://127.0.0.1:1984/stream.html?src=garage" },
-    { i: 4205, n: "Side Gate", u: "http://127.0.0.1:1984/stream.html?src=sidegate" },
+    { i: 4201, n: "Front Door", u: "http://127.0.0.1:1984/webrtc.html?src=front&media=video" },
+    { i: 4202, n: "Driveway", u: "http://127.0.0.1:1984/webrtc.html?src=driveway&media=video" },
+    { i: 4203, n: "Back Yard", u: "http://127.0.0.1:1984/webrtc.html?src=backyard&media=video" },
+    { i: 4204, n: "Garage", u: "http://127.0.0.1:1984/webrtc.html?src=garage&media=video" },
+    { i: 4205, n: "Side Gate", u: "http://127.0.0.1:1984/webrtc.html?src=sidegate&media=video" },
   ];
   const windowShades = [
     { i: 5001, n: "Living Room Shade", r: 1, st: "open", pos: 100 },

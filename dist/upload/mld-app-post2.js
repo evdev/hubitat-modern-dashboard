@@ -544,9 +544,46 @@
   let camerasObserver = null;
   const camerasStopTimers = new Map();
   let camerasRenderedSig = "";
+  const CAM_MUTE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor"/><path d="m16 10 2 2m0 0 2 2m-2-2-2 2m2-2 2-2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
+  const CAM_UNMUTE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor"/><path d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
 
   function camerasListSig() {
     return M.cameras.map(c => `${c.i}:${c.n}:${c.u || ""}`).join("|");
+  }
+
+  /** go2rtc webrtc.html: media=video (silent) vs media=video+audio. */
+  function cameraEmbedUrl(baseUrl, withAudio) {
+    if (!baseUrl) return "";
+    try {
+      const u = new URL(baseUrl, location.href);
+      if (/stream\.html$/i.test(u.pathname)) u.pathname = u.pathname.replace(/stream\.html$/i, "webrtc.html");
+      u.searchParams.set("media", withAudio ? "video+audio" : "video");
+      return u.toString();
+    } catch {
+      return baseUrl;
+    }
+  }
+
+  function cameraTilePlayUrl(tile) {
+    return cameraEmbedUrl(tile.dataset.streamUrl, tile.dataset.unmuted === "1");
+  }
+
+  function syncCameraMuteBtn(tile) {
+    const btn = tile.querySelector(".camera-mute-btn");
+    if (!btn) return;
+    const unmuted = tile.dataset.unmuted === "1";
+    btn.classList.toggle("is-unmuted", unmuted);
+    btn.setAttribute("aria-label", unmuted ? "Mute" : "Unmute");
+    btn.title = unmuted ? "Mute" : "Unmute";
+    btn.innerHTML = unmuted ? CAM_UNMUTE_SVG : CAM_MUTE_SVG;
+  }
+
+  function setCameraUnmuted(tile, unmuted) {
+    tile.dataset.unmuted = unmuted ? "1" : "0";
+    syncCameraMuteBtn(tile);
+    const iframe = tile.querySelector("iframe");
+    if (!iframe || iframe.src === "about:blank") return;
+    iframe.src = cameraTilePlayUrl(tile);
   }
 
   function stopCamerasStreams() {
@@ -580,12 +617,12 @@
       return;
     }
     const grid = ce("div", "cameras-grid");
-    const CAM_MUTE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor"/><path d="m16 10 2 2m0 0 2 2m-2-2-2 2m2-2 2-2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
     const HYSTERESIS_MS = 200;
     for (const cam of M.cameras) {
       const tile = ce("article", "camera-tile");
       tile.dataset.name = String(cam.n || "").toLowerCase();
       tile.dataset.streamUrl = cam.u || "";
+      tile.dataset.unmuted = "0";
       const media = ce("div", "camera-media");
       const iframe = ce("iframe", "camera-iframe");
       iframe.setAttribute("title", cam.n || "Camera");
@@ -598,10 +635,18 @@
       nameEl.textContent = cam.n || "Camera";
       const muteBtn = ce("button", "camera-mute-btn");
       muteBtn.type = "button";
-      muteBtn.disabled = true;
-      muteBtn.setAttribute("aria-label", "Unmute (not available with iframe embed)");
-      muteBtn.title = "Unmute requires a future embed update";
-      muteBtn.innerHTML = CAM_MUTE_SVG;
+      syncCameraMuteBtn(tile);
+      muteBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        M.hapticTap();
+        const wantUnmute = tile.dataset.unmuted !== "1";
+        if (wantUnmute) {
+          for (const other of grid.querySelectorAll(".camera-tile")) {
+            if (other !== tile && other.dataset.unmuted === "1") setCameraUnmuted(other, false);
+          }
+        }
+        setCameraUnmuted(tile, wantUnmute);
+      });
       chrome.appendChild(nameEl);
       chrome.appendChild(muteBtn);
       tile.appendChild(media);
@@ -613,8 +658,7 @@
       const tiles = grid.querySelectorAll(".camera-tile");
       for (let i = 0; i < Math.min(3, tiles.length); i++) {
         const iframe = tiles[i].querySelector("iframe");
-        const url = tiles[i].dataset.streamUrl;
-        if (iframe && url) iframe.src = url;
+        if (iframe) iframe.src = cameraTilePlayUrl(tiles[i]);
       }
       return;
     }
@@ -622,17 +666,17 @@
       for (const entry of entries) {
         const tile = entry.target;
         const iframe = tile.querySelector("iframe");
-        const url = tile.dataset.streamUrl;
-        if (!iframe || !url) continue;
-        const key = tile.dataset.name || url;
+        if (!iframe || !tile.dataset.streamUrl) continue;
+        const key = String(tile.dataset.name || tile.dataset.streamUrl);
         if (entry.isIntersecting) {
           const pending = camerasStopTimers.get(key);
           if (pending) { clearTimeout(pending); camerasStopTimers.delete(key); }
-          if (iframe.src === "about:blank" || !iframe.src.includes("stream.html")) iframe.src = url;
+          if (iframe.src === "about:blank") iframe.src = cameraTilePlayUrl(tile);
         } else if (!camerasStopTimers.has(key)) {
           camerasStopTimers.set(key, setTimeout(() => {
             camerasStopTimers.delete(key);
             iframe.src = "about:blank";
+            if (tile.dataset.unmuted === "1") setCameraUnmuted(tile, false);
           }, HYSTERESIS_MS));
         }
       }
@@ -1962,6 +2006,11 @@
     }
   }
 
+  function syncSearchWrapVisibility() {
+    if (!M.SEARCH_WRAP_EL) return;
+    M.SEARCH_WRAP_EL.hidden = !!(M.tabMode && M.activeTab === "cameras");
+  }
+
   function showTab(id) {
     if (M.colorSession) M.closeColorPopup(true);
     if (M.tstatSession) M.closeTstatPopup();
@@ -1990,6 +2039,7 @@
     if (M.CENTRAL_BLINDS_BTN) M.CENTRAL_BLINDS_BTN.hidden = !(M.tabMode && id === "blinds");
     if (M.CENTRAL_FAN_BTN) M.CENTRAL_FAN_BTN.hidden = !(M.tabMode && id === "fans");
     if (M.SEARCH_EL) M.SEARCH_EL.placeholder = nonLights ? "Search " + (M.TAB_LABELS[id] || "items") : "Search lights or rooms";
+    syncSearchWrapVisibility();
     updateTabActiveStates();
     if (nonLights) {
       switch (id) {
@@ -2042,6 +2092,7 @@
     }
     updateTabActiveStates();
     updateQuickNavVisibility();
+    syncSearchWrapVisibility();
     updateCurrentCategoryTitle();
   }
 
@@ -3225,5 +3276,5 @@
   })();
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
-  Object.assign(M, { makeShadeTile, updateShadeTile, updateFavoriteShadeTile, shadesListSignature, refreshBlindsPopup, renderBlindsPopup, toggleCeilingFan, stepCeilingFanSpeed, makeFanTile, updateFanTile, fansListSignature, refreshFansPopup, renderFansPopup, renderOutletsPopup, normalizeTempSensorForCard, syncDualSensorSources, applySensorLiveAttr, refreshSensorViews, makeMusicRow, updateFavoriteMusicRow, camerasListSig, stopCamerasStreams, refreshCamerasPopup, renderCamerasPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, setQuickBodyClass, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, allSensorRoomsCollapsed, expandAllSensorRooms, collapseAllSensorRooms, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, hasCollapsibleRooms, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, stopDashGateRecheck, syncDashboardAuthState, fetchAuthStatus, recheckDashboardAuthWhileGateOpen, startDashGateRecheck, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
+  Object.assign(M, { makeShadeTile, updateShadeTile, updateFavoriteShadeTile, shadesListSignature, refreshBlindsPopup, renderBlindsPopup, toggleCeilingFan, stepCeilingFanSpeed, makeFanTile, updateFanTile, fansListSignature, refreshFansPopup, renderFansPopup, renderOutletsPopup, normalizeTempSensorForCard, syncDualSensorSources, applySensorLiveAttr, refreshSensorViews, makeMusicRow, updateFavoriteMusicRow, camerasListSig, cameraEmbedUrl, cameraTilePlayUrl, syncCameraMuteBtn, setCameraUnmuted, stopCamerasStreams, refreshCamerasPopup, renderCamerasPopup, renderMusicPopup, renderHubModePopup, ensurePinPadPopup, showPinPadError, clearPinPadError, renderPinPadDots, appendPinDigit, backspacePinDigit, closePinPad, openPinPad, promptGarageOpenPin, promptUnlockPin, runHsmAction, appendHsmModeButtons, renderSecurityPopup, sendValveCmd, reconcileValve, sensorTypeOrder, sortSensorsInRoom, groupSensorsByRoom, groupRoomSensorsByType, mergedSensorList, sensorsPopupSignature, sensorTypesWithCounts, sensorMatchesFilter, syncSensorFilterBtn, syncSensorFilterChips, applySensorTypeFilter, buildSensorFilterBar, sensorBatteryPct, sensorBatteryLabel, sensorExFooter, applySensorCardState, makeSensorCard, makeFavoriteSensorCard, updateSensorCard, buildSensorRoomSection, renderSensorsPopup, refreshSensorsPopup, renderScenesPopup, favoritesPopupSignature, makeQuickTstatCard, updateQuickTstatCard, refreshFavoritesPopup, renderFavoritesPopup, thermostatsListSignature, refreshThermostatsPopup, renderThermostatsPopup, quickNavPopupHasContent, updateQuickNavVisibility, refreshQuickPopupIfOpen, openQuickPopup, closeQuickPopup, ensureTabView, setQuickBodyClass, currentBody, currentCategory, currentCategoryLabel, updateCurrentCategoryTitle, inTabView, updateTabActiveStates, syncSearchWrapVisibility, showTab, closeCurrentView, setTabMode, resolveDrawerDom, setDrawerLabels, openDrawer, closeDrawer, toggleDrawer, setDrawerMode, closeConfirm, ensureConfirmPopup, confirmAction, tapAllOn, tapAllOff, collapsedIdSet, applyFilter, applyTabSearch, applySearch, sensorsCollapsedIdSet, sensorsCollapsedSet, persistSensorsCollapsed, allSensorRoomsCollapsed, expandAllSensorRooms, collapseAllSensorRooms, restoreSensorsCollapsed, collapsedSet, persistCollapsed, allRoomsCollapsed, hasCollapsibleRooms, updateExpandAllBtn, collapseAllRooms, expandAllRooms, restoreCollapsed, refresh, effectivePollInterval, startPolling, restartPolling, stopPolling, clearWsReconnectTimer, stopWS, pauseApp, resetUiOnResume, syncApp, resumeApp, startWS, scheduleReconnect, stopDashGateRecheck, syncDashboardAuthState, fetchAuthStatus, recheckDashboardAuthWhileGateOpen, startDashGateRecheck, unlockDashboard, ensureDashboardGatePopup, openDashboardGate, closeDashboardGate, promptDashboardPassword, ensureDashboardAccess });
 })();

@@ -299,8 +299,10 @@ body {
 }
 .camera-mute-btn {
   pointer-events: auto; flex-shrink: 0; width: 32px; height: 32px; border: 0; border-radius: 8px;
-  background: rgba(0,0,0,.45); color: #fff; opacity: .55; cursor: not-allowed; padding: 4px;
+  background: rgba(0,0,0,.45); color: #fff; cursor: pointer; padding: 4px;
 }
+.camera-mute-btn:active { transform: scale(.96); }
+.camera-mute-btn.is-unmuted { background: rgba(43,155,214,.85); }
 .camera-mute-btn svg { width: 100%; height: 100%; display: block; }
 
 .quick-panel .quick-fav-grid,

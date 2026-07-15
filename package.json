@@ -1,6 +1,6 @@
 {
   "name": "hubitat-dashboard",
-  "version": "0.2.78",
+  "version": "0.2.79",
   "private": true,
   "type": "module",
   "description": "Minimal-setup Hubitat dashboard: select your devices and you're done. Room-grouped layout with clean names, installable PWA, fully hosted on your hub.",

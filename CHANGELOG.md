@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.79
+
+- **Cameras:** switch to go2rtc **WebRTC** embed (`webrtc.html`) — lower latency than
+  `stream.html`; streams start muted (`media=video`).
+- **Cameras:** working mute/unmute per tile (toggles `media=video+audio`); only one
+  camera unmuted at a time; auto-mute when a tile scrolls off-screen.
+- **Cameras:** hide the search bar on the Cameras tab.
+
 ## 0.2.78
 
 - **Cameras:** new Cameras tab (requires **Enable tabs**) for go2rtc Camera devices —
