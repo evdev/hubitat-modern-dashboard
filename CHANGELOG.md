@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.99
+
+- **Performance:** defer `mld-app-post3.js` (Cameras + Scheduler) until after the first
+  Lights render; load on demand when those tabs open, with retry on failure.
+- **Local dashboard:** post3 URL carried in page meta so direct `/local/` asset rewrites
+  still work when Hub Login Security is off.
+
 ## 0.2.98
 
 - **Performance:** data-first startup — load `/data` immediately instead of blocking on

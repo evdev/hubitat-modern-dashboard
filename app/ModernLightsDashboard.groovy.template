@@ -754,7 +754,7 @@ def rewriteDashboardAssetRefsToFileManager(String html) {
         ["src", "app-core.js", assetJsCoreFile()],
         ["src", "app-post.js", assetJsPostFile()],
         ["src", "app-post2.js", assetJsPost2File()],
-        ["src", "app-post3.js", assetJsPost3File()],
+        ["content", "app-post3.js", assetJsPost3File()],
     ].each { spec ->
         def attr = spec[0], assetPath = spec[1], fmFile = spec[2]
         def escaped = assetPath.replace(".", "\\.")
@@ -999,9 +999,10 @@ def renderIndex() {
         if (!iconHref) {
             html = html.replace('href="icons/icon-192.png"', "href=\"icons/icon-192.png${q}\"")
         }
-        for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"]) {
+        for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js"]) {
             html = appendAccessToken(html, "src", asset, token)
         }
+        html = appendAccessToken(html, "content", "app-post3.js", token)
     }
     html = rewriteDashboardAssetRefsToFileManager(html)
     renderNoStore("text/html", html, 200)

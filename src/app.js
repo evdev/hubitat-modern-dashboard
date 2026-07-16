@@ -8926,7 +8926,10 @@
     if (inTabView()) {
       switch (activeTab) {
         case "music": renderMusicPopup(); break;
-        case "cameras": refreshCamerasPopup(); break;
+        case "cameras":
+          if (isPost3Ready()) postCall("refreshCamerasPopup");
+          else void activateDeferredModule("cameras");
+          break;
         case "favorites": refreshFavoritesPopup(); break;
         case "thermostats": refreshThermostatsPopup(); break;
         case "sensors": refreshSensorsPopup(); break;
@@ -8934,7 +8937,8 @@
         case "fans": refreshFansPopup(); break;
         case "outlets": renderOutletsPopup(); break;
         case "scheduling":
-          if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
+          if (isPost3Ready()) postCall("renderSchedulerView");
+          else void activateDeferredModule("scheduling");
           break;
       }
       return;
@@ -8951,7 +8955,8 @@
       case "security": renderSecurityPopup(); break;
       case "sensors": refreshSensorsPopup(); break;
       case "scheduling":
-        if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
+        if (isPost3Ready()) postCall("renderSchedulerView");
+        else void activateDeferredModule("scheduling");
         break;
     }
   }
@@ -8982,11 +8987,7 @@
       case "sensors": renderSensorsPopup(); break;
       case "thermostats": renderThermostatsPopup(); break;
       case "scheduling":
-        if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
-        else {
-          popup._body.className = "quick-body";
-          popup._body.textContent = "Coming soon";
-        }
+        void activateDeferredModule("scheduling");
         break;
       default:
         popup._body.className = "quick-body";
@@ -9098,7 +9099,7 @@
     if (fanMasterPopup && fanMasterPopup.classList.contains("open")) closeFanMasterPopup();
     if (shadeMasterPopup && shadeMasterPopup.classList.contains("open")) closeShadeMasterPopup();
     if (quickPopup && quickPopup.classList.contains("open")) closeQuickPopup();
-    if (activeTab === "cameras" && id !== "cameras") stopCamerasStreams();
+    if (activeTab === "cameras" && id !== "cameras") postCall("stopCamerasStreams");
     const tabChanged = id !== activeTab;
     if (tabChanged && SEARCH_EL) {
       SEARCH_EL.value = "";
@@ -9128,13 +9129,11 @@
         case "sensors": renderSensorsPopup(); break;
         case "thermostats": renderThermostatsPopup(); break;
         case "music": renderMusicPopup(); break;
-        case "cameras": refreshCamerasPopup(); break;
+        case "cameras": void activateDeferredModule("cameras"); break;
         case "blinds": refreshBlindsPopup(); break;
         case "fans": refreshFansPopup(); break;
         case "outlets": renderOutletsPopup(); break;
-        case "scheduling":
-          if (globalThis.__MLD?.renderSchedulerView) globalThis.__MLD.renderSchedulerView();
-          break;
+        case "scheduling": void activateDeferredModule("scheduling"); break;
       }
     }
     applySearch();
@@ -9154,7 +9153,7 @@
     saveTabsPref(on);
     if (QUICK_LIGHTS_BTN) QUICK_LIGHTS_BTN.hidden = !on;
     if (!on) {
-      if (activeTab === "cameras") stopCamerasStreams();
+      if (activeTab === "cameras") postCall("stopCamerasStreams");
       syncCamerasViewClass(false);
       if (quickPopup && quickPopup.classList.contains("open")) closeQuickPopup();
       activeTab = "lights";
@@ -9747,6 +9746,7 @@
       refreshLocalUrlFromConfig();
       updateLocalModeMenuUI();
       render(d);
+      retainPost3PendingData(d);
       setStatus("");
     } catch (e) {
       setStatus("Cannot reach hub", true);
@@ -10307,6 +10307,129 @@
     }
   }
 
+  let post3LoadPromise = null;
+  let post3LoadFailed = false;
+  let post3PendingData = null;
+
+  function isPost3Ready() {
+    return typeof globalThis.__MLD?.renderSchedulerView === "function"
+      && typeof globalThis.__MLD?.refreshCamerasPopup === "function";
+  }
+
+  function resolvePost3Src() {
+    const meta = document.querySelector('meta[name="mld-post3"]');
+    const raw = (meta?.getAttribute("content") || "").trim();
+    if (raw) {
+      if (/^(https?:)?\/\//i.test(raw) || raw.startsWith("/local/")) return raw;
+      return withToken(raw);
+    }
+    const sibling = document.querySelector('script[src*="app-post2.js"], script[src*="mld-app-post2.js"]');
+    if (sibling?.src) {
+      return sibling.src
+        .replace("mld-app-post2.js", "mld-app-post3.js")
+        .replace("app-post2.js", "app-post3.js");
+    }
+    return withToken("app-post3.js");
+  }
+
+  function ensurePost3Loaded() {
+    if (isPost3Ready()) {
+      post3LoadFailed = false;
+      return Promise.resolve(true);
+    }
+    if (post3LoadPromise) return post3LoadPromise;
+    post3LoadFailed = false;
+    post3LoadPromise = new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = resolvePost3Src();
+      script.async = true;
+      script.onload = () => {
+        post3LoadPromise = null;
+        post3LoadFailed = !isPost3Ready();
+        resolve(isPost3Ready());
+      };
+      script.onerror = () => {
+        post3LoadPromise = null;
+        post3LoadFailed = true;
+        resolve(false);
+      };
+      document.head.appendChild(script);
+    });
+    return post3LoadPromise;
+  }
+
+  function retainPost3PendingData(d) {
+    if (!isPost3Ready()) post3PendingData = d;
+  }
+
+  function applyPendingPost3Data() {
+    const d = post3PendingData;
+    post3PendingData = null;
+    if (!d) return;
+    const apply = globalThis.__MLD?.applySchedulesFromData;
+    if (typeof apply === "function") apply(d);
+    updateQuickNavVisibility();
+  }
+
+  async function loadPost3AfterFirstRender() {
+    const ok = await ensurePost3Loaded();
+    if (!ok) {
+      setStatus("Cameras/scheduler module failed to load — open those tabs to retry", true);
+      return;
+    }
+    applyPendingPost3Data();
+  }
+
+  function showDeferredModuleLoading(label) {
+    const body = currentBody();
+    if (!body) return;
+    if (body === tabViewEl) body.className = "tab-view tab-body";
+    else body.className = "quick-body";
+    body.innerHTML = '<div class="loading"><div class="spinner"></div>Loading ' + label + "…</div>";
+  }
+
+  function showDeferredModuleError(id, label) {
+    const body = currentBody();
+    if (!body) return;
+    if (body === tabViewEl) body.className = "tab-view tab-body";
+    else body.className = "quick-body";
+    body.innerHTML =
+      '<div class="empty"><h2>Could not load ' + label + "</h2>" +
+      "<p>Check your connection and try again.</p>" +
+      '<p><button type="button" class="ghost-btn" id="mld-retry-post3">Retry</button></p></div>';
+    body.querySelector("#mld-retry-post3")?.addEventListener("click", () => {
+      post3LoadFailed = false;
+      void activateDeferredModule(id);
+    });
+  }
+
+  function deferredModuleStillActive(id) {
+    if (tabMode && activeTab === id) return true;
+    if (quickPopupOpenType === id) return true;
+    return false;
+  }
+
+  async function activateDeferredModule(id) {
+    const label = id === "cameras" ? "cameras" : "scheduler";
+    if (isPost3Ready()) {
+      if (id === "cameras") postCall("refreshCamerasPopup");
+      else postCall("renderSchedulerView");
+      return;
+    }
+    showDeferredModuleLoading(label);
+    const ok = await ensurePost3Loaded();
+    if (!deferredModuleStillActive(id)) return;
+    if (!ok) {
+      showDeferredModuleError(id, label);
+      setStatus("Failed to load " + label + " module", true);
+      return;
+    }
+    applyPendingPost3Data();
+    if (!deferredModuleStillActive(id)) return;
+    if (id === "cameras") postCall("refreshCamerasPopup");
+    else postCall("renderSchedulerView");
+  }
+
   function finishDashboardBoot(d) {
     if (applyLocalModeStrategy()) return false;
     // /data reports password state; arm renewal when a saved session is active.
@@ -10314,6 +10437,8 @@
       setupDashSessionActivityRenewal();
     }
     render(d);
+    retainPost3PendingData(d);
+    void loadPost3AfterFirstRender();
     initAndroidLocalImmersive();
     startPolling();
     startWS();
