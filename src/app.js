@@ -10307,21 +10307,28 @@
     }
   }
 
+  function finishDashboardBoot(d) {
+    if (applyLocalModeStrategy()) return false;
+    // /data reports password state; arm renewal when a saved session is active.
+    if (dashboardPasswordRequired && isDashSessionFresh()) {
+      setupDashSessionActivityRenewal();
+    }
+    render(d);
+    initAndroidLocalImmersive();
+    startPolling();
+    startWS();
+    return true;
+  }
+
+  // Data-first startup: skip /auth/status on the common path. Password-disabled
+  // dashboards and valid sessions load /data immediately. On 401, getJson()
+  // opens the gate via ensureDashboardAccess() and retries.
   (async function init() {
     consumePreferCloudParam();
-    try {
-      await ensureDashboardAccess();
-    } catch (e) {
-      console.error("Dashboard auth failed:", e);
-    }
     loadingState();
     try {
       const d = await fetchData();
-      if (applyLocalModeStrategy()) return;
-      render(d);
-      initAndroidLocalImmersive();
-      startPolling();
-      startWS();
+      finishDashboardBoot(d);
     } catch (e) {
       console.error("Dashboard init failed:", e);
       // getJson already prompts on 401; only recover here if that path threw auth_required.
@@ -10330,11 +10337,7 @@
           loadDashSession();
           if (!isDashSessionFresh()) await ensureDashboardAccess();
           const d = await fetchData();
-          if (applyLocalModeStrategy()) return;
-          render(d);
-          initAndroidLocalImmersive();
-          startPolling();
-          startWS();
+          finishDashboardBoot(d);
           return;
         } catch (retryErr) {
           console.error("Dashboard auth retry failed:", retryErr);

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.98
+
+- **Performance:** data-first startup — load `/data` immediately instead of blocking on
+  `/auth/status`; password gate opens only on 401. Session renewal still arms from
+  `/data` when a saved session is active.
+
 ## 0.2.97
 
 - **Performance:** in-memory File Manager asset cache on the hub (cleared on app update;
