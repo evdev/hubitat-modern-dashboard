@@ -860,6 +860,7 @@
   function openTopbarOverflowMenu() {
     if (!M.OVERFLOW_MENU || !M.OVERFLOW_BTN || M.reorderMode) return;
     M.updateLocalModeMenuUI();
+    M.updateCamerasLayoutMenuVisibility();
     M.OVERFLOW_MENU.hidden = false;
     M.OVERFLOW_BTN.setAttribute("aria-expanded", "true");
     const onClick = (e) => {

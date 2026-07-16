@@ -372,6 +372,7 @@
       return;
     }
     const grid = ce("div", "cameras-grid");
+    grid.dataset.cols = String(M.cfg.camerasCols === 2 || M.cfg.camerasCols === 3 ? M.cfg.camerasCols : 1);
     const HYSTERESIS_MS = 200;
     cameraReorderEls.clear();
     for (const cam of M.cameras) {

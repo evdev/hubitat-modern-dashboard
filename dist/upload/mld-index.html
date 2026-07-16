@@ -11,7 +11,7 @@
 <title>mDash</title>
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192.png" />
-<link rel="stylesheet" href="app.css?v=0.2.92" />
+<link rel="stylesheet" href="app.css?v=0.2.93" />
 </head>
 <body>
 <div id="app">
@@ -53,6 +53,15 @@
           </button>
           <div id="topbar-overflow-menu" class="topbar-overflow-menu" role="menu" hidden>
             <button id="menu-reorder" class="topbar-overflow-item" type="button" role="menuitem">Reorder</button>
+            <div id="menu-cameras-layout" hidden>
+              <div class="topbar-overflow-sep" role="separator"></div>
+              <div class="topbar-overflow-label">Cameras layout</div>
+              <div id="menu-cameras-cols" class="topbar-overflow-segment" role="group" aria-label="Cameras layout">
+                <button type="button" class="topbar-overflow-seg" data-cols="1" role="menuitemradio" aria-checked="true">1</button>
+                <button type="button" class="topbar-overflow-seg" data-cols="2" role="menuitemradio" aria-checked="false">2</button>
+                <button type="button" class="topbar-overflow-seg" data-cols="3" role="menuitemradio" aria-checked="false">3</button>
+              </div>
+            </div>
             <div class="topbar-overflow-sep" role="separator"></div>
             <button id="menu-open-local" class="topbar-overflow-item" type="button" role="menuitem" hidden>Open local mode</button>
             <button id="menu-open-cloud" class="topbar-overflow-item" type="button" role="menuitem" hidden>Open cloud mode</button>
@@ -110,11 +119,11 @@
 
   <div id="status" class="status" hidden></div>
 </div>
-<script src="app-pre.js?v=0.2.92"></script>
-<script src="app.js?v=0.2.92"></script>
-<script src="app-core.js?v=0.2.92"></script>
-<script src="app-post.js?v=0.2.92"></script>
-<script src="app-post2.js?v=0.2.92"></script>
-<script src="app-post3.js?v=0.2.92"></script>
+<script src="app-pre.js?v=0.2.93"></script>
+<script src="app.js?v=0.2.93"></script>
+<script src="app-core.js?v=0.2.93"></script>
+<script src="app-post.js?v=0.2.93"></script>
+<script src="app-post2.js?v=0.2.93"></script>
+<script src="app-post3.js?v=0.2.93"></script>
 </body>
 </html>

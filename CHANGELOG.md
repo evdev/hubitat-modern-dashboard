@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.93
+
+- **Cameras:** overflow layout picker (1 / 2 / 3 columns) on the Cameras tab; preference saved per device.
+
 ## 0.2.92
 
 - **Cameras:** HD toggles high-res stream in the grid tile (no expand overlay); button nudged up and right.

@@ -1897,6 +1897,7 @@
     if (M.CENTRAL_FAN_BTN) M.CENTRAL_FAN_BTN.hidden = !(M.tabMode && id === "fans");
     if (M.SEARCH_EL) M.SEARCH_EL.placeholder = nonLights ? "Search " + (M.TAB_LABELS[id] || "items") : "Search lights or rooms";
     syncCamerasViewClass(M.tabMode && id === "cameras");
+    M.updateCamerasLayoutMenuVisibility();
     updateTabActiveStates();
     if (nonLights) {
       switch (id) {
@@ -1951,6 +1952,7 @@
     updateTabActiveStates();
     updateQuickNavVisibility();
     updateCurrentCategoryTitle();
+    M.updateCamerasLayoutMenuVisibility();
   }
 
   // ---------- navigation drawer ----------
@@ -2462,6 +2464,18 @@
     }
   }
 
+  if (M.MENU_CAMERAS_COLS_SEGMENT) {
+    for (const btn of M.MENU_CAMERAS_COLS_SEGMENT.querySelectorAll(".topbar-overflow-seg")) {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const cols = Number(btn.dataset.cols);
+        if (cols !== 1 && cols !== 2 && cols !== 3) return;
+        M.applyCamerasCols(cols);
+        M.hapticTap();
+      });
+    }
+  }
+
   if (M.MENU_OPEN_LOCAL_BTN) {
     M.MENU_OPEN_LOCAL_BTN.addEventListener("click", () => {
       M.closeTopbarOverflowMenu();
@@ -2499,6 +2513,8 @@
   } catch {}
 
   M.applyTheme(M.cfg.theme);
+  M.applyCamerasCols(M.cfg.camerasCols);
+  M.updateCamerasLayoutMenuVisibility();
 
   // ---------- polling ----------
   async function refresh() {

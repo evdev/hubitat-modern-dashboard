@@ -24,6 +24,8 @@
   const MENU_TABS_EL = document.getElementById("menu-tabs");
   const MENU_DRAWER_EL = document.getElementById("menu-drawer");
   const MENU_THEME_SEGMENT = document.getElementById("menu-theme-segment");
+  const MENU_CAMERAS_LAYOUT = document.getElementById("menu-cameras-layout");
+  const MENU_CAMERAS_COLS_SEGMENT = document.getElementById("menu-cameras-cols");
   const MENU_OPEN_LOCAL_BTN = document.getElementById("menu-open-local");
   const MENU_OPEN_CLOUD_BTN = document.getElementById("menu-open-cloud");
   const MENU_LOCAL_URL_EL = document.getElementById("menu-local-url");
@@ -31,6 +33,7 @@
   const THEME_STORAGE_KEY = "mld_theme";
   const TABS_STORAGE_KEY = "mld_tabs";
   const DRAWER_STORAGE_KEY = "mld_drawer";
+  const CAMERAS_COLS_STORAGE_KEY = "mld_cameras_cols";
   const LOCAL_URL_STORAGE_KEY = "mld_localUrl";
   const CLOUD_URL_STORAGE_KEY = "mld_cloudUrl";
   const PREFER_CLOUD_STORAGE_KEY = "mld_preferCloud";
@@ -97,7 +100,19 @@
     try { localStorage.setItem(DRAWER_STORAGE_KEY, on ? "1" : "0"); } catch {}
   }
 
-  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", roomOrder: null, navOrder: null, cameraOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref(), enableDrawer: loadDrawerPref(), localUrl: "", cloudUrl: "" };
+  function loadCamerasColsPref() {
+    try {
+      const n = Number(localStorage.getItem(CAMERAS_COLS_STORAGE_KEY));
+      if (n === 2 || n === 3) return n;
+    } catch {}
+    return 1;
+  }
+
+  function saveCamerasColsPref(cols) {
+    try { localStorage.setItem(CAMERAS_COLS_STORAGE_KEY, String(cols)); } catch {}
+  }
+
+  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", roomOrder: null, navOrder: null, cameraOrder: null, enableHaptics: loadHapticsPref(), enableTabs: loadTabsPref(), enableDrawer: loadDrawerPref(), camerasCols: loadCamerasColsPref(), localUrl: "", cloudUrl: "" };
 
   let localModeBannerEl = null;
   let localBannerDismissed = false;
@@ -3957,6 +3972,29 @@
     }
   }
 
+  function updateCamerasColsSegmentUI(cols) {
+    if (!MENU_CAMERAS_COLS_SEGMENT) return;
+    const key = String(cols);
+    for (const btn of MENU_CAMERAS_COLS_SEGMENT.querySelectorAll(".topbar-overflow-seg")) {
+      const selected = btn.dataset.cols === key;
+      btn.setAttribute("aria-checked", selected ? "true" : "false");
+    }
+  }
+
+  function updateCamerasLayoutMenuVisibility() {
+    if (!MENU_CAMERAS_LAYOUT) return;
+    MENU_CAMERAS_LAYOUT.hidden = !(tabMode && activeTab === "cameras");
+  }
+
+  function applyCamerasCols(cols) {
+    const n = cols === 2 || cols === 3 ? cols : 1;
+    cfg.camerasCols = n;
+    saveCamerasColsPref(n);
+    updateCamerasColsSegmentUI(n);
+    const grid = tabViewEl?.querySelector(".cameras-grid");
+    if (grid) grid.dataset.cols = String(n);
+  }
+
   function applyTheme(theme) {
     cfg.theme = THEME_OPTIONS.includes(theme) ? theme : "auto";
     const effective = effectiveTheme(cfg.theme);
@@ -5316,6 +5354,7 @@
   function openTopbarOverflowMenu() {
     if (!OVERFLOW_MENU || !OVERFLOW_BTN || reorderMode) return;
     updateLocalModeMenuUI();
+    updateCamerasLayoutMenuVisibility();
     OVERFLOW_MENU.hidden = false;
     OVERFLOW_BTN.setAttribute("aria-expanded", "true");
     const onClick = (e) => {
@@ -9074,6 +9113,7 @@
     if (CENTRAL_FAN_BTN) CENTRAL_FAN_BTN.hidden = !(tabMode && id === "fans");
     if (SEARCH_EL) SEARCH_EL.placeholder = nonLights ? "Search " + (TAB_LABELS[id] || "items") : "Search lights or rooms";
     syncCamerasViewClass(tabMode && id === "cameras");
+    updateCamerasLayoutMenuVisibility();
     updateTabActiveStates();
     if (nonLights) {
       switch (id) {
@@ -9128,6 +9168,7 @@
     updateTabActiveStates();
     updateQuickNavVisibility();
     updateCurrentCategoryTitle();
+    updateCamerasLayoutMenuVisibility();
   }
 
   // ---------- navigation drawer ----------
@@ -9639,6 +9680,18 @@
     }
   }
 
+  if (MENU_CAMERAS_COLS_SEGMENT) {
+    for (const btn of MENU_CAMERAS_COLS_SEGMENT.querySelectorAll(".topbar-overflow-seg")) {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const cols = Number(btn.dataset.cols);
+        if (cols !== 1 && cols !== 2 && cols !== 3) return;
+        applyCamerasCols(cols);
+        hapticTap();
+      });
+    }
+  }
+
   if (MENU_OPEN_LOCAL_BTN) {
     MENU_OPEN_LOCAL_BTN.addEventListener("click", () => {
       closeTopbarOverflowMenu();
@@ -9676,6 +9729,8 @@
   } catch {}
 
   applyTheme(cfg.theme);
+  applyCamerasCols(cfg.camerasCols);
+  updateCamerasLayoutMenuVisibility();
 
   // ---------- polling ----------
   async function refresh() {
@@ -10674,6 +10729,7 @@
       return;
     }
     const grid = ce("div", "cameras-grid");
+    grid.dataset.cols = String(cfg.camerasCols === 2 || cfg.camerasCols === 3 ? cfg.camerasCols : 1);
     const HYSTERESIS_MS = 200;
     cameraReorderEls.clear();
     for (const cam of cameras) {
