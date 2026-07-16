@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.95
+
+- **Logging:** server-side failures (commands, batch, async light jobs, hub mode, HSM, scenes, scheduler) now write to Hubitat Logs with device and error context.
+- **Debug logging:** optional preference under Dashboard options; logs command traces when enabled and auto-disables after 30 minutes. Passwords and PINs are never logged.
+- **Debug logging:** auto-off timer re-arms after hub reboot and no longer resets on unrelated app saves.
+
 ## 0.2.94
 
 - **Companion app:** reorganized preferences on a single page — dashboard links near the top, device pickers split into Lights & outlets, Climate, Shades/fans/media, Locks & garage, Sensors, and Cameras; Options, hub mode/scenes, and scheduler merged under Dashboard options; password and HSM merged under Security & access; About and Light control collapsed by default.

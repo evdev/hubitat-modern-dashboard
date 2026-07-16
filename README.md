@@ -638,6 +638,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Dashboard options | Enable eventsocket | On | LAN WebSocket; see [WebSocket](#real-time-updates-websocket) |
 | Dashboard options | Hub mode / scenes quick menu | On | Hides quick-nav only |
 | Dashboard options | Scheduler | On | Hide stops schedules from running |
+| Dashboard options | Debug logging | Off | Command traces in Hubitat Logs; auto-off after 30 min |
 | Dashboard options | 24-hour time display | Off | Display only; stored times are 24h |
 | Light control | Disable metering | Off | When off, commands are staggered |
 | Light control | Metering delay | 75 ms | 0–2000 ms between light commands |
@@ -676,6 +677,10 @@ The **Shades (Switch Level)** picker is for shade/blind drivers that only
 advertise dimmer capabilities. Hubitat cannot filter that list to shades alone,
 so every Switch Level device appears — select only real shades/blinds, never
 ordinary lights (use **Lights** for those).
+
+### Diagnosing issues
+
+Open **Logs** in the Hubitat admin UI and filter for **Modern Dashboard**. Failures (command errors, auth/PIN rejections, scheduler problems) are logged automatically with device and error context. Enable **Debug logging** in app preferences for command traces while investigating; it turns off automatically after 30 minutes. Passwords, PINs, and session tokens are never written to the log.
 
 ## Community and wider distribution
 

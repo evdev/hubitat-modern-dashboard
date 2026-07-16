@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.94
+// Modern Dashboard v0.2.95
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -42,7 +42,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.2.94 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.95 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -157,6 +157,8 @@ def mainPage() {
                 input "schedulerUse24Hour", "bool", title: "Use 24-hour time in scheduler", defaultValue: false
             }
             paragraph "<small>When scheduler is hidden, no schedules run. Saved schedules are kept if you turn it back on.</small>"
+            input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            paragraph "<small>Logs command traces to Hubitat Logs for troubleshooting. Auto-disables after 30 minutes. Failures are always logged regardless of this setting.</small>"
         }
         section("Light control", hideable: true, hidden: true) {
             paragraph "<small>Applies to snapshot restore, All on/off, and room on/off. Metering is on by default.</small>"
@@ -212,6 +214,72 @@ def updated() {
     try { syncDashPasswordEpoch() } catch (e) { log.warn "Modern Dashboard: dash password sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
+    syncDebugLoggingAutoOff()
+}
+
+def initialize() {
+    syncDebugLoggingAutoOff()
+}
+
+def syncDebugLoggingAutoOff() {
+    if (debugLogging != true) {
+        state.remove("debugLogExpiresAt")
+        state.debugLogWasOn = false
+        try { unschedule("logsOff") } catch (e) {}
+        return
+    }
+    def nowMs = now()
+    def expiresAt = null
+    if (state.debugLogExpiresAt != null) {
+        try { expiresAt = state.debugLogExpiresAt.toLong() } catch (e) { expiresAt = null }
+    }
+    def newlyEnabled = (state.debugLogWasOn != true)
+    if (newlyEnabled || expiresAt == null) {
+        expiresAt = nowMs + 1800000L
+        state.debugLogExpiresAt = expiresAt
+    }
+    state.debugLogWasOn = true
+    if (nowMs >= expiresAt) {
+        logsOff()
+        return
+    }
+    def remainingSec = Math.max(1, Math.ceil((expiresAt - nowMs) / 1000.0).toInteger())
+    try { unschedule("logsOff") } catch (e) {}
+    runIn(remainingSec, "logsOff")
+}
+
+def logsOff() {
+    state.debugLogExpiresAt = now()
+    state.debugLogWasOn = false
+    if (debugLogging != true) return
+    log.warn "Modern Dashboard: debug logging disabled (auto-off after 30 minutes)"
+    // String "false" matches Hubitat community apps; boolean false also works on newer hubs.
+    app?.updateSetting("debugLogging", [value: "false", type: "bool"])
+}
+
+def debugLogActive() {
+    if (debugLogging != true) return false
+    if (state.debugLogExpiresAt != null) {
+        try {
+            if (now() > state.debugLogExpiresAt.toLong()) return false
+        } catch (e) {}
+    }
+    return true
+}
+
+def logDbg(msg) {
+    if (debugLogActive()) log.debug "Modern Dashboard: ${msg}"
+}
+
+def deviceLabel(dev) {
+    if (!dev) return "?"
+    def n = dev.displayName ?: dev.name ?: "device"
+    return "${n} (${dev.id})"
+}
+
+def logCmdFailure(dev, cmd, val, err) {
+    def v = (val != null && val.toString() != "") ? " v=${val}" : ""
+    log.warn "Modern Dashboard: cmd failed — ${deviceLabel(dev)} ${cmd}${v}: ${err}"
 }
 
 def logInit() {
@@ -1981,9 +2049,18 @@ def runAudioCmd(dev, c, v) {
 def validateUnlockPin(pin) {
     if (unlockPinEnabled != true) return [ok: true]
     def expected = unlockPin?.toString()?.trim() ?: ""
-    if (!expected) return [ok: false, error: "pin not configured"]
-    if (!pin?.trim()) return [ok: false, error: "wrong pin"]
-    if (!pinsMatch(expected, pin.trim())) return [ok: false, error: "wrong pin"]
+    if (!expected) {
+        log.warn "Modern Dashboard: unlock pin failed — pin not configured"
+        return [ok: false, error: "pin not configured"]
+    }
+    if (!pin?.trim()) {
+        log.warn "Modern Dashboard: unlock pin failed — wrong pin"
+        return [ok: false, error: "wrong pin"]
+    }
+    if (!pinsMatch(expected, pin.trim())) {
+        log.warn "Modern Dashboard: unlock pin failed — wrong pin"
+        return [ok: false, error: "wrong pin"]
+    }
     return [ok: true]
 }
 
@@ -1993,6 +2070,7 @@ def isShadeCmd(c) {
 
 def executeOneCmd(id, c, v, pin) {
     if (id == null || c == null) {
+        log.warn "Modern Dashboard: cmd failed — id=${id} ${c}: missing params"
         return [ok: false, error: "missing params"]
     }
     def dev = lights?.find { it.id.toString() == id.toString() }
@@ -2005,9 +2083,12 @@ def executeOneCmd(id, c, v, pin) {
     def valve = valves?.find { it.id.toString() == id.toString() }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
     if (dev == null && outletDev == null && t == null && lk == null && garage == null && shade == null && fan == null && valve == null && mp == null) {
+        log.warn "Modern Dashboard: cmd failed — id=${id} ${c}: device not found"
         return [ok: false, error: "device not found"]
     }
+    def targetDev = dev ?: outletDev ?: t ?: lk ?: garage ?: shade ?: fan ?: valve ?: mp
     try {
+        logDbg("cmd — ${deviceLabel(targetDev)} ${c}" + ((v != null && v.toString() != "") ? " v=${v}" : ""))
         if (shade != null && isShadeCmd(c)) {
             runShadeCmd(shade, c, v)
         } else if (fan != null && (c == "on" || c == "off" || c == "setSpeed")) {
@@ -2041,6 +2122,7 @@ def executeOneCmd(id, c, v, pin) {
         }
         return [ok: true]
     } catch (e) {
+        logCmdFailure(targetDev, c, v, e.message ?: e.toString())
         return [ok: false, error: e.message ?: e.toString()]
     }
 }
@@ -2083,6 +2165,9 @@ def doCmdBatch() {
             failed++
             errors << [id: id, error: result.error]
         }
+    }
+    if (failed > 0) {
+        log.warn "Modern Dashboard: batch cmd — ${failed} failed of ${commands.size()}"
     }
     def out = new StringBuilder()
     out << "{\"ok\":" << (failed == 0 ? "true" : "false")
@@ -2414,6 +2499,7 @@ def enqueueLightCommandJob(kind, steps, meta) {
     ]
     if (meta) job.putAll(meta)
     saveLightCommandJob(job)
+    logDbg("async light job — ${kind ?: 'bulk'} ${steps.size()} steps")
     lightCommandNextStep()
     return [ok: true, async: true, total: steps.size()]
 }
@@ -2426,6 +2512,10 @@ def lightCommandNextStep() {
     }
     def idx = job.index ?: 0
     if (idx >= job.steps.size()) {
+        def failed = job.failed ?: 0
+        if (failed > 0) {
+            log.warn "Modern Dashboard: async light job — ${failed} failed of ${job.total ?: job.steps.size()}"
+        }
         clearLightCommandJob()
         return
     }
@@ -2441,11 +2531,16 @@ def lightCommandNextStep() {
                 runLightCmd(dev, c, v)
             } catch (e) {
                 job.failed = (job.failed ?: 0) + 1
+                logCmdFailure(dev, c, v, e.message ?: e.toString())
             }
         }
     }
     job.index = idx + 1
     if (job.index >= job.steps.size()) {
+        def failed = job.failed ?: 0
+        if (failed > 0) {
+            log.warn "Modern Dashboard: async light job — ${failed} failed of ${job.total ?: job.steps.size()}"
+        }
         clearLightCommandJob()
         return
     }
@@ -3033,6 +3128,7 @@ def setHubModeFromName(modeName) {
         location.setMode(modeName)
         return render(contentType: "application/json", data: withAuthJson("{\"ok\":true,\"mode\":${jsonStr(modeName)}}"), status: 200)
     } catch (e) {
+        log.warn "Modern Dashboard: hub mode failed — ${modeName}: ${e.message ?: e}"
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
     }
 }
@@ -3218,10 +3314,12 @@ def authUnlock() {
         }
         def expected = dashboardPassword?.toString()?.trim() ?: ""
         if (!expected) {
+            log.warn "Modern Dashboard: auth failed — password not configured"
             return render(contentType: "application/json", data: '{"ok":false,"error":"password not configured"}', status: 400)
         }
         def provided = body?.password?.toString() ?: params?.password?.toString() ?: ""
         if (!provided.trim() || !pinsMatch(expected, provided.trim())) {
+            log.warn "Modern Dashboard: auth failed — wrong password"
             return render(contentType: "application/json", data: '{"ok":false,"error":"wrong password"}', status: 403)
         }
         def issued = issueDashboardSession()
@@ -3363,12 +3461,15 @@ def setHsmFromMode(mode, pin) {
     if (hsmPinEnabled == true) {
         def expectedPin = hsmPin?.toString()?.trim() ?: ""
         if (!expectedPin) {
+            log.warn "Modern Dashboard: HSM pin failed — pin not configured"
             return render(contentType: "application/json", data: '{"ok":false,"error":"pin not configured"}', status: 400)
         }
         if (!pin?.trim()) {
+            log.warn "Modern Dashboard: HSM pin failed — wrong pin"
             return render(contentType: "application/json", data: '{"ok":false,"error":"wrong pin"}', status: 403)
         }
         if (!pinsMatch(expectedPin, pin.trim())) {
+            log.warn "Modern Dashboard: HSM pin failed — wrong pin"
             return render(contentType: "application/json", data: '{"ok":false,"error":"wrong pin"}', status: 403)
         }
     }
@@ -3378,6 +3479,7 @@ def setHsmFromMode(mode, pin) {
         def out = hsmResponseAfterCommand(mode)
         return render(contentType: "application/json", data: withAuthJson("{\"ok\":true,\"mode\":${jsonStr(mode)},\"status\":${jsonStr(out.status)},\"alert\":${jsonStr(out.alert)},\"alertDesc\":${jsonStr(out.alertDesc)}}"), status: 200)
     } catch (e) {
+        log.warn "Modern Dashboard: HSM failed — ${mode}: ${e.message ?: e}"
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
     }
 }
@@ -3414,12 +3516,14 @@ def activateSceneFromId(id) {
     def scenesMap = [:]
     try { scenesMap = location.scenes ?: [:] } catch (e) {}
     if (!scenesMap.containsKey(sceneId)) {
+        log.warn "Modern Dashboard: scene failed — ${sceneId}: scene not found"
         return render(contentType: "application/json", data: '{"ok":false,"error":"scene not found"}', status: 404)
     }
     try {
         location.activateScene(sceneId)
         return render(contentType: "application/json", data: withAuthJson("{\"ok\":true,\"id\":${sceneId}}"), status: 200)
     } catch (e) {
+        log.warn "Modern Dashboard: scene failed — ${sceneId}: ${e.message ?: e}"
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
     }
 }
@@ -3766,6 +3870,7 @@ def rebuildScheduledJobs() {
     def map = parseSchedulesMap()
     def now = now()
     def updated = false
+    int registered = 0
     for (id in map.keySet().toList()) {
         def s = map[id]
         if (!s) continue
@@ -3781,6 +3886,7 @@ def rebuildScheduledJobs() {
                         def cron = scheduleCronForTrigger(kind, tr?.time, tr?.days)
                         if (cron) {
                             schedule(cron, "scheduledJobHandler", [data: [id: id.toString()], overwrite: false])
+                            registered++
                             def nf = cronNextFire(cron, now)
                             if (nf != null) nextFire = nf
                         }
@@ -3788,6 +3894,7 @@ def rebuildScheduledJobs() {
                         def nf = scheduleSunNextFire(tr, when, now)
                         if (nf != null && nf > now) {
                             runOnce(new Date(nf), "scheduledJobHandler", [data: [id: id.toString()]])
+                            registered++
                             nextFire = nf
                         }
                     }
@@ -3795,6 +3902,7 @@ def rebuildScheduledJobs() {
                     def atMs = scheduleOnceToMs(tr?.at)
                     if (atMs != null && atMs > now) {
                         runOnce(new Date(atMs), "scheduledJobHandler", [data: [id: id.toString()]])
+                        registered++
                         nextFire = atMs
                     } else if (atMs != null && atMs <= now) {
                         // past one-time — will be removed by cleanupSchedules shortly
@@ -3813,6 +3921,7 @@ def rebuildScheduledJobs() {
         }
     }
     if (updated) saveSchedulesMap(map)
+    logDbg("scheduler rebuild — ${registered} jobs")
 }
 
 def scheduleOnceToMs(at) {
@@ -3906,7 +4015,7 @@ def runScheduleAction(action) {
         case "hubMode":
             def mode = action?.mode?.toString()?.trim()
             if (mode) {
-                try { location.setMode(mode) } catch (e) { log.warn "setMode failed: ${e}" }
+                try { location.setMode(mode) } catch (e) { log.warn "Modern Dashboard: hub mode failed — ${mode}: ${e}" }
             }
             break
         default:
@@ -3950,7 +4059,9 @@ def runScheduleLightAction(action) {
                 def ct = st?.ct
                 if (ct != null && dev.hasCapability("ColorTemperature")) {
                     int k = Math.max(2500, Math.min(6000, ct.toInteger()))
-                    try { dev.setColorTemperature(k) } catch (e) {}
+                    try { dev.setColorTemperature(k) } catch (e) {
+                        log.warn "Modern Dashboard: schedule light CT failed for ${id}: ${e}"
+                    }
                 }
             } else {
                 dev.off()
@@ -3973,16 +4084,24 @@ def runScheduleThermostatAction(action) {
         if (!dev) continue
         try {
             if (mode) {
-                try { dev.setThermostatMode(mode) } catch (e) {}
+                try { dev.setThermostatMode(mode) } catch (e) {
+                    log.warn "Modern Dashboard: schedule tstat mode failed for ${id}: ${e}"
+                }
             }
             if (heat != null) {
-                try { dev.setHeatingSetpoint(heat.toInteger()) } catch (e) {}
+                try { dev.setHeatingSetpoint(heat.toInteger()) } catch (e) {
+                    log.warn "Modern Dashboard: schedule tstat heat failed for ${id}: ${e}"
+                }
             }
             if (cool != null) {
-                try { dev.setCoolingSetpoint(cool.toInteger()) } catch (e) {}
+                try { dev.setCoolingSetpoint(cool.toInteger()) } catch (e) {
+                    log.warn "Modern Dashboard: schedule tstat cool failed for ${id}: ${e}"
+                }
             }
             if (fanMode && (dev.hasCapability("ThermostatFanMode") || dev.hasAttribute("thermostatFanMode"))) {
-                try { dev.setFanMode(fanMode) } catch (e) {}
+                try { dev.setFanMode(fanMode) } catch (e) {
+                    log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: ${e}"
+                }
             }
         } catch (e) {
             log.warn "Modern Dashboard: schedule tstat cmd failed for ${id}: ${e}"
@@ -4209,6 +4328,7 @@ def schedulesTest() {
     try {
         runScheduleAction(s?.action)
     } catch (e) {
+        log.warn "Modern Dashboard: schedule ${id} test failed: ${e}"
         return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}".toString(), status: 500)
     }
     return render(contentType: "application/json", data: withAuthJson('{"ok":true}'), status: 200)
