@@ -1,4 +1,4 @@
-// Modern Dashboard v0.2.96
+// Modern Dashboard v0.2.97
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -9,6 +9,14 @@
 //        mld-index.html, mld-app.css, mld-app.js, mld-app-core.js, mld-app-post.js, mld-app-post2.js, mld-app-post3.js,
 //        mld-manifest.webmanifest, mld-sw.js, mld-icon-192.b64, mld-icon-512.b64
 //   3. Apps -> Add User App -> Modern Dashboard -> select devices -> Done
+
+import groovy.transform.Field
+
+@Field private static Map LOCAL_ASSET_CACHE = [:]
+@Field private static String LOCAL_ASSET_CACHE_VERSION = ""
+@Field private static int LOCAL_ASSET_CACHE_BYTES = 0
+@Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
+@Field private static final String MLD_DEPLOYED_VERSION = "0.2.97"
 
 definition(
     name: "Modern Dashboard",
@@ -42,7 +50,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.2.96 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.2.97 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -211,6 +219,7 @@ def installed() {
 
 def updated() {
     logInit()
+    try { clearLocalAssetCache() } catch (e) { log.warn "Modern Dashboard: asset cache clear failed: ${e}" }
     try { syncDashPasswordEpoch() } catch (e) { log.warn "Modern Dashboard: dash password sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
@@ -652,6 +661,110 @@ def dashboardUrl(boolean local) {
     return "${base}/dashboard?access_token=${state.accessToken}"
 }
 
+// ---------------------------------------------------------------------------
+// File Manager asset cache + HTTP cache headers
+// ---------------------------------------------------------------------------
+def noStoreHeaders() {
+    return [
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    ]
+}
+
+def versionedAssetHeaders() {
+    return ["Cache-Control": "private, max-age=31536000, immutable"]
+}
+
+def renderNoStore(String contentType, String data, int status = 200) {
+    render contentType: contentType, data: data, status: status, headers: noStoreHeaders()
+}
+
+def renderJsonNoStore(String data, int status = 200) {
+    render contentType: "application/json", data: data, status: status, headers: noStoreHeaders()
+}
+
+def renderVersionedAsset(String contentType, String data) {
+    render contentType: contentType, data: data, status: 200, headers: versionedAssetHeaders()
+}
+
+def useDirectLocalAssets() {
+    try {
+        return request?.requestSource == "local" && !hubSecurity
+    } catch (e) {
+        return false
+    }
+}
+
+def assetCacheKey(String fileName) {
+    return "${MLD_DEPLOYED_VERSION}:${fileName}"
+}
+
+def cacheableAssetFileNames() {
+    return requiredAssetFiles() + [assetIcon512File()]
+}
+
+def isCacheableAsset(String fileName) {
+    return cacheableAssetFileNames().contains(fileName)
+}
+
+def assetBodyByteLength(String body) {
+    return body ? body.getBytes("UTF-8").length : 0
+}
+
+def clearLocalAssetCache() {
+    LOCAL_ASSET_CACHE.clear()
+    LOCAL_ASSET_CACHE_VERSION = MLD_DEPLOYED_VERSION
+    LOCAL_ASSET_CACHE_BYTES = 0
+}
+
+def ensureAssetCacheVersion() {
+    if (LOCAL_ASSET_CACHE_VERSION != MLD_DEPLOYED_VERSION) {
+        clearLocalAssetCache()
+    }
+}
+
+def rememberCachedAsset(String fileName, String body) {
+    if (!body || !isCacheableAsset(fileName)) return
+    ensureAssetCacheVersion()
+    def key = assetCacheKey(fileName)
+    def bytes = assetBodyByteLength(body)
+    if (bytes <= 0) return
+    if (LOCAL_ASSET_CACHE_BYTES + bytes > LOCAL_ASSET_CACHE_MAX_BYTES) {
+        clearLocalAssetCache()
+    }
+    def prev = LOCAL_ASSET_CACHE.remove(key)
+    if (prev) LOCAL_ASSET_CACHE_BYTES -= assetBodyByteLength(prev)
+    LOCAL_ASSET_CACHE[key] = body
+    LOCAL_ASSET_CACHE_BYTES += bytes
+}
+
+def readCachedAsset(String fileName) {
+    if (!isCacheableAsset(fileName)) return null
+    ensureAssetCacheVersion()
+    return LOCAL_ASSET_CACHE[assetCacheKey(fileName)]
+}
+
+def rewriteDashboardAssetRefsToFileManager(String html) {
+    if (!useDirectLocalAssets()) return html
+    def base = "${hubBaseUri()}/local"
+    [
+        ["href", "app.css", assetCssFile()],
+        ["src", "app.js", assetJsFile()],
+        ["src", "app-core.js", assetJsCoreFile()],
+        ["src", "app-post.js", assetJsPostFile()],
+        ["src", "app-post2.js", assetJsPost2File()],
+        ["src", "app-post3.js", assetJsPost3File()],
+    ].each { spec ->
+        def attr = spec[0], assetPath = spec[1], fmFile = spec[2]
+        def escaped = assetPath.replace(".", "\\.")
+        html = html.replaceAll(/${attr}="${escaped}(\?[^"]*)?"/) { m ->
+            "${attr}=\"${base}/${fmFile}${m[1] ?: ''}\""
+        }
+    }
+    return html
+}
+
 // File Manager asset names (uploaded to /local/)
 def assetHtmlFile() { return "mld-index.html" }
 def assetCssFile()  { return "mld-app.css" }
@@ -761,6 +874,8 @@ def readHttpBody(data) {
 }
 
 def readLocalAsset(String fileName) {
+    def cached = readCachedAsset(fileName)
+    if (cached != null) return cached
     def result = ""
     try {
         def params = [
@@ -782,20 +897,21 @@ def readLocalAsset(String fileName) {
     } catch (e) {
         log.error "readLocalAsset ${fileName}: ${e.message}"
     }
+    if (result) rememberCachedAsset(fileName, result)
     return result
 }
 
 def renderPngFromBase64Asset(String b64FileName, String missingMsg) {
     def b64 = readLocalAsset(b64FileName)
     if (!b64) {
-        return render(contentType: "text/plain", data: missingMsg, status: 404)
+        return renderNoStore("text/plain", missingMsg, 404)
     }
     try {
         def bytes = b64.trim().decodeBase64()
-        return render(contentType: "image/png", data: new String(bytes, "ISO-8859-1"), status: 200)
+        return renderNoStore("image/png", new String(bytes, "ISO-8859-1"), 200)
     } catch (e) {
         log.error "renderPngFromBase64Asset ${b64FileName}: ${e.message}"
-        return render(contentType: "text/plain", data: "Invalid icon file", status: 500)
+        return renderNoStore("text/plain", "Invalid icon file", 500)
     }
 }
 
@@ -887,43 +1003,44 @@ def renderIndex() {
             html = appendAccessToken(html, "src", asset, token)
         }
     }
-    render contentType: "text/html", data: html, status: 200
+    html = rewriteDashboardAssetRefsToFileManager(html)
+    renderNoStore("text/html", html, 200)
 }
 
 def renderCss() {
     def css = readLocalAsset(assetCssFile())
     if (!css) { css = "/* upload mld-app.css to File Manager */" }
-    render contentType: "text/css", data: css, status: 200
+    renderVersionedAsset("text/css", css)
 }
 
 def renderJs() {
     def js = readLocalAsset(assetJsFile())
     if (!js) { js = "document.body.innerHTML='<p>Upload mld-app.js to File Manager</p>';" }
-    render contentType: "application/javascript", data: js, status: 200
+    renderVersionedAsset("application/javascript", js)
 }
 
 def renderJsCore() {
     def js = readLocalAsset(assetJsCoreFile())
     if (!js) { js = "console.warn('Upload mld-app-core.js to File Manager');" }
-    render contentType: "application/javascript", data: js, status: 200
+    renderVersionedAsset("application/javascript", js)
 }
 
 def renderJsPost() {
     def js = readLocalAsset(assetJsPostFile())
     if (!js) { js = "console.warn('Upload mld-app-post.js to File Manager');" }
-    render contentType: "application/javascript", data: js, status: 200
+    renderVersionedAsset("application/javascript", js)
 }
 
 def renderJsPost2() {
     def js = readLocalAsset(assetJsPost2File())
     if (!js) { js = "console.warn('Upload mld-app-post2.js to File Manager');" }
-    render contentType: "application/javascript", data: js, status: 200
+    renderVersionedAsset("application/javascript", js)
 }
 
 def renderJsPost3() {
     def js = readLocalAsset(assetJsPost3File())
     if (!js) { js = "console.warn('Upload mld-app-post3.js to File Manager');" }
-    render contentType: "application/javascript", data: js, status: 200
+    renderVersionedAsset("application/javascript", js)
 }
 
 def renderManifest() {
@@ -947,13 +1064,13 @@ def renderManifest() {
         out << '{"src":"' << uri << '","sizes":"512x512","type":"image/png","purpose":"maskable"}'
     }
     out << ']}'
-    render contentType: "application/manifest+json", data: out.toString(), status: 200
+    renderNoStore("application/manifest+json", out.toString(), 200)
 }
 
 def renderSw() {
     def js = readLocalAsset(assetSwFile())
     if (!js) { js = "self.addEventListener('fetch',e=>e.respondWith(fetch(e.request)));" }
-    render contentType: "application/javascript", data: js, status: 200
+    renderNoStore("application/javascript", js, 200)
 }
 
 def renderIcon192() {
@@ -1343,7 +1460,7 @@ def renderData() {
         out << ",\"dashSessionExpiresAt\":" << authRenewed.expiresAt
     }
     out << "}"
-    render contentType: "application/json", data: out.toString(), status: 200
+    renderJsonNoStore(out.toString(), 200)
 }
 
 def safeCurrent(d, attrName) {
@@ -1651,7 +1768,7 @@ def renderDevice() {
     if (!guardDashboardAccess()) return renderAuthRequired()
     def id = params.id
     if (id == null) {
-        return render(contentType: "application/json", data: '{"error":"missing id"}', status: 400)
+        return renderJsonNoStore( '{"error":"missing id"}', 400)
     }
     def dev = lights?.find { it.id.toString() == id.toString() }
     def shadeForDev = allWindowShades()?.find { it.id.toString() == id.toString() }
@@ -1680,7 +1797,7 @@ def renderDevice() {
             out << ",\"pos\":" << numOrNull(shadePosition(shadeForDev))
         }
         out << "}"
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     // thermostat?
     def t = thermostats?.find { it.id.toString() == id.toString() }
@@ -1700,7 +1817,7 @@ def renderDevice() {
         out << ",\"hasFs\":" << (hasFanSpeed ? 1 : 0)
         out << ",\"fs\":" << jsonStr(hasFanSpeed ? safeCurrent(t, "fanSpeed") : null)
         out << "}"
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     def senEntry = allSensorDevices()?.find { it.device.id.toString() == id.toString() }
     def hasControlRole =
@@ -1720,7 +1837,7 @@ def renderDevice() {
         out << ",\"bat\":" << numOrNull(safeCurrent(s, "battery"))
         appendExJsonArray(out, extras)
         out << "}"
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     if (senEntry != null && !hasControlRole) {
         def sd = senEntry.device
@@ -1728,7 +1845,7 @@ def renderDevice() {
         def roomsList = app.getRooms() ?: []
         def out = new StringBuilder()
         appendSensorJson(out, sd, senEntry, roomsList)
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     def lk = locks?.find { it.id.toString() == id.toString() }
     if (lk != null) {
@@ -1738,7 +1855,7 @@ def renderDevice() {
         out << "{\"i\":" << lk.id
         out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
         out << ",\"st\":" << jsonStr(lockSt) << "}"
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     def garage = garageDoors?.find { it.id.toString() == id.toString() }
     if (garage != null) {
@@ -1746,7 +1863,7 @@ def renderDevice() {
         def out = new StringBuilder()
         out << "{\"i\":" << garage.id
         out << ",\"st\":" << jsonStr(safeCurrent(garage, "door")) << "}"
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     def shade = allWindowShades()?.find { it.id.toString() == id.toString() }
     if (shade != null) {
@@ -1757,7 +1874,7 @@ def renderDevice() {
         out << "{\"i\":" << shade.id
         out << ",\"st\":" << jsonStr(shadeSt)
         out << ",\"pos\":" << numOrNull(shadePos) << "}"
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     def fan = ceilingFans?.find { it.id.toString() == id.toString() }
     if (fan != null) {
@@ -1771,7 +1888,7 @@ def renderDevice() {
         out << "{\"i\":" << fan.id
         out << ",\"s\":" << (on ? 1 : 0)
         out << ",\"sp\":" << jsonStr(speed) << "}"
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     def valve = valves?.find { it.id.toString() == id.toString() }
     if (valve != null) {
@@ -1780,7 +1897,7 @@ def renderDevice() {
         out << "{\"i\":" << valve.id
         out << ",\"st\":" << jsonStr(safeCurrent(valve, "valve"))
         out << "}"
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
     if (mp != null) {
@@ -1795,9 +1912,9 @@ def renderDevice() {
         out << ",\"m\":" << jsonStr(muteVal ?: "unmuted")
         out << ",\"f\":" << audioControlFlags(mp).toString()
         out << "}"
-        return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
-    render(contentType: "application/json", data: '{"error":"not found"}', status: 404)
+    renderJsonNoStore('{"error":"not found"}', 404)
 }
 
 // ---------------------------------------------------------------------------
@@ -2127,9 +2244,9 @@ def doCmd() {
         if (result.error?.contains("unknown command")) status = 400
         if (result.error == "wrong pin") status = 403
         if (result.error == "pin not configured") status = 400
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(result.error)}}", status: status)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(result.error)}}", status)
     }
-    return render(contentType: "application/json", data: withAuthJson('{"ok":true}'), status: 200)
+    return renderJsonNoStore( withAuthJson('{"ok":true}'), 200)
 }
 
 def doCmdBatch() {
@@ -2143,7 +2260,7 @@ def doCmdBatch() {
     }
     def commands = body?.commands
     if (!(commands instanceof List) || commands.isEmpty()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing commands"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing commands"}', 400)
     }
     def errors = []
     int failed = 0
@@ -2174,7 +2291,7 @@ def doCmdBatch() {
     }
     out << "]}"
     def status = 200
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: status)
+    return renderJsonNoStore( withAuthJson(out.toString()), status)
 }
 
 // ---------------------------------------------------------------------------
@@ -2553,7 +2670,7 @@ def renderAsyncEnqueueResult(result, extra) {
         }
     }
     out << "}"
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
 }
 
 def parseScopeParams(body) {
@@ -2579,11 +2696,11 @@ def snapshotSaveFromParams(body) {
     if (!guardDashboardAccess()) return renderAuthRequired()
     def parsed = parseScopeParams(body ?: [:])
     if (parsed.error) {
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", status: 400)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", 400)
     }
     def key = snapshotScopeKey(parsed.scope, parsed.roomId)
     if (!key) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"invalid scope"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"invalid scope"}', 400)
     }
     def scopeDevices = lightsInScope(parsed.scope, parsed.roomId)
     def deviceIds = []
@@ -2597,8 +2714,7 @@ def snapshotSaveFromParams(body) {
     def all = parseSnapshotsMap()
     all[key] = snap
     saveSnapshotsMap(all)
-    return render(contentType: "application/json",
-        data: withAuthJson("{\"ok\":true,\"ts\":${ts},\"count\":${deviceIds.size()},\"scope\":${jsonStr(key)}}"), status: 200)
+    return renderJsonNoStore(withAuthJson("{\"ok\":true,\"ts\":${ts},\"count\":${deviceIds.size()},\"scope\":${jsonStr(key)}}"), 200)
 }
 
 def snapshotRestoreGet() {
@@ -2614,16 +2730,16 @@ def snapshotRestoreFromParams(body) {
     if (!guardDashboardAccess()) return renderAuthRequired()
     def parsed = parseScopeParams(body ?: [:])
     if (parsed.error) {
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", status: 400)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", 400)
     }
     def key = snapshotScopeKey(parsed.scope, parsed.roomId)
     if (!key) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"invalid scope"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"invalid scope"}', 400)
     }
     def all = parseSnapshotsMap()
     def snap = all[key]
     if (!snap) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"no snapshot"}', status: 404)
+        return renderJsonNoStore( '{"ok":false,"error":"no snapshot"}', 404)
     }
     def deviceIds = snap.deviceIds ?: []
     def devicesMap = snap.devices ?: [:]
@@ -2648,7 +2764,7 @@ def snapshotStatus() {
         out << ",\"restoring\":false,\"done\":0,\"total\":0,\"failed\":0"
     }
     out << "}"
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
 }
 
 def lightsBulkGet() {
@@ -2665,11 +2781,11 @@ def lightsBulkFromParams(body) {
     def cmd = body?.cmd ?: params?.cmd
     cmd = cmd?.toString()?.trim()
     if (cmd != "on" && cmd != "off") {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"invalid cmd"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"invalid cmd"}', 400)
     }
     def parsed = parseScopeParams(body ?: [:])
     if (parsed.error) {
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", status: 400)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(parsed.error)}}", 400)
     }
     def scopeDevices = lightsInScope(parsed.scope, parsed.roomId)
     def steps = buildBulkSteps(cmd, scopeDevices)
@@ -2713,7 +2829,7 @@ def validRoomIdSet() {
 def saveRoomOrderGet() {
     def orderStr = params?.order
     if (!orderStr?.trim()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
     }
     def order = orderStr.split(",").collect { it.trim() }.findAll { it }
     return saveRoomOrderFromList(order)
@@ -2734,7 +2850,7 @@ def saveRoomOrder() {
 def saveRoomOrderFromList(order) {
     if (!guardDashboardAccess()) return renderAuthRequired()
     if (!(order instanceof List) || order.isEmpty()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
     }
     def valid = validRoomIdSet()
     def validated = []
@@ -2750,7 +2866,7 @@ def saveRoomOrderFromList(order) {
         validated << (key == "-1" ? -1 : key.toLong())
     }
     if (validated.isEmpty()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"empty order"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"empty order"}', 400)
     }
     state.roomOrder = validated.join(",")
     def out = new StringBuilder()
@@ -2761,7 +2877,7 @@ def saveRoomOrderFromList(order) {
         out << id
     }
     out << "]}"
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
 }
 
 // ---------------------------------------------------------------------------
@@ -2887,7 +3003,7 @@ def navOrderJsonFragment() {
 def saveNavOrderGet() {
     def orderStr = params?.order
     if (!orderStr?.trim()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
     }
     def order = orderStr.split(",").collect { it.trim() }.findAll { it }
     return saveNavOrderFromList(order)
@@ -2908,7 +3024,7 @@ def saveNavOrder() {
 def saveNavOrderFromList(order) {
     if (!guardDashboardAccess()) return renderAuthRequired()
     if (!(order instanceof List) || order.isEmpty()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
     }
     def valid = validNavKeySet()
     def validated = []
@@ -2921,7 +3037,7 @@ def saveNavOrderFromList(order) {
         validated << key
     }
     if (validated.isEmpty()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"empty order"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"empty order"}', 400)
     }
     state.navOrder = validated.join(",")
     def out = new StringBuilder()
@@ -2932,7 +3048,7 @@ def saveNavOrderFromList(order) {
         out << jsonStr(key)
     }
     out << "]}"
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
 }
 
 // ---------------------------------------------------------------------------
@@ -2995,7 +3111,7 @@ def orderedCamerasList() {
 def saveCameraOrderGet() {
     def orderStr = params?.order
     if (!orderStr?.trim()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
     }
     def order = orderStr.split(",").collect { it.trim() }.findAll { it }
     return saveCameraOrderFromList(order)
@@ -3016,7 +3132,7 @@ def saveCameraOrder() {
 def saveCameraOrderFromList(order) {
     if (!guardDashboardAccess()) return renderAuthRequired()
     if (!(order instanceof List) || order.isEmpty()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing order"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
     }
     def valid = validCameraIdSet()
     def validated = []
@@ -3032,7 +3148,7 @@ def saveCameraOrderFromList(order) {
         validated << key.toLong()
     }
     if (validated.isEmpty()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"empty order"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"empty order"}', 400)
     }
     state.cameraOrder = validated.join(",")
     def out = new StringBuilder()
@@ -3043,7 +3159,7 @@ def saveCameraOrderFromList(order) {
         out << id
     }
     out << "]}"
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
 }
 
 // ---------------------------------------------------------------------------
@@ -3089,7 +3205,7 @@ def validFavoriteIdSet() {
 def setHubModeGet() {
     def mode = params?.mode
     if (!mode?.trim()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing mode"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing mode"}', 400)
     }
     return setHubModeFromName(mode.trim())
 }
@@ -3104,7 +3220,7 @@ def setHubMode() {
     }
     def mode = body?.mode
     if (!mode?.toString()?.trim()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing mode"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing mode"}', 400)
     }
     return setHubModeFromName(mode.toString().trim())
 }
@@ -3114,14 +3230,14 @@ def setHubModeFromName(modeName) {
     def modes = []
     try { modes = location.modes ?: [] } catch (e) {}
     if (!modes.contains(modeName)) {
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr("unknown mode")}}", status: 400)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr("unknown mode")}}", 400)
     }
     try {
         location.setMode(modeName)
-        return render(contentType: "application/json", data: withAuthJson("{\"ok\":true,\"mode\":${jsonStr(modeName)}}"), status: 200)
+        return renderJsonNoStore( withAuthJson("{\"ok\":true,\"mode\":${jsonStr(modeName)}}"), 200)
     } catch (e) {
         log.warn "Modern Dashboard: hub mode failed — ${modeName}: ${e.message ?: e}"
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", 500)
     }
 }
 
@@ -3275,7 +3391,7 @@ def guardDashboardAccess() {
 }
 
 def renderAuthRequired() {
-    return render(contentType: "application/json", data: '{"ok":false,"error":"auth required"}', status: 401)
+    return renderJsonNoStore('{"ok":false,"error":"auth required"}', 401)
 }
 
 def withAuthJson(baseJson) {
@@ -3289,7 +3405,7 @@ def withAuthJson(baseJson) {
 
 def authStatus() {
     if (!dashboardPasswordRequired()) syncDashPasswordEpoch()
-    render contentType: "application/json", data: '{"required":' + (dashboardPasswordRequired() ? "true" : "false") + '}', status: 200
+    renderJsonNoStore('{"required":' + (dashboardPasswordRequired() ? "true" : "false") + '}', 200)
 }
 
 def authUnlock() {
@@ -3302,38 +3418,38 @@ def authUnlock() {
             } catch (e) {}
         }
         if (!dashboardPasswordRequired()) {
-            return render(contentType: "application/json", data: '{"ok":true,"required":false}', status: 200)
+            return renderJsonNoStore( '{"ok":true,"required":false}', 200)
         }
         def expected = dashboardPassword?.toString()?.trim() ?: ""
         if (!expected) {
             log.warn "Modern Dashboard: auth failed — password not configured"
-            return render(contentType: "application/json", data: '{"ok":false,"error":"password not configured"}', status: 400)
+            return renderJsonNoStore( '{"ok":false,"error":"password not configured"}', 400)
         }
         def provided = body?.password?.toString() ?: params?.password?.toString() ?: ""
         if (!provided.trim() || !pinsMatch(expected, provided.trim())) {
             log.warn "Modern Dashboard: auth failed — wrong password"
-            return render(contentType: "application/json", data: '{"ok":false,"error":"wrong password"}', status: 403)
+            return renderJsonNoStore( '{"ok":false,"error":"wrong password"}', 403)
         }
         def issued = issueDashboardSession()
         def out = new StringBuilder()
         out << '{"ok":true,"session":' << jsonStr(issued.session)
         out << ',"expiresAt":' << issued.expiresAt << '}'
-        return render(contentType: "application/json", data: out.toString(), status: 200)
+        return renderJsonNoStore( out.toString(), 200)
     } catch (e) {
         log.error "Modern Dashboard authUnlock: ${e.message}"
-        return render(contentType: "application/json", data: '{"ok":false,"error":"unlock failed","detail":' + jsonStr(e.message ?: e.toString()) + '}', status: 500)
+        return renderJsonNoStore( '{"ok":false,"error":"unlock failed","detail":' + jsonStr(e.message ?: e.toString()) + '}', 500)
     }
 }
 
 def authRenew() {
     if (!dashboardPasswordRequired()) {
-        return render(contentType: "application/json", data: '{"ok":true,"required":false}', status: 200)
+        return renderJsonNoStore( '{"ok":true,"required":false}', 200)
     }
     if (!guardDashboardAccess()) return renderAuthRequired()
     def out = new StringBuilder()
     out << '{"ok":true,"session":' << jsonStr(authRenewed.session)
     out << ',"expiresAt":' << authRenewed.expiresAt << '}'
-    return render(contentType: "application/json", data: out.toString(), status: 200)
+    return renderJsonNoStore( out.toString(), 200)
 }
 
 def initializeHsm() {
@@ -3420,7 +3536,7 @@ def setHsmGet() {
     def mode = params?.mode
     def pin = params?.pin
     if (!mode?.trim()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing mode"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing mode"}', 400)
     }
     return setHsmFromMode(mode.trim(), pin)
 }
@@ -3436,7 +3552,7 @@ def setHsm() {
     def mode = body?.mode
     def pin = body?.pin
     if (!mode?.toString()?.trim()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing mode"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing mode"}', 400)
     }
     return setHsmFromMode(mode.toString().trim(), pin?.toString())
 }
@@ -3444,42 +3560,42 @@ def setHsm() {
 def setHsmFromMode(mode, pin) {
     if (!guardDashboardAccess()) return renderAuthRequired()
     if (hsmEnabled != true) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"HSM control disabled"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"HSM control disabled"}', 400)
     }
     def validModes = ["armAway", "armHome", "armNight", "disarm", "armAll", "disarmAll", "armRules", "disarmRules", "cancelAlerts"]
     if (!validModes.contains(mode)) {
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr("unknown mode")}}", status: 400)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr("unknown mode")}}", 400)
     }
     if (hsmPinEnabled == true) {
         def expectedPin = hsmPin?.toString()?.trim() ?: ""
         if (!expectedPin) {
             log.warn "Modern Dashboard: HSM pin failed — pin not configured"
-            return render(contentType: "application/json", data: '{"ok":false,"error":"pin not configured"}', status: 400)
+            return renderJsonNoStore( '{"ok":false,"error":"pin not configured"}', 400)
         }
         if (!pin?.trim()) {
             log.warn "Modern Dashboard: HSM pin failed — wrong pin"
-            return render(contentType: "application/json", data: '{"ok":false,"error":"wrong pin"}', status: 403)
+            return renderJsonNoStore( '{"ok":false,"error":"wrong pin"}', 403)
         }
         if (!pinsMatch(expectedPin, pin.trim())) {
             log.warn "Modern Dashboard: HSM pin failed — wrong pin"
-            return render(contentType: "application/json", data: '{"ok":false,"error":"wrong pin"}', status: 403)
+            return renderJsonNoStore( '{"ok":false,"error":"wrong pin"}', 403)
         }
     }
     try {
         sendLocationEvent(name: "hsmSetArm", value: mode)
         persistHsmFromCommand(mode)
         def out = hsmResponseAfterCommand(mode)
-        return render(contentType: "application/json", data: withAuthJson("{\"ok\":true,\"mode\":${jsonStr(mode)},\"status\":${jsonStr(out.status)},\"alert\":${jsonStr(out.alert)},\"alertDesc\":${jsonStr(out.alertDesc)}}"), status: 200)
+        return renderJsonNoStore( withAuthJson("{\"ok\":true,\"mode\":${jsonStr(mode)},\"status\":${jsonStr(out.status)},\"alert\":${jsonStr(out.alert)},\"alertDesc\":${jsonStr(out.alertDesc)}}"), 200)
     } catch (e) {
         log.warn "Modern Dashboard: HSM failed — ${mode}: ${e.message ?: e}"
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", 500)
     }
 }
 
 def activateSceneGet() {
     def id = params?.id
     if (id == null) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing id"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing id"}', 400)
     }
     return activateSceneFromId(id)
 }
@@ -3494,7 +3610,7 @@ def activateScene() {
     }
     def id = body?.id
     if (id == null) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing id"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing id"}', 400)
     }
     return activateSceneFromId(id)
 }
@@ -3503,27 +3619,27 @@ def activateSceneFromId(id) {
     if (!guardDashboardAccess()) return renderAuthRequired()
     def sceneId
     try { sceneId = id instanceof Number ? id.longValue() : id.toString().toLong() } catch (e) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"invalid id"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"invalid id"}', 400)
     }
     def scenesMap = [:]
     try { scenesMap = location.scenes ?: [:] } catch (e) {}
     if (!scenesMap.containsKey(sceneId)) {
         log.warn "Modern Dashboard: scene failed — ${sceneId}: scene not found"
-        return render(contentType: "application/json", data: '{"ok":false,"error":"scene not found"}', status: 404)
+        return renderJsonNoStore( '{"ok":false,"error":"scene not found"}', 404)
     }
     try {
         location.activateScene(sceneId)
-        return render(contentType: "application/json", data: withAuthJson("{\"ok\":true,\"id\":${sceneId}}"), status: 200)
+        return renderJsonNoStore( withAuthJson("{\"ok\":true,\"id\":${sceneId}}"), 200)
     } catch (e) {
         log.warn "Modern Dashboard: scene failed — ${sceneId}: ${e.message ?: e}"
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", status: 500)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", 500)
     }
 }
 
 def saveFavoritesGet() {
     def idsStr = params?.ids
     if (!idsStr?.trim()) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing ids"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing ids"}', 400)
     }
     def ids = idsStr.split(",").collect { it.trim() }.findAll { it }
     return saveFavoritesFromList(ids)
@@ -3539,7 +3655,7 @@ def saveFavorites() {
     }
     def ids = body?.ids
     if (!(ids instanceof List)) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing ids"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing ids"}', 400)
     }
     return saveFavoritesFromList(ids)
 }
@@ -3568,7 +3684,7 @@ def saveFavoritesFromList(ids) {
         out << id
     }
     out << "]}"
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
 }
 
 // ===========================================================================
@@ -3773,7 +3889,7 @@ def shutdownScheduler() {
 
 def guardSchedulerEnabled() {
     if (schedulerIsEnabled()) return true
-    render(contentType: "application/json", data: '{"ok":false,"error":"scheduler disabled"}', status: 403)
+    renderJsonNoStore('{"ok":false,"error":"scheduler disabled"}', 403)
     return false
 }
 
@@ -4127,7 +4243,7 @@ def cleanupSchedules() {
 def schedulesGet() {
     if (!guardDashboardAccess()) return renderAuthRequired()
     if (!guardSchedulerEnabled()) return
-    return render(contentType: "application/json", data: withAuthJson(groovy.json.JsonOutput.toJson([ok: true, schedules: schedulesListForClient()])), status: 200)
+    return renderJsonNoStore( withAuthJson(groovy.json.JsonOutput.toJson([ok: true, schedules: schedulesListForClient()])), 200)
 }
 
 def schedulesListForClient() {
@@ -4240,7 +4356,7 @@ def schedulesSave() {
     if (!guardSchedulerEnabled()) return
     def body = parseRequestJson()
     if (body == null) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing body"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing body"}', 400)
     }
     def s = schedulesNormalizePayload(body)
     def map = parseSchedulesMap()
@@ -4255,7 +4371,7 @@ def schedulesSave() {
     out << "{\"ok\":true,\"id\":" << jsonStr(id.toString())
     out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
     out << "}"
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
 }
 
 def schedulesDelete() {
@@ -4264,7 +4380,7 @@ def schedulesDelete() {
     def body = parseRequestJson()
     def id = body?.id?.toString()?.trim()
     if (!id) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing id"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing id"}', 400)
     }
     def map = parseSchedulesMap()
     if (map.containsKey(id)) {
@@ -4276,7 +4392,7 @@ def schedulesDelete() {
     out << "{\"ok\":true,\"id\":" << jsonStr(id.toString())
     out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
     out << "}"
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
 }
 
 def schedulesToggle() {
@@ -4285,12 +4401,12 @@ def schedulesToggle() {
     def body = parseRequestJson()
     def id = body?.id?.toString()?.trim()
     if (!id) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing id"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing id"}', 400)
     }
     def map = parseSchedulesMap()
     def s = map[id]
     if (!s) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"not found"}', status: 404)
+        return renderJsonNoStore( '{"ok":false,"error":"not found"}', 404)
     }
     s.enabled = (s.enabled != true)
     map[id] = s
@@ -4301,7 +4417,7 @@ def schedulesToggle() {
     out << ",\"enabled\":" << (s.enabled == true ? "true" : "false")
     out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
     out << "}"
-    return render(contentType: "application/json", data: withAuthJson(out.toString()), status: 200)
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
 }
 
 def schedulesTest() {
@@ -4310,20 +4426,20 @@ def schedulesTest() {
     def body = parseRequestJson()
     def id = body?.id?.toString()?.trim()
     if (!id) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"missing id"}', status: 400)
+        return renderJsonNoStore( '{"ok":false,"error":"missing id"}', 400)
     }
     def map = parseSchedulesMap()
     def s = map[id]
     if (!s) {
-        return render(contentType: "application/json", data: '{"ok":false,"error":"not found"}', status: 404)
+        return renderJsonNoStore( '{"ok":false,"error":"not found"}', 404)
     }
     try {
         runScheduleAction(s?.action)
     } catch (e) {
         log.warn "Modern Dashboard: schedule ${id} test failed: ${e}"
-        return render(contentType: "application/json", data: "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}".toString(), status: 500)
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}".toString(), 500)
     }
-    return render(contentType: "application/json", data: withAuthJson('{"ok":true}'), status: 200)
+    return renderJsonNoStore( withAuthJson('{"ok":true}'), 200)
 }
 
 // --- cron next-fire helper (7-field Quartz: sec min hour dom mon dow year) ---

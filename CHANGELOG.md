@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.97
+
+- **Performance:** in-memory File Manager asset cache on the hub (cleared on app update;
+  version-keyed, ~768 KB cap).
+- **Performance:** versioned CSS/JS served with long-lived `immutable` cache headers;
+  HTML, JSON, and API responses use `no-store`.
+- **Local dashboard:** when opened on LAN without Hub Login Security, CSS/JS load
+  directly from `/local/mld-*` instead of through the app proxy.
+
 ## 0.2.96
 
 - **Build:** esbuild minifies CSS and JS at build time (more headroom under the 124 KB
