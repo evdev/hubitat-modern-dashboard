@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.91
+
+- **Cameras:** HD button on dual-stream tiles (top-right, inset from go2rtc unmute) opens high-res expand; grid iframe stays interactive.
+
 ## 0.2.90
 
 - Thermostat fan modes: hide fan controls when `supportedThermostatFanModes` is

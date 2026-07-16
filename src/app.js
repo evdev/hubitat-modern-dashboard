@@ -4005,6 +4005,10 @@
     document.documentElement.classList.add("android-browser-local");
 
     function isModalOpen() {
+      try {
+        if (document.fullscreenElement) return true;
+      } catch {}
+      if (document.querySelector(".camera-expand-overlay")) return true;
       return !!document.querySelector(
         ".quick-popup.open, .ct-popup.open, .tstat-popup.open, .music-master-popup.open, .confirm-popup.open, .pin-pad-popup.open, .dash-gate-popup.open"
       );
@@ -10650,11 +10654,10 @@
       const tile = ce("article", "camera-tile");
       tile.dataset.camId = String(cam.i);
       tile.dataset.name = String(cam.n || "").toLowerCase();
-      tile.dataset.streamUrl = cameraEmbedUrl(cam.u || "");
-      tile.dataset.streamUrlHi = cameraEmbedUrl(cam.uh || cam.u || "");
-      if (!cameraReorderActive) {
-        tile.addEventListener("click", () => openCameraExpand(tile));
-      }
+      const lowUrl = cameraEmbedUrl(cam.u || "");
+      const hiUrl = cam.uh ? cameraEmbedUrl(cam.uh) : "";
+      tile.dataset.streamUrl = lowUrl;
+      tile.dataset.streamUrlHi = hiUrl || lowUrl;
       const media = ce("div", "camera-media");
       const iframe = ce("iframe", "camera-iframe");
       iframe.setAttribute("title", cam.n || "Camera");
@@ -10665,6 +10668,17 @@
       const nameEl = ce("span", "camera-name");
       nameEl.textContent = cam.n || "Camera";
       media.appendChild(nameEl);
+      if (hiUrl && !cameraReorderActive) {
+        const hdBtn = ce("button", "camera-hd-btn");
+        hdBtn.type = "button";
+        hdBtn.setAttribute("aria-label", "Open high definition stream");
+        hdBtn.textContent = "HD";
+        hdBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openCameraExpand(tile);
+        });
+        media.appendChild(hdBtn);
+      }
       const reorderOverlay = ce("div", "camera-reorder-overlay");
       const dragHandle = ce("button", "camera-drag-handle");
       dragHandle.type = "button";

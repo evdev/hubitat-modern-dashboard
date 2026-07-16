@@ -285,7 +285,7 @@ body {
 }
 .tab-view.cameras-tab { padding: 0 0 calc(env(safe-area-inset-bottom)); }
 .cameras-grid { display: flex; flex-direction: column; gap: 0; }
-.camera-tile { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; cursor: pointer; }
+.camera-tile { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
 .camera-media { position: absolute; inset: 0; }
 .camera-iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
 .camera-name {
@@ -296,21 +296,43 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   pointer-events: none;
 }
+.camera-hd-btn {
+  position: absolute; top: 0; right: 48px; z-index: 2;
+  appearance: none; border: none; background: transparent;
+  color: #fff; opacity: 0.6;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.05em; line-height: 1;
+  text-shadow: 0 1px 2px rgba(0,0,0,.85);
+  padding: 12px 14px; min-width: 44px; min-height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: manipulation;
+}
+.camera-hd-btn:active { opacity: 0.85; }
+.cameras-reorder-mode .camera-hd-btn { display: none; }
 .camera-expand-overlay {
   position: fixed; inset: 0; z-index: 10000;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; flex-direction: column;
   background: rgba(0,0,0,.85);
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 .camera-expand-panel {
-  position: relative; width: min(100%, 960px); max-height: 100%;
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  max-height: 100%;
 }
 .camera-expand-media {
-  position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000;
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  background: #000;
 }
 .camera-expand-media .camera-iframe { width: 100%; height: 100%; border: 0; display: block; }
 .camera-expand-close {
-  position: absolute; top: -40px; right: 0; z-index: 2;
+  position: absolute; top: 8px; right: 8px; z-index: 2;
   width: 36px; height: 36px; border: 0; border-radius: 50%;
   background: rgba(255,255,255,.15); color: #fff; font-size: 24px; line-height: 1;
   cursor: pointer;
@@ -1689,12 +1711,26 @@ body {
 }
 .sensor-card[hidden] { display: none !important; }
 .sensor-card.is-alert {
-  border-color: color-mix(in srgb, var(--sensor-accent) 55%, var(--stroke));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--sensor-accent) 12%, var(--panel-2)), var(--panel-2));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sensor-accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--sensor-accent) 68%, var(--stroke));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--sensor-accent) 26%, var(--panel-2)), color-mix(in srgb, var(--sensor-accent) 10%, var(--panel-2)));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--sensor-accent) 32%, transparent),
+    0 0 16px color-mix(in srgb, var(--sensor-accent) 16%, transparent);
 }
 .sensor-card-top { display: flex; align-items: center; justify-content: space-between; min-height: 20px; }
-.sensor-card-icon { color: var(--sensor-accent); width: 20px; height: 20px; display: inline-flex; }
+.sensor-card-icon {
+  color: var(--text-faint);
+  width: 20px; height: 20px;
+  display: inline-flex;
+  transition: color .2s var(--ease);
+}
+.sensor-card--temp .sensor-card-icon,
+.sensor-card--humidity .sensor-card-icon,
+.sensor-card--illuminance .sensor-card-icon,
+.sensor-card--generic .sensor-card-icon {
+  color: var(--sensor-accent);
+}
+.sensor-card.is-alert .sensor-card-icon { color: var(--sensor-accent); }
 .sensor-card-icon svg { width: 20px; height: 20px; display: block; }
 .sensor-card-pill {
   display: inline-flex; align-items: center; gap: 6px;
