@@ -497,18 +497,18 @@ src/
   manifest.webmanifest   PWA manifest (install name: mDash)
   sw.js                  pass-through service worker
   styles.css             visual design (served at /app.css)
-  app-pre.js             SVG/data constants + helpers
-  app.js                 core UI (split into 6 JS File Manager chunks at build)
+  app-pre.js             SVG/data constants + helpers (concatenated into mld-app.js at build)
+  app.js                 core UI (split into 5 JS File Manager chunks at build)
 lib/
   pwa-icons.mjs          generates dashboard PNG icons at build time
 app/
   ModernLightsDashboard.groovy.template   Groovy SmartApp
-build.mjs                no-dependency build → dist/ + HPM manifests
+build.mjs                esbuild minify + split → dist/ + HPM manifests
 preview/
   server.mjs             local mock server (~130 lights) for UI dev
 dist/
   ModernLightsDashboard.groovy   generated SmartApp
-  upload/mld-*                   File Manager assets (12 files)
+  upload/mld-*                   File Manager assets (11 files)
 docs/
   hubitat-community-post.md      Hubitat Community forum draft
   hpm-registry.md                HPM registry notes for maintainers
@@ -536,7 +536,7 @@ Outputs:
 | ---- | ------- |
 | `dist/ModernLightsDashboard.bundle.zip` | Manual install — Bundles → Import ZIP |
 | `dist/ModernLightsDashboard.groovy` | HPM / manual paste into Apps Code |
-| `dist/upload/mld-*` | File Manager assets (12 files; HPM auto-deploys) |
+| `dist/upload/mld-*` | File Manager assets (11 files; HPM auto-deploys) |
 | `hubitat/packageManifest.json` | HPM manifest — app (`oauth: true`) + files |
 | `dist/packageManifest.json` | Copy of the HPM manifest |
 
@@ -545,10 +545,10 @@ HPM_BASE_URL=https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/ma
 ```
 
 The Groovy app does **not** embed the UI (Hubitat cannot compile huge blobs). The
-app reads **12 files** from File Manager at runtime. JS is split into
-`mld-app-pre.js`, `mld-app.js`, `mld-app-core.js`, `mld-app-post.js`,
+app reads **11 files** from File Manager at runtime. JS is split into
+`mld-app.js`, `mld-app-core.js`, `mld-app-post.js`,
 `mld-app-post2.js`, and `mld-app-post3.js` to stay under the hub's ~128 KB
-per-file limit. PWA assets
+per-file limit (constants from `src/app-pre.js` are merged into `mld-app.js`). PWA assets
 (`mld-manifest.webmanifest`, `mld-sw.js`, icon `.b64` files) enable home-screen
 install on the cloud URL. Icons are stored as base64 text because Hubitat cannot
 reliably serve binary PNGs from File Manager.
@@ -558,7 +558,6 @@ reliably serve binary PNGs from File Manager.
 ```
 mld-index.html
 mld-app.css
-mld-app-pre.js
 mld-app.js
 mld-app-core.js
 mld-app-post.js
@@ -575,7 +574,7 @@ mld-icon-512.b64
 1. Open **Hubitat Package Manager** on your hub.
 2. **Install** (or search) → find **Modern Dashboard** → install.
 3. HPM installs the Groovy app, **enables OAuth automatically**, and deploys all
-   12 File Manager assets.
+   11 File Manager assets.
 4. **Apps → Add User App → Modern Dashboard** → select devices → **Done**.
 5. Open the **Cloud** URL shown in the app page and install as a PWA (see below).
 

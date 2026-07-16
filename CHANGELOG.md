@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.96
+
+- **Build:** esbuild minifies CSS and JS at build time (more headroom under the 124 KB
+  File Manager limit per chunk).
+- **Deploy:** `mld-app-pre.js` removed — constants from `src/app-pre.js` are merged into
+  `mld-app.js`; HPM and manual installs now ship **11** File Manager assets (was 12).
+
 ## 0.2.95
 
 - **Logging:** server-side failures (commands, batch, async light jobs, hub mode, HSM, scenes, scheduler) now write to Hubitat Logs with device and error context.

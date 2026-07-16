@@ -5,8 +5,8 @@
 //
 // INSTALL:
 //   1. Paste this file into Apps Code, enable OAuth, Save.
-//   2. Upload the 12 files from dist/upload/ to Settings -> File Manager:
-//        mld-index.html, mld-app.css, mld-app-pre.js, mld-app.js, mld-app-core.js, mld-app-post.js, mld-app-post2.js, mld-app-post3.js,
+//   2. Upload the 11 files from dist/upload/ to Settings -> File Manager:
+//        mld-index.html, mld-app.css, mld-app.js, mld-app-core.js, mld-app-post.js, mld-app-post2.js, mld-app-post3.js,
 //        mld-manifest.webmanifest, mld-sw.js, mld-icon-192.b64, mld-icon-512.b64
 //   3. Apps -> Add User App -> Modern Dashboard -> select devices -> Done
 
@@ -56,7 +56,7 @@ def mainPage() {
                 def need = requiredAssetFiles()
                 def missing = need.findAll { n -> !fileNamePresent(names, n) }
                 paragraph "Upload these files via <b>Settings → File Manager</b> (root folder, exact names):"
-                paragraph "<ul><li><code>mld-index.html</code></li><li><code>mld-app.css</code></li><li><code>mld-app-pre.js</code></li><li><code>mld-app.js</code></li><li><code>mld-app-core.js</code></li><li><code>mld-app-post.js</code></li><li><code>mld-app-post2.js</code></li><li><code>mld-app-post3.js</code></li><li><code>mld-manifest.webmanifest</code></li><li><code>mld-sw.js</code></li><li><code>mld-icon-192.b64</code></li><li><code>mld-icon-512.b64</code></li></ul>"
+                paragraph "<ul><li><code>mld-index.html</code></li><li><code>mld-app.css</code></li><li><code>mld-app.js</code></li><li><code>mld-app-core.js</code></li><li><code>mld-app-post.js</code></li><li><code>mld-app-post2.js</code></li><li><code>mld-app-post3.js</code></li><li><code>mld-manifest.webmanifest</code></li><li><code>mld-sw.js</code></li><li><code>mld-icon-192.b64</code></li><li><code>mld-icon-512.b64</code></li></ul>"
                 if (names) {
                     def mld = names.findAll { it?.contains("mld-") }
                     paragraph "<small>Files seen on hub: ${mld ? mld.join(', ') : '(none matching mld-*)'}</small>"
@@ -655,7 +655,6 @@ def dashboardUrl(boolean local) {
 // File Manager asset names (uploaded to /local/)
 def assetHtmlFile() { return "mld-index.html" }
 def assetCssFile()  { return "mld-app.css" }
-def assetJsPreFile() { return "mld-app-pre.js" }
 def assetJsFile()   { return "mld-app.js" }
 def assetJsCoreFile() { return "mld-app-core.js" }
 def assetJsPostFile() { return "mld-app-post.js" }
@@ -668,7 +667,7 @@ def assetIcon512File() { return "mld-icon-512.b64" }
 
 def requiredAssetFiles() {
     return [
-        assetHtmlFile(), assetCssFile(), assetJsPreFile(), assetJsFile(), assetJsCoreFile(), assetJsPostFile(), assetJsPost2File(), assetJsPost3File(),
+        assetHtmlFile(), assetCssFile(), assetJsFile(), assetJsCoreFile(), assetJsPostFile(), assetJsPost2File(), assetJsPost3File(),
         assetManifestFile(), assetSwFile(), assetIcon192File()
     ]
 }
@@ -801,7 +800,7 @@ def renderPngFromBase64Asset(String b64FileName, String missingMsg) {
 }
 
 def missingAssetHtml() {
-    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup</title></head><body style="font-family:system-ui;padding:24px;max-width:520px;margin:auto;line-height:1.5"><h1>Setup required</h1><p>Modern Dashboard serves its UI from File Manager on your hub. Upload these twelve files to <b>Settings &rarr; File Manager</b> (root folder, exact names):</p><ul><li>mld-index.html</li><li>mld-app.css</li><li>mld-app-pre.js</li><li>mld-app.js</li><li>mld-app-core.js</li><li>mld-app-post.js</li><li>mld-app-post2.js</li><li>mld-app-post3.js</li><li>mld-manifest.webmanifest</li><li>mld-sw.js</li><li>mld-icon-192.b64</li><li>mld-icon-512.b64</li></ul><p><b>Easiest install:</b> use <a href="__GITHUB_URL__#readme">Hubitat Package Manager</a> — OAuth and File Manager files are deployed automatically.</p><p>Then reopen the Modern Dashboard app, select your devices, and open the dashboard link.</p></body></html>"""
+    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup</title></head><body style="font-family:system-ui;padding:24px;max-width:520px;margin:auto;line-height:1.5"><h1>Setup required</h1><p>Modern Dashboard serves its UI from File Manager on your hub. Upload these eleven files to <b>Settings &rarr; File Manager</b> (root folder, exact names):</p><ul><li>mld-index.html</li><li>mld-app.css</li><li>mld-app.js</li><li>mld-app-core.js</li><li>mld-app-post.js</li><li>mld-app-post2.js</li><li>mld-app-post3.js</li><li>mld-manifest.webmanifest</li><li>mld-sw.js</li><li>mld-icon-192.b64</li><li>mld-icon-512.b64</li></ul><p><b>Easiest install:</b> use <a href="__GITHUB_URL__#readme">Hubitat Package Manager</a> — OAuth and File Manager files are deployed automatically.</p><p>Then reopen the Modern Dashboard app, select your devices, and open the dashboard link.</p></body></html>"""
 }
 
 // ---------------------------------------------------------------------------
@@ -811,7 +810,6 @@ mappings {
     path("/dashboard") { action: [GET: "renderIndex"] }
     path("/")          { action: [GET: "renderIndex"] }
     path("/app.css")   { action: [GET: "renderCss"] }
-    path("/app-pre.js") { action: [GET: "renderJsPre"] }
     path("/app.js")    { action: [GET: "renderJs"] }
     path("/app-core.js") { action: [GET: "renderJsCore"] }
     path("/app-post.js") { action: [GET: "renderJsPost"] }
@@ -885,7 +883,7 @@ def renderIndex() {
         if (!iconHref) {
             html = html.replace('href="icons/icon-192.png"', "href=\"icons/icon-192.png${q}\"")
         }
-        for (def asset : ["app-pre.js", "app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"]) {
+        for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"]) {
             html = appendAccessToken(html, "src", asset, token)
         }
     }
@@ -896,12 +894,6 @@ def renderCss() {
     def css = readLocalAsset(assetCssFile())
     if (!css) { css = "/* upload mld-app.css to File Manager */" }
     render contentType: "text/css", data: css, status: 200
-}
-
-def renderJsPre() {
-    def js = readLocalAsset(assetJsPreFile())
-    if (!js) { js = "console.warn('Upload mld-app-pre.js to File Manager');" }
-    render contentType: "application/javascript", data: js, status: 200
 }
 
 def renderJs() {

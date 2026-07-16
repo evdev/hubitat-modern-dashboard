@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from "no
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import * as esbuild from "esbuild";
 import { iconBase64, createIconPng } from "./lib/pwa-icons.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ const APP_DISPLAY_NAME = "Modern Dashboard";
 
 const HPM_BASE_URL =
   process.env.HPM_BASE_URL ??
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist";
 
 const APP_AUTHOR = "Ephrayim (evdev)";
 const GITHUB_URL = "https://github.com/evdev/hubitat-modern-dashboard";
@@ -49,17 +50,16 @@ const COMMUNITY_LINK =
   "https://community.hubitat.com/t/release-modern-dashboard-mdash-minimal-setup-pwa-with-built-in-scheduler-runs-entirely-on-your-hub/165028";
 const HPM_REPO_PACKAGE_ID = "e8f4a1c2-3b5d-4e9f-a7c6-1d2e3f4a5b6c";
 const REPOSITORY_JSON_URL =
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/repository.json";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/hubitat/repository.json";
 const PACKAGE_MANIFEST_URL =
   process.env.HPM_PACKAGE_MANIFEST_URL ??
-  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/hubitat/packageManifest.json";
+  "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/hubitat/packageManifest.json";
 
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";
 const FILE_MANAGER_ASSETS = [
   { id: "b1a2c3d4-e5f6-7890-abcd-ef1234567890", name: "mld-index.html" },
   { id: "c2b3d4e5-f6a7-8901-bcde-f12345678901", name: "mld-app.css" },
-  { id: "d3c4e5f6-a7b8-9012-cdef-123456789012", name: "mld-app-pre.js" },
   { id: "e4d5f6a7-b8c9-0123-def0-234567890123", name: "mld-app.js" },
   { id: "a1b2c3d4-e5f6-7890-abcd-ef1234567891", name: "mld-app-core.js" },
   { id: "f5e6a7b8-c9d0-1234-ef01-345678901234", name: "mld-app-post.js" },
@@ -430,8 +430,12 @@ function splitAppJs(srcPath) {
   return { part1Out, partCoreOut, part2Out, part3Out, part4Out };
 }
 
+function byteSize(content) {
+  return Buffer.byteLength(content, "utf8");
+}
+
 function assertUnderHubLimit(label, content) {
-  const size = typeof content === "string" ? content.length : content;
+  const size = typeof content === "number" ? content : byteSize(content);
   if (size >= HUB_MAX_BLOB) {
     throw new Error(
       `${label} is ${size} bytes (limit ${HUB_MAX_BLOB} / 124 KB). Split src/app.js further or trim the asset.`
@@ -442,9 +446,41 @@ function assertUnderHubLimit(label, content) {
 function assertUploadBlobLimits() {
   for (const { name } of FILE_MANAGER_ASSETS) {
     const path = join(upload, name);
-    const size = readFileSync(path).length;
-    assertUnderHubLimit(name, size);
+    assertUnderHubLimit(name, readFileSync(path));
   }
+}
+
+/** Minify without renaming identifiers so split-chunk __MLD exports stay stable. */
+function minifyJs(label, source) {
+  const result = esbuild.transformSync(source, {
+    loader: "js",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    legalComments: "none",
+    target: ["es2018"],
+  });
+  if (result.warnings?.length) {
+    for (const w of result.warnings) {
+      console.warn(`${label}: ${w.text}`);
+    }
+  }
+  return result.code;
+}
+
+function minifyCss(label, source) {
+  const result = esbuild.transformSync(source, {
+    loader: "css",
+    minify: true,
+    legalComments: "none",
+    target: ["es2018"],
+  });
+  if (result.warnings?.length) {
+    for (const w of result.warnings) {
+      console.warn(`${label}: ${w.text}`);
+    }
+  }
+  return result.code;
 }
 
 function assertJsSyntax(label, path) {
@@ -494,13 +530,16 @@ function hpmReleaseNotes() {
 }
 
 mkdirSync(upload, { recursive: true });
+rmSync(join(upload, "mld-app-pre.js"), { force: true });
 
 const indexHtml = readFileSync(join(root, "src", "index.html"), "utf8")
   .replaceAll("__APP_VERSION__", pkg.version);
 writeFileSync(join(upload, "mld-index.html"), indexHtml);
-copyFileSync(join(root, "src", "styles.css"), join(upload, "mld-app.css"));
-assertUnderHubLimit("mld-app.css", readFileSync(join(upload, "mld-app.css"), "utf8"));
-copyFileSync(join(root, "src", "app-pre.js"), join(upload, "mld-app-pre.js"));
+
+const cssOut = minifyCss("mld-app.css", readFileSync(join(root, "src", "styles.css"), "utf8"));
+assertUnderHubLimit("mld-app.css", cssOut);
+writeFileSync(join(upload, "mld-app.css"), cssOut);
+
 copyFileSync(join(root, "src", "manifest.webmanifest"), join(upload, "mld-manifest.webmanifest"));
 copyFileSync(join(root, "src", "sw.js"), join(upload, "mld-sw.js"));
 writeFileSync(join(upload, "mld-icon-192.b64"), iconBase64(192) + "\n");
@@ -509,24 +548,26 @@ writeFileSync(join(upload, "mld-icon-192.png"), createIconPng(192));
 writeFileSync(join(upload, "mld-icon-512.png"), createIconPng(512));
 
 const { part1Out, partCoreOut, part2Out, part3Out, part4Out } = splitAppJs(join(root, "src", "app.js"));
-assertUnderHubLimit("mld-app.js", part1Out);
-assertUnderHubLimit("mld-app-core.js", partCoreOut);
-assertUnderHubLimit("mld-app-post.js", part2Out);
-assertUnderHubLimit("mld-app-post2.js", part3Out);
-assertUnderHubLimit("mld-app-post3.js", part4Out);
-writeFileSync(join(upload, "mld-app.js"), part1Out);
-writeFileSync(join(upload, "mld-app-core.js"), partCoreOut);
-writeFileSync(join(upload, "mld-app-post.js"), part2Out);
-writeFileSync(join(upload, "mld-app-post2.js"), part3Out);
-writeFileSync(join(upload, "mld-app-post3.js"), part4Out);
+const appPre = readFileSync(join(root, "src", "app-pre.js"), "utf8").trimEnd();
+const part1Merged = `${appPre}\n${part1Out}`;
 
-for (const name of ["mld-app-pre.js", "mld-app.js", "mld-app-core.js", "mld-app-post.js", "mld-app-post2.js", "mld-app-post3.js"]) {
+const jsOutputs = [
+  ["mld-app.js", minifyJs("mld-app.js", part1Merged)],
+  ["mld-app-core.js", minifyJs("mld-app-core.js", partCoreOut)],
+  ["mld-app-post.js", minifyJs("mld-app-post.js", part2Out)],
+  ["mld-app-post2.js", minifyJs("mld-app-post2.js", part3Out)],
+  ["mld-app-post3.js", minifyJs("mld-app-post3.js", part4Out)],
+];
+
+for (const [name, content] of jsOutputs) {
+  assertUnderHubLimit(name, content);
+  writeFileSync(join(upload, name), content);
+}
+
+for (const [name] of jsOutputs) {
   assertJsSyntax(name, join(upload, name));
 }
-for (const name of ["mld-app-pre.js", "mld-sw.js"]) {
-  const content = readFileSync(join(upload, name), "utf8");
-  assertUnderHubLimit(name, content);
-}
+assertUnderHubLimit("mld-sw.js", readFileSync(join(upload, "mld-sw.js"), "utf8"));
 assertUploadBlobLimits();
 
 const groovyRaw = readFileSync(join(root, "app", "ModernLightsDashboard.groovy.template"), "utf8");
@@ -651,8 +692,8 @@ const hpmRepository = {
 };
 writeFileSync(join(hubitat, "repository.json"), JSON.stringify(hpmRepository, null, "\t") + "\n");
 
-const kb = (p) => (readFileSync(p).length / 1024).toFixed(1);
-const blobHeadroom = (p) => ((HUB_MAX_BLOB - readFileSync(p).length) / 1024).toFixed(1);
+const kb = (p) => (byteSize(readFileSync(p)) / 1024).toFixed(1);
+const blobHeadroom = (p) => ((HUB_MAX_BLOB - byteSize(readFileSync(p))) / 1024).toFixed(1);
 console.log("Built:");
 console.log(`  dist/ModernLightsDashboard.groovy       ${kb(join(dist, "ModernLightsDashboard.groovy"))} KB`);
 console.log(`  dist/ModernLightsDashboard.bundle.zip   ${kb(bundleZip)} KB  ← manual Bundles → Import`);

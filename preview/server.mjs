@@ -473,7 +473,6 @@ const readDist = (name) => readFileSync(join(distUpload, name), "utf8");
 const mime = {
   "/": "text/html",
   "/app.css": "text/css",
-  "/app-pre.js": "application/javascript",
   "/app.js": "application/javascript",
 };
 
@@ -488,15 +487,13 @@ const server = createServer(async (req, res) => {
   }
   if (p === "/app.css") {
     res.writeHead(200, { "Content-Type": "text/css" });
-    return res.end(read("src/styles.css"));
-  }
-  if (p === "/app-pre.js") {
-    res.writeHead(200, { "Content-Type": "application/javascript" });
-    return res.end(read("src/app-pre.js"));
+    return res.end(existsSync(join(distUpload, "mld-app.css")) ? readDist("mld-app.css") : read("src/styles.css"));
   }
   if (p === "/app.js") {
     res.writeHead(200, { "Content-Type": "application/javascript" });
-    return res.end(existsSync(join(distUpload, "mld-app.js")) ? readDist("mld-app.js") : read("src/app.js"));
+    if (existsSync(join(distUpload, "mld-app.js"))) return res.end(readDist("mld-app.js"));
+    // Fallback for unbuilt trees: constants + main IIFE in one response (matches production).
+    return res.end(read("src/app-pre.js") + "\n" + read("src/app.js"));
   }
   if (p === "/app-core.js") {
     res.writeHead(200, { "Content-Type": "application/javascript" });
