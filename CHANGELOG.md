@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.5
+
+- **Fix:** favorites tile sizes could fail to save — the JS chunk rewriter now
+  handles object spread (`{...favoriteSizes}`) so reorder/size changes persist
+  correctly.
+
 ## 0.3.4
 
 - **Favorites:** responsive tile-size layout on phones — 2-column and single-column

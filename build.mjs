@@ -115,7 +115,11 @@ function assertNoBareExportRefs(label, code, replaceIds) {
   const offenders = [];
   for (const id of replaceIds) {
     if (localDecl.has(id)) continue;
-    const re = new RegExp(`(?<!(?:const|let|var) )(?<![.\\w])${id.replace(/\$/g, "\\$")}(?![\\w$])`, "g");
+    // Same spread-aware lookbehind as rewriteCodeSegment.
+    const re = new RegExp(
+      `(?<!(?:const|let|var)\\s+)(?<=\\.\\.\\.\\s*|[^.\\w]|^)${id.replace(/\$/g, "\\$")}(?![\\w$])`,
+      "g"
+    );
     for (const m of code.matchAll(re)) {
       const offset = m.index;
       const after = code.slice(offset + id.length);
@@ -139,8 +143,11 @@ function assertNoBareExportRefs(label, code, replaceIds) {
 function rewriteCodeSegment(segment, replaceIds) {
   let out = segment;
   for (const id of replaceIds) {
+    // Match bare ids, including after object spread (`...id`). The old
+    // `(?<![.\\w])` lookbehind treated the final `.` of `...` as property
+    // access and left `{...favoriteSizes}` unrewritten (runtime ReferenceError).
     const re = new RegExp(
-      `(?<!(?:const|let|var) )(?<![.\\w])${id.replace(/\$/g, "\\$")}(?![\\w$])`,
+      `(?<!(?:const|let|var)\\s+)(?<=\\.\\.\\.\\s*|[^.\\w]|^)${id.replace(/\$/g, "\\$")}(?![\\w$])`,
       "g"
     );
     // Rewrite bare ids to M.id, but leave object-literal keys alone
