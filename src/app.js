@@ -7268,7 +7268,7 @@
     let art = null;
     if (inFav) {
       art = ce("div", "quick-lock-art");
-      art.innerHTML = LOCK_SVG;
+      art.innerHTML = effectiveLock(lock) ? LOCK_CLOSED_SVG : LOCK_OPEN_SVG;
       art.setAttribute("aria-hidden", "true");
       row.appendChild(art);
     }
@@ -7311,6 +7311,7 @@
     const isLocked = effectiveLock(lock);
     rec.el.classList.toggle("is-locked", isLocked);
     rec.el.classList.toggle("is-unlocked", !isLocked);
+    if (rec.art) rec.art.innerHTML = isLocked ? LOCK_CLOSED_SVG : LOCK_OPEN_SVG;
     rec.lockBtn.classList.toggle("active", isLocked);
     rec.unlockBtn.classList.toggle("active", !isLocked);
   }

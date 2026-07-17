@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.9
+
+- **Favorites:** lock tiles use blue open/closed lock icons that update with state;
+  unlocked tiles get a red border and tint so status is obvious at a glance.
+
 ## 0.3.8
 
 - **Favorites:** lock tiles show a centered lock icon with locked/unlocked styling;
