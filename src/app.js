@@ -8853,8 +8853,8 @@
   function favoriteReorderGridSpan(size) {
     if (window.matchMedia("(max-width: 359px)").matches) return 1;
     if (window.matchMedia("(max-width: 539px)").matches) {
-      if (size === "square" || size === "standard" || size === "compact") return 1;
-      return 2;
+      if (size === "full") return 2;
+      return 1;
     }
     if (size === "full") return 4;
     if (size === "square" || size === "wide") return 2;
@@ -9465,7 +9465,11 @@
     const rec = map.get(t.i);
     if (!rec) return;
     const tm = String(t.tm || "").toLowerCase();
-    rec.card.className = "quick-fav-card quick-fav-tstat mode-" + (tm || "off");
+    const nextMode = "mode-" + (tm || "off");
+    for (const cls of rec.card.classList) {
+      if (cls.startsWith("mode-")) rec.card.classList.remove(cls);
+    }
+    rec.card.classList.add(nextMode);
     const temps = favoriteTstatTemps(t);
     const stateInfo = favoriteTstatState(t);
     rec.spEl.className = "quick-fav-tstat-sp " + temps.tone;

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.11
+
+- **Favorites:** on phones, wide/square/standard/compact tiles use a single column
+  (only full-width favorites span two columns).
+- **Favorites:** wide lock tiles — horizontal layout with icon, name, and side-by-side
+  Lock/Unlock buttons; icon-only buttons on narrow screens.
+- **Favorites:** thermostat tile mode colors update correctly on live status changes.
+
 ## 0.3.10
 
 - **Favorites:** larger lock icons on favorite tiles; square preset shows Lock/Unlock

@@ -2096,7 +2096,7 @@ body {
     aspect-ratio: 1;
   }
   .quick-body-favorites .quick-fav-grid > .fav-size-wide {
-    grid-column: span 2;
+    grid-column: span 1;
     min-height: 88px;
   }
   .quick-body-favorites .quick-fav-grid > .fav-size-standard {
@@ -2193,6 +2193,10 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
+}
+/* Grid-sized thermostats: height comes from fav-size-* span/aspect-ratio, not quick-fav-card default. */
+.quick-body-favorites .quick-fav-grid > .quick-fav-tstat {
+  min-height: 0;
 }
 
 /* ---- Thermostat: always stack in favorites (avoid @container horizontal in short tiles) ---- */
@@ -2295,23 +2299,64 @@ body {
 .quick-body-favorites .fav-size-wide.quick-lock-row {
   flex-direction: row;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 10px 12px;
+  max-height: 96px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 .quick-body-favorites .fav-size-wide.quick-lock-row .quick-fav-row-head {
   flex: 1;
   min-width: 0;
+  order: 2;
+}
+.quick-body-favorites .fav-size-wide.quick-lock-row .quick-fav-meta {
+  display: none;
+}
+.quick-body-favorites .fav-size-wide.quick-lock-row .quick-lock-art {
+  flex: 0 0 auto;
+  order: 1;
+}
+.quick-body-favorites .fav-size-wide.quick-lock-row .quick-lock-art svg {
+  width: 32px;
+  height: 32px;
 }
 .quick-body-favorites .fav-size-wide.quick-lock-row .quick-lock-actions {
   flex: 0 0 auto;
-  flex-direction: column;
+  flex-direction: row;
   gap: 6px;
   width: auto;
+  order: 3;
 }
 .quick-body-favorites .fav-size-wide.quick-lock-row .quick-lock-btn {
-  min-width: 92px;
-  min-height: 36px;
-  flex: none;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+  flex: 1 1 auto;
+}
+.quick-body-favorites .fav-size-wide.quick-lock-row .quick-lock-btn svg {
+  width: 15px;
+  height: 15px;
+}
+@media (max-width: 539px) {
+  .quick-body-favorites .fav-size-wide.quick-lock-row {
+    max-height: 88px;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .quick-body-favorites .fav-size-wide.quick-lock-row .quick-lock-art svg {
+    width: 28px;
+    height: 28px;
+  }
+  .quick-body-favorites .fav-size-wide.quick-lock-row .quick-lock-btn {
+    min-height: 32px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+  .quick-body-favorites .fav-size-wide.quick-lock-row .quick-lock-btn-label {
+    display: none;
+  }
 }
 .quick-body-favorites .fav-reorder-item.fav-size-square .quick-lock-row {
   justify-content: space-between;
