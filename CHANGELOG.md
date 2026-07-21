@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.18
+
+- **Fix:** cloud dashboard could keep serving stale JS after File Manager updates
+  (HPM), while local LAN worked — local loads `/local/mld-*` directly; cloud used an
+  in-memory asset cache that did not refresh until Done/reboot. Cache now clears on
+  each dashboard HTML load.
+
 ## 0.3.17
 
 - **Fix:** dashboard could fail to leave the loading shell when Favorites had an
