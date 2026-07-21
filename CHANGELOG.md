@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.28
+
+- **Favorites:** compact tiles pair into one standard-size cell instead of dense-grid
+  packing, so mixed-size layouts stay predictable and reorder mode stays stable.
+
 ## 0.3.27
 
 - **Favorites:** add **Time** tiles from the overflow menu — live clock cards with

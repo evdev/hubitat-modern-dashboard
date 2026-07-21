@@ -7843,11 +7843,15 @@
   }
 
   function favoritesGridSizesMatch(entries, grid) {
-    const kids = grid.children;
-    if (kids.length !== entries.length) return false;
-    for (let i = 0; i < entries.length; i++) {
-      const want = "fav-size-" + resolveFavoriteSize(entries[i]);
-      if (!kids[i].classList.contains(want)) return false;
+    const rendered = new Map(
+      Array.from(grid.querySelectorAll("[data-fav-key]"))
+        .map((el) => [el.dataset.favKey, el])
+    );
+    if (rendered.size !== entries.length) return false;
+    for (const entry of entries) {
+      const tile = rendered.get(favoriteEntryKey(entry));
+      const want = "fav-size-" + resolveFavoriteSize(entry);
+      if (!tile?.classList.contains(want)) return false;
     }
     return true;
   }
@@ -7922,6 +7926,36 @@
     if (!tile) return null;
     applyFavoriteSizeClass(tile, entry);
     return tile;
+  }
+
+  function appendFavoriteEntryTiles(grid, entries) {
+    let compactStack = null;
+    for (const entry of entries) {
+      const tile = makeFavoriteEntryElement(entry);
+      if (!tile) continue;
+      tile.dataset.favKey = favoriteEntryKey(entry);
+      if (!tile.dataset.name) {
+        tile.dataset.name = String(
+          entry.type === "time" ? (TIME_STYLE_LABELS[entry.card.style] || "Time")
+            : entry.type === "embed" ? (entry.card.title || "")
+            : (entry.dev?.n || "")
+        ).toLowerCase();
+      }
+      const stackable = resolveFavoriteSize(entry) === "compact" && entry.type !== "embed";
+      if (!stackable) {
+        grid.appendChild(tile);
+        continue;
+      }
+      if (!compactStack) {
+        compactStack = ce("div", "fav-compact-stack");
+        grid.appendChild(compactStack);
+      }
+      compactStack.appendChild(tile);
+      compactStack.dataset.name = Array.from(compactStack.children)
+        .map((child) => child.dataset.name || "")
+        .join(" ");
+      if (compactStack.children.length >= 2) compactStack = null;
+    }
   }
 
   function currentFavoritesOrderFromDom() {
@@ -9418,12 +9452,10 @@
       return;
     }
     const grid = ce("div", "quick-fav-grid");
-    for (const entry of entries) {
-      if (favoritesReorderActive) wrapFavoriteForReorder(grid, entry);
-      else {
-        const tile = makeFavoriteEntryElement(entry);
-        if (tile) grid.appendChild(tile);
-      }
+    if (favoritesReorderActive) {
+      for (const entry of entries) wrapFavoriteForReorder(grid, entry);
+    } else {
+      appendFavoriteEntryTiles(grid, entries);
     }
     body.appendChild(grid);
     if (favoritesReorderActive) {
