@@ -244,8 +244,8 @@
       nextCards
     );
     const prevSig = favoritesLayout.join(",") + "|" + embedCards.map((c) => c.id + ":" + c.size + ":" + c.url).join("|");
-    embedCards = nextCards;
-    favoritesLayout = nextLayout;
+    replaceList(embedCards, nextCards);
+    replaceList(favoritesLayout, nextLayout);
     syncEmbedStateToMld();
     const nextSig = favoritesLayout.join(",") + "|" + embedCards.map((c) => c.id + ":" + c.size + ":" + c.url).join("|");
     return prevSig !== nextSig;
@@ -6033,6 +6033,7 @@
       }
     }
     const embedCfgChanged = applyEmbedConfigFromData(d);
+    syncEmbedStateToMld();
     reapplyLockOptimistic();
     reapplyGarageOptimistic();
     reapplyShadeOptimistic();
@@ -9699,8 +9700,8 @@
     if (favoritesReorderSnapshot) replaceList(favorites, favoritesReorderSnapshot);
     if (favoritesReorderSnapshotSizes) favoriteSizes = { ...favoritesReorderSnapshotSizes };
     else favoriteSizes = {};
-    if (favoritesReorderSnapshotLayout) favoritesLayout = favoritesReorderSnapshotLayout.slice();
-    if (favoritesReorderSnapshotEmbeds) embedCards = favoritesReorderSnapshotEmbeds.map((c) => ({ ...c }));
+    if (favoritesReorderSnapshotLayout) replaceList(favoritesLayout, favoritesReorderSnapshotLayout.slice());
+    if (favoritesReorderSnapshotEmbeds) replaceList(embedCards, favoritesReorderSnapshotEmbeds.map((c) => ({ ...c })));
     syncEmbedStateToMld();
     lastDataSig = "";
     exitFavoritesReorderMode(false);

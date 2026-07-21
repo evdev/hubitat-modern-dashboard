@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.16
+
+- **Fix:** favorites embed cards could disappear or ignore saved layout after `/data`
+  refresh — embed and layout arrays are updated in place so all JS chunks share the
+  same `__MLD` references.
+
 ## 0.3.15
 
 - **Favorites:** embed cards style and layout load with the main dashboard (not only
