@@ -131,12 +131,31 @@ try {
   assert(String(layoutSave.json.sizes[favorites[0]]) === "wide", "device size saved");
   assert(layoutSave.json.embedCards[0].size === "standard", "embed size saved");
 
+  // Embed viewport round-trip via layout
+  const viewportSave = await postJson("/settings/favorites-layout", {
+    layout,
+    favoriteSizes: { [favorites[0]]: "square" },
+    embedSizes: { [embedId]: "viewport" },
+  });
+  assert(viewportSave.res.ok, "viewport layout save ok");
+  assert(viewportSave.json.embedCards[0].size === "viewport", "embed viewport saved");
+  assert(String(viewportSave.json.sizes[favorites[0]]) === "square", "device square retained");
+
+  // Invalid embed size ignored (previous size kept)
+  const badEmbedSize = await postJson("/settings/favorites-layout", {
+    layout,
+    embedSizes: { [embedId]: "compact" },
+  });
+  assert(badEmbedSize.res.ok, "bad embed size request ok");
+  assert(badEmbedSize.json.embedCards[0].size === "viewport", "invalid embed size ignored");
+
   // Legacy POST /favorites preserves embeds
   const reversed = favorites.slice().reverse();
   const legacy = await postJson("/favorites", { ids: reversed, sizes: {} });
   assert(legacy.res.ok, "legacy favorites ok");
   assert(legacy.json.embedCards?.length === 1, "legacy preserves embeds");
   assert(legacy.json.favoritesLayout.some((k) => k.startsWith("e:")), "legacy preserves embed layout slot");
+  assert(legacy.json.embedCards[0].size === "viewport", "legacy preserves embed size");
 
   // Delete
   const deleted = await postJson("/embed-cards", { action: "delete", id: embedId });

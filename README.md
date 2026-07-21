@@ -341,14 +341,16 @@ Tap the star on a supported device tile (lights, shades, locks, garage doors, mu
 etc.) to add it to favorites. The list is stored on the hub and syncs across
 devices. Open the **Favorites** quick-nav icon for a cross-category view of
 starred devices. On the Favorites tab, use overflow menu (⋯) → **Reorder** to
-drag tiles or use the move buttons; compact tiles reflow responsively, while
-thermostats and other wide favorites stay full-width rows.
+drag tiles or use the move buttons, and tap **Size** on a tile to choose a
+named layout (**Compact**, **Standard**, **Wide**, **Square**, **Full row**,
+**Tall**, or **Fill screen** depending on device type). One size is saved per
+tile and adapts responsively across phone and desktop widths.
 
 **Embed cards:** From Favorites, use overflow **Add embed** (or the empty-state
 button) to add an HTTPS iframe widget — for example a [Google Calendar embed](https://support.google.com/calendar/answer/41207)
 URL or an iframe-based weather widget. You can paste either the HTTPS URL or a
 full `<iframe …>` snippet; only the `src` is kept. Cards support sizes
-**standard**, **wide**, **tall**, and **near full screen**, plus a temporary
+**Standard**, **Wide**, **Tall**, and **Fill screen**, plus a temporary
 **Expand** overlay. Use **Open** if the site refuses to load in a frame (many
 normal website pages block embedding; public Google Calendar embeds usually work,
 while private calendars may require an existing Google sign-in in that browser).
@@ -374,7 +376,7 @@ top-bar expand/collapse-all button toggles every room.
 - **Quick-nav icons:** drag category icons (locks, scenes, scheduler, etc.) to
   reorder. Search is hidden while reordering.
 - **Favorites tab:** drag handles and move buttons reorder favorite tiles;
-  order syncs across devices.
+  the Size control opens a named size chooser; order and sizes sync across devices.
 
 ### UI preferences
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.25
+
+- **Favorites:** tile sizes use named choices (**Compact**, **Standard**, **Wide**,
+  **Square**, **Full row**, **Tall**, **Fill screen**) — tap **Size** in reorder mode
+  to open a picker instead of cycling grid codes. Sizes still save per tile and adapt
+  across phone and desktop layouts.
+- **Favorites:** refreshed PWA icons.
+
 ## 0.3.24
 
 - **Favorites:** embed iframes no longer reload on tab switches — Favorites uses a

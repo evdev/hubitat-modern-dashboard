@@ -1718,7 +1718,7 @@
       ".fav-embed-media{position:relative;flex:1;min-height:160px;background:#000}" +
       ".fav-size-wide.fav-embed-card .fav-embed-media{min-height:180px}" +
       ".fav-size-tall.fav-embed-card .fav-embed-media{min-height:240px}" +
-      ".fav-size-viewport.fav-embed-card .fav-embed-media{min-height:calc(100dvh - 14rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))}" +
+      ".fav-size-viewport.fav-embed-card .fav-embed-media{min-height:calc(100dvh - 11rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))}" +
       ".fav-embed-iframe{position:absolute;inset:0;width:100%;height:100%;border:0}" +
       ".favorites-reorder-mode .fav-embed-iframe{pointer-events:none}" +
       ".fav-embed-hint{position:absolute;left:8px;right:8px;bottom:8px;z-index:1;font-size:.72rem;font-weight:600;color:rgba(255,255,255,.78);pointer-events:none}" +
@@ -7600,19 +7600,39 @@
     return entry.type === "sensor" && entry.dev?.t === "valve";
   }
 
+  // Semantic size profiles: persisted preset strings stay stable; UI shows names.
+  const FAVORITE_SIZE_LABELS = {
+    compact: { short: "Compact", long: "Compact" },
+    standard: { short: "Standard", long: "Standard" },
+    wide: { short: "Wide", long: "Wide" },
+    square: { short: "Square", long: "Square" },
+    full: { short: "Full row", long: "Full row" },
+    tall: { short: "Tall", long: "Tall" },
+    viewport: { short: "Fill screen", long: "Fill screen" },
+  };
+  // Legacy hub values for controlled tiles map to square.
+  const CONTROLLED_FAVORITE_SIZE_ALIASES = {
+    wide: "square",
+    standard: "square",
+    compact: "square",
+  };
   const CONTROLLED_FAVORITE_SIZE_PROFILE = {
     default: "square",
-    allowed: ["square", "full", "tall"]
+    allowed: ["square", "full", "tall"],
   };
 
   function favoriteSizeProfile(entry) {
-    if (entry?.type === "embed") return { default: "tall", allowed: ["standard", "wide", "tall", "viewport"] };
+    if (entry?.type === "embed") {
+      return { default: "tall", allowed: ["standard", "wide", "tall", "viewport"] };
+    }
     if (entryNeedsControlledFavoriteSize(entry)) return CONTROLLED_FAVORITE_SIZE_PROFILE;
     const t = entry.type;
     if (t === "garage") return { default: "full", allowed: ["full", "square", "wide"] };
-    if (t === "light") return entry.dev && entry.dev.d
-      ? { default: "standard", allowed: ["standard", "wide"] }
-      : { default: "standard", allowed: ["standard", "wide", "compact"] };
+    if (t === "light") {
+      return entry.dev && entry.dev.d
+        ? { default: "standard", allowed: ["standard", "wide"] }
+        : { default: "standard", allowed: ["standard", "wide", "compact"] };
+    }
     if (t === "outlet") return { default: "standard", allowed: ["standard", "wide", "compact"] };
     if (t === "sensor") return { default: "standard", allowed: ["standard", "wide", "compact"] };
     return { default: "standard", allowed: ["standard"] };
@@ -7622,11 +7642,18 @@
     const profile = favoriteSizeProfile(entry);
     if (!size) return profile.default;
     if (profile.allowed.includes(size)) return size;
-    if (entryNeedsControlledFavoriteSize(entry)
-        && (size === "wide" || size === "standard" || size === "compact")) {
-      return "square";
+    if (entryNeedsControlledFavoriteSize(entry) && CONTROLLED_FAVORITE_SIZE_ALIASES[size]) {
+      return CONTROLLED_FAVORITE_SIZE_ALIASES[size];
     }
     return profile.default;
+  }
+
+  function favoriteSizeShortLabel(size) {
+    return FAVORITE_SIZE_LABELS[size]?.short || "Standard";
+  }
+
+  function favoriteSizeLongLabel(size) {
+    return FAVORITE_SIZE_LABELS[size]?.long || "Standard";
   }
 
   function findDeviceFavoriteEntry(id) {
@@ -7705,74 +7732,8 @@
   const favoritesReorderEls = new Map();
   let favDragCleanup = null;
   let favAutoScrollRaf = null;
-  let favReorderResizeListener = null;
-
-  function favoriteReorderGridSpan(size) {
-    if (window.matchMedia("(max-width: 359px)").matches) return 1;
-    if (window.matchMedia("(max-width: 539px)").matches) {
-      if (size === "full" || size === "tall" || size === "viewport") return 2;
-      return size === "wide" || size === "square" ? 2 : 1;
-    }
-    if (size === "full" || size === "tall" || size === "viewport") return 4;
-    if (size === "square" || size === "wide") return 2;
-    return 1;
-  }
-
-  function favoriteReorderPreviewHeight(size) {
-    const viewportH = Math.round(Math.max(280, window.innerHeight * 0.72));
-    if (window.matchMedia("(max-width: 359px)").matches) {
-      return { full: 88, square: 148, tall: 176, wide: 84, standard: 112, compact: 52, viewport: viewportH }[size] || 112;
-    }
-    if (window.matchMedia("(max-width: 539px)").matches) {
-      return { full: 96, square: 160, tall: 192, wide: 88, standard: 120, compact: 56, viewport: viewportH }[size] || 120;
-    }
-    return { full: 96, square: 168, tall: 192, wide: 96, standard: 132, compact: 64, viewport: viewportH }[size] || 132;
-  }
-
-  function applyFavoriteReorderPreview(wrap, size) {
-    if (!wrap || !size) return;
-    const span = favoriteReorderGridSpan(size);
-    wrap.style.gridColumn = "span " + span;
-    if (size === "square") {
-      wrap.style.aspectRatio = "1";
-      wrap.style.height = "auto";
-      wrap.style.minHeight = "0";
-    } else if (size === "full" && window.matchMedia("(max-width: 699px)").matches) {
-      // A one-row control card cannot always reflow to 96px on a phone.
-      // Keep its four-column width but let its controls determine the height.
-      wrap.style.aspectRatio = "";
-      wrap.style.height = "auto";
-      wrap.style.minHeight = favoriteReorderPreviewHeight(size) + "px";
-    } else {
-      wrap.style.aspectRatio = "";
-      const height = favoriteReorderPreviewHeight(size);
-      wrap.style.height = height + "px";
-      wrap.style.minHeight = height + "px";
-    }
-    const grid = wrap.parentElement;
-    if (grid) void grid.offsetHeight;
-  }
-
-  function refreshAllFavReorderPreviews() {
-    if (!favoritesReorderActive) return;
-    const grid = currentBody()?.querySelector(".quick-fav-grid");
-    if (!grid) return;
-    for (const wrap of grid.querySelectorAll(".fav-reorder-item")) {
-      applyFavoriteReorderPreview(wrap, wrap.dataset.favSize || "standard");
-    }
-  }
-
-  function bindFavReorderResizeListener() {
-    if (favReorderResizeListener) return;
-    favReorderResizeListener = () => refreshAllFavReorderPreviews();
-    window.addEventListener("resize", favReorderResizeListener, { passive: true });
-  }
-
-  function unbindFavReorderResizeListener() {
-    if (!favReorderResizeListener) return;
-    window.removeEventListener("resize", favReorderResizeListener);
-    favReorderResizeListener = null;
-  }
+  let favSizeChooserEl = null;
+  let favSizeChooserReturnFocus = null;
 
   function isFavoritesReorderActive() {
     return favoritesReorderActive;
@@ -7796,12 +7757,26 @@
     return favoriteSizeProfile({ type, dev: {} }).default === "full" ? "full" : "cell";
   }
 
+  function clearFavoriteSizeClasses(el) {
+    for (const p of FAVORITE_SIZE_PRESETS) el.classList.remove("fav-size-" + p);
+  }
+
   function applyFavoriteSizeClass(el, entry) {
     const size = resolveFavoriteSize(entry);
-    for (const p of FAVORITE_SIZE_PRESETS) el.classList.remove("fav-size-" + p);
+    clearFavoriteSizeClasses(el);
     el.classList.add("fav-size-" + size);
     el.dataset.favSize = size;
     return size;
+  }
+
+  function setFavoriteSizeClasses(el, size) {
+    clearFavoriteSizeClasses(el);
+    el.classList.add("fav-size-" + size);
+    el.dataset.favSize = size;
+  }
+
+  function isFullFavoriteSize(size) {
+    return size === "full" || size === "tall" || size === "viewport";
   }
 
   function makeFavoriteEntryElement(entry) {
@@ -7960,7 +7935,6 @@
       floatOffsetY = e.clientY - rect.top;
       const size = wrapper.dataset.favSize || "standard";
       placeholder = ce("div", "fav-drag-placeholder fav-size-" + size);
-      placeholder.style.gridColumn = "span " + favoriteReorderGridSpan(size);
       placeholder.style.height = rect.height + "px";
       wrapper.parentNode.insertBefore(placeholder, wrapper);
       wrapper.classList.add("fav-dragging");
@@ -8066,10 +8040,10 @@
     const size = resolveFavoriteSize(entry);
     const wrap = ce("div", "fav-reorder-item fav-size-" + size);
     wrap.dataset.favKey = favKey;
-    wrap.dataset.favSpan = (size === "full" || size === "tall" || size === "viewport") ? "full" : "cell";
+    wrap.dataset.favSpan = isFullFavoriteSize(size) ? "full" : "cell";
     wrap.dataset.favSize = size;
     wrap.dataset.name = String(entry.type === "embed" ? (entry.card.title || "") : (entry.dev.n || "")).toLowerCase();
-    if (size === "full" || size === "tall" || size === "viewport") wrap.classList.add("fav-reorder-full");
+    wrap.classList.toggle("fav-reorder-full", isFullFavoriteSize(size));
     tile.classList.add("fav-reorder-content");
     wrap.appendChild(tile);
 
@@ -8081,19 +8055,16 @@
 
     const sizeBtn = ce("button", "fav-size-btn");
     sizeBtn.type = "button";
+    sizeBtn.setAttribute("aria-haspopup", "dialog");
     const sizeLabel = ce("span", "fav-size-btn-current");
     const sizeHint = ce("span", "fav-size-btn-label");
+    sizeHint.textContent = "Size";
     sizeBtn.appendChild(sizeLabel);
     sizeBtn.appendChild(sizeHint);
     function syncSizeBtn() {
       const cur = wrap.dataset.favSize;
-      const idx = profile.allowed.indexOf(cur);
-      const next = profile.allowed[(idx + 1) % profile.allowed.length];
       sizeLabel.textContent = favoriteSizeShortLabel(cur);
-      sizeHint.textContent = profile.allowed.length > 1
-        ? "Size → " + favoriteSizeShortLabel(next)
-        : "Size";
-      sizeBtn.setAttribute("aria-label", "Tile size " + favoriteSizeLongLabel(cur) + ". Tap for " + favoriteSizeLongLabel(next) + ".");
+      sizeBtn.setAttribute("aria-label", "Tile size " + favoriteSizeLongLabel(cur) + ". Choose size.");
       sizeBtn.disabled = profile.allowed.length <= 1;
     }
     sizeBtn.addEventListener("pointerdown", (e) => {
@@ -8103,15 +8074,8 @@
       e.preventDefault();
       e.stopPropagation();
       if (reorderBusy || sizeBtn.disabled) return;
-      const cur = wrap.dataset.favSize;
-      const idx = profile.allowed.indexOf(cur);
-      const next = profile.allowed[(idx + 1) % profile.allowed.length];
-      if (!next || next === cur) return;
-      cycleFavoriteSize(favKey, next, wrap, tile, entry);
-      syncSizeBtn();
-      sizeBtn.focus();
       hapticTap();
-      flash("Size: " + favoriteSizeLongLabel(next));
+      openFavoriteSizeChooser({ favKey, wrap, tile, entry, profile, sizeBtn });
     });
     syncSizeBtn();
 
@@ -8142,50 +8106,132 @@
     wrap.appendChild(overlay);
     attachFavoriteReorder(wrap, dragHandle);
     favoritesReorderEls.set(favKey, { moveEarlier, moveLater, sizeBtn, syncSizeBtn });
-    applyFavoriteReorderPreview(wrap, size);
     grid.appendChild(wrap);
   }
 
-  function cycleFavoriteSize(favKey, next, wrap, tile, entry) {
-    for (const p of FAVORITE_SIZE_PRESETS) wrap.classList.remove("fav-size-" + p);
-    wrap.classList.add("fav-size-" + next);
-    wrap.dataset.favSize = next;
-    wrap.dataset.favSpan = (next === "full" || next === "tall" || next === "viewport") ? "full" : "cell";
-    wrap.classList.toggle("fav-reorder-full", next === "full" || next === "tall" || next === "viewport");
-    for (const p of FAVORITE_SIZE_PRESETS) tile.classList.remove("fav-size-" + p);
-    tile.classList.add("fav-size-" + next);
-    tile.dataset.favSize = next;
+  function applyFavoriteSizeChoice(wrap, tile, entry, next) {
     const profile = favoriteSizeProfile(entry);
+    const size = coerceFavoriteSize(entry, next);
+    if (!profile.allowed.includes(size)) return null;
+    setFavoriteSizeClasses(wrap, size);
+    wrap.dataset.favSpan = isFullFavoriteSize(size) ? "full" : "cell";
+    wrap.classList.toggle("fav-reorder-full", isFullFavoriteSize(size));
+    setFavoriteSizeClasses(tile, size);
     if (entry.type === "embed") {
-      entry.card.size = next;
+      entry.card.size = size;
       const idx = embedCards.findIndex((c) => c.id === entry.card.id);
-      if (idx >= 0) embedCards[idx] = { ...embedCards[idx], size: next };
+      if (idx >= 0) embedCards[idx] = { ...embedCards[idx], size };
     } else {
       const favId = Number(entry.dev.i);
-      if (next === profile.default) delete favoriteSizes[favId];
-      else favoriteSizes[favId] = next;
+      if (size === profile.default) delete favoriteSizes[favId];
+      else favoriteSizes[favId] = size;
     }
-    applyFavoriteReorderPreview(wrap, next);
     updateFavoritesDraftOrderFromDom();
+    return size;
   }
 
-  function favoriteSizeShortLabel(size) {
-    return size === "full" ? "1×4"
-      : size === "square" ? "2×2"
-      : size === "tall" ? "2×4"
-      : size === "wide" ? "1×2"
-      : size === "viewport" ? "Fill"
-      : size === "compact" ? "½×1"
-      : "1×1";
+  function closeFavoriteSizeChooser() {
+    if (!favSizeChooserEl) return;
+    const returnFocus = favSizeChooserReturnFocus;
+    favSizeChooserEl.remove();
+    favSizeChooserEl = null;
+    favSizeChooserReturnFocus = null;
+    if (returnFocus && typeof returnFocus.focus === "function") {
+      try { returnFocus.focus(); } catch {}
+    }
   }
-  function favoriteSizeLongLabel(size) {
-    return size === "full" ? "wide row (1 by 4)"
-      : size === "square" ? "square (2 by 2)"
-      : size === "tall" ? "tall (2 by 4)"
-      : size === "wide" ? "wide (1 by 2)"
-      : size === "viewport" ? "near full screen"
-      : size === "compact" ? "compact (half by 1)"
-      : "standard (1 by 1)";
+
+  function openFavoriteSizeChooser({ favKey, wrap, tile, entry, profile, sizeBtn }) {
+    closeFavoriteSizeChooser();
+    if (!profile?.allowed?.length) return;
+    favSizeChooserReturnFocus = sizeBtn || null;
+    const name = entry.type === "embed"
+      ? (entry.card?.title || "Embed")
+      : (entry.dev?.n || "Favorite");
+    const overlay = ce("div", "fav-size-sheet open");
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "Choose size for " + name);
+    const panel = ce("div", "fav-size-sheet-panel");
+    const head = ce("div", "fav-size-sheet-head");
+    const title = ce("div", "fav-size-sheet-title");
+    title.textContent = "Size · " + name;
+    const closeBtn = ce("button", "fav-size-sheet-close");
+    closeBtn.type = "button";
+    closeBtn.textContent = "Done";
+    head.appendChild(title);
+    head.appendChild(closeBtn);
+    panel.appendChild(head);
+
+    const list = ce("div", "fav-size-sheet-options");
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", "Available sizes");
+    const optionBtns = [];
+    for (const size of profile.allowed) {
+      const btn = ce("button", "fav-size-option");
+      btn.type = "button";
+      btn.setAttribute("role", "option");
+      btn.dataset.size = size;
+      const preview = ce("span", "fav-size-option-preview fav-size-option-preview--" + size);
+      preview.setAttribute("aria-hidden", "true");
+      const label = ce("span", "fav-size-option-label");
+      label.textContent = favoriteSizeLongLabel(size);
+      btn.appendChild(preview);
+      btn.appendChild(label);
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (reorderBusy) return;
+        const applied = applyFavoriteSizeChoice(wrap, tile, entry, size);
+        if (!applied) return;
+        const rec = favoritesReorderEls.get(favKey);
+        rec?.syncSizeBtn?.();
+        hapticTap();
+        flash("Size: " + favoriteSizeLongLabel(applied));
+        closeFavoriteSizeChooser();
+      });
+      list.appendChild(btn);
+      optionBtns.push(btn);
+    }
+
+    function syncSelected() {
+      const cur = wrap.dataset.favSize;
+      for (const btn of optionBtns) {
+        const selected = btn.dataset.size === cur;
+        btn.classList.toggle("is-selected", selected);
+        btn.setAttribute("aria-selected", selected ? "true" : "false");
+      }
+    }
+    syncSelected();
+    panel.appendChild(list);
+    overlay.appendChild(panel);
+
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeFavoriteSizeChooser();
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+      e.preventDefault();
+      const idx = optionBtns.indexOf(document.activeElement);
+      let next = idx;
+      if (e.key === "ArrowDown") next = idx < 0 ? 0 : Math.min(optionBtns.length - 1, idx + 1);
+      else if (e.key === "ArrowUp") next = idx < 0 ? optionBtns.length - 1 : Math.max(0, idx - 1);
+      else if (e.key === "Home") next = 0;
+      else if (e.key === "End") next = optionBtns.length - 1;
+      optionBtns[next]?.focus();
+    };
+    overlay.addEventListener("keydown", onKey);
+    closeBtn.addEventListener("click", () => {
+      hapticTap();
+      closeFavoriteSizeChooser();
+    });
+    bindPopupDismiss(overlay, panel, null, () => closeFavoriteSizeChooser());
+    favSizeChooserEl = overlay;
+    appendPopup(overlay);
+    const selected = optionBtns.find((b) => b.classList.contains("is-selected")) || optionBtns[0];
+    requestAnimationFrame(() => selected?.focus());
   }
 
   function enterFavoritesReorderMode() {
@@ -8208,6 +8254,7 @@
     postCall("closeTopbarOverflowMenu");
     closeFavoriteTstatModeMenu();
     closeEmbedExpand();
+    closeFavoriteSizeChooser();
     if (SEARCH_EL) {
       SEARCH_EL.value = "";
       applySearch();
@@ -8216,14 +8263,12 @@
     if (REORDER_CANCEL_BTN) REORDER_CANCEL_BTN.hidden = false;
     renderFavoritesPopup();
     updateFavoritesMoveButtons();
-    refreshAllFavReorderPreviews();
-    bindFavReorderResizeListener();
-    flash("Drag to reorder · tap Size to resize");
+    flash("Drag to reorder · tap Size to choose size");
   }
 
   function exitFavoritesReorderMode(resumePoll) {
     cleanupFavDragState();
-    unbindFavReorderResizeListener();
+    closeFavoriteSizeChooser();
     favoritesReorderActive = false;
     favoritesReorderDraftOrder = null;
     favoritesReorderSnapshot = null;

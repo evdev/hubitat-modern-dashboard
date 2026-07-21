@@ -142,6 +142,50 @@ try {
   const readdJson = await readdRes.json();
   assert(Object.keys(readdJson.sizes || {}).length === 0, "empty sizes clears stored sizes");
 
+  // ---- Mixed layout save via settings/favorites-layout ----
+  const layout = reversed.map((id) => "d:" + id);
+  const layoutSizes = { [reversed[0]]: "wide", [reversed[1]]: "standard" };
+  const layoutRes = await fetch(`http://127.0.0.1:${PORT}/settings/favorites-layout?${dashSessionQuery}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      layout,
+      favoriteSizes: layoutSizes,
+      embedSizes: {},
+    }),
+  });
+  assert(layoutRes.ok, "POST settings/favorites-layout ok");
+  const layoutJson = await layoutRes.json();
+  assert(Array.isArray(layoutJson.favoritesLayout), "layout returned");
+  assert(layoutJson.favoritesLayout.join(",") === layout.join(","), "device layout persisted");
+  assert(String(layoutJson.sizes[reversed[0]]) === "wide", "wide size via layout save");
+  assert(String(layoutJson.sizes[reversed[1]]) === "standard", "standard size via layout save");
+
+  // ---- Unknown layout size rejected; known sizes retained when omitted ----
+  const badLayoutRes = await fetch(`http://127.0.0.1:${PORT}/settings/favorites-layout?${dashSessionQuery}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      layout,
+      favoriteSizes: { [reversed[0]]: "enormous" },
+    }),
+  });
+  assert(badLayoutRes.ok, "invalid size still returns ok with filtered map");
+  const badLayoutJson = await badLayoutRes.json();
+  assert(badLayoutJson.sizes[reversed[0]] == null, "invalid layout size filtered out");
+
+  // viewport is embed-only and must not stick on a device favorite
+  const viewportRes = await fetch(`http://127.0.0.1:${PORT}/settings/favorites-layout?${dashSessionQuery}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      layout,
+      favoriteSizes: { [reversed[0]]: "viewport" },
+    }),
+  });
+  const viewportJson = await viewportRes.json();
+  assert(viewportJson.sizes[reversed[0]] == null, "viewport rejected for device favorites");
+
   console.log("verify-favorites-order: ok");
 } finally {
   child.kill("SIGTERM");
