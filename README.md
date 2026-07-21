@@ -354,9 +354,10 @@ normal website pages block embedding; public Google Calendar embeds usually work
 while private calendars may require an existing Google sign-in in that browser).
 Only `https://` sources are accepted so embeds work on the installed cloud PWA.
 Embedded sites see your IP address and may use cookies already set for that
-provider. Switching dashboard tabs keeps the same embed iframe alive (e.g.
-Google Calendar view) without reloading; browser third-party cookie rules still
-apply after a full page refresh.
+provider. With category tabs on, Favorites keeps embed iframes mounted while you
+switch tabs (hidden, not destroyed), so in-widget state like a Google Calendar
+view is preserved. Browser third-party cookie rules still apply after a full
+page refresh.
 
 ### Search, collapse & reorder
 

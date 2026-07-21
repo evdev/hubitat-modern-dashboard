@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.24
+
+- **Favorites:** embed iframes no longer reload on tab switches — Favorites uses a
+  persistent panel that is shown/hidden in place (browsers reload iframes if moved
+  in the DOM, which broke the earlier park/reattach approach).
+
 ## 0.3.23
 
 - **Favorites:** embed iframes no longer reload when switching category tabs — live

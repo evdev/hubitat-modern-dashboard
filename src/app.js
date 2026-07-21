@@ -382,8 +382,7 @@
   let embedEditorOpen = false;
   let embedExpandState = null; // { cardEl, placeholder, restoreFocus }
   let favEmbedObserver = null;
-  let favEmbedKeepaliveEl = null;
-  const favEmbedParked = new Map(); // embed card id -> live iframe
+  let favoritesPersistEl = null; // stable Favorites panel (iframes never moved)
   let snapshots = {};
   let roomGestureLockCount = 0;
   let hubModeLockUntil = 0;
@@ -1728,7 +1727,8 @@
       ".fav-embed-card.fav-embed-expanded .fav-embed-media{min-height:0}" +
       ".fav-embed-close-expand{position:absolute;top:calc(10px + env(safe-area-inset-top));right:12px;z-index:3}" +
       "body.fav-embed-expanded-open{overflow:hidden}" +
-      ".fav-embed-keepalive{position:fixed;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none}" +
+      ".favorites-persist{padding:6px 14px calc(24px + env(safe-area-inset-bottom))}" +
+      ".favorites-persist[hidden]{display:none!important}" +
       ".fav-embed-expand-placeholder{border-radius:16px;border:1px dashed var(--stroke)}" +
       ".fav-empty{display:flex;flex-direction:column;gap:12px;padding:8px 2px 20px;color:var(--muted)}" +
       ".fav-embed-editor-panel{width:min(440px,calc(100svw - 32px))}" +
@@ -8426,69 +8426,52 @@
     }
   }
 
-  function ensureFavEmbedKeepalive() {
-    if (favEmbedKeepaliveEl) return favEmbedKeepaliveEl;
-    favEmbedKeepaliveEl = ce("div", "fav-embed-keepalive");
-    favEmbedKeepaliveEl.id = "fav-embed-keepalive";
-    favEmbedKeepaliveEl.hidden = true;
-    favEmbedKeepaliveEl.setAttribute("aria-hidden", "true");
-    document.body.appendChild(favEmbedKeepaliveEl);
-    return favEmbedKeepaliveEl;
-  }
-
-  function discardParkedEmbedIframe(id) {
-    const iframe = favEmbedParked.get(id);
-    if (!iframe) return;
-    favEmbedParked.delete(id);
-    try { iframe.src = "about:blank"; } catch {}
-    iframe.remove();
-  }
-
-  function pruneParkedEmbedIframes(activeEmbedIds) {
-    const keep = activeEmbedIds instanceof Set ? activeEmbedIds : new Set(activeEmbedIds);
-    for (const id of [...favEmbedParked.keys()]) {
-      if (!keep.has(id)) discardParkedEmbedIframe(id);
+  function ensureFavoritesPersistPanel() {
+    if (favoritesPersistEl) return favoritesPersistEl;
+    favoritesPersistEl = ce("div", "favorites-persist tab-view quick-body quick-body-favorites tab-body");
+    favoritesPersistEl.id = "favorites-persist";
+    favoritesPersistEl.hidden = true;
+    favoritesPersistEl.setAttribute("aria-label", "Favorites");
+    const anchor = tabViewEl || ROOMS_EL;
+    if (anchor?.parentNode) {
+      anchor.parentNode.insertBefore(favoritesPersistEl, anchor.nextSibling);
+    } else {
+      (APP_EL || document.body).appendChild(favoritesPersistEl);
     }
+    return favoritesPersistEl;
   }
 
-  /** Move live embed iframes off-DOM without reloading (preserves in-frame state). */
-  function parkFavEmbedIframes(root) {
-    disconnectFavEmbedObserver();
-    const scope = root || currentBody();
-    if (!scope?.querySelectorAll) return;
-    const host = ensureFavEmbedKeepalive();
-    for (const card of scope.querySelectorAll(".fav-embed-card")) {
-      const id = card.dataset.embedId;
-      const iframe = card.querySelector(".fav-embed-iframe");
-      if (!id || !iframe) continue;
-      iframe.dataset.embedUrl = card.dataset.embedUrl || iframe.dataset.embedUrl || "";
-      host.appendChild(iframe);
-      favEmbedParked.set(id, iframe);
-    }
+  function setFavoritesPersistVisible(on) {
+    const el = ensureFavoritesPersistPanel();
+    el.hidden = !on;
   }
 
-  function adoptParkedEmbedIframe(cardId, mediaEl, expectedUrl) {
-    const parked = favEmbedParked.get(cardId);
-    if (!parked) return null;
-    const parkedUrl = parked.dataset.embedUrl || "";
-    if (expectedUrl && parkedUrl && parkedUrl !== expectedUrl) {
-      discardParkedEmbedIframe(cardId);
-      return null;
+  function isFavoritesPersistActive() {
+    return (tabMode && activeTab === "favorites") || quickPopupOpenType === "favorites";
+  }
+
+  function discardEmbedIframe(id) {
+    if (!id) return;
+    const roots = [favoritesPersistEl, document.getElementById("favorites-persist")].filter(Boolean);
+    for (const root of roots) {
+      for (const card of root.querySelectorAll(".fav-embed-card")) {
+        if (card.dataset.embedId !== String(id)) continue;
+        const iframe = card.querySelector(".fav-embed-iframe");
+        if (iframe) {
+          try { iframe.src = "about:blank"; } catch {}
+        }
+      }
     }
-    favEmbedParked.delete(cardId);
-    mediaEl.insertBefore(parked, mediaEl.firstChild);
-    return parked;
   }
 
   function stopFavEmbedStreams() {
     disconnectFavEmbedObserver();
-    const scope = currentBody();
-    if (scope) {
-      for (const iframe of scope.querySelectorAll(".fav-embed-iframe")) {
+    const roots = [favoritesPersistEl, currentBody()].filter(Boolean);
+    for (const root of roots) {
+      for (const iframe of root.querySelectorAll(".fav-embed-iframe")) {
         try { iframe.src = "about:blank"; } catch {}
       }
     }
-    for (const id of [...favEmbedParked.keys()]) discardParkedEmbedIframe(id);
   }
 
   function closeEmbedExpand() {
@@ -8629,17 +8612,14 @@
       media.appendChild(blocked);
       media.appendChild(hint);
     } else {
-      let iframe = adoptParkedEmbedIframe(card.id, media, card.url);
-      if (!iframe) {
-        iframe = ce("iframe", "fav-embed-iframe");
-        iframe.setAttribute("title", title);
-        iframe.loading = "lazy";
-        iframe.referrerPolicy = "no-referrer";
-        iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox");
-        iframe.src = "about:blank";
-        media.insertBefore(iframe, media.firstChild);
-      }
+      const iframe = ce("iframe", "fav-embed-iframe");
+      iframe.setAttribute("title", title);
+      iframe.loading = "lazy";
+      iframe.referrerPolicy = "no-referrer";
+      iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox");
+      iframe.src = "about:blank";
       iframe.dataset.embedUrl = card.url;
+      media.appendChild(iframe);
       media.appendChild(hint);
     }
     el.appendChild(media);
@@ -8669,7 +8649,7 @@
   }
 
   async function deleteEmbedCard(id) {
-    discardParkedEmbedIframe(id);
+    discardEmbedIframe(id);
     const body = await embedCardsApi({ action: "delete", id });
     if (!body) return false;
     closeEmbedExpand();
@@ -8798,7 +8778,7 @@
         }
         save.disabled = true;
         if (popup._existing && popup._existing.url !== parsed.url) {
-          discardParkedEmbedIframe(popup._existing.id);
+          discardEmbedIframe(popup._existing.id);
         }
         const payload = popup._existing
           ? { action: "update", id: popup._existing.id, title: titleInput.value, url: parsed.url, size: popup._existing.size || "tall" }
@@ -8843,12 +8823,12 @@
   }
 
   function refreshFavoritesPopup() {
-    if (currentCategory() !== "favorites") return;
+    if (!isFavoritesPersistActive()) return;
     if (favoritesReorderActive) return;
     if (embedEditorOpen || embedExpandState) return;
     const entries = getFavoriteEntries();
     const sig = favoritesPopupSignature();
-    const body = currentBody();
+    const body = tabMode ? ensureFavoritesPersistPanel() : (currentBody());
     const grid = body.querySelector(".quick-fav-grid");
     if (!grid || sig !== favPopupSig || !favoritesGridSizesMatch(entries, grid)) {
       renderFavoritesPopup();
@@ -8860,8 +8840,11 @@
         const t = thermostats.find((x) => x.i === entry.dev.i) || entry.dev;
         updateQuickTstatCard(t, favTstatMap);
       } else if (entry.type === "sensor") {
-        const dev = mergedSensorList().find((x) => x.i === entry.dev.i) || entry.dev;
-        updateSensorCard(dev);
+        const listFn = globalThis.__MLD?.mergedSensorList;
+        const merged = typeof listFn === "function" ? listFn() : [];
+        const dev = merged.find((x) => x.i === entry.dev.i) || entry.dev;
+        if (typeof updateSensorCard === "function") updateSensorCard(dev);
+        else globalThis.__MLD?.updateSensorCard?.(dev);
       } else if (entry.type === "music") {
         const mp = music.find((x) => x.i === entry.dev.i) || entry.dev;
         updateFavoriteMusicRow(mp);
@@ -8883,16 +8866,54 @@
     if (favTstatModeMenu) repositionFavoriteTstatModeMenu();
   }
 
+  /** Soft open: keep existing embed iframes when layout unchanged (tab mode). */
+  function showFavoritesPanel() {
+    if (!tabMode) {
+      // Popup mode still uses the shared popup body (iframes reload on reopen).
+      renderFavoritesPopup();
+      return;
+    }
+    setFavoritesPersistVisible(true);
+    const body = ensureFavoritesPersistPanel();
+    const entries = getFavoriteEntries();
+    const sig = favoritesPopupSignature();
+    const grid = body.querySelector(".quick-fav-grid");
+    if (
+      !favoritesReorderActive &&
+      !embedEditorOpen &&
+      !embedExpandState &&
+      grid &&
+      sig === favPopupSig &&
+      favoritesGridSizesMatch(entries, grid)
+    ) {
+      refreshFavoritesPopup();
+      return;
+    }
+    renderFavoritesPopup();
+  }
+
+  function favoritesRenderTarget() {
+    if (tabMode) return ensureFavoritesPersistPanel();
+    const popup = ensureQuickPopup();
+    syncQuickPopupWidthForOpen(popup);
+    return popup._body;
+  }
+
   function renderFavoritesPopup() {
     closeFavoriteTstatModeMenu();
     if (!favoritesReorderActive) closeEmbedExpand();
-    const body = currentBody();
-    parkFavEmbedIframes(body);
+    const body = favoritesRenderTarget();
+    if (tabMode) setFavoritesPersistVisible(true);
     if (!tabMode || activeTab !== "favorites") {
       const popup = ensureQuickPopup();
       syncQuickPopupWidthForOpen(popup);
     }
-    setQuickBodyClass(body, "quick-body quick-body-favorites");
+    if (tabMode) {
+      setQuickBodyClass(body, "quick-body quick-body-favorites");
+      body.classList.add("favorites-persist", "tab-view", "tab-body");
+    } else {
+      setQuickBodyClass(body, "quick-body quick-body-favorites");
+    }
     body.innerHTML = "";
     favDevMap.clear();
     favTstatMap.clear();
@@ -8905,9 +8926,6 @@
     favFanMap.clear();
     favoritesReorderEls.clear();
     const entries = getFavoriteEntries();
-    pruneParkedEmbedIframes(
-      entries.filter((e) => e.type === "embed").map((e) => e.card.id)
-    );
     if (!entries.length) {
       favPopupSig = favoritesPopupSignature();
       renderFavoritesEmptyState(body);
@@ -9061,9 +9079,9 @@
     closeFanMasterPopup();
     closeShadeMasterPopup();
     if (quickPopupOpenType === "favorites" && id !== "favorites") {
-      parkFavEmbedIframes();
       closeEmbedExpand();
       closeEmbedEditor();
+      setFavoritesPersistVisible(false);
     }
     const popup = ensureQuickPopup();
     syncQuickPopupRef(popup);
@@ -9074,7 +9092,7 @@
     switch (id) {
       case "hub-mode": renderHubModePopup(); break;
       case "scenes": renderScenesPopup(); break;
-      case "favorites": renderFavoritesPopup(); break;
+      case "favorites": showFavoritesPanel(); break;
       case "locks": renderLocksPopup(); break;
       case "blinds": refreshBlindsPopup(); break;
       case "fans": refreshFansPopup(); break;
@@ -9099,6 +9117,7 @@
 
   function closeQuickPopup() {
     closeFavoriteTstatModeMenu();
+    const wasFavorites = quickPopupOpenType === "favorites";
     const popup = quickPopup || (globalThis.__MLD && globalThis.__MLD.quickPopup) || document.querySelector(".quick-popup");
     if (!popup) return;
     syncQuickPopupRef(popup);
@@ -9107,19 +9126,26 @@
     popup.classList.remove("quick-popup-wide");
     popup.classList.remove("quick-popup-hub-mode");
     quickPopupOpenType = null;
-    favDevMap.clear();
-    favTstatMap.clear();
-    favSensorMap.clear();
-    favMusicMap.clear();
-    favLockMap.clear();
-    favGarageMap.clear();
-    favShadeMap.clear();
-    favFanMap.clear();
+    if (wasFavorites) {
+      closeEmbedExpand();
+      closeEmbedEditor();
+      setFavoritesPersistVisible(false);
+      // Keep favPopupSig + panel DOM so embeds survive reopen / tab return.
+    } else {
+      favDevMap.clear();
+      favTstatMap.clear();
+      favSensorMap.clear();
+      favMusicMap.clear();
+      favLockMap.clear();
+      favGarageMap.clear();
+      favShadeMap.clear();
+      favFanMap.clear();
+      favPopupSig = "";
+    }
     fansPopupMap.clear();
     fansPopupSig = "";
     shadePopupMap.clear();
     blindsPopupSig = "";
-    favPopupSig = "";
     tstatsPopupMap.clear();
     tstatsPopupSig = "";
     sensorCardMap.clear();
@@ -9144,11 +9170,15 @@
   }
 
   function setQuickBodyClass(body, classes) {
-    if (body === tabViewEl) body.className = "tab-view " + classes + " tab-body";
-    else body.className = classes;
+    if (body === tabViewEl || body === favoritesPersistEl) {
+      body.className = (body === favoritesPersistEl ? "favorites-persist " : "") + "tab-view " + classes + " tab-body";
+    } else {
+      body.className = classes;
+    }
   }
 
   function currentBody() {
+    if (isFavoritesPersistActive()) return ensureFavoritesPersistPanel();
     if (tabMode && activeTab !== "lights") return ensureTabView();
     return ensureQuickPopup()._body;
   }
@@ -9213,8 +9243,8 @@
     if (activeTab === "cameras" && id !== "cameras") postCall("stopCamerasStreams");
     if (activeTab === "favorites" && id !== "favorites") {
       closeEmbedExpand();
-      parkFavEmbedIframes();
       closeEmbedEditor();
+      setFavoritesPersistVisible(false);
     }
     const tabChanged = id !== activeTab;
     if (tabChanged && SEARCH_EL) {
@@ -9224,9 +9254,12 @@
     }
     activeTab = id;
     ensureTabView();
+    ensureFavoritesPersistPanel();
     const nonLights = id !== "lights";
+    const showFav = nonLights && id === "favorites";
     if (ROOMS_EL) ROOMS_EL.hidden = nonLights;
-    if (tabViewEl) tabViewEl.hidden = !nonLights;
+    if (tabViewEl) tabViewEl.hidden = !nonLights || showFav;
+    setFavoritesPersistVisible(showFav);
     if (ALL_ON_TRACK) ALL_ON_TRACK.hidden = nonLights;
     else if (ALL_ON_BTN) ALL_ON_BTN.hidden = nonLights;
     if (ALL_OFF_TRACK) ALL_OFF_TRACK.hidden = nonLights;
@@ -9242,7 +9275,7 @@
     updateTabActiveStates();
     if (nonLights) {
       switch (id) {
-        case "favorites": renderFavoritesPopup(); break;
+        case "favorites": showFavoritesPanel(); break;
         case "sensors": renderSensorsPopup(); break;
         case "thermostats": renderThermostatsPopup(); break;
         case "music": renderMusicPopup(); break;
@@ -9276,6 +9309,7 @@
       activeTab = "lights";
       if (ROOMS_EL) ROOMS_EL.hidden = false;
       if (tabViewEl) tabViewEl.hidden = true;
+      setFavoritesPersistVisible(false);
       if (ALL_ON_TRACK) ALL_ON_TRACK.hidden = false;
       else if (ALL_ON_BTN) ALL_ON_BTN.hidden = false;
       if (ALL_OFF_TRACK) ALL_OFF_TRACK.hidden = false;
@@ -9555,7 +9589,8 @@
   }
 
   function applyTabSearch(q) {
-    if (!tabViewEl) return;
+    const searchRoot = (activeTab === "favorites" && favoritesPersistEl) ? favoritesPersistEl : tabViewEl;
+    if (!searchRoot && activeTab !== "sensors") return;
     if (activeTab === "sensors" && sensorRoomEls.size) {
       if (!q) {
         for (const [, rec] of sensorRoomEls) {
@@ -9585,7 +9620,8 @@
       }
       return;
     }
-    const items = tabViewEl.querySelectorAll("[data-name]");
+    if (!searchRoot) return;
+    const items = searchRoot.querySelectorAll("[data-name]");
     for (const el of items) {
       el.classList.toggle("search-hidden", !!q && !el.dataset.name.includes(q));
     }
