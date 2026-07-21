@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.29
+
+- **Favorites:** reorder mode pairs adjacent **Compact** tiles in the same stacked cell
+  as normal view, with drag-and-drop and move buttons respecting the stacks.
+
 ## 0.3.28
 
 - **Favorites:** compact tiles pair into one standard-size cell instead of dense-grid

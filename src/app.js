@@ -5980,8 +5980,13 @@
           break;
         }
       }
-      if (insertBefore) el.insertBefore(placeholder, insertBefore);
-      else el.appendChild(placeholder);
+      if (insertBefore) {
+        const stack = insertBefore.closest(".fav-reorder-compact-stack");
+        if (stack?.parentNode === el) el.insertBefore(placeholder, stack);
+        else insertBefore.parentNode.insertBefore(placeholder, insertBefore);
+      } else {
+        el.appendChild(placeholder);
+      }
     }
 
     function positionFloat(clientX) {
@@ -7943,6 +7948,7 @@
       }
       const stackable = resolveFavoriteSize(entry) === "compact" && entry.type !== "embed";
       if (!stackable) {
+        compactStack = null;
         grid.appendChild(tile);
         continue;
       }
@@ -7951,6 +7957,33 @@
         grid.appendChild(compactStack);
       }
       compactStack.appendChild(tile);
+      compactStack.dataset.name = Array.from(compactStack.children)
+        .map((child) => child.dataset.name || "")
+        .join(" ");
+      if (compactStack.children.length >= 2) compactStack = null;
+    }
+  }
+
+  function flattenFavoriteReorderStacks(grid) {
+    for (const stack of Array.from(grid.querySelectorAll(":scope > .fav-reorder-compact-stack"))) {
+      while (stack.firstChild) grid.insertBefore(stack.firstChild, stack);
+      stack.remove();
+    }
+  }
+
+  function packFavoriteReorderStacks(grid) {
+    flattenFavoriteReorderStacks(grid);
+    let compactStack = null;
+    for (const item of Array.from(grid.querySelectorAll(":scope > .fav-reorder-item"))) {
+      if (item.dataset.favSize !== "compact") {
+        compactStack = null;
+        continue;
+      }
+      if (!compactStack) {
+        compactStack = ce("div", "fav-compact-stack fav-reorder-compact-stack");
+        grid.insertBefore(compactStack, item);
+      }
+      compactStack.appendChild(item);
       compactStack.dataset.name = Array.from(compactStack.children)
         .map((child) => child.dataset.name || "")
         .join(" ");
@@ -7993,15 +8026,23 @@
   function moveFavorite(favKey, delta) {
     const grid = currentBody()?.querySelector(".quick-fav-grid");
     if (!grid) return;
-    const items = Array.from(grid.querySelectorAll(".fav-reorder-item"));
+    flattenFavoriteReorderStacks(grid);
+    const items = Array.from(grid.querySelectorAll(":scope > .fav-reorder-item"));
     const idx = items.findIndex((el) => el.dataset.favKey === String(favKey));
-    if (idx < 0) return;
+    if (idx < 0) {
+      packFavoriteReorderStacks(grid);
+      return;
+    }
     const newIdx = idx + delta;
-    if (newIdx < 0 || newIdx >= items.length) return;
+    if (newIdx < 0 || newIdx >= items.length) {
+      packFavoriteReorderStacks(grid);
+      return;
+    }
     const item = items[idx];
     const sibling = items[newIdx];
     if (delta < 0) grid.insertBefore(item, sibling);
     else grid.insertBefore(sibling, item);
+    packFavoriteReorderStacks(grid);
     updateFavoritesDraftOrderFromDom();
     updateFavoritesMoveButtons();
     hapticTap();
@@ -8112,7 +8153,7 @@
     function commitDrag() {
       const el = grid();
       if (placeholder?.parentNode && el) {
-        el.insertBefore(wrapper, placeholder);
+        placeholder.parentNode.insertBefore(wrapper, placeholder);
         placeholder.remove();
       }
       wrapper.classList.remove("fav-dragging");
@@ -8122,6 +8163,7 @@
       wrapper.removeAttribute("aria-grabbed");
       placeholder = null;
       stopFavAutoScroll();
+      if (el) packFavoriteReorderStacks(el);
       updateFavoritesDraftOrderFromDom();
       updateFavoritesMoveButtons();
     }
@@ -8275,6 +8317,11 @@
     grid.appendChild(wrap);
   }
 
+  function appendFavoriteReorderItems(grid, entries) {
+    for (const entry of entries) wrapFavoriteForReorder(grid, entry);
+    packFavoriteReorderStacks(grid);
+  }
+
   function applyFavoriteSizeChoice(wrap, tile, entry, next) {
     const profile = favoriteSizeProfile(entry);
     const size = coerceFavoriteSize(entry, next);
@@ -8296,6 +8343,8 @@
       if (size === profile.default) delete favoriteSizes[favId];
       else favoriteSizes[favId] = size;
     }
+    const grid = currentBody()?.querySelector(".quick-fav-grid");
+    if (grid) packFavoriteReorderStacks(grid);
     updateFavoritesDraftOrderFromDom();
     return size;
   }
@@ -9453,7 +9502,7 @@
     }
     const grid = ce("div", "quick-fav-grid");
     if (favoritesReorderActive) {
-      for (const entry of entries) wrapFavoriteForReorder(grid, entry);
+      appendFavoriteReorderItems(grid, entries);
     } else {
       appendFavoriteEntryTiles(grid, entries);
     }

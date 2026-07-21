@@ -2203,8 +2203,8 @@ body {
   }
 }
 
-/* Reorder mode stays in source order. Compact tiles use the standard editing
-   footprint so their controls cannot resize the grid while they are moved. */
+/* Reorder mode stays in source order. Adjacent compact items share one
+   vertical stack; each half expands only enough to keep edit controls usable. */
 .favorites-reorder-mode .quick-body-favorites .quick-fav-grid > .fav-reorder-item {
   align-self: start;
   justify-self: stretch;
@@ -2212,6 +2212,17 @@ body {
 }
 .favorites-reorder-mode .quick-body-favorites .quick-fav-grid > .fav-reorder-item.fav-size-compact {
   min-height: var(--fav-min-h-standard);
+}
+.favorites-reorder-mode .quick-body-favorites .quick-fav-grid > .fav-reorder-compact-stack {
+  grid-template-rows: repeat(2, minmax(110px, 1fr));
+  min-height: calc(220px + var(--fav-gap));
+  height: calc(220px + var(--fav-gap));
+}
+.favorites-reorder-mode .quick-body-favorites .fav-reorder-compact-stack > .fav-reorder-item {
+  min-height: 110px;
+  height: 110px;
+  align-self: stretch;
+  overflow: hidden;
 }
 .favorites-reorder-mode .quick-body-favorites .fav-reorder-content {
   flex: 1 1 auto;
