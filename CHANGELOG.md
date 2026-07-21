@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.20
+
+- **Fix:** cloud dashboard could show only a bare top bar (All on/off) after embed-card
+  work — Hubitat Cloud drops OAuth responses near its ~128 KB MQTT limit, and
+  `mld-app-post2.js` had grown to ~122 KB (it hosts boot/`init`). Rebalanced chunks so
+  post2 stays ~81 KB; shades/fans/sensors/scenes move to post3, which loads with the
+  other scripts again (no longer deferred).
+
 ## 0.3.19
 
 - **Performance:** cloud File Manager asset cache no longer clears on every dashboard
