@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.18
+// Modern Dashboard v0.3.19
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.18"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.19"
 
 definition(
     name: "Modern Dashboard",
@@ -50,7 +50,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.18 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.19 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -720,10 +720,6 @@ def useDirectLocalAssets() {
     }
 }
 
-def assetCacheKey(String fileName) {
-    return "${MLD_DEPLOYED_VERSION}:${fileName}"
-}
-
 def cacheableAssetFileNames() {
     return requiredAssetFiles() + [assetIcon512File()]
 }
@@ -736,14 +732,24 @@ def assetBodyByteLength(String body) {
     return body ? body.getBytes("UTF-8").length : 0
 }
 
-def clearLocalAssetCache() {
+def clearLocalAssetCache(boolean keepGeneration = false) {
+    def gen = LOCAL_ASSET_CACHE_VERSION
     LOCAL_ASSET_CACHE.clear()
-    LOCAL_ASSET_CACHE_VERSION = MLD_DEPLOYED_VERSION
     LOCAL_ASSET_CACHE_BYTES = 0
+    LOCAL_ASSET_CACHE_VERSION = keepGeneration ? (gen ?: "") : ""
+}
+
+def assetCacheGeneration() {
+    return LOCAL_ASSET_CACHE_VERSION ?: "${MLD_DEPLOYED_VERSION}|"
+}
+
+def assetCacheKey(String fileName) {
+    return "${assetCacheGeneration()}:${fileName}"
 }
 
 def ensureAssetCacheVersion() {
-    if (LOCAL_ASSET_CACHE_VERSION != MLD_DEPLOYED_VERSION) {
+    // Groovy app code updated while an older generation is still in memory.
+    if (LOCAL_ASSET_CACHE_VERSION && !LOCAL_ASSET_CACHE_VERSION.startsWith("${MLD_DEPLOYED_VERSION}|")) {
         clearLocalAssetCache()
     }
 }
@@ -755,7 +761,7 @@ def rememberCachedAsset(String fileName, String body) {
     def bytes = assetBodyByteLength(body)
     if (bytes <= 0) return
     if (LOCAL_ASSET_CACHE_BYTES + bytes > LOCAL_ASSET_CACHE_MAX_BYTES) {
-        clearLocalAssetCache()
+        clearLocalAssetCache(true)
     }
     def prev = LOCAL_ASSET_CACHE.remove(key)
     if (prev) LOCAL_ASSET_CACHE_BYTES -= assetBodyByteLength(prev)
@@ -767,6 +773,60 @@ def readCachedAsset(String fileName) {
     if (!isCacheableAsset(fileName)) return null
     ensureAssetCacheVersion()
     return LOCAL_ASSET_CACHE[assetCacheKey(fileName)]
+}
+
+/** Build version stamped into File Manager HTML (`app.js?v=…`). */
+def assetVersionFromHtml(String html) {
+    if (!html) return null
+    def m = (html =~ /(?:^|["\s])(?:app\.js|mld-app\.js)\?v=([0-9A-Za-z._+-]+)/)
+    if (m.find()) return m.group(1)?.toString()
+    m = (html =~ /\?v=([0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z._+-]*)/)
+    if (m.find()) return m.group(1)?.toString()
+    return null
+}
+
+def fetchLocalAssetUncached(String fileName) {
+    def result = ""
+    try {
+        def params = [
+            uri: "${hubBaseUri()}/local/${fileName}",
+            contentType: "text/plain",
+            textParser: true,
+            timeout: 30,
+            ignoreSSLIssues: true
+        ]
+        def headers = hubRequestHeaders()
+        if (headers) params.headers = headers
+        httpGet(params) { resp ->
+            def code = resp?.status ?: resp?.statusCode
+            if (code == 200 && resp?.data != null) {
+                def data = resp.getData() != null ? resp.getData() : resp.data
+                result = readHttpBody(data)
+            }
+        }
+    } catch (e) {
+        log.error "fetchLocalAssetUncached ${fileName}: ${e.message}"
+    }
+    return result
+}
+
+/**
+ * Always re-read mld-index.html from File Manager. If its embedded ?v= (or the Groovy
+ * app version) differs from the in-memory cache generation, drop cached JS/CSS so cloud
+ * picks up HPM file updates without Done/reboot. Keeps the cache warm across reloads
+ * when versions match.
+ */
+def syncAssetCacheWithFileManagerHtml() {
+    def html = fetchLocalAssetUncached(assetHtmlFile())
+    if (!html) return null
+    def fileVer = assetVersionFromHtml(html) ?: "unknown"
+    def stamp = "${MLD_DEPLOYED_VERSION}|${fileVer}"
+    if (LOCAL_ASSET_CACHE_VERSION != stamp) {
+        clearLocalAssetCache()
+        LOCAL_ASSET_CACHE_VERSION = stamp
+    }
+    rememberCachedAsset(assetHtmlFile(), html)
+    return html
 }
 
 def rewriteDashboardAssetRefsToFileManager(String html) {
@@ -992,27 +1052,7 @@ def readHttpBody(data) {
 def readLocalAsset(String fileName) {
     def cached = readCachedAsset(fileName)
     if (cached != null) return cached
-    def result = ""
-    try {
-        def params = [
-            uri: "${hubBaseUri()}/local/${fileName}",
-            contentType: "text/plain",
-            textParser: true,
-            timeout: 30,
-            ignoreSSLIssues: true
-        ]
-        def headers = hubRequestHeaders()
-        if (headers) params.headers = headers
-        httpGet(params) { resp ->
-            def code = resp?.status ?: resp?.statusCode
-            if (code == 200 && resp?.data != null) {
-                def data = resp.getData() != null ? resp.getData() : resp.data
-                result = readHttpBody(data)
-            }
-        }
-    } catch (e) {
-        log.error "readLocalAsset ${fileName}: ${e.message}"
-    }
+    def result = fetchLocalAssetUncached(fileName)
     if (result) rememberCachedAsset(fileName, result)
     return result
 }
@@ -1099,11 +1139,9 @@ def appendAccessToken(String html, String attr, String assetPath, String token) 
 }
 
 def renderIndex() {
-    // Cloud serves JS/CSS via this app's in-memory File Manager cache. Local LAN often
-    // bypasses it (/local/mld-*). Clear on each HTML load so HPM/file updates apply to
-    // cloud without requiring a hub reboot or pressing Done.
-    try { clearLocalAssetCache() } catch (e) {}
-    def html = readLocalAsset(assetHtmlFile())
+    // Revalidate against File Manager HTML ?v= so cloud cache invalidates on HPM
+    // file updates without clearing on every reload when versions already match.
+    def html = syncAssetCacheWithFileManagerHtml()
     if (!html) { html = missingAssetHtml() }
     def token = params?.access_token
     def iconHref = readIconDataUri(assetIcon192File())

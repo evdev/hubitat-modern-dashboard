@@ -1,11 +1,19 @@
 # Changelog
 
+## 0.3.19
+
+- **Performance:** cloud File Manager asset cache no longer clears on every dashboard
+  HTML load. It re-reads `mld-index.html`, compares its embedded `?v=` (plus Groovy
+  app version) to the cache generation, and only invalidates JS/CSS when that changes —
+  so HPM file updates still apply without Done/reboot, while unchanged reloads keep the
+  warm in-memory cache.
+
 ## 0.3.18
 
 - **Fix:** cloud dashboard could keep serving stale JS after File Manager updates
   (HPM), while local LAN worked — local loads `/local/mld-*` directly; cloud used an
-  in-memory asset cache that did not refresh until Done/reboot. Cache now clears on
-  each dashboard HTML load.
+  in-memory asset cache that did not refresh until Done/reboot. Interim fix cleared the
+  cache on each HTML load (refined in 0.3.19).
 
 ## 0.3.17
 
