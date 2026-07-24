@@ -59,8 +59,8 @@ const PACKAGE_MANIFEST_URL =
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";
 const HPM_DRIVER_ID = "d1e2f3a4-b5c6-7890-def1-234567890abc";
-const DRIVER_FILE = "VirtualNotification.groovy";
-const DRIVER_DISPLAY_NAME = "Virtual Notification";
+const DRIVER_FILE = "mDashNotifications.groovy";
+const DRIVER_DISPLAY_NAME = "mDash Notifications";
 const FILE_MANAGER_ASSETS = [
   { id: "b1a2c3d4-e5f6-7890-abcd-ef1234567890", name: "mld-index.html" },
   { id: "c2b3d4e5-f6a7-8901-bcde-f12345678901", name: "mld-app.css" },
@@ -517,7 +517,8 @@ function substituteGroovyTemplate(template) {
     .replaceAll("__APP_AUTHOR__", APP_AUTHOR)
     .replaceAll("__GITHUB_URL__", GITHUB_URL)
     .replaceAll("__LICENSE_NAME__", LICENSE_NAME)
-    .replaceAll("__APP_NAMESPACE__", NS);
+    .replaceAll("__APP_NAMESPACE__", NS)
+    .replaceAll("__NOTIF_DRIVER_NAME__", DRIVER_DISPLAY_NAME);
 }
 
 function changelogEntryForVersion(version) {
@@ -692,7 +693,6 @@ const hpmManifest = {
       id: HPM_DRIVER_ID,
       name: DRIVER_DISPLAY_NAME,
       namespace: NS,
-      alternateNames: [{ name: DRIVER_DISPLAY_NAME, namespace: LEGACY_NS }],
       location: `${HPM_BASE_URL}/drivers/${DRIVER_FILE}`,
       required: true,
     },
@@ -744,7 +744,7 @@ for (const { name } of FILE_MANAGER_ASSETS) {
 console.log(`  hubitat/packageManifest.json            (HPM: app + oauth + driver + ${FILE_MANAGER_ASSETS.length} files)`);
 console.log(`  hubitat/repository.json                 (HPM repository listing; in default HPM registry)`);
 console.log(`  dist/packageManifest.json               (copy of HPM manifest)`);
-console.log(`  dist/drivers/${DRIVER_FILE}             (Virtual Notification driver)`);
+console.log(`  dist/drivers/${DRIVER_FILE}             (${DRIVER_DISPLAY_NAME} driver)`);
 if (HPM_BASE_URL.includes("UPDATE_USER")) {
   console.log("\nHPM: set HPM_BASE_URL to your hosted dist/ raw URL before publishing, then rebuild.");
 }

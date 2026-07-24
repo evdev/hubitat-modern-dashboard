@@ -158,15 +158,15 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Notifications") {
-            paragraph "<small>Rule Machine and other apps can send notifications to a Virtual Notification device; the dashboard shows each unread message as a popup until marked as read.</small>"
+            paragraph "<small>Rule Machine and other apps can send notifications to an <b>mDash Notifications</b> device; the dashboard shows each unread message as a banner until marked as read.</small>"
             def notifChild = getNotificationChildDevice()
             if (notifChild) {
                 paragraph "<small><b>Dashboard notification device:</b> ${htmlEsc(notifChild.displayName)} (created by this app).</small>"
             } else {
-                input "notifDeviceLabel", "string", title: "Name for new Virtual Notification device",
+                input "notifDeviceLabel", "string", title: "Name for new mDash Notifications device",
                     defaultValue: "Dashboard Notifications", required: false
-                input name: "btnCreateNotifDevice", type: "button", title: "Create Virtual Notification device"
-                paragraph "<small>Requires the <b>Virtual Notification</b> driver from this package (installed automatically via HPM). The device can be renamed under <b>Devices</b>; deleting it only removes it from the hub — use <b>Create</b> again to add a new one.</small>"
+                input name: "btnCreateNotifDevice", type: "button", title: "Create mDash Notifications device"
+                paragraph "<small>Requires the <b>mDash Notifications</b> driver from this package (installed automatically via HPM). The device can be renamed under <b>Devices</b>; deleting it only removes it from the hub — use <b>Create</b> again to add a new one.</small>"
                 if (state.notifDeviceCreateError) {
                     paragraph "<small><b>Could not create device:</b> ${htmlEsc(state.notifDeviceCreateError.toString())}</small>"
                 }
@@ -4420,10 +4420,10 @@ def createNotificationChildDeviceFromUi() {
     try {
         def child = addChildDevice(
             "__APP_NAMESPACE__",
-            "Virtual Notification",
+            "__NOTIF_DRIVER_NAME__",
             notificationChildDni(),
             [
-                name: "Virtual Notification",
+                name: "__NOTIF_DRIVER_NAME__",
                 label: label,
                 isComponent: false
             ]
@@ -4435,7 +4435,7 @@ def createNotificationChildDeviceFromUi() {
     } catch (e) {
         def msg = e?.message?.toString() ?: e?.toString() ?: "unknown error"
         state.notifDeviceCreateError = msg
-        log.warn "Modern Dashboard: could not create Virtual Notification device: ${msg}"
+        log.warn "Modern Dashboard: could not create mDash Notifications device: ${msg}"
     }
 }
 

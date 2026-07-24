@@ -4,7 +4,7 @@ dist/*
 !dist/packageManifest.json
 !dist/drivers/
 dist/drivers/*
-!dist/drivers/VirtualNotification.groovy
+!dist/drivers/mDashNotifications.groovy
 !dist/upload/
 dist/upload/*
 !dist/upload/mld-*

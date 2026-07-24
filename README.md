@@ -304,14 +304,14 @@ reflect the merged tile type (for example, temp+humidity counts as Temperature).
 ### Notifications
 
 Hubitat has no built-in virtual notification device. This package includes a
-**Virtual Notification** driver (`capability.notification`) so Rule Machine and
+**mDash Notifications** driver (`capability.notification`) so Rule Machine and
 other apps can send messages to the dashboard.
 
 **Setup**
 
-1. Install/update Modern Dashboard (HPM installs the Virtual Notification driver).
+1. Install/update Modern Dashboard (HPM installs the mDash Notifications driver).
 2. In **Apps → Modern Dashboard → Notifications**, tap
-   **Create Virtual Notification device** (optionally set a name first).
+   **Create mDash Notifications device** (optionally set a name first).
 3. In Rule Machine (or another app), send a notification to that device.
 
 The created device is a child of the app and is selected in the Notification
@@ -697,7 +697,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Locks & garage | Locks, garage doors, unlock PIN | — | See [device selection](#device-selection) |
 | Sensors | Motion, contact, water, presence, etc. | — | See [device selection](#device-selection) |
 | Cameras | go2rtc cameras | — | See [device selection](#device-selection) |
-| Notifications | Notification devices | — | Create button installs Virtual Notification child device; other notification devices optional |
+| Notifications | Notification devices | — | Create button installs mDash Notifications child device; other notification devices optional |
 | Dashboard options | Dashboard name | `mDash` | Browser tab and PWA title |
 | Dashboard options | Default tab | Lights | Opening tab when Category tabs is on; falls back to Lights if empty |
 | Dashboard options | Refresh interval | 5 s (2–60) | `/data` poll interval |

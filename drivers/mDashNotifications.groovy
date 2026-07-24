@@ -1,24 +1,24 @@
 /**
- * Virtual Notification — Modern Dashboard companion driver
+ * mDash Notifications — Modern Dashboard companion driver
  *
  * Receives Hubitat Notification capability messages (Rule Machine, HSM, apps)
  * for display as popups on the Modern Dashboard PWA.
  *
  * Setup (recommended):
  *   1. Install Modern Dashboard via Hubitat Package Manager (installs this driver).
- *   2. Apps → Modern Dashboard → Notifications → Create Virtual Notification device.
+ *   2. Apps → Modern Dashboard → Notifications → Create mDash Notifications device.
  *   3. Target that device from Rule Machine or other apps (Send Notification).
  *
  * Manual driver install: Drivers Code → New Driver → paste → Save, then use the
- * in-app Create button above (or Devices → Add Virtual Device → Virtual Notification).
+ * in-app Create button above (or Devices → Add Virtual Device → mDash Notifications).
  */
 
 metadata {
     definition(
-        name: "Virtual Notification",
+        name: "mDash Notifications",
         namespace: "mDash",
         author: "Ephrayim (evdev)",
-        importUrl: "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/drivers/VirtualNotification.groovy"
+        importUrl: "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/drivers/mDashNotifications.groovy"
     ) {
         capability "Notification"
         capability "Actuator"
@@ -33,11 +33,11 @@ metadata {
 }
 
 void installed() {
-    log.info "Virtual Notification installed"
+    log.info "mDash Notifications installed"
 }
 
 void updated() {
-    log.info "Virtual Notification updated"
+    log.info "mDash Notifications updated"
 }
 
 void deviceNotification(String text) {

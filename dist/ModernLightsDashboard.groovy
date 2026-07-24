@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.42
+// Modern Dashboard v0.3.44
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.42"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.44"
 
 definition(
     name: "Modern Dashboard",
@@ -50,7 +50,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.42 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.44 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -158,15 +158,15 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Notifications") {
-            paragraph "<small>Rule Machine and other apps can send notifications to a Virtual Notification device; the dashboard shows each unread message as a popup until marked as read.</small>"
+            paragraph "<small>Rule Machine and other apps can send notifications to an <b>mDash Notifications</b> device; the dashboard shows each unread message as a banner until marked as read.</small>"
             def notifChild = getNotificationChildDevice()
             if (notifChild) {
                 paragraph "<small><b>Dashboard notification device:</b> ${htmlEsc(notifChild.displayName)} (created by this app).</small>"
             } else {
-                input "notifDeviceLabel", "string", title: "Name for new Virtual Notification device",
+                input "notifDeviceLabel", "string", title: "Name for new mDash Notifications device",
                     defaultValue: "Dashboard Notifications", required: false
-                input name: "btnCreateNotifDevice", type: "button", title: "Create Virtual Notification device"
-                paragraph "<small>Requires the <b>Virtual Notification</b> driver from this package (installed automatically via HPM). The device can be renamed under <b>Devices</b>; deleting it only removes it from the hub — use <b>Create</b> again to add a new one.</small>"
+                input name: "btnCreateNotifDevice", type: "button", title: "Create mDash Notifications device"
+                paragraph "<small>Requires the <b>mDash Notifications</b> driver from this package (installed automatically via HPM). The device can be renamed under <b>Devices</b>; deleting it only removes it from the hub — use <b>Create</b> again to add a new one.</small>"
                 if (state.notifDeviceCreateError) {
                     paragraph "<small><b>Could not create device:</b> ${htmlEsc(state.notifDeviceCreateError.toString())}</small>"
                 }
@@ -4420,10 +4420,10 @@ def createNotificationChildDeviceFromUi() {
     try {
         def child = addChildDevice(
             "mDash",
-            "Virtual Notification",
+            "mDash Notifications",
             notificationChildDni(),
             [
-                name: "Virtual Notification",
+                name: "mDash Notifications",
                 label: label,
                 isComponent: false
             ]
@@ -4435,7 +4435,7 @@ def createNotificationChildDeviceFromUi() {
     } catch (e) {
         def msg = e?.message?.toString() ?: e?.toString() ?: "unknown error"
         state.notifDeviceCreateError = msg
-        log.warn "Modern Dashboard: could not create Virtual Notification device: ${msg}"
+        log.warn "Modern Dashboard: could not create mDash Notifications device: ${msg}"
     }
 }
 

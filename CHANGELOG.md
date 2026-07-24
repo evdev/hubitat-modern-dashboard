@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.44
+
+- **Change:** notification driver source file renamed to `mDashNotifications.groovy`
+  (HPM URL and bundle install path updated; no legacy Virtual Notification filename).
+
+## 0.3.43
+
+- **Change:** notification driver renamed from Virtual Notification to **mDash Notifications**
+  (HPM `alternateNames` keeps Match Up working for the old name).
+
 ## 0.3.42
 
 - **Fix:** notification subscriptions clear correctly when devices are removed from the
