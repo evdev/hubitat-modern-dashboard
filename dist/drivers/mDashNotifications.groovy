@@ -18,7 +18,7 @@ metadata {
         name: "mDash Notifications",
         namespace: "mDash",
         author: "Ephrayim (evdev)",
-        importUrl: "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/drivers/mDashNotifications.groovy"
+        importUrl: "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/drivers/mDashNotifications.groovy"
     ) {
         capability "Notification"
         capability "Actuator"
