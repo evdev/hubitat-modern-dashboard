@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.31
+
+- **Favorites:** lock tiles can use **Compact** size — tap the tile to toggle lock/
+  unlock; unlocked shows an open lock icon in red, locked shows a closed lock icon.
+- **Favorites:** thermostat tiles can use **Compact** size — mini ring shows current
+  temp; setpoint and mode beside it; ring turns red/blue/green when heating/cooling/
+  fan is running (gray when off); tap opens the full thermostat popup.
+
 ## 0.3.30
 
 - **Sensors:** overflow option to show all sensors in one flat list grouped by type

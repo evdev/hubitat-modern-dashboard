@@ -3082,6 +3082,81 @@
     return tm || "—";
   }
 
+  // Compact favorites: ring accent from operating state (mode off → muted).
+  function favoriteTstatCompactStateClass(t) {
+    const tm = String(t?.tm || "").toLowerCase();
+    if (tm === "off") return "state-off";
+    const os = String(t?.os || "").toLowerCase();
+    if (os === "heating" || os === "pending heat") return "state-heat";
+    if (os === "cooling" || os === "pending cool") return "state-cool";
+    if (os === "fan" || os === "fan only") return "state-fan";
+    if (t?.hasFm && fanModeActive(t.fm)) return "state-fan";
+    return "state-off";
+  }
+
+  function syncFavoriteTstatCompactState(card, t) {
+    const next = favoriteTstatCompactStateClass(t);
+    for (const cls of ["state-heat", "state-cool", "state-fan", "state-off"]) {
+      card.classList.toggle(cls, cls === next);
+    }
+  }
+
+  function openFavoriteTstatPopup(t, anchor) {
+    hapticTap();
+    postCall("closeCurrentView");
+    openTstatPopupForDevice(t.i, anchor || null);
+  }
+
+  // Compact favorites: whole-tile tap opens the thermostat popup.
+  function attachTstatTap(card, t) {
+    const TAP_MOVE = 10;
+    const TAP_MAX_MS = 500;
+    let downX = 0, downY = 0, downT = 0, active = false;
+
+    card.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      if (!card.classList.contains("fav-size-compact")) return;
+      if (e.target.closest(".quick-fav-tstat-controls")) return;
+      if (e.target.closest(".quick-fav-ctl")) return;
+      active = true;
+      downX = e.clientX; downY = e.clientY; downT = Date.now();
+    }, { passive: true });
+
+    card.addEventListener("pointerup", (e) => {
+      if (!active) return;
+      active = false;
+      if (!card.classList.contains("fav-size-compact")) return;
+      if (e.target.closest(".quick-fav-tstat-controls")) return;
+      if (e.target.closest(".quick-fav-ctl")) return;
+      const dx = Math.abs(e.clientX - downX);
+      const dy = Math.abs(e.clientY - downY);
+      if (dx > TAP_MOVE || dy > TAP_MOVE) return;
+      if (Date.now() - downT > TAP_MAX_MS) return;
+      openFavoriteTstatPopup(t, card);
+    }, { passive: true });
+
+    card.addEventListener("pointercancel", () => { active = false; }, { passive: true });
+  }
+
+  function makeFavoriteTstatCompactDial(currentTemp) {
+    const dial = ce("div", "quick-fav-tstat-dial");
+    const svg = svgEl("svg", {
+      viewBox: "0 0 48 48",
+      class: "quick-fav-tstat-ring",
+      "aria-hidden": "true",
+    });
+    svg.appendChild(svgEl("circle", {
+      class: "quick-fav-tstat-ring-track",
+      cx: "24", cy: "24", r: "20",
+      fill: "none",
+    }));
+    dial.appendChild(svg);
+    const temp = ce("span", "quick-fav-tstat-dial-temp");
+    temp.textContent = currentTemp;
+    dial.appendChild(temp);
+    return { dial, temp };
+  }
+
   function favoriteTstatTarget(t) {
     const tm = String(t?.tm || "").toLowerCase();
     if (tm === "off") return null;
@@ -7651,6 +7726,53 @@
     return row;
   }
 
+  function lockFavoriteMetaText(lock, row) {
+    const compact = row?.classList.contains("fav-size-compact")
+      || resolveFavoriteSize({ type: "lock", dev: lock }) === "compact";
+    if (compact) return lockStatusLabel(lock);
+    return roomLabel(lock.r) + " · " + lockStatusLabel(lock);
+  }
+
+  function toggleLockFavorite(lock) {
+    if (effectiveLock(lock)) {
+      if (unlockPinRequired) promptUnlockPin(lock.i, lock.n);
+      else sendLockCmd(lock.i, "unlock");
+    } else {
+      sendLockCmd(lock.i, "lock");
+    }
+  }
+
+  // Compact favorites: whole-tile tap toggles lock/unlock (ignores scroll / fav star).
+  function attachLockTap(row, lock) {
+    const TAP_MOVE = 10;
+    const TAP_MAX_MS = 500;
+    let downX = 0, downY = 0, downT = 0, active = false;
+
+    row.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      if (!row.classList.contains("fav-size-compact")) return;
+      if (e.target.closest(".tile-fav")) return;
+      if (e.target.closest(".quick-lock-btn")) return;
+      active = true;
+      downX = e.clientX; downY = e.clientY; downT = Date.now();
+    }, { passive: true });
+
+    row.addEventListener("pointerup", (e) => {
+      if (!active) return;
+      active = false;
+      if (!row.classList.contains("fav-size-compact")) return;
+      if (e.target.closest(".tile-fav")) return;
+      if (e.target.closest(".quick-lock-btn")) return;
+      const dx = Math.abs(e.clientX - downX);
+      const dy = Math.abs(e.clientY - downY);
+      if (dx > TAP_MOVE || dy > TAP_MOVE) return;
+      if (Date.now() - downT > TAP_MAX_MS) return;
+      toggleLockFavorite(lock);
+    }, { passive: true });
+
+    row.addEventListener("pointercancel", () => { active = false; }, { passive: true });
+  }
+
   function makeLockRow(lock, context) {
     const inFav = context === "favorites";
     const row = ce("div", "quick-lock-row");
@@ -7660,7 +7782,9 @@
     const name = ce("span", "quick-fav-name");
     name.textContent = lock.n || ("Lock " + lock.i);
     const meta = ce("span", "quick-fav-meta");
-    meta.textContent = roomLabel(lock.r) + " · " + lockStatusLabel(lock);
+    meta.textContent = inFav
+      ? lockFavoriteMetaText(lock)
+      : (roomLabel(lock.r) + " · " + lockStatusLabel(lock));
     info.appendChild(name);
     info.appendChild(meta);
     head.appendChild(info);
@@ -7701,9 +7825,11 @@
     row.appendChild(actions);
 
     if (inFav) {
-      const isLocked = effectiveLock(lock);
-      row.classList.toggle("is-locked", isLocked);
-      row.classList.toggle("is-unlocked", !isLocked);
+      const locked = effectiveLock(lock);
+      row.classList.toggle("is-locked", locked);
+      row.classList.toggle("is-unlocked", !locked);
+      row.setAttribute("aria-pressed", locked ? "true" : "false");
+      attachLockTap(row, lock);
       favLockMap.set(lock.i, { el: row, meta, art, lockBtn, unlockBtn, favBtn: fav });
     }
     return row;
@@ -7712,10 +7838,11 @@
   function updateFavoriteLockRow(lock) {
     const rec = favLockMap.get(lock.i);
     if (!rec) return;
-    rec.meta.textContent = roomLabel(lock.r) + " · " + lockStatusLabel(lock);
+    rec.meta.textContent = lockFavoriteMetaText(lock, rec.el);
     const isLocked = effectiveLock(lock);
     rec.el.classList.toggle("is-locked", isLocked);
     rec.el.classList.toggle("is-unlocked", !isLocked);
+    rec.el.setAttribute("aria-pressed", isLocked ? "true" : "false");
     if (rec.art) rec.art.innerHTML = isLocked ? LOCK_CLOSED_SVG : LOCK_OPEN_SVG;
     rec.lockBtn.classList.toggle("active", isLocked);
     rec.unlockBtn.classList.toggle("active", !isLocked);
@@ -7787,6 +7914,10 @@
   function favoriteSizeProfile(entry) {
     if (entry?.type === "embed") return EMBED_FAVORITE_SIZE_PROFILE;
     if (entry?.type === "time") return TIME_FAVORITE_SIZE_PROFILE;
+    // Locks keep square/full/tall plus compact toggle tiles (legacy wide/standard → square).
+    if (entry?.type === "lock") return { default: "square", allowed: ["compact", "square", "full", "tall"] };
+    // Thermostats keep square/full/tall plus compact readout tiles.
+    if (entry?.type === "thermostat") return { default: "square", allowed: ["compact", "square", "full", "tall"] };
     if (entryNeedsControlledFavoriteSize(entry)) return CONTROLLED_FAVORITE_SIZE_PROFILE;
     const t = entry.type;
     if (t === "garage") return { default: "full", allowed: ["full", "square", "wide"] };
@@ -8365,6 +8496,10 @@
     wrap.dataset.favSpan = isFullFavoriteSize(size) ? "full" : "cell";
     wrap.classList.toggle("fav-reorder-full", isFullFavoriteSize(size));
     setFavoriteSizeClasses(tile, size);
+    if (entry.type === "lock") {
+      const rec = favLockMap.get(entry.dev.i);
+      if (rec?.meta) rec.meta.textContent = lockFavoriteMetaText(entry.dev, tile);
+    }
     if (entry.type === "embed") {
       entry.card.size = size;
       const idx = embedCards.findIndex((c) => c.id === entry.card.id);
@@ -8625,6 +8760,12 @@
     const tm = String(t.tm || "").toLowerCase();
     const card = ce("div", "quick-fav-card quick-fav-tstat mode-" + (tm || "off"));
     card.dataset.name = String(t.n || "").toLowerCase();
+    syncFavoriteTstatCompactState(card, t);
+
+    const temps = favoriteTstatTemps(t);
+    const stateInfo = favoriteTstatState(t);
+    const { dial, temp: dialTemp } = makeFavoriteTstatCompactDial(temps.current);
+    card.appendChild(dial);
 
     const nameBtn = ce("button", "quick-fav-tstat-name");
     nameBtn.type = "button";
@@ -8632,13 +8773,8 @@
     nameBtn.setAttribute("aria-label", "Open full controls for " + (t.n || "thermostat"));
     nameBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      hapticTap();
-      closeCurrentView();
-      openTstatPopupForDevice(t.i, null);
+      openFavoriteTstatPopup(t, null);
     });
-
-    const temps = favoriteTstatTemps(t);
-    const stateInfo = favoriteTstatState(t);
 
     const info = ce("div", "quick-fav-tstat-info");
     info.appendChild(nameBtn);
@@ -8652,6 +8788,9 @@
 
     const spEl = ce("div", "quick-fav-tstat-sp " + temps.tone);
     spEl.textContent = temps.setpoint;
+
+    const compactMode = ce("div", "quick-fav-tstat-mode" + (tm === "off" ? " is-off" : ""));
+    compactMode.textContent = tstatModeDisplayLabel(t.tm);
 
     const controls = ce("div", "quick-fav-tstat-controls");
     const minus = ce("button", "quick-fav-ctl quick-fav-step");
@@ -8698,9 +8837,14 @@
     controls.appendChild(plus);
     card.appendChild(info);
     card.appendChild(spEl);
+    card.appendChild(compactMode);
     card.appendChild(controls);
+    attachTstatTap(card, t);
 
-    map.set(t.i, { el: card, card, spEl, stateEl, stateTxt, modeLabel, modeBtn, minus, plus });
+    map.set(t.i, {
+      el: card, card, spEl, stateEl, stateTxt, modeLabel, modeBtn, minus, plus,
+      dialTemp, compactMode,
+    });
     return card;
   }
 
@@ -8713,6 +8857,7 @@
       if (cls.startsWith("mode-")) rec.card.classList.remove(cls);
     }
     rec.card.classList.add(nextMode);
+    syncFavoriteTstatCompactState(rec.card, t);
     const temps = favoriteTstatTemps(t);
     const stateInfo = favoriteTstatState(t);
     rec.spEl.className = "quick-fav-tstat-sp " + temps.tone;
@@ -8720,6 +8865,11 @@
     rec.stateEl.className = "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : "");
     rec.stateTxt.textContent = stateInfo.label;
     rec.modeLabel.textContent = tstatModeDisplayLabel(t.tm);
+    if (rec.dialTemp) rec.dialTemp.textContent = temps.current;
+    if (rec.compactMode) {
+      rec.compactMode.textContent = tstatModeDisplayLabel(t.tm);
+      rec.compactMode.classList.toggle("is-off", tm === "off");
+    }
     const canAdjust = !!favoriteTstatTarget(t);
     rec.minus.disabled = !canAdjust;
     rec.plus.disabled = !canAdjust;

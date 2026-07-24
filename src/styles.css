@@ -2457,6 +2457,10 @@ body {
   height: 48px;
   display: block;
   color: var(--accent);
+  transition: color .18s var(--ease);
+}
+.quick-body-favorites .quick-lock-row.is-unlocked .quick-lock-art svg {
+  color: var(--danger);
 }
 .quick-body-favorites .fav-size-square.quick-lock-row .quick-lock-art svg {
   width: 42px;
@@ -2633,6 +2637,166 @@ body {
 }
 .quick-body-favorites .fav-size-compact.tile .tile-foot { margin-top: auto; }
 .quick-body-favorites .fav-size-compact.tile .tile-state { font-size: 12px; font-weight: 700; }
+
+/* ---- Compact locks: icon + name + status; whole tile toggles ---- */
+.quick-body-favorites .fav-size-compact.quick-lock-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  min-height: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+}
+.quick-body-favorites .fav-size-compact.quick-lock-row .quick-lock-actions { display: none; }
+.quick-body-favorites .fav-size-compact.quick-lock-row .quick-lock-art {
+  flex: 0 0 auto;
+  order: 1;
+  min-height: 0;
+}
+.quick-body-favorites .fav-size-compact.quick-lock-row .quick-lock-art svg {
+  width: 28px;
+  height: 28px;
+}
+.quick-body-favorites .fav-size-compact.quick-lock-row .quick-fav-row-head {
+  flex: 1 1 auto;
+  min-width: 0;
+  order: 2;
+  gap: 4px;
+}
+.quick-body-favorites .fav-size-compact.quick-lock-row .quick-fav-name {
+  font-size: 13px;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.quick-body-favorites .fav-size-compact.quick-lock-row .quick-fav-meta {
+  font-size: 12px;
+  font-weight: 700;
+}
+.quick-body-favorites .fav-size-compact.quick-lock-row.is-locked .quick-fav-meta {
+  color: var(--accent);
+}
+.quick-body-favorites .fav-size-compact.quick-lock-row.is-unlocked .quick-fav-meta {
+  color: var(--danger);
+}
+.quick-body-favorites .fav-size-compact.quick-lock-row .tile-fav {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+/* ---- Compact thermostats: mini ring + setpoint + mode; whole tile opens popup ---- */
+.quick-fav-tstat-dial,
+.quick-fav-tstat-mode { display: none; }
+.quick-body-favorites .fav-size-compact.quick-fav-tstat {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  grid-template-areas:
+    "dial name"
+    "dial sp"
+    "dial mode";
+  align-items: center;
+  gap: 2px 10px;
+  padding: 8px 10px;
+  min-height: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-dial {
+  display: flex;
+  grid-area: dial;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-ring {
+  width: 44px;
+  height: 44px;
+  display: block;
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-ring-track {
+  stroke: var(--stroke-2);
+  stroke-width: 3.5;
+  transition: stroke .18s var(--ease);
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat.state-heat .quick-fav-tstat-ring-track {
+  stroke: #ff5c5c;
+  filter: drop-shadow(0 0 4px rgba(255, 92, 92, 0.45));
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat.state-cool .quick-fav-tstat-ring-track {
+  stroke: #5b9cff;
+  filter: drop-shadow(0 0 4px rgba(91, 156, 255, 0.45));
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat.state-fan .quick-fav-tstat-ring-track {
+  stroke: #3dd68c;
+  filter: drop-shadow(0 0 4px rgba(61, 214, 140, 0.45));
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat.state-off .quick-fav-tstat-ring-track {
+  stroke: var(--text-faint);
+  filter: none;
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-dial-temp {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  line-height: 1;
+  pointer-events: none;
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-info {
+  display: contents;
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-name {
+  grid-area: name;
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-state { display: none; }
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-sp {
+  grid-area: sp;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: left;
+  text-shadow: none;
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-sp.off {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-faint);
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-mode {
+  display: block;
+  grid-area: mode;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-dim);
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-mode.is-off {
+  color: var(--text-faint);
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-controls { display: none; }
 
 /* ---- Compact sensors: value + name; star overlays top-right ---- */
 .quick-body-favorites .fav-size-compact.sensor-card {
