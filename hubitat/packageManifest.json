@@ -2,10 +2,10 @@
 	"packageName": "Modern Dashboard",
 	"minimumHEVersion": "2.3.0",
 	"author": "Ephrayim (evdev)",
-	"version": "0.3.37",
+	"version": "0.3.39",
 	"dateReleased": "2026-07-24",
 	"licenseFile": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/LICENSE",
-	"releaseNotes": "0.3.37: **Fix:** Virtual Notification driver is now a required HPM component so **Update**;   installs it automatically (was optional and easy to miss during update).\nControl-first, minimal-effort Hubitat dashboard (mDash): pick devices and go — rooms and layout are automatic. Optimized for control (not just status): bulk room/house on/off, multi-thermostat control, drag-to-dim. Installable PWA from the cloud URL. Built-in scheduler (daily/weekly/once/sunrise/sunset/mode) managed from the dashboard without Hubitat admin login. Lights, shades, ceiling fans, thermostats, locks, HSM, scenes, hub mode, music/media, and sensors. Snapshots, favorites, and reorderable rooms/nav. Fully hosted on your hub — no Maker API or third-party cloud.",
+	"releaseNotes": "0.3.39: **Change:** Groovy namespace renamed from `modernlights` to `mDash` (app + Virtual;   Notification driver). HPM package UUIDs unchanged; manifest includes `alternateNames`;   for Match Up. Run HPM **Update** — do not uninstall. If notification popups stop after;   update, recreate the Virtual Notification device from app settings.\nControl-first, minimal-effort Hubitat dashboard (mDash): pick devices and go — rooms and layout are automatic. Optimized for control (not just status): bulk room/house on/off, multi-thermostat control, drag-to-dim. Installable PWA from the cloud URL. Built-in scheduler (daily/weekly/once/sunrise/sunset/mode) managed from the dashboard without Hubitat admin login. Lights, shades, ceiling fans, thermostats, locks, HSM, scenes, hub mode, music/media, and sensors. Snapshots, favorites, and reorderable rooms/nav. Fully hosted on your hub — no Maker API or third-party cloud.",
 	"documentationLink": "https://github.com/evdev/hubitat-modern-dashboard#readme",
 	"communityLink": "https://community.hubitat.com/t/release-modern-dashboard-mdash-minimal-setup-pwa-with-built-in-scheduler-runs-entirely-on-your-hub/165028",
 	"gitHubUrl": "https://github.com/evdev/hubitat-modern-dashboard",
@@ -13,7 +13,13 @@
 		{
 			"id": "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f",
 			"name": "Modern Dashboard",
-			"namespace": "modernlights",
+			"namespace": "mDash",
+			"alternateNames": [
+				{
+					"name": "Modern Dashboard",
+					"namespace": "modernlights"
+				}
+			],
 			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/ModernLightsDashboard.groovy",
 			"required": true,
 			"oauth": true,
@@ -24,7 +30,13 @@
 		{
 			"id": "d1e2f3a4-b5c6-7890-def1-234567890abc",
 			"name": "Virtual Notification",
-			"namespace": "modernlights",
+			"namespace": "mDash",
+			"alternateNames": [
+				{
+					"name": "Virtual Notification",
+					"namespace": "modernlights"
+				}
+			],
 			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/drivers/VirtualNotification.groovy",
 			"required": true
 		}

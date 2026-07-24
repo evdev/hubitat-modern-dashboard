@@ -26,7 +26,8 @@ const MLD_SPLIT3 = "// __MLD_SPLIT3__";
 const HUB_MAX_BLOB = 124 * 1024;
 
 // Must match definition(namespace:, name:) in the Groovy template
-const NS = "modernlights";
+const NS = "mDash";
+const LEGACY_NS = "modernlights";
 const APP_FILE = `${NS}.ModernLightsDashboard.groovy`;
 const BUNDLE_NAME = "ModernLightsDashboard";
 const APP_DISPLAY_NAME = "Modern Dashboard";
@@ -515,7 +516,8 @@ function substituteGroovyTemplate(template) {
     .replaceAll("__APP_VERSION__", pkg.version)
     .replaceAll("__APP_AUTHOR__", APP_AUTHOR)
     .replaceAll("__GITHUB_URL__", GITHUB_URL)
-    .replaceAll("__LICENSE_NAME__", LICENSE_NAME);
+    .replaceAll("__LICENSE_NAME__", LICENSE_NAME)
+    .replaceAll("__APP_NAMESPACE__", NS);
 }
 
 function changelogEntryForVersion(version) {
@@ -678,6 +680,7 @@ const hpmManifest = {
       id: HPM_APP_ID,
       name: APP_DISPLAY_NAME,
       namespace: NS,
+      alternateNames: [{ name: APP_DISPLAY_NAME, namespace: LEGACY_NS }],
       location: `${HPM_BASE_URL}/ModernLightsDashboard.groovy`,
       required: true,
       oauth: true,
@@ -689,6 +692,7 @@ const hpmManifest = {
       id: HPM_DRIVER_ID,
       name: DRIVER_DISPLAY_NAME,
       namespace: NS,
+      alternateNames: [{ name: DRIVER_DISPLAY_NAME, namespace: LEGACY_NS }],
       location: `${HPM_BASE_URL}/drivers/${DRIVER_FILE}`,
       required: true,
     },

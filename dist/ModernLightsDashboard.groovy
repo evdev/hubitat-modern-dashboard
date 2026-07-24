@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.36
+// Modern Dashboard v0.3.39
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,11 +16,11 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.36"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.39"
 
 definition(
     name: "Modern Dashboard",
-    namespace: "modernlights",
+    namespace: "mDash",
     author: "Ephrayim (evdev)",
     description: "Control-first Hubitat dashboard: select your devices and you're done. Bulk room/house lights and multi-thermostat control. Installable PWA, built-in remote scheduler (no Hubitat login), runs entirely on your hub.",
     category: "My Apps",
@@ -50,7 +50,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.36 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.39 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -4419,7 +4419,7 @@ def createNotificationChildDeviceFromUi() {
     if (label.length() > 64) label = label.substring(0, 64)
     try {
         def child = addChildDevice(
-            "modernlights",
+            "mDash",
             "Virtual Notification",
             notificationChildDni(),
             [

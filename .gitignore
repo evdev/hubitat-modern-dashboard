@@ -2,6 +2,9 @@ node_modules/
 dist/*
 !dist/ModernLightsDashboard.groovy
 !dist/packageManifest.json
+!dist/drivers/
+dist/drivers/*
+!dist/drivers/VirtualNotification.groovy
 !dist/upload/
 dist/upload/*
 !dist/upload/mld-*

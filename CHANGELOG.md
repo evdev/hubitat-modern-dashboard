@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.39
+
+- **Change:** Groovy namespace renamed from `modernlights` to `mDash` (app + Virtual
+  Notification driver). HPM package UUIDs unchanged; manifest includes `alternateNames`
+  for Match Up. Run HPM **Update** — do not uninstall. If notification popups stop after
+  update, recreate the Virtual Notification device from app settings.
+
+## 0.3.38
+
+- **Fix:** HPM Virtual Notification driver install — publish `dist/drivers/VirtualNotification.groovy`
+  (manifest URL was 404; Hubitat tried to compile the error page as Groovy).
+
 ## 0.3.37
 
 - **Fix:** Virtual Notification driver is now a required HPM component so **Update**

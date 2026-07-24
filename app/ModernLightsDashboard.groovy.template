@@ -20,7 +20,7 @@ import groovy.transform.Field
 
 definition(
     name: "Modern Dashboard",
-    namespace: "modernlights",
+    namespace: "__APP_NAMESPACE__",
     author: "__APP_AUTHOR__",
     description: "Control-first Hubitat dashboard: select your devices and you're done. Bulk room/house lights and multi-thermostat control. Installable PWA, built-in remote scheduler (no Hubitat login), runs entirely on your hub.",
     category: "My Apps",
@@ -4419,7 +4419,7 @@ def createNotificationChildDeviceFromUi() {
     if (label.length() > 64) label = label.substring(0, 64)
     try {
         def child = addChildDevice(
-            "modernlights",
+            "__APP_NAMESPACE__",
             "Virtual Notification",
             notificationChildDni(),
             [
