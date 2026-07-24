@@ -58,7 +58,9 @@ const PACKAGE_MANIFEST_URL =
 
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";
-const HPM_DRIVER_ID = "d1e2f3a4-b5c6-7890-def1-234567890abc";
+// New UUID (0.3.46): namespace/name change cannot be applied via HPM upgradeDriver on the
+// old heID — fresh installDriver is required. Keep stable from here for main channel.
+const HPM_DRIVER_ID = "e2f3a4b5-c6d7-8901-ef23-456789012bcd";
 const DRIVER_FILE = "mDashNotifications.groovy";
 const DRIVER_DISPLAY_NAME = "mDash Notifications";
 // HPM serves the driver from drivers/ (source), not dist/ — avoids dist publish gaps.

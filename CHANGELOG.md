@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.46
+
+- **Fix:** HPM driver install after rename — new driver package UUID so HPM runs a fresh
+  install instead of upgrading the old Virtual Notification code entry (Hubitat rejects
+  in-place namespace/name changes). Delete any orphaned notification drivers under
+  **Drivers Code** after updating if you installed manually during beta.
+
 ## 0.3.45
 
 - **Fix:** HPM driver install — manifest now fetches `drivers/mDashNotifications.groovy`
