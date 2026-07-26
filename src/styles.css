@@ -2330,7 +2330,8 @@ body {
 .favorites-reorder-mode .quick-body-favorites .fav-reorder-content .fan-tile,
 .favorites-reorder-mode .quick-body-favorites .fav-reorder-content .music-row,
 .favorites-reorder-mode .quick-body-favorites .fav-reorder-content .quick-lock-row,
-.favorites-reorder-mode .quick-body-favorites .fav-reorder-content .fav-embed-card {
+.favorites-reorder-mode .quick-body-favorites .fav-reorder-content .fav-embed-card,
+.favorites-reorder-mode .quick-body-favorites .fav-reorder-content .fav-html-card {
   min-height: 0;
   height: 100%;
 }

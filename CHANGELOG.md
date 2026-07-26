@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.50
+
+- **Favorites:** add **HTML** tiles (overflow **Add tile → HTML**) for Hubitat device
+  attributes that publish dashboard HTML — including Tile Builder Storage Driver
+  `tile1`–`tile26`, vehicle/status drivers, and similar integrations.
+- **App settings:** new **HTML source devices** picker (`capability.*`); attributes are
+  discovered automatically. Favorited tiles load HTML content; catalog listing is
+  metadata-only to keep `/data` small.
+- **Theme:** HTML tiles use the mDash card chrome plus a minimal font/color/transparent
+  background bridge; source table colors and styling are preserved.
+- **Local-only:** oversized Tile Builder file stubs that embed hub `http://…/local/`
+  content work on the local dashboard URL; cloud HTTPS may block them.
+
 ## 0.3.49
 
 - **Favorites:** on the Favorites tab, wide layouts show up to four compact tiles

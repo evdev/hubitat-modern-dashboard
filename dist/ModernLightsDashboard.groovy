@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.49
+// Modern Dashboard v0.3.50
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.49"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.50"
 
 definition(
     name: "Modern Dashboard",
@@ -50,7 +50,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.49 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.50 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -155,6 +155,11 @@ def mainPage() {
         section("Cameras") {
             paragraph "<small>Select <b>go2rtc Camera</b> devices. Requires <b>Enable tabs</b> and the <b>local hub dashboard URL</b>. Grid tiles use the sub stream; tap <b>HD</b> for the main stream.</small>"
             input "cameras", "capability.imageCapture", title: "Cameras (go2rtc)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+        }
+        section("HTML tiles") {
+            paragraph "<small>Select devices that publish dashboard HTML (for example <b>Tile Builder Storage Driver</b>, vehicle status drivers, or weather tiles). On the Favorites tab, use <b>Add tile → HTML</b> to choose which attributes appear. Attribute names are detected automatically.</small>"
+            input "htmlTileDevices", "capability.*", title: "HTML source devices",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Notifications") {
@@ -1692,6 +1697,7 @@ def renderData() {
     out << lightJobJsonFragment()
     out << sunTimesJsonFragment()
     out << notificationsJsonFragment()
+    out << htmlTilesJsonFragment()
     // Cloud MQTT ~128 KB limit: schedules can make /data fail entirely. Client loads via GET /schedules.
     if (request?.requestSource == "cloud") {
         out << ',"schedules":null'
@@ -3566,6 +3572,203 @@ def parseFavoritesLayoutState() {
 
 def deviceLayoutKey(id) { return "d:" + id.toString() }
 def embedLayoutKey(id) { return "e:" + id.toString().replaceFirst(/^e_/, "") }
+def htmlLayoutKey(deviceId, attribute) { return "h:" + deviceId.toString() + ":" + attribute.toString() }
+
+def maxHtmlAttrBytes() { return 8192 }
+def maxHtmlAttrsPerGenericDevice() { return 6 }
+def htmlSizePresetSet() { return ["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"] as Set }
+def htmlNamedAttrs() { return ["html", "tile", "iframe"] as Set }
+
+def isTileBuilderStorageDevice(d) {
+    try {
+        def tn = (d?.typeName ?: "").toString().toLowerCase()
+        return tn.contains("tile builder storage")
+    } catch (e) {
+        return false
+    }
+}
+
+def looksLikeDashboardHtml(raw) {
+    def s = raw?.toString() ?: ""
+    if (s.length() < 8) return false
+    def lower = s.toLowerCase()
+    return lower.contains("<div") || lower.contains("<table") || lower.contains("<style") || lower.contains("<iframe") ||
+        lower.contains("[div") || lower.contains("[table") || lower.contains("[style") || lower.contains("[iframe")
+}
+
+def sanitizeHtmlForDashboard(raw) {
+    if (raw == null) return null
+    def s = raw.toString()
+    s = s.replaceAll(/(?is)<script\b[^>]*>.*?<\/script>/, "")
+    s = s.replaceAll(/(?is)<script\b[^>]*\/?>/, "")
+    s = s.replaceAll(/(?i)\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/, "")
+    s = s.replaceAll(/(?i)(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/, '$1=$2#$2')
+    s = s.replaceAll(/(?is)<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/, "")
+    return s
+}
+
+def tileBuilderDescriptions(d) {
+    def map = [:]
+    try {
+        def list = d.getTileList()
+        if (list instanceof List) {
+            for (item in list) {
+                def s = item?.toString() ?: ""
+                def m = (s =~ /^(tile\d+)\s*:\s*(.*?)\s*:\s*\(/)
+                if (m.find()) {
+                    def desc = m.group(2)?.trim()
+                    if (desc && desc != "None") map[m.group(1)] = desc
+                }
+            }
+        }
+    } catch (e) {}
+    return map
+}
+
+def discoverHtmlTilesForDevice(d) {
+    def out = []
+    if (!d) return out
+    def deviceName = d.displayName?.toString() ?: ("Device " + d.id)
+    def deviceId = d.id
+    if (isTileBuilderStorageDevice(d)) {
+        def descs = tileBuilderDescriptions(d)
+        for (i in 1..26) {
+            def attr = "tile" + i
+            def val = safeCurrent(d, attr)
+            if (val == null || val.toString().trim() == "") continue
+            def title = descs[attr]
+            if (!title) title = "Tile " + i
+            out << [id: deviceId.toString() + ":" + attr, deviceId: deviceId, attribute: attr, title: title, html: val.toString()]
+        }
+        return out
+    }
+    def seen = new HashSet()
+    def named = htmlNamedAttrs()
+    try {
+        def states = d.currentStates ?: []
+        for (st in states) {
+            def nm = st?.name?.toString()
+            if (!nm) continue
+            def low = nm.toLowerCase()
+            if (low == "roomscss" || low == "alignroomtilescss" || low == "emptyattribute") continue
+            def val = st?.value
+            if (val == null || val.toString().trim() == "") continue
+            def vs = val.toString()
+            if (!(named.contains(low) || looksLikeDashboardHtml(vs))) continue
+            if (seen.contains(nm)) continue
+            seen.add(nm)
+            out << [id: deviceId.toString() + ":" + nm, deviceId: deviceId, attribute: nm, title: nm, html: vs]
+            if (out.size() >= maxHtmlAttrsPerGenericDevice()) break
+        }
+    } catch (e) {}
+    if (out.size() == 1) {
+        out[0].title = deviceName
+    } else {
+        for (t in out) {
+            t.title = deviceName + " — " + t.attribute
+        }
+    }
+    return out
+}
+
+def activeHtmlLayoutIds(preferredLayout = null) {
+    def source = preferredLayout != null ? preferredLayout : parseFavoritesLayoutState()
+    def out = new HashSet()
+    for (raw in source) {
+        def parsed = parseHtmlLayoutKey(raw)
+        if (parsed?.id) out.add(parsed.id)
+    }
+    return out
+}
+
+def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
+    def out = []
+    def devices = htmlTileDevices ?: []
+    def active = null
+    if (activeIds instanceof Set) active = activeIds
+    else if (activeIds instanceof Collection) active = new HashSet(activeIds)
+    def sizes = parseHtmlTileSizesState()
+    for (d in devices) {
+        def tiles = discoverHtmlTilesForDevice(d)
+        def roomsCss = null
+        def alignCss = null
+        if (isTileBuilderStorageDevice(d)) {
+            roomsCss = safeCurrent(d, "roomsCSS")
+            alignCss = safeCurrent(d, "alignRoomTilesCSS")
+        }
+        for (t in tiles) {
+            def entry = [
+                id: t.id,
+                deviceId: t.deviceId,
+                attribute: t.attribute,
+                title: t.title,
+                size: (sizes[t.id] ?: "tall")
+            ]
+            def wantBody = includeHtmlBodies && (active == null || active.contains(t.id))
+            if (wantBody) {
+                def raw = t.html
+                if (raw != null && raw.toString().size() > maxHtmlAttrBytes()) {
+                    entry.error = "too_large"
+                } else {
+                    entry.html = sanitizeHtmlForDashboard(raw)
+                    if (roomsCss) entry.roomsCss = roomsCss.toString()
+                    if (alignCss) entry.alignCss = alignCss.toString()
+                }
+            }
+            out << entry
+        }
+    }
+    return out
+}
+
+def validHtmlTileIdSet() {
+    def set = new HashSet()
+    for (t in discoverHtmlTileCatalog(false, null)) set.add(t.id)
+    return set
+}
+
+def parseHtmlTileSizesState() {
+    if (!state.htmlTileSizesJson) return [:]
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(state.htmlTileSizesJson.toString())
+        if (!(parsed instanceof Map)) return [:]
+        def allowed = htmlSizePresetSet()
+        def out = [:]
+        for (entry in parsed) {
+            def k = entry.key?.toString()?.trim()
+            def v = entry.value?.toString()?.trim()
+            if (!k || !(k ==~ /^\d+:[A-Za-z0-9_.-]+$/)) continue
+            if (!allowed.contains(v)) continue
+            out[k] = v
+        }
+        return out
+    } catch (e) {
+        return [:]
+    }
+}
+
+def htmlTilesJsonFragment() {
+    def activeIds = activeHtmlLayoutIds()
+    def tiles = discoverHtmlTileCatalog(true, activeIds)
+    def out = new StringBuilder()
+    out << ",\"htmlTiles\":["
+    boolean first = true
+    for (t in tiles) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << jsonStr(t.id)
+        out << ",\"deviceId\":" << t.deviceId
+        out << ",\"attribute\":" << jsonStr(t.attribute)
+        out << ",\"title\":" << jsonStr(t.title)
+        out << ",\"size\":" << jsonStr(t.size ?: "tall")
+        if (t.html != null) out << ",\"html\":" << jsonStr(t.html)
+        if (t.error) out << ",\"error\":" << jsonStr(t.error)
+        if (t.roomsCss) out << ",\"roomsCss\":" << jsonStr(t.roomsCss)
+        if (t.alignCss) out << ",\"alignCss\":" << jsonStr(t.alignCss)
+        out << "}"
+    }
+    out << "]"
+    return out.toString()
+}
 
 def normalizeEmbedLayoutKey(raw) {
     def s = raw?.toString()?.trim()
@@ -3611,7 +3814,28 @@ def normalizeEmbedLayoutKey(raw) {
         if (!(rest ==~ /^[A-Za-z0-9_-]+$/)) return null
         return "n:" + rest
     }
+    if (s.startsWith("h:")) {
+        def rest = s.substring(2).trim()
+        def idx = rest.indexOf(":")
+        if (idx <= 0) return null
+        def idPart = rest.substring(0, idx)
+        def attr = rest.substring(idx + 1).trim()
+        if (!(idPart ==~ /^\d+$/)) return null
+        if (!(attr ==~ /^[A-Za-z0-9_.-]+$/)) return null
+        return "h:" + idPart + ":" + attr
+    }
     return null
+}
+
+def parseHtmlLayoutKey(raw) {
+    def k = normalizeEmbedLayoutKey(raw)
+    if (!k || !k.startsWith("h:")) return null
+    def rest = k.substring(2)
+    def idx = rest.indexOf(":")
+    if (idx <= 0) return null
+    def idPart = rest.substring(0, idx)
+    def attr = rest.substring(idx + 1)
+    return [id: idPart + ":" + attr, deviceId: idPart.toLong(), attribute: attr]
 }
 
 def embedCardIdFromLayoutKey(key) {
@@ -3703,6 +3927,7 @@ def reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, pers
     def validEmbeds = new HashSet(embedCards.collect { it.id.toString() })
     def validTimes = new HashSet(times.collect { it.id.toString() })
     def validNotifs = new HashSet(notifs.collect { it.id.toString() })
+    def validHtml = validHtmlTileIdSet()
     def source = preferredLayout != null ? preferredLayout : parseFavoritesLayoutState()
     def out = []
     def seen = new HashSet()
@@ -3724,6 +3949,10 @@ def reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, pers
             def nid = notificationCardIdFromLayoutKey(key)
             if (!nid || !validNotifs.contains(nid)) continue
             key = "n:" + nid.substring(2)
+        } else if (key.startsWith("h:")) {
+            def parsed = parseHtmlLayoutKey(key)
+            if (!parsed || !validHtml.contains(parsed.id)) continue
+            key = htmlLayoutKey(parsed.deviceId, parsed.attribute)
         } else {
             continue
         }
@@ -3758,6 +3987,7 @@ def reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, pers
             out << key
         }
     }
+    // HTML tiles are never auto-appended; only explicit h: layout keys are kept.
     if (persist) state.favoritesLayoutJson = groovy.json.JsonOutput.toJson(out)
     return out
 }
@@ -3770,6 +4000,7 @@ def replaceDeviceSlotsInLayout(deviceIds) {
     def deviceQueue = deviceIds.collect { deviceLayoutKey(it) }
     def next = []
     def di = 0
+    def validHtml = validHtmlTileIdSet()
     for (raw in prev) {
         def key = normalizeEmbedLayoutKey(raw)
         if (!key) continue
@@ -3787,6 +4018,9 @@ def replaceDeviceSlotsInLayout(deviceIds) {
         } else if (key.startsWith("n:")) {
             def nid = notificationCardIdFromLayoutKey(key)
             if (nid && notifs.find { it.id == nid }) next << ("n:" + nid.substring(2))
+        } else if (key.startsWith("h:")) {
+            def parsed = parseHtmlLayoutKey(key)
+            if (parsed && validHtml.contains(parsed.id)) next << htmlLayoutKey(parsed.deviceId, parsed.attribute)
         }
     }
     while (di < deviceQueue.size()) {
@@ -4205,6 +4439,7 @@ def saveFavoritesLayout() {
     for (card in times) timeById[card.id] = card
     def notifById = [:]
     for (card in notifs) notifById[card.id] = card
+    def validHtml = validHtmlTileIdSet()
 
     def nextLayout = []
     def seen = new HashSet()
@@ -4220,6 +4455,10 @@ def saveFavoritesLayout() {
     def notificationSizes = body?.notificationSizes
     if (notificationSizes != null && !(notificationSizes instanceof Map)) {
         return renderJsonNoStore('{"ok":false,"error":"invalid notificationSizes"}', 400)
+    }
+    def htmlSizes = body?.htmlSizes
+    if (htmlSizes != null && !(htmlSizes instanceof Map)) {
+        return renderJsonNoStore('{"ok":false,"error":"invalid htmlSizes"}', 400)
     }
     def favoriteSizes = body?.favoriteSizes
     if (favoriteSizes != null && !(favoriteSizes instanceof Map)) {
@@ -4253,9 +4492,16 @@ def saveFavoritesLayout() {
             def nk = "n:" + nid.substring(2)
             seen.add(nk)
             nextLayout << nk
+        } else if (key.startsWith("h:")) {
+            def parsed = parseHtmlLayoutKey(key)
+            if (!parsed || !validHtml.contains(parsed.id)) continue
+            def nk = htmlLayoutKey(parsed.deviceId, parsed.attribute)
+            seen.add(nk)
+            nextLayout << nk
         }
     }
     // Preserve any omitted devices/embeds/times/notification tiles at the end (deterministic reconcile).
+    // HTML tiles are only kept when explicitly present in layoutIn (reconcile does not auto-append them).
     nextLayout = reconcileFavoritesLayout(nextDevices.size() ? nextDevices : deviceIds, cards, nextLayout, true, times, notifs)
     if (nextDevices.size()) {
         state.favorites = nextDevices.join(",")
@@ -4340,6 +4586,36 @@ def saveFavoritesLayout() {
         nextLayout = reconcileFavoritesLayout(deviceIds, cards, nextLayout, true, times, notifs)
     }
 
+    // HTML tile sizes live in a separate map keyed by deviceId:attribute.
+    if (htmlSizes != null) {
+        def allowed = htmlSizePresetSet()
+        def nextHtmlSizes = [:]
+        def activeHtml = activeHtmlLayoutIds(nextLayout)
+        for (id in activeHtml) {
+            def size = "tall"
+            if (htmlSizes.containsKey(id)) {
+                def cand = htmlSizes[id]?.toString()?.trim()
+                if (allowed.contains(cand)) size = cand
+            } else {
+                def prev = parseHtmlTileSizesState()[id]
+                if (prev && allowed.contains(prev)) size = prev
+            }
+            nextHtmlSizes[id] = size
+        }
+        state.htmlTileSizesJson = groovy.json.JsonOutput.toJson(nextHtmlSizes)
+    } else {
+        def prevHtmlSizes = parseHtmlTileSizesState()
+        def activeHtml = activeHtmlLayoutIds(nextLayout)
+        def pruned = [:]
+        for (entry in prevHtmlSizes) {
+            def idKey = String.valueOf(entry.key)
+            if (activeHtml.contains(idKey)) pruned[idKey] = String.valueOf(entry.value)
+        }
+        state.htmlTileSizesJson = groovy.json.JsonOutput.toJson(pruned)
+    }
+
+    def htmlSizeMap = parseHtmlTileSizesState()
+
     def out = new StringBuilder()
     out << "{\"ok\":true,\"favorites\":["
     boolean first = true
@@ -4373,7 +4649,13 @@ def saveFavoritesLayout() {
         out << "{\"id\":" << jsonStr(card.id)
         out << ",\"size\":" << jsonStr(card.size) << "}"
     }
-    out << "],\"favoritesLayout\":["
+    out << "],\"htmlSizes\":{"
+    first = true
+    for (entry in htmlSizeMap) {
+        if (!first) out << ","; first = false
+        out << jsonStr(entry.key.toString()) << ":" << jsonStr(entry.value.toString())
+    }
+    out << "},\"favoritesLayout\":["
     first = true
     for (key in nextLayout) {
         if (!first) out << ","; first = false

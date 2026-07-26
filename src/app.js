@@ -24,6 +24,7 @@
   const MENU_ADD_EMBED_BTN = document.getElementById("menu-add-embed");
   const MENU_ADD_TIME_BTN = document.getElementById("menu-add-time");
   const MENU_ADD_NOTIF_BTN = document.getElementById("menu-add-notif");
+  const MENU_ADD_HTML_BTN = document.getElementById("menu-add-html");
   const MENU_HAPTICS_EL = document.getElementById("menu-haptics");
   const MENU_NOTIF_SOUND_EL = document.getElementById("menu-notif-sound");
   const MENU_TABS_EL = document.getElementById("menu-tabs");
@@ -246,6 +247,18 @@
     const s = String(id || "");
     return "n:" + (s.startsWith("n_") ? s.slice(2) : s);
   }
+  function htmlFavoriteKey(id) {
+    return "h:" + String(id || "");
+  }
+  function parseHtmlTileId(raw) {
+    const id = String(raw || "").trim();
+    const colon = id.indexOf(":");
+    if (colon <= 0) return null;
+    const deviceId = id.slice(0, colon);
+    const attribute = id.slice(colon + 1);
+    if (!/^\d+$/.test(deviceId) || !/^[A-Za-z0-9_.-]+$/.test(attribute)) return null;
+    return { id: deviceId + ":" + attribute, deviceId: Number(deviceId), attribute };
+  }
   function normalizeTimeStyle(raw) {
     const s = String(raw || "").trim();
     return TIME_STYLE_SET.has(s) ? s : "time";
@@ -263,15 +276,17 @@
     if (entry.type === "embed") return embedFavoriteKey(entry.card?.id);
     if (entry.type === "time") return timeFavoriteKey(entry.card?.id);
     if (entry.type === "notifications") return notificationFavoriteKey(entry.card?.id);
+    if (entry.type === "html") return htmlFavoriteKey(entry.tile?.id);
     if (entry.dev?.i == null) return "";
     return deviceFavoriteKey(entry.dev.i);
   }
 
-  function normalizeFavoritesLayout(layout, deviceIds, cards, timeCardsList, notificationCardsList) {
+  function normalizeFavoritesLayout(layout, deviceIds, cards, timeCardsList, notificationCardsList, htmlTilesList) {
     const validDevices = new Set((deviceIds || []).map(Number));
     const validEmbeds = new Set((cards || []).map((c) => String(c.id)));
     const validTimes = new Set((timeCardsList || []).map((c) => String(c.id)));
     const validNotifs = new Set((notificationCardsList || []).map((c) => String(c.id)));
+    const validHtml = new Set((htmlTilesList || []).map((tile) => String(tile.id)));
     const out = [];
     const seen = new Set();
     for (const raw of layout || []) {
@@ -296,12 +311,16 @@
         if (/^[A-Za-z0-9_-]+$/.test(rest)) key = "n:" + rest;
       } else if (s.startsWith("n_") && /^n_[A-Za-z0-9_-]+$/.test(s)) {
         key = "n:" + s.slice(2);
+      } else if (s.startsWith("h:")) {
+        const parsed = parseHtmlTileId(s.slice(2));
+        if (parsed) key = htmlFavoriteKey(parsed.id);
       }
       if (!key || seen.has(key)) continue;
       if (key.startsWith("d:") && !validDevices.has(Number(key.slice(2)))) continue;
       if (key.startsWith("e:") && !validEmbeds.has("e_" + key.slice(2))) continue;
       if (key.startsWith("t:") && !validTimes.has("t_" + key.slice(2))) continue;
       if (key.startsWith("n:") && !validNotifs.has("n_" + key.slice(2))) continue;
+      if (key.startsWith("h:") && !validHtml.has(key.slice(2))) continue;
       seen.add(key);
       out.push(key);
     }
@@ -330,6 +349,7 @@
     m.embedCards = embedCards;
     m.timeCards = timeCards;
     m.notificationCards = notificationCards;
+    m.htmlTiles = htmlTiles;
     m.favoritesLayout = favoritesLayout;
     m.embedEditorOpen = embedEditorOpen;
     m.timeEditorOpen = timeEditorOpen;
@@ -350,6 +370,73 @@
       id: String(c.id || ""),
       size: normalizeNotificationSize(c.size),
     })).filter((c) => c.id.startsWith("n_"));
+  }
+
+  function applyHtmlCatalogFromData(d) {
+    if (!Array.isArray(d?.htmlTiles)) return false;
+    const hasHtmlSizes = !!(d.config?.htmlSizes && typeof d.config.htmlSizes === "object")
+      || !!(d.htmlSizes && typeof d.htmlSizes === "object");
+    const htmlSizes = d.config?.htmlSizes && typeof d.config.htmlSizes === "object"
+      ? d.config.htmlSizes
+      : (d.htmlSizes && typeof d.htmlSizes === "object" ? d.htmlSizes : {});
+    const nextTiles = [];
+    const seen = new Set();
+    for (const raw of d.htmlTiles) {
+      if (!raw || typeof raw !== "object") continue;
+      const candidateId = raw.id != null
+        ? raw.id
+        : String(raw.deviceId == null ? "" : raw.deviceId) + ":" + String(raw.attribute || "");
+      const parsed = parseHtmlTileId(candidateId);
+      if (!parsed || seen.has(parsed.id)) continue;
+      seen.add(parsed.id);
+      const configuredSize = htmlSizes[parsed.id] ?? htmlSizes[htmlFavoriteKey(parsed.id)];
+      const sizeCandidate = configuredSize ?? (hasHtmlSizes ? "tall" : raw.size);
+      const tile = {
+        id: parsed.id,
+        deviceId: parsed.deviceId,
+        attribute: parsed.attribute,
+        title: String(raw.title || raw.name || parsed.attribute || "HTML").trim() || "HTML",
+        size: EMBED_SIZE_PRESET_SET.has(String(sizeCandidate)) ? String(sizeCandidate) : "tall",
+      };
+      if (Object.prototype.hasOwnProperty.call(raw, "html")) {
+        tile.html = raw.html == null ? "" : String(raw.html);
+      } else {
+        const prev = htmlTiles.find((candidate) => candidate.id === parsed.id);
+        if (prev && Object.prototype.hasOwnProperty.call(prev, "html")) tile.html = prev.html;
+      }
+      if (raw.error != null && String(raw.error).trim()) tile.error = String(raw.error).trim();
+      if (raw.roomsCss != null && String(raw.roomsCss).trim()) tile.roomsCss = String(raw.roomsCss);
+      if (raw.alignCss != null && String(raw.alignCss).trim()) tile.alignCss = String(raw.alignCss);
+      nextTiles.push(tile);
+    }
+    const incomingLayout = Array.isArray(d.config?.favoritesLayout)
+      ? d.config.favoritesLayout
+      : favoritesLayout;
+    const nextDeviceIds = Array.isArray(d.config?.favorites)
+      ? d.config.favorites.map(Number)
+      : favorites;
+    const nextLayout = normalizeFavoritesLayout(
+      incomingLayout,
+      nextDeviceIds,
+      embedCards,
+      timeCards,
+      notificationCards,
+      nextTiles
+    );
+    const favoredIdsBefore = new Set(favoritesLayout.filter((key) => key.startsWith("h:")).map((key) => key.slice(2)));
+    const favoredIdsAfter = new Set(nextLayout.filter((key) => key.startsWith("h:")).map((key) => key.slice(2)));
+    const signature = (tiles, ids, layout) => JSON.stringify({
+      layout: layout.filter((key) => key.startsWith("h:")),
+      tiles: tiles.filter((tile) => ids.has(tile.id)).map((tile) => [
+        tile.id, tile.title, tile.size, tile.html, tile.error, tile.roomsCss, tile.alignCss,
+      ]),
+    });
+    const prevSig = signature(htmlTiles, favoredIdsBefore, favoritesLayout);
+    const nextSig = signature(nextTiles, favoredIdsAfter, nextLayout);
+    replaceList(htmlTiles, nextTiles);
+    replaceList(favoritesLayout, nextLayout);
+    syncEmbedStateToMld();
+    return prevSig !== nextSig;
   }
 
   function applyEmbedConfigFromData(d, { allowDuringReorder = false } = {}) {
@@ -375,7 +462,8 @@
       favorites,
       nextCards,
       nextTimeCards,
-      nextNotificationCards
+      nextNotificationCards,
+      htmlTiles
     );
     const prevSig = favoritesLayout.join(",")
       + "|" + embedCards.map((c) => c.id + ":" + c.size + ":" + c.url).join("|")
@@ -520,15 +608,18 @@
   let embedCards = []; // [{id,title,url,size}]
   let timeCards = []; // [{id,style,size}]
   let notificationCards = []; // [{id,size}]
-  let favoritesLayout = []; // ["d:123","e:abc","t:xyz","n:abc",...]
+  let htmlTiles = []; // [{id,deviceId,attribute,title,size,html?,error?,roomsCss?,alignCss?}]
+  let favoritesLayout = []; // ["d:123","e:abc","t:xyz","n:abc","h:123:attribute",...]
   let favoritesReorderSnapshotLayout = null;
   let favoritesReorderSnapshotEmbeds = null;
   let favoritesReorderSnapshotTimes = null;
   let favoritesReorderSnapshotNotifs = null;
+  let favoritesReorderSnapshotHtml = null;
   let embedEditorOpen = false;
   let timeEditorOpen = false;
   let embedExpandState = null; // { cardEl, placeholder, restoreFocus }
   let favEmbedObserver = null;
+  const htmlTileIframes = new Map(); // tile id -> iframe
   let timeTickTimer = null;
   let favoritesPersistEl = null; // stable Favorites panel (iframes never moved)
   let snapshots = {};
@@ -1729,6 +1820,7 @@
     if (d && typeof d.dashboardPasswordRequired === "boolean") {
       postCall("syncDashboardAuthState", !!d.dashboardPasswordRequired);
     }
+    applyHtmlCatalogFromData(d);
     if (d && d.config) {
       if (d.config.pollIntervalMs) cfg.pollIntervalMs = d.config.pollIntervalMs;
       if (typeof d.config.useWebSocket === "boolean") cfg.useWebSocket = d.config.useWebSocket;
@@ -1909,6 +2001,29 @@
       ".favorites-persist{padding:6px 14px calc(24px + env(safe-area-inset-bottom))}" +
       ".favorites-persist[hidden]{display:none!important}" +
       ".fav-embed-expand-placeholder{border-radius:16px;border:1px dashed var(--stroke)}" +
+      ".fav-html-card{display:flex;flex-direction:column;min-width:0;min-height:0;border:1px solid var(--stroke);border-radius:16px;background:var(--panel);overflow:hidden;position:relative}" +
+      ".fav-html-media{position:relative;flex:1;min-height:160px;background:var(--panel-solid)}" +
+      ".fav-size-compact.fav-html-card .fav-html-media{min-height:120px}" +
+      ".fav-size-standard.fav-html-card .fav-html-media{min-height:160px}" +
+      ".fav-size-wide.fav-html-card .fav-html-media{min-height:180px}" +
+      ".fav-size-square.fav-html-card .fav-html-media{min-height:0}" +
+      ".fav-size-portrait.fav-html-card .fav-html-media{min-height:220px}" +
+      ".fav-size-full.fav-html-card .fav-html-media{min-height:140px}" +
+      ".fav-size-tall.fav-html-card .fav-html-media{min-height:240px}" +
+      ".fav-size-large.fav-html-card .fav-html-media{min-height:320px}" +
+      ".fav-size-viewport.fav-html-card .fav-html-media{min-height:calc(100dvh - 11rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))}" +
+      ".fav-html-iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent}" +
+      ".favorites-reorder-mode .fav-html-iframe{pointer-events:none}" +
+      ".fav-html-unavailable{display:grid;place-items:center;height:100%;min-height:140px;padding:16px;text-align:center;color:var(--muted);font-size:.88rem;font-weight:600;line-height:1.4}" +
+      ".fav-html-card.fav-embed-expanded{position:fixed;inset:0;z-index:80;border-radius:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}" +
+      ".fav-html-card.fav-embed-expanded .fav-html-media{min-height:0}" +
+      ".fav-html-picker-panel{width:min(460px,calc(100svw - 32px))}" +
+      ".fav-html-picker-list{display:flex;flex-direction:column;gap:8px;max-height:min(54dvh,420px);overflow:auto;margin:12px 0}" +
+      ".fav-html-picker-option{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--stroke);border-radius:12px;background:var(--panel-solid);color:var(--text);cursor:pointer}" +
+      ".fav-html-picker-option input{margin-top:2px}" +
+      ".fav-html-picker-copy{display:flex;min-width:0;flex-direction:column;gap:2px}" +
+      ".fav-html-picker-name{font-size:.9rem;font-weight:700;overflow-wrap:anywhere}" +
+      ".fav-html-picker-meta{font-size:.74rem;color:var(--muted);overflow-wrap:anywhere}" +
       ".fav-empty{display:flex;flex-direction:column;gap:12px;padding:8px 2px 20px;color:var(--muted)}" +
       ".fav-empty-actions{display:flex;flex-wrap:wrap;gap:8px}" +
       ".fav-embed-editor-panel{width:min(440px,calc(100svw - 32px))}" +
@@ -4656,6 +4771,7 @@
     const meta = qs('meta[name="theme-color"]');
     if (meta) meta.setAttribute("content", effective === "light" ? "#eef1f7" : "#0b0d12");
     updateThemeSegmentUI(cfg.theme);
+    postCall("refreshHtmlTileIframes");
   }
 
   function applyDashboardName(name) {
@@ -5838,12 +5954,14 @@
     const embedById = new Map((Array.isArray(embedCards) ? embedCards : []).map((c) => [c.id, c]));
     const timeById = new Map((Array.isArray(timeCards) ? timeCards : []).map((c) => [c.id, c]));
     const notifById = new Map((Array.isArray(notificationCards) ? notificationCards : []).map((c) => [c.id, c]));
+    const htmlById = new Map((Array.isArray(htmlTiles) ? htmlTiles : []).map((tile) => [tile.id, tile]));
     const layout = normalizeFavoritesLayout(
       Array.isArray(favoritesLayout) ? favoritesLayout : [],
       favorites,
       Array.isArray(embedCards) ? embedCards : [],
       Array.isArray(timeCards) ? timeCards : [],
-      Array.isArray(notificationCards) ? notificationCards : []
+      Array.isArray(notificationCards) ? notificationCards : [],
+      Array.isArray(htmlTiles) ? htmlTiles : []
     );
     const out = [];
     const seen = new Set();
@@ -5869,6 +5987,11 @@
         if (!card) continue;
         seen.add(key);
         out.push({ type: "notifications", card });
+      } else if (key.startsWith("h:")) {
+        const tile = htmlById.get(key.slice(2));
+        if (!tile) continue;
+        seen.add(key);
+        out.push({ type: "html", tile });
       }
     }
     for (const [id, entry] of deviceById) {
@@ -6463,6 +6586,7 @@
         if (!favSet.has(Number(k))) delete favoriteSizes[Number(k)];
       }
     }
+    const htmlCfgChanged = applyHtmlCatalogFromData(d);
     const embedCfgChanged = applyEmbedConfigFromData(d);
     syncEmbedStateToMld();
     reapplyLockOptimistic();
@@ -6519,7 +6643,7 @@
     updateClimateWidgets();
     applySearch();
     refreshQuickPopupIfOpen();
-    if ((favSizesChanged || embedCfgChanged) && currentCategory() === "favorites") renderFavoritesPopup();
+    if ((favSizesChanged || embedCfgChanged || htmlCfgChanged) && currentCategory() === "favorites") renderFavoritesPopup();
     restoreUiScroll(scrollSnap);
   }
 
@@ -8084,6 +8208,10 @@
     default: "tall",
     allowed: ["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"],
   };
+  const HTML_FAVORITE_SIZE_PROFILE = {
+    default: "tall",
+    allowed: ["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"],
+  };
   const TIME_FAVORITE_SIZE_PROFILE = {
     default: "square",
     allowed: ["compact", "standard", "square", "wide", "tall", "large"],
@@ -8095,6 +8223,7 @@
 
   function favoriteSizeProfile(entry) {
     if (entry?.type === "embed") return EMBED_FAVORITE_SIZE_PROFILE;
+    if (entry?.type === "html") return HTML_FAVORITE_SIZE_PROFILE;
     if (entry?.type === "time") return TIME_FAVORITE_SIZE_PROFILE;
     if (entry?.type === "notifications") return NOTIFICATION_FAVORITE_SIZE_PROFILE;
     // Locks keep square/full/tall plus compact toggle tiles (legacy wide/standard → square).
@@ -8134,7 +8263,7 @@
 
   function findDeviceFavoriteEntry(id) {
     const want = Number(id);
-    return getFavoriteEntries().find((e) => e?.type !== "embed" && e?.type !== "time" && e?.type !== "notifications" && Number(e?.dev?.i) === want);
+    return getFavoriteEntries().find((e) => e?.type !== "embed" && e?.type !== "html" && e?.type !== "time" && e?.type !== "notifications" && Number(e?.dev?.i) === want);
   }
 
   function normalizedFavoriteSizes(order) {
@@ -8223,6 +8352,9 @@
 
   function resolveFavoriteSize(entry) {
     const profile = favoriteSizeProfile(entry);
+    if (entry?.type === "html") {
+      return coerceFavoriteSize(entry, entry.tile?.size);
+    }
     if (entry?.type === "embed" || entry?.type === "time" || entry?.type === "notifications") {
       return coerceFavoriteSize(entry, entry.card?.size);
     }
@@ -8262,6 +8394,7 @@
   function makeFavoriteEntryElement(entry) {
     let tile = null;
     if (entry.type === "embed") tile = makeEmbedFavoriteCard(entry.card);
+    else if (entry.type === "html") tile = postCall("makeHtmlFavoriteCard", entry.tile);
     else if (entry.type === "time") tile = makeTimeFavoriteCard(entry.card);
     else if (entry.type === "notifications") tile = makeNotificationsFavoriteCard(entry.card);
     else if (entry.type === "light") tile = makeTile(entry.dev, "favorites");
@@ -8289,10 +8422,11 @@
           entry.type === "time" ? (TIME_STYLE_LABELS[entry.card.style] || "Time")
             : entry.type === "notifications" ? "Notifications"
             : entry.type === "embed" ? (entry.card.title || "")
+            : entry.type === "html" ? (entry.tile.title || entry.tile.attribute || "HTML")
             : (entry.dev?.n || "")
         ).toLowerCase();
       }
-      const stackable = resolveFavoriteSize(entry) === "compact" && entry.type !== "embed" && entry.type !== "notifications";
+      const stackable = resolveFavoriteSize(entry) === "compact" && entry.type !== "embed" && entry.type !== "html" && entry.type !== "notifications";
       if (!stackable) {
         compactStack = null;
         grid.appendChild(tile);
@@ -8599,6 +8733,7 @@
     wrap.dataset.favSize = size;
     wrap.dataset.name = String(
       entry.type === "embed" ? (entry.card.title || "")
+        : entry.type === "html" ? (entry.tile.title || entry.tile.attribute || "HTML")
         : entry.type === "time" ? (TIME_STYLE_LABELS[entry.card.style] || "Time")
         : entry.type === "notifications" ? "Notifications"
         : (entry.dev?.n || "")
@@ -8690,6 +8825,10 @@
       entry.card.size = size;
       const idx = embedCards.findIndex((c) => c.id === entry.card.id);
       if (idx >= 0) embedCards[idx] = { ...embedCards[idx], size };
+    } else if (entry.type === "html") {
+      entry.tile.size = size;
+      const idx = htmlTiles.findIndex((tile) => tile.id === entry.tile.id);
+      if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], size };
     } else if (entry.type === "time") {
       entry.card.size = size;
       const idx = timeCards.findIndex((c) => c.id === entry.card.id);
@@ -8726,6 +8865,8 @@
     favSizeChooserReturnFocus = sizeBtn || null;
     const name = entry.type === "embed"
       ? (entry.card?.title || "Embed")
+      : entry.type === "html"
+        ? (entry.tile?.title || entry.tile?.attribute || "HTML")
       : entry.type === "time"
         ? (TIME_STYLE_LABELS[entry.card?.style] || "Time")
       : entry.type === "notifications"
@@ -8830,6 +8971,7 @@
     favoritesReorderSnapshotEmbeds = embedCards.map((c) => ({ ...c }));
     favoritesReorderSnapshotTimes = timeCards.map((c) => ({ ...c }));
     favoritesReorderSnapshotNotifs = notificationCards.map((c) => ({ ...c }));
+    favoritesReorderSnapshotHtml = htmlTiles.map((tile) => ({ ...tile }));
     favoritesReorderDraftOrder = null;
     favoritesReorderEls.clear();
     stopPolling();
@@ -8862,6 +9004,7 @@
     favoritesReorderSnapshotEmbeds = null;
     favoritesReorderSnapshotTimes = null;
     favoritesReorderSnapshotNotifs = null;
+    favoritesReorderSnapshotHtml = null;
     favoritesReorderEls.clear();
     favoritesReorderSaving = false;
     reorderMode = false;
@@ -8879,7 +9022,7 @@
     }
   }
 
-  async function saveFavoritesLayoutApi(layout, deviceSizes, embedSizes, timeSizes, notificationSizes) {
+  async function saveFavoritesLayoutApi(layout, deviceSizes, embedSizes, htmlSizes, timeSizes, notificationSizes) {
     try {
       const r = await fetch(withToken("settings/favorites-layout"), {
         method: "POST",
@@ -8889,6 +9032,7 @@
           layout,
           favoriteSizes: deviceSizes,
           embedSizes,
+          htmlSizes,
           timeSizes,
           notificationSizes,
         }),
@@ -8909,6 +9053,7 @@
         for (const k of Object.keys(body.sizes)) favoriteSizes[Number(k)] = String(body.sizes[k]);
         saveFavoriteSizesCache(favoriteSizes);
       }
+      applyHtmlCatalogFromData({ htmlTiles: htmlTiles.map((tile) => ({ ...tile })), config: body });
       applyEmbedConfigFromData({ config: body }, { allowDuringReorder: true });
       return true;
     } catch {
@@ -8917,21 +9062,44 @@
     }
   }
 
+  function favoriteLayoutSizePayloads(layout = favoritesLayout) {
+    const deviceOrder = layout.filter((key) => key.startsWith("d:")).map((key) => Number(key.slice(2)));
+    const embedSizes = {};
+    const htmlSizes = {};
+    const timeSizes = {};
+    const notificationSizes = {};
+    for (const card of embedCards) embedSizes[card.id] = card.size || "tall";
+    for (const tile of htmlTiles) htmlSizes[tile.id] = tile.size || "tall";
+    for (const card of timeCards) timeSizes[card.id] = card.size || "square";
+    for (const card of notificationCards) notificationSizes[card.id] = card.size || "tall";
+    return {
+      deviceSizes: normalizedFavoriteSizes(deviceOrder),
+      embedSizes,
+      htmlSizes,
+      timeSizes,
+      notificationSizes,
+    };
+  }
+
+  async function persistFavoriteLayout(layout) {
+    const sizes = favoriteLayoutSizePayloads(layout);
+    return saveFavoritesLayoutApi(
+      layout,
+      sizes.deviceSizes,
+      sizes.embedSizes,
+      sizes.htmlSizes,
+      sizes.timeSizes,
+      sizes.notificationSizes
+    );
+  }
+
   async function finishFavoritesReorderMode() {
     if (favoritesReorderSaving) return false;
     cleanupFavDragState();
     const layout = currentFavoritesOrderFromDom();
-    const deviceOrder = layout.filter((k) => k.startsWith("d:")).map((k) => Number(k.slice(2)));
-    const sizes = normalizedFavoriteSizes(deviceOrder);
-    const embedSizes = {};
-    for (const card of embedCards) embedSizes[card.id] = card.size || "tall";
-    const timeSizes = {};
-    for (const card of timeCards) timeSizes[card.id] = card.size || "square";
-    const notificationSizes = {};
-    for (const card of notificationCards) notificationSizes[card.id] = card.size || "tall";
     favoritesReorderSaving = true;
     if (REORDER_DONE_BTN) REORDER_DONE_BTN.disabled = true;
-    const saved = await saveFavoritesLayoutApi(layout, sizes, embedSizes, timeSizes, notificationSizes);
+    const saved = await persistFavoriteLayout(layout);
     favoritesReorderSaving = false;
     if (REORDER_DONE_BTN) REORDER_DONE_BTN.disabled = false;
     if (!saved) return false;
@@ -8949,6 +9117,7 @@
     if (favoritesReorderSnapshotEmbeds) replaceList(embedCards, favoritesReorderSnapshotEmbeds.map((c) => ({ ...c })));
     if (favoritesReorderSnapshotTimes) replaceList(timeCards, favoritesReorderSnapshotTimes.map((c) => ({ ...c })));
     if (favoritesReorderSnapshotNotifs) replaceList(notificationCards, favoritesReorderSnapshotNotifs.map((c) => ({ ...c })));
+    if (favoritesReorderSnapshotHtml) replaceList(htmlTiles, favoritesReorderSnapshotHtml.map((tile) => ({ ...tile })));
     syncEmbedStateToMld();
     lastDataSig = "";
     exitFavoritesReorderMode(false);
@@ -9256,12 +9425,12 @@
     timeTickTimer = setInterval(tickFavoriteTimeCards, 1000);
   }
 
-  const FAV_TILE_MENU_SELECTOR = ".fav-time-menu, .fav-embed-menu, .fav-notif-menu";
+  const FAV_TILE_MENU_SELECTOR = ".fav-time-menu, .fav-embed-menu, .fav-notif-menu, .fav-html-menu";
 
   function favTileMenuButtonFor(menu) {
     const actions = menu?.parentElement;
     if (!actions) return null;
-    return actions.querySelector(".fav-time-menu-btn, .fav-embed-menu-btn, .fav-notif-menu-btn");
+    return actions.querySelector(".fav-time-menu-btn, .fav-embed-menu-btn, .fav-notif-menu-btn, .fav-html-menu-btn");
   }
 
   function closeFavTileOverflowMenu(menu, menuBtn) {
@@ -9795,7 +9964,7 @@
   function renderFavoritesEmptyState(body) {
     const wrap = ce("div", "fav-empty");
     const p = ce("p");
-    p.textContent = "Tap the star on any device to add it here, or add an embedded, time, or notifications tile.";
+    p.textContent = "Tap the star on any device to add it here, or add an embedded, time, notifications, or HTML tile.";
     const actions = ce("div", "fav-empty-actions");
     const addEmbedBtn = ce("button", "confirm-btn fav-add-embed-btn");
     addEmbedBtn.type = "button";
@@ -9818,9 +9987,17 @@
       hapticTap();
       void addNotificationTile();
     });
+    const addHtmlBtn = ce("button", "ghost-btn fav-add-html-btn");
+    addHtmlBtn.type = "button";
+    addHtmlBtn.textContent = "Add HTML";
+    addHtmlBtn.addEventListener("click", () => {
+      hapticTap();
+      postCall("openHtmlTilePicker");
+    });
     actions.appendChild(addEmbedBtn);
     actions.appendChild(addTimeBtn);
     actions.appendChild(addNotifBtn);
+    actions.appendChild(addHtmlBtn);
     wrap.appendChild(p);
     wrap.appendChild(actions);
     body.appendChild(wrap);
@@ -9839,7 +10016,7 @@
       return;
     }
     for (const entry of getFavoriteEntries()) {
-      if (entry.type === "embed" || entry.type === "time") continue;
+      if (entry.type === "embed" || entry.type === "html" || entry.type === "time") continue;
       if (entry.type === "thermostat") {
         const t = thermostats.find((x) => x.i === entry.dev.i) || entry.dev;
         updateQuickTstatCard(t, favTstatMap);
@@ -9922,6 +10099,7 @@
       setQuickBodyClass(body, "quick-body quick-body-favorites");
     }
     body.innerHTML = "";
+    htmlTileIframes.clear();
     favDevMap.clear();
     favTstatMap.clear();
     favSensorMap.clear();
@@ -11474,6 +11652,13 @@
     });
   }
 
+  if (MENU_ADD_HTML_BTN) {
+    MENU_ADD_HTML_BTN.addEventListener("click", () => {
+      closeTopbarOverflowMenu();
+      postCall("openHtmlTilePicker");
+    });
+  }
+
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && embedExpandState) {
       e.preventDefault();
@@ -11743,6 +11928,7 @@
         if (m.source !== "DEVICE" || m.deviceId == null) return;
         const deviceId = Number(m.deviceId);
         const notifAttr = String(m.name || "");
+        postCall("applyHtmlTileLiveAttr", deviceId, notifAttr, m.value);
         if (
           notificationDeviceIds.has(deviceId) &&
           (notifAttr === "notificationText" || notifAttr === "deviceNotification" || notifAttr === "lastMessage")
@@ -12416,6 +12602,336 @@
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
 
   // __MLD_SPLIT3__
+
+  // ---------- HTML attribute favorite tiles (post3; keeps post2 under hub limit) ----------
+  function htmlTileThemeTokens(tile) {
+    const rootStyles = getComputedStyle(document.documentElement);
+    return {
+      font: rootStyles.getPropertyValue("--font-sans").trim() || "system-ui, sans-serif",
+      color: rootStyles.getPropertyValue("--text").trim() || "#f5f7fb",
+      colorScheme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
+      roomsCss: tile?.roomsCss || "",
+      alignCss: tile?.alignCss || "",
+    };
+  }
+
+  function sanitizeHtmlTileMarkup(raw) {
+    const doc = new DOMParser().parseFromString(String(raw || ""), "text/html");
+    for (const node of doc.querySelectorAll("script,meta[http-equiv]")) {
+      if (node.tagName === "SCRIPT" || String(node.getAttribute("http-equiv") || "").toLowerCase() === "refresh") {
+        node.remove();
+      }
+    }
+    for (const el of doc.querySelectorAll("*")) {
+      for (const attr of Array.from(el.attributes)) {
+        const name = attr.name.toLowerCase();
+        const compactValue = String(attr.value || "").replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+        if (name.startsWith("on") || name === "srcdoc" || compactValue.includes("javascript:")) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+    for (const style of doc.querySelectorAll("style")) {
+      style.textContent = String(style.textContent || "").replace(/javascript\s*:/gi, "");
+    }
+    return doc;
+  }
+
+  function buildHtmlTileSrcdoc(raw, tokens) {
+    const doc = sanitizeHtmlTileMarkup(raw);
+    const cleanCss = (value) => String(value || "").replace(/<\/style/gi, "<\\/style");
+    const cleanCssValue = (value, fallback) => {
+      const cleaned = String(value || "").replace(/[;{}<>]/g, "").trim();
+      return cleaned || fallback;
+    };
+    const style = doc.createElement("style");
+    style.setAttribute("data-mld-theme-bridge", "");
+    style.textContent =
+      ":root{color-scheme:" + cleanCssValue(tokens?.colorScheme, "dark") + ";}" +
+      "html,body{margin:0;padding:0;background:transparent;color:" + cleanCssValue(tokens?.color, "#f5f7fb") +
+      ";font-family:" + cleanCssValue(tokens?.font, "system-ui, sans-serif") + ";}" +
+      cleanCss(tokens?.roomsCss) + "\n" + cleanCss(tokens?.alignCss);
+    doc.head.appendChild(style);
+    return "<!doctype html>\n" + doc.documentElement.outerHTML;
+  }
+
+  function htmlTileStubUrl(raw) {
+    const doc = new DOMParser().parseFromString(String(raw || ""), "text/html");
+    const frames = Array.from(doc.body.querySelectorAll("iframe[src]"));
+    if (frames.length !== 1) return "";
+    const frame = frames[0];
+    for (const child of Array.from(doc.body.children)) {
+      if (child !== frame && child.tagName !== "STYLE") return "";
+    }
+    const copy = doc.body.cloneNode(true);
+    copy.querySelector("iframe[src]")?.remove();
+    for (const style of copy.querySelectorAll("style")) style.remove();
+    if (String(copy.textContent || "").trim()) return "";
+    const src = String(frame.getAttribute("src") || "").trim();
+    try {
+      const url = new URL(src);
+      return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function configureHtmlTileIframe(iframe, tile, unavailableEl) {
+    if (!iframe || !tile) return;
+    const raw = tile.html == null ? "" : String(tile.html);
+    iframe.dataset.html = raw;
+    iframe.dataset.htmlTileId = tile.id;
+    delete iframe.dataset.htmlMode;
+    iframe.removeAttribute("srcdoc");
+    iframe.src = "about:blank";
+    const showUnavailable = (message) => {
+      iframe.dataset.htmlMode = "unavailable";
+      iframe.hidden = true;
+      if (unavailableEl) {
+        unavailableEl.hidden = false;
+        unavailableEl.textContent = message;
+      }
+    };
+    if (tile.error) {
+      showUnavailable(tile.error === "too_large"
+        ? "This HTML value is too large to display in the dashboard."
+        : String(tile.error));
+    } else if (!raw.trim()) {
+      showUnavailable("No HTML is currently available for this source.");
+    } else {
+      const stubUrl = htmlTileStubUrl(raw);
+      if (stubUrl && !isLocalOrigin()) {
+        const mixed = location.protocol === "https:" && new URL(stubUrl).protocol === "http:";
+        showUnavailable(mixed
+          ? "This local HTTP content is unavailable over a secure cloud connection."
+          : "This HTML iframe source is available only from the local dashboard.");
+      } else {
+        iframe.hidden = false;
+        if (unavailableEl) unavailableEl.hidden = true;
+        if (stubUrl) {
+          iframe.dataset.htmlMode = "stub";
+          iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox");
+          iframe.src = stubUrl;
+        } else {
+          iframe.dataset.htmlMode = "inline";
+          iframe.setAttribute("sandbox", "");
+          iframe.srcdoc = buildHtmlTileSrcdoc(raw, htmlTileThemeTokens(tile));
+        }
+      }
+    }
+    htmlTileIframes.set(tile.id, iframe);
+  }
+
+  function refreshHtmlTileIframes() {
+    for (const [id, iframe] of htmlTileIframes) {
+      if (!iframe?.isConnected) {
+        htmlTileIframes.delete(id);
+        continue;
+      }
+      if (iframe.dataset.htmlMode !== "inline") continue;
+      const tile = htmlTiles.find((candidate) => candidate.id === id);
+      if (!tile) continue;
+      iframe.dataset.html = tile.html == null ? "" : String(tile.html);
+      iframe.srcdoc = buildHtmlTileSrcdoc(iframe.dataset.html, htmlTileThemeTokens(tile));
+    }
+  }
+
+  function applyHtmlTileLiveAttr(deviceId, attr, value) {
+    const parsedDeviceId = Number(deviceId);
+    const attribute = String(attr || "");
+    const tile = htmlTiles.find((candidate) =>
+      Number(candidate.deviceId) === parsedDeviceId && candidate.attribute === attribute
+    );
+    if (!tile) return false;
+    tile.html = value == null ? "" : String(value);
+    delete tile.error;
+    const iframe = htmlTileIframes.get(tile.id);
+    if (iframe?.isConnected) {
+      configureHtmlTileIframe(iframe, tile, iframe.parentElement?.querySelector(".fav-html-unavailable"));
+    }
+    return true;
+  }
+
+  async function removeHtmlFavoriteTile(id) {
+    const key = htmlFavoriteKey(id);
+    if (!favoritesLayout.includes(key)) return true;
+    const previousLayout = favoritesLayout.slice();
+    const nextLayout = favoritesLayout.filter((candidate) => candidate !== key);
+    replaceList(favoritesLayout, nextLayout);
+    if (currentCategory() === "favorites") renderFavoritesPopup();
+    const saved = await persistFavoriteLayout(nextLayout);
+    if (!saved) {
+      replaceList(favoritesLayout, previousLayout);
+      if (currentCategory() === "favorites") renderFavoritesPopup();
+      return false;
+    }
+    updateQuickNavVisibility();
+    flash("HTML tile removed");
+    return true;
+  }
+
+  function openHtmlTilePicker() {
+    if (postCall("isFavoritesReorderActive")) {
+      flash("Finish reordering favorites first", true);
+      return;
+    }
+    const popup = ce("div", "confirm-popup open");
+    popup.setAttribute("role", "dialog");
+    popup.setAttribute("aria-modal", "true");
+    popup.setAttribute("aria-labelledby", "fav-html-picker-title");
+    const panel = ce("div", "confirm-panel fav-html-picker-panel");
+    const heading = ce("h2", "fav-embed-editor-heading");
+    heading.id = "fav-html-picker-title";
+    heading.textContent = "Add HTML tiles";
+    panel.appendChild(heading);
+    const selected = new Set();
+    const existing = new Set(favoritesLayout.filter((key) => key.startsWith("h:")));
+    const available = htmlTiles.filter((tile) => !existing.has(htmlFavoriteKey(tile.id)));
+    const list = ce("div", "fav-html-picker-list");
+    if (!htmlTiles.length) {
+      const empty = ce("p", "fav-embed-editor-help");
+      empty.textContent = "Select HTML source devices in the Modern Dashboard Hubitat app settings, then return here.";
+      panel.appendChild(empty);
+    } else if (!available.length) {
+      const empty = ce("p", "fav-embed-editor-help");
+      empty.textContent = "All configured HTML sources are already in Favorites.";
+      panel.appendChild(empty);
+    } else {
+      const help = ce("p", "fav-embed-editor-help");
+      help.textContent = "Choose one or more configured device attributes.";
+      panel.appendChild(help);
+      for (const tile of available) {
+        const option = ce("label", "fav-html-picker-option");
+        const input = ce("input");
+        input.type = "checkbox";
+        input.value = tile.id;
+        const copy = ce("span", "fav-html-picker-copy");
+        const name = ce("span", "fav-html-picker-name");
+        name.textContent = tile.title || tile.attribute || "HTML";
+        const meta = ce("span", "fav-html-picker-meta");
+        meta.textContent = "Device " + tile.deviceId + " · " + tile.attribute;
+        copy.appendChild(name);
+        copy.appendChild(meta);
+        option.appendChild(input);
+        option.appendChild(copy);
+        list.appendChild(option);
+        input.addEventListener("change", () => {
+          if (input.checked) selected.add(tile.id);
+          else selected.delete(tile.id);
+          addBtn.disabled = selected.size === 0;
+        });
+      }
+      panel.appendChild(list);
+    }
+    const actions = ce("div", "confirm-actions");
+    const cancel = ce("button", "ghost-btn confirm-cancel");
+    cancel.type = "button";
+    cancel.textContent = available.length ? "Cancel" : "Close";
+    const addBtn = ce("button", "confirm-btn");
+    addBtn.type = "button";
+    addBtn.textContent = "Add selected";
+    addBtn.disabled = true;
+    if (available.length) actions.appendChild(addBtn);
+    actions.appendChild(cancel);
+    panel.appendChild(actions);
+    popup.appendChild(panel);
+    const close = () => popup.remove();
+    cancel.addEventListener("click", close);
+    bindPopupDismiss(popup, panel, null, close);
+    addBtn.addEventListener("click", async () => {
+      if (!selected.size) return;
+      const previousLayout = favoritesLayout.slice();
+      const nextLayout = favoritesLayout.slice();
+      for (const id of selected) {
+        const key = htmlFavoriteKey(id);
+        if (!nextLayout.includes(key)) nextLayout.push(key);
+      }
+      replaceList(favoritesLayout, nextLayout);
+      addBtn.disabled = true;
+      const saved = await persistFavoriteLayout(nextLayout);
+      if (!saved) {
+        replaceList(favoritesLayout, previousLayout);
+        addBtn.disabled = false;
+        return;
+      }
+      close();
+      try {
+        const data = await fetchData();
+        render(data);
+      } catch {
+        if (currentCategory() === "favorites") renderFavoritesPopup();
+      }
+      updateQuickNavVisibility();
+      flash(selected.size === 1 ? "HTML tile added" : selected.size + " HTML tiles added");
+    });
+    appendPopup(popup);
+    requestAnimationFrame(() => {
+      const first = list.querySelector("input") || cancel;
+      first.focus();
+    });
+  }
+
+  function makeHtmlFavoriteCard(tile) {
+    const el = ce("article", "fav-html-card");
+    el.dataset.htmlTileId = tile.id;
+    const title = tile.title || tile.attribute || "HTML";
+    const head = ce("div", "fav-embed-head");
+    const titleEl = ce("div", "fav-embed-title");
+    titleEl.textContent = title;
+    head.appendChild(titleEl);
+    const actions = ce("div", "fav-embed-actions");
+    const expandBtn = ce("button", "fav-embed-expand");
+    expandBtn.type = "button";
+    expandBtn.textContent = "Expand";
+    expandBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hapticTap();
+      expandEmbedCard(el, expandBtn);
+    });
+    const menuBtn = ce("button", "fav-embed-menu-btn fav-html-menu-btn");
+    menuBtn.type = "button";
+    menuBtn.setAttribute("aria-label", "HTML tile options");
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.textContent = "\u22ef";
+    const menu = ce("div", "fav-embed-menu fav-html-menu");
+    menu.hidden = true;
+    menu.setAttribute("role", "menu");
+    const removeBtn = ce("button", "fav-embed-menu-item danger");
+    removeBtn.type = "button";
+    removeBtn.setAttribute("role", "menuitem");
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      closeFavTileOverflowMenu(menu, menuBtn);
+      const ok = await confirmAction({ message: "Remove this HTML tile from favorites?", confirmLabel: "Remove", danger: true });
+      if (ok) await removeHtmlFavoriteTile(tile.id);
+    });
+    menu.appendChild(removeBtn);
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFavTileOverflowMenu(menuBtn, menu);
+    });
+    actions.appendChild(expandBtn);
+    actions.appendChild(menuBtn);
+    actions.appendChild(menu);
+    head.appendChild(actions);
+    el.appendChild(head);
+
+    const media = ce("div", "fav-html-media");
+    const iframe = ce("iframe", "fav-html-iframe");
+    iframe.setAttribute("title", title);
+    iframe.loading = "lazy";
+    iframe.referrerPolicy = "no-referrer";
+    const unavailable = ce("div", "fav-html-unavailable");
+    unavailable.hidden = true;
+    media.appendChild(iframe);
+    media.appendChild(unavailable);
+    el.appendChild(media);
+    configureHtmlTileIframe(iframe, tile, unavailable);
+    return el;
+  }
+
+
 
   // ---------- shades / fans / music / sensors / scenes (post3; keeps post2 under cloud MQTT limit) ----------
   function makeShadeTile(shade, context) {

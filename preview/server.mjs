@@ -24,6 +24,23 @@ const MOCK_HSM_PIN = "1234";
 const MOCK_UNLOCK_PIN = "5678";
 const MOCK_DASH_PASSWORD = "dashpass";
 const DASH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const HTML_SIZE_PRESETS = new Set(["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"]);
+const MOCK_HTML_TILES = [
+  {
+    id: "9001:tile5",
+    deviceId: 9001,
+    attribute: "tile5",
+    title: "Battery Monitor",
+    html: '<table style="width:100%;border-collapse:collapse"><tr><th>Device</th><th>Battery</th></tr><tr><td>Front Door</td><td>92%</td></tr><tr><td>Garage Motion</td><td>74%</td></tr></table>',
+  },
+  {
+    id: "9002:html",
+    deviceId: 9002,
+    attribute: "html",
+    title: "2022 PALISADE",
+    html: '<div style="display:grid;gap:.4rem"><strong>2022 PALISADE</strong><span>Locked · Parked at Home</span><span>Fuel 68% · Range 247 mi</span></div>',
+  },
+];
 const MOCK_TRACKS = [
   "Daft Punk — Get Lucky",
   "Fleetwood Mac — Dreams",
@@ -223,7 +240,7 @@ function buildMockData(count) {
     { i: 5102, n: "Master Bedroom Fan", r: 3, s: 0, sp: "off", supSp: "low,medium-low,medium,medium-high,high", hasSw: 1 },
     { i: 5103, n: "Patio DC Fan", r: 7, s: 1, sp: "4", supSp: "1,2,3,4,5,6", hasSw: 1 },
   ];
-  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, rooms, devices, outlets: [
+  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: MOCK_HTML_TILES.map((tile) => ({ ...tile })), rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
   ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
@@ -274,6 +291,8 @@ function ensureEmbedConfig() {
   if (!Array.isArray(state.config.notificationCards)) state.config.notificationCards = [];
   if (!Array.isArray(state.config.favoritesLayout)) state.config.favoritesLayout = [];
   if (!state.config.favoriteSizes || typeof state.config.favoriteSizes !== "object") state.config.favoriteSizes = {};
+  if (!state.config.htmlSizes || typeof state.config.htmlSizes !== "object") state.config.htmlSizes = {};
+  if (!Array.isArray(state.htmlTiles)) state.htmlTiles = [];
 }
 
 function validateHttpsEmbedUrl(raw) {
@@ -341,6 +360,11 @@ function normalizeLayoutKey(raw) {
     if (!/^[A-Za-z0-9_-]+$/.test(rest)) return null;
     return "n:" + rest;
   }
+  if (s.startsWith("h:")) {
+    const match = /^h:(\d+):([A-Za-z0-9_.-]+)$/.exec(s);
+    if (!match) return null;
+    return `h:${match[1]}:${match[2]}`;
+  }
   return null;
 }
 
@@ -360,6 +384,28 @@ function notificationIdFromLayoutKey(key) {
   const k = normalizeLayoutKey(key);
   if (!k || !k.startsWith("n:")) return null;
   return "n_" + k.slice(2);
+}
+
+function htmlIdFromLayoutKey(key) {
+  const k = normalizeLayoutKey(key);
+  if (!k || !k.startsWith("h:")) return null;
+  return k.slice(2);
+}
+
+function htmlTilesForPayload() {
+  ensureEmbedConfig();
+  const activeIds = new Set(
+    (state.config.favoritesLayout || [])
+      .map(htmlIdFromLayoutKey)
+      .filter(Boolean)
+  );
+  return state.htmlTiles.map((tile) => {
+    const id = String(tile.id);
+    const entry = { ...tile, size: state.config.htmlSizes[id] || tile.size || "tall" };
+    if (activeIds.has(id)) return entry;
+    const { html: _html, ...catalogEntry } = entry;
+    return catalogEntry;
+  });
 }
 
 function normalizeTimeStyle(raw) {
@@ -402,6 +448,7 @@ function reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null,
   ensureEmbedConfig();
   const validDevices = new Set(deviceIds.map(String));
   const validEmbeds = new Set(embedCards.map((c) => c.id));
+  const validHtml = new Set(state.htmlTiles.map((tile) => String(tile.id)));
   const times = Array.isArray(timeCards) ? timeCards : (state.config.timeCards || []);
   const notifs = Array.isArray(notificationCards) ? notificationCards : (state.config.notificationCards || []);
   const validTimes = new Set(times.map((c) => c.id));
@@ -426,6 +473,10 @@ function reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null,
       const nid = notificationIdFromLayoutKey(key);
       if (!nid || !validNotifs.has(nid)) continue;
       key = "n:" + nid.slice(2);
+    } else if (key.startsWith("h:")) {
+      const hid = htmlIdFromLayoutKey(key);
+      if (!hid || !validHtml.has(hid)) continue;
+      key = "h:" + hid;
     } else continue;
     seen.add(key);
     out.push(key);
@@ -467,6 +518,7 @@ function replaceDeviceSlotsInLayout(deviceIds) {
   const cards = state.config.embedCards || [];
   const times = state.config.timeCards || [];
   const notifs = state.config.notificationCards || [];
+  const htmlIds = new Set(state.htmlTiles.map((tile) => String(tile.id)));
   const prev = state.config.favoritesLayout || [];
   const deviceQueue = deviceIds.map((id) => "d:" + id);
   const next = [];
@@ -488,6 +540,9 @@ function replaceDeviceSlotsInLayout(deviceIds) {
     } else if (key.startsWith("n:")) {
       const nid = notificationIdFromLayoutKey(key);
       if (nid && notifs.some((c) => c.id === nid)) next.push("n:" + nid.slice(2));
+    } else if (key.startsWith("h:")) {
+      const hid = htmlIdFromLayoutKey(key);
+      if (hid && htmlIds.has(hid)) next.push("h:" + hid);
     }
   }
   while (di < deviceQueue.length) {
@@ -914,7 +969,7 @@ const server = createServer(async (req, res) => {
       state.config.timeCards || [],
       state.config.notificationCards || []
     );
-    const payload = appendDashSession(state, auth.renewed);
+    const payload = appendDashSession({ ...state, htmlTiles: htmlTilesForPayload() }, auth.renewed);
     if (!schedulerMockEnabled()) payload.schedules = [];
     return res.end(JSON.stringify(payload));
   }
@@ -1432,6 +1487,7 @@ const server = createServer(async (req, res) => {
         embedCards: state.config.embedCards,
         timeCards: state.config.timeCards,
         notificationCards: state.config.notificationCards || [],
+        htmlSizes: state.config.htmlSizes || {},
       }));
     };
     if (req.method === "GET" && idsParam != null) {
@@ -1695,6 +1751,10 @@ const server = createServer(async (req, res) => {
       res.writeHead(400, { "Content-Type": "application/json" });
       return res.end('{"ok":false,"error":"invalid notificationSizes"}');
     }
+    if (body.htmlSizes != null && (typeof body.htmlSizes !== "object" || Array.isArray(body.htmlSizes))) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end('{"ok":false,"error":"invalid htmlSizes"}');
+    }
     let cards = (state.config.embedCards || []).slice();
     let times = (state.config.timeCards || []).slice();
     let notifs = (state.config.notificationCards || []).slice();
@@ -1703,6 +1763,7 @@ const server = createServer(async (req, res) => {
     const cardById = new Map(cards.map((c) => [c.id, c]));
     const timeById = new Map(times.map((c) => [c.id, c]));
     const notifById = new Map(notifs.map((c) => [c.id, c]));
+    const htmlById = new Map(state.htmlTiles.map((tile) => [String(tile.id), tile]));
     const nextLayout = [];
     const seen = new Set();
     const nextDevices = [];
@@ -1731,6 +1792,12 @@ const server = createServer(async (req, res) => {
         const nid = notificationIdFromLayoutKey(key);
         if (!nid || !notifById.has(nid)) continue;
         const nk = "n:" + nid.slice(2);
+        seen.add(nk);
+        nextLayout.push(nk);
+      } else if (key.startsWith("h:")) {
+        const hid = htmlIdFromLayoutKey(key);
+        if (!hid || !htmlById.has(hid)) continue;
+        const nk = "h:" + hid;
         seen.add(nk);
         nextLayout.push(nk);
       }
@@ -1796,6 +1863,28 @@ const server = createServer(async (req, res) => {
       notifs = nextNotifs;
       reconciled = reconcileFavoritesLayout(deviceIds, cards, reconciled, times, notifs);
     }
+    if (body.htmlSizes != null) {
+      const nextHtmlSizes = {};
+      const previousHtmlSizes = state.config.htmlSizes || {};
+      const activeHtmlIds = new Set(reconciled.map(htmlIdFromLayoutKey).filter(Boolean));
+      for (const id of activeHtmlIds) {
+        let size = "tall";
+        if (Object.hasOwn(body.htmlSizes, id)) {
+          const candidate = String(body.htmlSizes[id]).trim();
+          if (HTML_SIZE_PRESETS.has(candidate)) size = candidate;
+        } else {
+          const previous = String(previousHtmlSizes[id] || "").trim();
+          if (HTML_SIZE_PRESETS.has(previous)) size = previous;
+        }
+        nextHtmlSizes[id] = size;
+      }
+      state.config.htmlSizes = nextHtmlSizes;
+    } else {
+      const activeHtmlIds = new Set(reconciled.map(htmlIdFromLayoutKey).filter(Boolean));
+      state.config.htmlSizes = Object.fromEntries(
+        Object.entries(state.config.htmlSizes || {}).filter(([id]) => activeHtmlIds.has(id))
+      );
+    }
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({
       ok: true,
@@ -1804,6 +1893,7 @@ const server = createServer(async (req, res) => {
       embedCards: cards,
       timeCards: times,
       notificationCards: notifs,
+      htmlSizes: state.config.htmlSizes || {},
       favoritesLayout: reconciled,
     }));
   }

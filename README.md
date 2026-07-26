@@ -390,7 +390,7 @@ named layout (**Compact**, **Standard**, **Wide**, **Square**, **Portrait**,
 One size is saved per tile and adapts responsively across phone and desktop
 widths.
 
-**Embed cards:** From Favorites, use overflow **Add embed** (or the empty-state
+**Embed cards:** From Favorites, use overflow **Add tile → Embedded** (or the empty-state
 button) to add an HTTPS iframe widget — for example a [Google Calendar embed](https://support.google.com/calendar/answer/41207)
 URL or an iframe-based weather widget. You can paste either the HTTPS URL or a
 full `<iframe …>` snippet; only the `src` is kept. Cards support sizes
@@ -405,6 +405,16 @@ provider. With category tabs on, Favorites keeps embed iframes mounted while you
 switch tabs (hidden, not destroyed), so in-widget state like a Google Calendar
 view is preserved. Browser third-party cookie rules still apply after a full
 page refresh.
+
+**HTML tiles:** Select HTML source devices in the Hubitat app (**HTML tiles** section) —
+for example a [Tile Builder](https://github.com/GaryMilne/Hubitat-TileBuilder) Storage
+Driver, a vehicle status device, or any driver that publishes static dashboard HTML.
+Then on Favorites use overflow **Add tile → HTML** and pick one or more discovered
+attributes (Tile Builder `tile1`–`tile26` expand automatically). Inline HTML renders
+in a sandboxed frame with a light mDash theme bridge (font, text color, transparent
+background); source-defined colors stay intact. Oversized Tile Builder tiles that
+point at hub File Manager URLs work on the **local** dashboard; cloud HTTPS may block
+those local `http://` stubs. Scripts and interactive JS are not supported.
 
 ### Search, collapse & reorder
 
@@ -819,7 +829,7 @@ Nothing to edit.
 | `POST /lights/bulk` | Bulk on/off by scope |
 | `POST /hub-mode`, `/hsm`, `/scene/activate` | Mode, security, scenes |
 | `GET/POST /schedules/*` | Scheduler CRUD, toggle, test |
-| `POST /settings/room-order`, `/nav-order`, `/favorites`, `/embed-cards`, `/settings/favorites-layout` | Layout sync, favorites, HTTPS embed cards |
+| `POST /settings/room-order`, `/nav-order`, `/favorites`, `/embed-cards`, `/settings/favorites-layout` | Layout sync, favorites, HTTPS embed cards, HTML tile layout/`htmlSizes` |
 
 All endpoints require `?access_token=…` (included automatically when you open the
 dashboard link from the app page).
