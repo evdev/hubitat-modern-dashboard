@@ -619,6 +619,7 @@
   let timeEditorOpen = false;
   let embedExpandState = null; // { cardEl, placeholder, restoreFocus }
   let favEmbedObserver = null;
+  let favHtmlObserver = null;
   const htmlTileIframes = new Map(); // tile id -> iframe
   let timeTickTimer = null;
   let favoritesPersistEl = null; // stable Favorites panel (iframes never moved)
@@ -10099,6 +10100,10 @@
       setQuickBodyClass(body, "quick-body quick-body-favorites");
     }
     body.innerHTML = "";
+    if (favHtmlObserver) {
+      favHtmlObserver.disconnect();
+      favHtmlObserver = null;
+    }
     htmlTileIframes.clear();
     favDevMap.clear();
     favTstatMap.clear();
@@ -12637,26 +12642,8 @@
     return doc;
   }
 
-  function buildHtmlTileSrcdoc(raw, tokens) {
-    const doc = sanitizeHtmlTileMarkup(raw);
-    const cleanCss = (value) => String(value || "").replace(/<\/style/gi, "<\\/style");
-    const cleanCssValue = (value, fallback) => {
-      const cleaned = String(value || "").replace(/[;{}<>]/g, "").trim();
-      return cleaned || fallback;
-    };
-    const style = doc.createElement("style");
-    style.setAttribute("data-mld-theme-bridge", "");
-    style.textContent =
-      ":root{color-scheme:" + cleanCssValue(tokens?.colorScheme, "dark") + ";}" +
-      "html,body{margin:0;padding:0;background:transparent;color:" + cleanCssValue(tokens?.color, "#f5f7fb") +
-      ";font-family:" + cleanCssValue(tokens?.font, "system-ui, sans-serif") + ";}" +
-      cleanCss(tokens?.roomsCss) + "\n" + cleanCss(tokens?.alignCss);
-    doc.head.appendChild(style);
-    return "<!doctype html>\n" + doc.documentElement.outerHTML;
-  }
-
-  function htmlTileStubUrl(raw) {
-    const doc = new DOMParser().parseFromString(String(raw || ""), "text/html");
+  function htmlTileStubUrlFromDoc(doc) {
+    if (!doc?.body) return "";
     const frames = Array.from(doc.body.querySelectorAll("iframe[src]"));
     if (frames.length !== 1) return "";
     const frame = frames[0];
@@ -12674,6 +12661,31 @@
     } catch {
       return "";
     }
+  }
+
+  function htmlTileSrcdocFromDoc(doc, tokens) {
+    const cleanCss = (value) => String(value || "").replace(/<\/style/gi, "<\\/style");
+    const cleanCssValue = (value, fallback) => {
+      const cleaned = String(value || "").replace(/[;{}<>]/g, "").trim();
+      return cleaned || fallback;
+    };
+    const style = doc.createElement("style");
+    style.setAttribute("data-mld-theme-bridge", "");
+    style.textContent =
+      ":root{color-scheme:" + cleanCssValue(tokens?.colorScheme, "dark") + ";}" +
+      "html,body{margin:0;padding:0;background:transparent;color:" + cleanCssValue(tokens?.color, "#f5f7fb") +
+      ";font-family:" + cleanCssValue(tokens?.font, "system-ui, sans-serif") + ";}" +
+      cleanCss(tokens?.roomsCss) + "\n" + cleanCss(tokens?.alignCss);
+    doc.head.appendChild(style);
+    return "<!doctype html>\n" + doc.documentElement.outerHTML;
+  }
+
+  // One DOMParser pass: sanitize, then either stub URL or inline srcdoc.
+  function prepareHtmlTileFrame(raw, tokens) {
+    const doc = sanitizeHtmlTileMarkup(raw);
+    const stubUrl = htmlTileStubUrlFromDoc(doc);
+    if (stubUrl) return { kind: "stub", stubUrl };
+    return { kind: "inline", srcdoc: htmlTileSrcdocFromDoc(doc, tokens) };
   }
 
   function configureHtmlTileIframe(iframe, tile, unavailableEl) {
@@ -12699,27 +12711,54 @@
     } else if (!raw.trim()) {
       showUnavailable("No HTML is currently available for this source.");
     } else {
-      const stubUrl = htmlTileStubUrl(raw);
-      if (stubUrl && !isLocalOrigin()) {
-        const mixed = location.protocol === "https:" && new URL(stubUrl).protocol === "http:";
+      const prepared = prepareHtmlTileFrame(raw, htmlTileThemeTokens(tile));
+      if (prepared.kind === "stub" && !isLocalOrigin()) {
+        const mixed = location.protocol === "https:" && new URL(prepared.stubUrl).protocol === "http:";
         showUnavailable(mixed
           ? "This local HTTP content is unavailable over a secure cloud connection."
           : "This HTML iframe source is available only from the local dashboard.");
       } else {
         iframe.hidden = false;
         if (unavailableEl) unavailableEl.hidden = true;
-        if (stubUrl) {
+        if (prepared.kind === "stub") {
           iframe.dataset.htmlMode = "stub";
           iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox");
-          iframe.src = stubUrl;
+          iframe.src = prepared.stubUrl;
         } else {
           iframe.dataset.htmlMode = "inline";
           iframe.setAttribute("sandbox", "");
-          iframe.srcdoc = buildHtmlTileSrcdoc(raw, htmlTileThemeTokens(tile));
+          iframe.srcdoc = prepared.srcdoc;
         }
       }
     }
     htmlTileIframes.set(tile.id, iframe);
+  }
+
+  function ensureHtmlTileLoaded(card) {
+    if (!card || card.dataset.htmlLoaded === "1") return;
+    const id = card.dataset.htmlTileId;
+    const iframe = card.querySelector(".fav-html-iframe");
+    const unavailable = card.querySelector(".fav-html-unavailable");
+    const tile = htmlTiles.find((candidate) => candidate.id === id);
+    if (!iframe || !tile) return;
+    card.dataset.htmlLoaded = "1";
+    configureHtmlTileIframe(iframe, tile, unavailable);
+  }
+
+  function observeFavHtmlCard(card) {
+    if (!card) return;
+    if (!("IntersectionObserver" in window)) {
+      ensureHtmlTileLoaded(card);
+      return;
+    }
+    if (!favHtmlObserver) {
+      favHtmlObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) ensureHtmlTileLoaded(entry.target);
+        }
+      }, { root: null, rootMargin: "80px", threshold: 0.05 });
+    }
+    favHtmlObserver.observe(card);
   }
 
   function refreshHtmlTileIframes() {
@@ -12732,7 +12771,9 @@
       const tile = htmlTiles.find((candidate) => candidate.id === id);
       if (!tile) continue;
       iframe.dataset.html = tile.html == null ? "" : String(tile.html);
-      iframe.srcdoc = buildHtmlTileSrcdoc(iframe.dataset.html, htmlTileThemeTokens(tile));
+      const prepared = prepareHtmlTileFrame(iframe.dataset.html, htmlTileThemeTokens(tile));
+      if (prepared.kind === "inline") iframe.srcdoc = prepared.srcdoc;
+      else configureHtmlTileIframe(iframe, tile, iframe.parentElement?.querySelector(".fav-html-unavailable"));
     }
   }
 
@@ -12746,8 +12787,12 @@
     tile.html = value == null ? "" : String(value);
     delete tile.error;
     const iframe = htmlTileIframes.get(tile.id);
+    // Not mounted yet (lazy): state is updated; paint happens when the card intersects.
     if (iframe?.isConnected) {
+      const card = iframe.closest(".fav-html-card");
+      if (card && card.dataset.htmlLoaded !== "1") return true;
       configureHtmlTileIframe(iframe, tile, iframe.parentElement?.querySelector(".fav-html-unavailable"));
+      if (card) card.dataset.htmlLoaded = "1";
     }
     return true;
   }
@@ -12886,6 +12931,7 @@
     expandBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       hapticTap();
+      ensureHtmlTileLoaded(el);
       expandEmbedCard(el, expandBtn);
     });
     const menuBtn = ce("button", "fav-embed-menu-btn fav-html-menu-btn");
@@ -12922,12 +12968,14 @@
     iframe.setAttribute("title", title);
     iframe.loading = "lazy";
     iframe.referrerPolicy = "no-referrer";
+    iframe.src = "about:blank";
     const unavailable = ce("div", "fav-html-unavailable");
     unavailable.hidden = true;
     media.appendChild(iframe);
     media.appendChild(unavailable);
     el.appendChild(media);
-    configureHtmlTileIframe(iframe, tile, unavailable);
+    htmlTileIframes.set(tile.id, iframe);
+    observeFavHtmlCard(el);
     return el;
   }
 

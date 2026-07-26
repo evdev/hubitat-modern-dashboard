@@ -3625,7 +3625,13 @@ def tileBuilderDescriptions(d) {
     return map
 }
 
-def discoverHtmlTilesForDevice(d) {
+def htmlTileWantsBody(tileId, includeHtmlBodies, activeIds) {
+    if (!includeHtmlBodies) return false
+    if (activeIds == null) return true
+    return activeIds.contains(tileId)
+}
+
+def discoverHtmlTilesForDevice(d, includeHtmlBodies = false, activeIds = null) {
     def out = []
     if (!d) return out
     def deviceName = d.displayName?.toString() ?: ("Device " + d.id)
@@ -3635,10 +3641,16 @@ def discoverHtmlTilesForDevice(d) {
         for (i in 1..26) {
             def attr = "tile" + i
             def val = safeCurrent(d, attr)
-            if (val == null || val.toString().trim() == "") continue
+            if (val == null) continue
+            def vs = val.toString()
+            if (vs.trim() == "") continue
             def title = descs[attr]
             if (!title) title = "Tile " + i
-            out << [id: deviceId.toString() + ":" + attr, deviceId: deviceId, attribute: attr, title: title, html: val.toString()]
+            def id = deviceId.toString() + ":" + attr
+            def entry = [id: id, deviceId: deviceId, attribute: attr, title: title]
+            // Keep HTML strings only for favorited/active tiles — avoids retaining large inactive bodies every /data poll.
+            if (htmlTileWantsBody(id, includeHtmlBodies, activeIds)) entry.html = vs
+            out << entry
         }
         return out
     }
@@ -3652,12 +3664,16 @@ def discoverHtmlTilesForDevice(d) {
             def low = nm.toLowerCase()
             if (low == "roomscss" || low == "alignroomtilescss" || low == "emptyattribute") continue
             def val = st?.value
-            if (val == null || val.toString().trim() == "") continue
+            if (val == null) continue
             def vs = val.toString()
+            if (vs.trim() == "") continue
             if (!(named.contains(low) || looksLikeDashboardHtml(vs))) continue
             if (seen.contains(nm)) continue
             seen.add(nm)
-            out << [id: deviceId.toString() + ":" + nm, deviceId: deviceId, attribute: nm, title: nm, html: vs]
+            def id = deviceId.toString() + ":" + nm
+            def entry = [id: id, deviceId: deviceId, attribute: nm, title: nm]
+            if (htmlTileWantsBody(id, includeHtmlBodies, activeIds)) entry.html = vs
+            out << entry
             if (out.size() >= maxHtmlAttrsPerGenericDevice()) break
         }
     } catch (e) {}
@@ -3689,12 +3705,18 @@ def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
     else if (activeIds instanceof Collection) active = new HashSet(activeIds)
     def sizes = parseHtmlTileSizesState()
     for (d in devices) {
-        def tiles = discoverHtmlTilesForDevice(d)
+        def tiles = discoverHtmlTilesForDevice(d, includeHtmlBodies, active)
         def roomsCss = null
         def alignCss = null
-        if (isTileBuilderStorageDevice(d)) {
-            roomsCss = safeCurrent(d, "roomsCSS")
-            alignCss = safeCurrent(d, "alignRoomTilesCSS")
+        def needsCss = false
+        if (includeHtmlBodies && isTileBuilderStorageDevice(d)) {
+            for (t in tiles) {
+                if (t.html != null) { needsCss = true; break }
+            }
+            if (needsCss) {
+                roomsCss = safeCurrent(d, "roomsCSS")
+                alignCss = safeCurrent(d, "alignRoomTilesCSS")
+            }
         }
         for (t in tiles) {
             def entry = [
@@ -3704,10 +3726,9 @@ def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
                 title: t.title,
                 size: (sizes[t.id] ?: "tall")
             ]
-            def wantBody = includeHtmlBodies && (active == null || active.contains(t.id))
-            if (wantBody) {
+            if (t.html != null) {
                 def raw = t.html
-                if (raw != null && raw.toString().size() > maxHtmlAttrBytes()) {
+                if (raw.toString().size() > maxHtmlAttrBytes()) {
                     entry.error = "too_large"
                 } else {
                     entry.html = sanitizeHtmlForDashboard(raw)

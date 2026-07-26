@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.51
+
+- **HTML tiles:** hub sends HTML bodies only for favorited/active tiles (not every
+  Tile Builder slot on each poll), and tiles lazy-load when scrolled into view.
+- **Perf:** Tile Builder `roomsCSS` / `alignRoomTilesCSS` are read only when an
+  active tile from that device needs them.
+
 ## 0.3.50
 
 - **Favorites:** add **HTML** tiles (overflow **Add tile → HTML**) for Hubitat device
