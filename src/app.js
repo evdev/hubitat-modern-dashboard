@@ -271,7 +271,7 @@
     const s = String(raw || "").trim();
     return NOTIFICATION_SIZE_PRESET_SET.has(s) ? s : "tall";
   }
-  const HTML_ZOOM_PRESETS = [75, 100, 125, 150];
+  const HTML_ZOOM_PRESETS = [50, 75, 100, 125, 150];
   function normalizeHtmlZoom(raw) {
     const n = Number(raw);
     return HTML_ZOOM_PRESETS.includes(n) ? n : 100;

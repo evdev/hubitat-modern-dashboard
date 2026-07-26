@@ -2459,7 +2459,7 @@ body {
   text-transform: uppercase; letter-spacing: .06em;
 }
 .fav-size-sheet-zoom-options {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;
 }
 .fav-size-zoom-option {
   appearance: none;

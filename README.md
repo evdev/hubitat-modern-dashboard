@@ -416,7 +416,7 @@ background); source-defined colors stay intact. Oversized Tile Builder tiles tha
 point at hub File Manager URLs work on the **local** dashboard; cloud HTTPS may block
 those local `http://` stubs. Scripts and interactive JS are not supported. In Favorites
 reorder mode, **Size** opens card-size presets; HTML tiles also get a **Zoom** row
-(75% / 100% / 125% / 150%) to scale content inside the card.
+(50% / 75% / 100% / 125% / 150%) to scale content inside the card.
 
 ### Search, collapse & reorder
 

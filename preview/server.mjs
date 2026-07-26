@@ -25,7 +25,7 @@ const MOCK_UNLOCK_PIN = "5678";
 const MOCK_DASH_PASSWORD = "dashpass";
 const DASH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const HTML_SIZE_PRESETS = new Set(["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"]);
-const HTML_ZOOM_PRESETS = new Set([75, 100, 125, 150]);
+const HTML_ZOOM_PRESETS = new Set([50, 75, 100, 125, 150]);
 const MOCK_HTML_TILES = [
   {
     id: "9001:tile5",

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.53
+
+- **HTML tiles:** zoom range extended to include **50%** (now 50%–150%).
+
 ## 0.3.52
 
 - **HTML tiles:** Favorites reorder **Size** sheet adds a **Zoom** control (75%–150%)

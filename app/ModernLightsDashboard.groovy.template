@@ -3577,7 +3577,7 @@ def htmlLayoutKey(deviceId, attribute) { return "h:" + deviceId.toString() + ":"
 def maxHtmlAttrBytes() { return 8192 }
 def maxHtmlAttrsPerGenericDevice() { return 6 }
 def htmlSizePresetSet() { return ["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"] as Set }
-def htmlZoomPresetSet() { return [75, 100, 125, 150] as Set }
+def htmlZoomPresetSet() { return [50, 75, 100, 125, 150] as Set }
 def htmlNamedAttrs() { return ["html", "tile", "iframe"] as Set }
 
 def isTileBuilderStorageDevice(d) {
