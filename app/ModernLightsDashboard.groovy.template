@@ -405,6 +405,14 @@ def shadePosition(dev) {
     return safeCurrent(dev, "level")
 }
 
+def shadeSupportsPosition(dev) {
+    return dev.hasCommand("setPosition") || dev.hasCommand("setLevel")
+}
+
+def shadeSupportsStop(dev) {
+    return dev.hasCommand("stopPositionChange") || dev.hasCommand("stop")
+}
+
 def shadeStatus(dev) {
     def st = safeCurrent(dev, "windowShade")
     if (st != null) return st
@@ -1561,6 +1569,8 @@ def renderData() {
         out << ",\"r\":" << (rid == null ? "null" : rid.toString())
         out << ",\"st\":" << jsonStr(shadeSt)
         out << ",\"pos\":" << numOrNull(shadePos)
+        out << ",\"hasPos\":" << (shadeSupportsPosition(d) ? 1 : 0)
+        out << ",\"hasStop\":" << (shadeSupportsStop(d) ? 1 : 0)
         out << "}"
     }
     out << "],\"ceilingFans\":["
@@ -2015,6 +2025,8 @@ def renderDevice() {
             try { shadeForDev.refresh() } catch (e) {}
             out << ",\"st\":" << jsonStr(shadeStatus(shadeForDev))
             out << ",\"pos\":" << numOrNull(shadePosition(shadeForDev))
+            out << ",\"hasPos\":" << (shadeSupportsPosition(shadeForDev) ? 1 : 0)
+            out << ",\"hasStop\":" << (shadeSupportsStop(shadeForDev) ? 1 : 0)
         }
         out << "}"
         return renderJsonNoStore( withAuthJson(out.toString()), 200)
@@ -2093,7 +2105,10 @@ def renderDevice() {
         def out = new StringBuilder()
         out << "{\"i\":" << shade.id
         out << ",\"st\":" << jsonStr(shadeSt)
-        out << ",\"pos\":" << numOrNull(shadePos) << "}"
+        out << ",\"pos\":" << numOrNull(shadePos)
+        out << ",\"hasPos\":" << (shadeSupportsPosition(shade) ? 1 : 0)
+        out << ",\"hasStop\":" << (shadeSupportsStop(shade) ? 1 : 0)
+        out << "}"
         return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
     def fan = ceilingFans?.find { it.id.toString() == id.toString() }
@@ -2180,13 +2195,28 @@ def runThermostatCmd(t, c, v) {
             if (v != null) t.setCoolingSetpoint(v.toInteger())
             break
         case "setFanMode":
-            if (v != null && (t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode"))) t.setFanMode(v.toString())
+            setThermostatFanModeCmd(t, v)
             break
         case "setFanSpeed":
             if (v != null && (t.hasAttribute("fanSpeed") || t.hasCommand("setFanSpeed"))) t.setFanSpeed(v.toString())
             break
         default:
             throw new IllegalArgumentException("unknown command")
+    }
+}
+
+def setThermostatFanModeCmd(t, modeStr) {
+    def mode = modeStr?.toString()?.toLowerCase()
+    if (!mode) return
+    if (!(t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode"))) return
+    try {
+        if (mode == "auto" && t.hasCommand("fanAuto")) t.fanAuto()
+        else if (mode == "on" && t.hasCommand("fanOn")) t.fanOn()
+        else if (mode == "circulate" && t.hasCommand("fanCirculate")) t.fanCirculate()
+        else t.setFanMode(modeStr.toString())
+    } catch (e) {
+        log.warn "Modern Dashboard: setFanMode ${mode} failed for ${t.id}: ${e}"
+        throw e
     }
 }
 
@@ -5457,7 +5487,7 @@ def runScheduleThermostatAction(action) {
                 }
             }
             if (fanMode && (dev.hasCapability("ThermostatFanMode") || dev.hasAttribute("thermostatFanMode"))) {
-                try { dev.setFanMode(fanMode) } catch (e) {
+                try { setThermostatFanModeCmd(dev, fanMode) } catch (e) {
                     log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: ${e}"
                 }
             }

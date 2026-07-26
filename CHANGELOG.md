@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.47
+
+- **Shades:** position slider and % readout only when the driver supports
+  `setPosition` / `setLevel`; **Stop** only when the driver supports
+  `stopPositionChange` / `stop` (open/close-only motors no longer show a dead slider).
+- **Thermostats:** fan mode uses `fanAuto` / `fanOn` / `fanCirculate` when available;
+  fan mode changes hold optimistically until the hub confirms.
+
 ## 0.3.46
 
 - **Fix:** HPM driver install after rename — new driver package UUID so HPM runs a fresh

@@ -205,8 +205,9 @@ function buildMockData(count) {
     { i: 4205, n: "Side Gate", u: "http://127.0.0.1:1984/webrtc.html?src=sidegate_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=sidegate&media=video+audio" },
   ];
   const windowShades = [
-    { i: 5001, n: "Living Room Shade", r: 1, st: "open", pos: 100 },
-    { i: 5002, n: "Master Bedroom Shade", r: 3, st: "closed", pos: 0 },
+    { i: 5001, n: "Living Room Shade", r: 1, st: "open", pos: 100, hasPos: 1, hasStop: 1 },
+    { i: 5002, n: "Master Bedroom Shade", r: 3, st: "closed", pos: 0, hasPos: 1, hasStop: 1 },
+    { i: 5003, n: "Garage Door Shade", r: 9, st: "closed", pos: null, hasPos: 0, hasStop: 1 },
   ];
   const ceilingFans = [
     { i: 5101, n: "Living Room Fan", r: 1, s: 1, sp: "medium", supSp: "low,medium,high", hasSw: 1 },

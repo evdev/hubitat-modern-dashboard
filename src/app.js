@@ -447,6 +447,7 @@
   let tstatPopup = null;
   let tstatSession = null;       // { rid, anchor, ids:[], unit, edit:"heat"|"cool" }
   const tstatDeviceModeLock = new Map(); // id -> { until, mode }
+  const tstatFanModeLock = new Map(); // id -> { until, mode }
 
   let musicMasterPopup = null;
   let fanMasterPopup = null;
@@ -859,10 +860,18 @@
     return st === "opening" || st === "closing";
   }
 
+  function shadeHasPosition(shade) {
+    return !!shade?.hasPos;
+  }
+
+  function shadeHasStop(shade) {
+    return !!shade?.hasStop;
+  }
+
   function shadeStatusLabel(shade) {
     const st = effectiveShadeState(shade);
     const pos = effectiveShadePosition(shade);
-    const posText = pos != null ? pos + "%" : null;
+    const posText = shadeHasPosition(shade) && pos != null ? pos + "%" : null;
     if (st === "opening") return "Opening…";
     if (st === "closing") return "Closing…";
     if (st === "open") return posText ? posText + " · Open" : "Open";
@@ -1011,7 +1020,7 @@
 
   function averageShadePosition(shades) {
     const list = shades || windowShades;
-    const positioned = list.filter((s) => s.pos != null);
+    const positioned = list.filter((s) => shadeHasPosition(s));
     if (!positioned.length) return 50;
     let sum = 0;
     for (const shade of positioned) {
@@ -3102,6 +3111,11 @@
     return !!(tstatSession?.modeLockUntil > Date.now() && tstatSession.ids?.includes(Number(id)));
   }
 
+  function tstatFanModeLocked(id) {
+    const devLock = tstatFanModeLock.get(Number(id));
+    return !!(devLock?.until > Date.now());
+  }
+
   function reapplyTstatDeviceModeLocks() {
     const now = Date.now();
     for (const [id, lock] of tstatDeviceModeLock) {
@@ -3111,6 +3125,18 @@
       }
       const t = thermostats.find(x => x.i === id);
       if (t) t.tm = lock.mode;
+    }
+  }
+
+  function reapplyTstatFanModeLocks() {
+    const now = Date.now();
+    for (const [id, lock] of tstatFanModeLock) {
+      if (lock.until <= now) {
+        tstatFanModeLock.delete(id);
+        continue;
+      }
+      const t = thermostats.find(x => x.i === id);
+      if (t) t.fm = lock.mode;
     }
   }
 
@@ -3254,6 +3280,22 @@
       else if (key === "off") t.os = "idle";
       else if (key === "auto") t.os = "idle";
       tstatDeviceModeLock.set(id, { until: Date.now() + 4000, mode: key });
+    }
+    refreshOpenTstatQuickPopups();
+  }
+
+  function applyTstatFanModeOptimistic(ids, fm) {
+    const key = String(fm || "").toLowerCase();
+    for (const id of ids) {
+      const t = thermostats.find(x => x.i === id);
+      if (!t || !t.hasFm) continue;
+      t.fm = key;
+      const tm = String(t.tm || "").toLowerCase();
+      if (tm === "off") {
+        if (key === "on" || key === "circulate") t.os = "fan";
+        else if (key === "auto") t.os = "idle";
+      }
+      tstatFanModeLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, mode: key });
     }
     refreshOpenTstatQuickPopups();
   }
@@ -3570,11 +3612,11 @@
   function setFanMode(fm) {
     if (!tstatSession || !tstatSession.ids?.length) return;
     const ids = tstatSession.ids;
-    for (const id of ids) {
-      for (const t of thermostats) {
-        if (t.i !== id || !t.hasFm) continue;
-        t.fm = fm;
-        if (fm !== "on") continue;
+    applyTstatFanModeOptimistic(ids, fm);
+    if (fm === "on") {
+      for (const id of ids) {
+        const t = thermostats.find((x) => x.i === id);
+        if (!t?.hasFm) continue;
         if (!t.fs && deviceHasFanSpeed(t)) {
           const levels = supportedFanSpeeds(t);
           t.fs = levels.includes("medium") ? "medium" : levels[0] || "medium";
@@ -3590,6 +3632,7 @@
         if (t?.fs) sendCmd(id, "setFanSpeed", t.fs);
       }
     }
+    for (const id of ids) reconcileTstat(id);
   }
 
   function setFanSpeed(lv) {
@@ -4326,7 +4369,7 @@
     popup._openBtn = openBtn;
     popup._closeBtn = closeBtn;
 
-    const positioned = selectedShades.filter((s) => s.pos != null);
+    const positioned = selectedShades.filter((s) => shadeHasPosition(s));
     if (positioned.length) {
       const sliderWrap = ce("div", "shade-master-slider-wrap");
       const levelLabel = ce("span", "shade-level-label");
@@ -4384,7 +4427,7 @@
       popup._closeBtn.disabled = noneSelected;
     }
 
-    const positioned = selectedShades.filter((s) => s.pos != null || effectiveShadePosition(s) != null);
+    const positioned = selectedShades.filter((s) => shadeHasPosition(s));
     if (popup._slider && popup._levelLabel && positioned.length && !popup._slider.classList.contains("dragging")) {
       const pos = averageShadePosition(positioned);
       postCall("setSliderLevel", popup._slider, pos);
@@ -6351,6 +6394,7 @@
     rebuildOutletsByRoom();
     reapplySwitchOptimistic();
     reapplyTstatDeviceModeLocks();
+    reapplyTstatFanModeLocks();
     applyTstatSessionModeLock();
 
     repopulateThermoByRoom();
@@ -7271,7 +7315,7 @@
         applyTstatSetpoints(t, { hsp: d.hsp, csp: d.csp });
         if (d.temp != null) t.temp = Number(d.temp);
         if (d.hasFm != null) t.hasFm = d.hasFm;
-        if (d.fm != null) t.fm = d.fm;
+        if (d.fm != null && !tstatFanModeLocked(t.i)) t.fm = d.fm;
         if (d.hasFs != null) t.hasFs = d.hasFs;
         if (d.fs != null) t.fs = d.fs;
         updateClimateWidgets();
@@ -7605,7 +7649,7 @@
     for (const id of ids) {
       const shade = windowShades.find((s) => s.i === id);
       if (!shade) continue;
-      if (cmd === "setPosition" && shade.pos == null) continue;
+      if (cmd === "setPosition" && !shadeHasPosition(shade)) continue;
       shades.push(shade);
     }
     if (!shades.length) return;
@@ -7614,8 +7658,8 @@
     // immediate active/slider feedback (individual tiles still use opening/closing).
     for (const shade of shades) {
       let patch = {};
-      if (cmd === "open") patch = { st: "open", pos: shade.pos != null ? 100 : undefined };
-      else if (cmd === "close") patch = { st: "closed", pos: shade.pos != null ? 0 : undefined };
+      if (cmd === "open") patch = { st: "open", pos: shadeHasPosition(shade) ? 100 : undefined };
+      else if (cmd === "close") patch = { st: "closed", pos: shadeHasPosition(shade) ? 0 : undefined };
       else if (cmd === "setPosition") patch = { pos: Math.max(0, Math.min(100, Number(val))) };
       if (patch.st != null || patch.pos != null) setShadeOptimistic(shade.i, patch);
     }
@@ -8855,19 +8899,16 @@
     plus.textContent = "+";
     plus.setAttribute("aria-label", "Increase setpoint");
     const canAdjust = !!favoriteTstatTarget(t);
-    if (!canAdjust) {
-      minus.disabled = true;
-      plus.disabled = true;
-    } else {
-      minus.addEventListener("click", (e) => {
-        e.stopPropagation();
-        adjustFavoriteTstat(t.i, -1);
-      });
-      plus.addEventListener("click", (e) => {
-        e.stopPropagation();
-        adjustFavoriteTstat(t.i, 1);
-      });
-    }
+    minus.disabled = !canAdjust;
+    plus.disabled = !canAdjust;
+    minus.addEventListener("click", (e) => {
+      e.stopPropagation();
+      adjustFavoriteTstat(t.i, -1);
+    });
+    plus.addEventListener("click", (e) => {
+      e.stopPropagation();
+      adjustFavoriteTstat(t.i, 1);
+    });
     modeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       hapticTap();
@@ -11381,7 +11422,7 @@
           else if (name === "heatingSetpoint") applyTstatSetpoints(t, { hsp: val });
           else if (name === "coolingSetpoint") applyTstatSetpoints(t, { csp: val });
           else if (name === "temperature") { const n = Number(val); if (!isNaN(n)) t.temp = Math.round(n); }
-          else if (name === "thermostatFanMode") t.fm = val;
+          else if (name === "thermostatFanMode" && !tstatFanModeLocked(t.i)) t.fm = val;
           else if (name === "fanSpeed") t.fs = val;
           else return;
           updateClimateWidgets();
@@ -11960,7 +12001,7 @@
 
     const moving = shadeIsMoving(shade);
     const pos = effectiveShadePosition(shade);
-    const hasPos = shade.pos != null;
+    const hasPos = shadeHasPosition(shade);
     let levelLabel = null;
     let slider = null;
     if (hasPos) {
@@ -12007,7 +12048,7 @@
     actions.appendChild(openBtn);
     actions.appendChild(closeBtn);
     let stopBtn = null;
-    if (moving) {
+    if (shadeHasStop(shade)) {
       stopBtn = ce("button", "quick-lock-btn shade-btn shade-stop-btn");
       stopBtn.type = "button";
       stopBtn.innerHTML = SHADE_STOP_SVG + '<span class="quick-lock-btn-label">Stop</span>';
@@ -12040,6 +12081,7 @@
     rec.closeBtn.classList.toggle("moving", moving);
     rec.openBtn.disabled = moving;
     rec.closeBtn.disabled = moving;
+    if (rec.stopBtn) rec.stopBtn.classList.toggle("active", moving);
   }
 
   function updateFavoriteShadeTile(shade) {
