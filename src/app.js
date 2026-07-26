@@ -8327,6 +8327,668 @@
     return prevSig !== nextSig;
   }
 
+  // ---------- hub notifications (post.js; keeps post2 under hub limit) ----------
+  function pruneNotifSnoozeMap(map) {
+    const now = Date.now();
+    const next = {};
+    let changed = false;
+    for (const [id, until] of Object.entries(map || {})) {
+      const ts = Number(until);
+      if (!id || !Number.isFinite(ts) || ts <= now) {
+        changed = true;
+        continue;
+      }
+      next[id] = ts;
+    }
+    return { map: next, changed };
+  }
+
+  function isNotifSnoozed(id) {
+    if (!id) return false;
+    const pruned = pruneNotifSnoozeMap(loadNotifSnoozeMap());
+    if (pruned.changed) saveNotifSnoozeMap(pruned.map);
+    const until = Number(pruned.map[id]);
+    return Number.isFinite(until) && until > Date.now();
+  }
+
+  function snoozeNotificationLocal(id) {
+    if (!id) return;
+    const pruned = pruneNotifSnoozeMap(loadNotifSnoozeMap());
+    pruned.map[id] = Date.now() + NOTIF_SNOOZE_MS;
+    saveNotifSnoozeMap(pruned.map);
+    scheduleNotifSnoozeWake();
+  }
+
+  function clearNotifSnooze(id) {
+    if (!id) return;
+    const map = loadNotifSnoozeMap();
+    if (!(id in map)) return;
+    delete map[id];
+    saveNotifSnoozeMap(map);
+  }
+
+  function scheduleNotifSnoozeWake() {
+    if (notifSnoozeTimer) {
+      clearTimeout(notifSnoozeTimer);
+      notifSnoozeTimer = null;
+    }
+    const map = pruneNotifSnoozeMap(loadNotifSnoozeMap()).map;
+    let soonest = Infinity;
+    for (const until of Object.values(map)) {
+      const ts = Number(until);
+      if (Number.isFinite(ts) && ts < soonest) soonest = ts;
+    }
+    if (!Number.isFinite(soonest) || soonest === Infinity) return;
+    const delay = Math.max(250, soonest - Date.now() + 50);
+    notifSnoozeTimer = setTimeout(() => {
+      notifSnoozeTimer = null;
+      syncNotificationPopup();
+      scheduleNotifSnoozeWake();
+    }, delay);
+  }
+
+  function nextUnreadNotification() {
+    for (const item of hubNotifications) {
+      if (!item?.id) continue;
+      if (isNotifSnoozed(item.id)) continue;
+      return item;
+    }
+    return null;
+  }
+
+  function ensureNotificationPopup() {
+    if (notifPopup) return notifPopup;
+    const el = ce("div", "notification-popup");
+    notifPopup = el;
+    el.hidden = true;
+    el.setAttribute("role", "alertdialog");
+    el.setAttribute("aria-modal", "false");
+    el.setAttribute("aria-labelledby", "mld-notif-title");
+    el.setAttribute("aria-describedby", "mld-notif-msg");
+    const panel = ce("div", "notification-panel");
+    const title = ce("h2", "notification-title");
+    title.id = "mld-notif-title";
+    title.textContent = "Notification";
+    const from = ce("p", "notification-from");
+    from.hidden = true;
+    const msg = ce("p", "notification-msg");
+    msg.id = "mld-notif-msg";
+    const actions = ce("div", "notification-actions");
+    const closeBtn = ce("button", "notification-close");
+    closeBtn.type = "button";
+    closeBtn.textContent = "Close";
+    const ackBtn = ce("button", "notification-ack");
+    ackBtn.type = "button";
+    ackBtn.textContent = "Mark as Read";
+    actions.appendChild(closeBtn);
+    actions.appendChild(ackBtn);
+    panel.appendChild(title);
+    panel.appendChild(from);
+    panel.appendChild(msg);
+    panel.appendChild(actions);
+    el.appendChild(panel);
+    appendPopup(el);
+
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hapticTap();
+      const id = notifShowingId;
+      if (!id) return;
+      snoozeNotificationLocal(id);
+      if (notifLastSoundId === id) notifLastSoundId = null;
+      hideNotificationPopup();
+      syncNotificationPopup();
+    });
+    ackBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hapticTap();
+      void acknowledgeNotification(notifShowingId);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if (!el.classList.contains("open")) return;
+      e.preventDefault();
+      const id = notifShowingId;
+      if (!id || notifAckInFlight) return;
+      snoozeNotificationLocal(id);
+      if (notifLastSoundId === id) notifLastSoundId = null;
+      hideNotificationPopup();
+      syncNotificationPopup();
+    });
+
+    el._from = from;
+    el._msg = msg;
+    el._close = closeBtn;
+    el._ack = ackBtn;
+    return el;
+  }
+
+  function hideNotificationPopup() {
+    const popup = notifPopup || document.querySelector(".notification-popup");
+    if (!popup) return;
+    popup.hidden = true;
+    popup.classList.remove("open");
+    notifShowingId = null;
+  }
+
+  function unlockNotifAudio() {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return false;
+      if (!notifAudioCtx) notifAudioCtx = new AC();
+      if (notifAudioCtx.state === "suspended") void notifAudioCtx.resume();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function playNotifWebChime() {
+    try {
+      if (!unlockNotifAudio() || !notifAudioCtx) return false;
+      const ctx = notifAudioCtx;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.value = 0.0001;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const t = ctx.currentTime;
+      gain.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+      osc.start(t);
+      osc.stop(t + 0.5);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function dismissNotifChimeNotifications(tag) {
+    try {
+      if (!navigator.serviceWorker?.ready) return;
+      navigator.serviceWorker.ready.then((reg) => {
+        reg.getNotifications({ tag }).then((list) => {
+          for (const n of list) {
+            try { n.close(); } catch {}
+          }
+        }).catch(() => {});
+      }).catch(() => {});
+    } catch {}
+  }
+
+  function playNotificationOsSound(item) {
+    if (!cfg.enableNotifSound) return;
+    if (!item?.id || item.id === notifLastSoundId) return;
+    notifLastSoundId = item.id;
+
+    // Dashboard popup is foreground UI — Web Audio is reliable here. OS notifications
+    // are often silent while the page is focused, and closing them instantly blocked sound.
+    if (!document.hidden && playNotifWebChime()) return;
+
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") {
+      playNotifWebChime();
+      return;
+    }
+
+    const tag = "mld-notif-chime";
+    const title = "mDash";
+    const opts = {
+      body: " ",
+      tag,
+      renotify: true,
+      silent: false,
+      requireInteraction: false,
+    };
+    const dismissAfterMs = 1500;
+    const scheduleDismiss = () => {
+      setTimeout(() => dismissNotifChimeNotifications(tag), dismissAfterMs);
+    };
+    try {
+      if (navigator.serviceWorker?.ready) {
+        navigator.serviceWorker.ready.then((reg) => {
+          reg.showNotification(title, opts)
+            .then(() => scheduleDismiss())
+            .catch(() => {
+              try {
+                const n = new Notification(title, opts);
+                setTimeout(() => { try { n.close(); } catch {} }, dismissAfterMs);
+              } catch {
+                playNotifWebChime();
+              }
+            });
+        }).catch(() => {
+          try {
+            const n = new Notification(title, opts);
+            setTimeout(() => { try { n.close(); } catch {} }, dismissAfterMs);
+          } catch {
+            playNotifWebChime();
+          }
+        });
+      } else {
+        const n = new Notification(title, opts);
+        setTimeout(() => { try { n.close(); } catch {} }, dismissAfterMs);
+      }
+    } catch {
+      playNotifWebChime();
+    }
+  }
+
+  function showNotificationPopup(item) {
+    if (!item?.id) return;
+    if (isDashboardGateOpen()) return;
+    const popup = ensureNotificationPopup();
+    const changed = notifShowingId !== item.id;
+    notifShowingId = item.id;
+    popup._msg.textContent = String(item.text || "");
+    if (item.deviceName) {
+      popup._from.hidden = false;
+      popup._from.textContent = String(item.deviceName);
+    } else {
+      popup._from.hidden = true;
+      popup._from.textContent = "";
+    }
+    popup._close.disabled = notifAckInFlight;
+    popup._ack.disabled = notifAckInFlight;
+    popup.hidden = false;
+    popup.classList.add("open");
+    if (changed) playNotificationOsSound(item);
+  }
+
+  function syncNotificationPopup() {
+    if (isDashboardGateOpen()) {
+      hideNotificationPopup();
+      return;
+    }
+    const next = nextUnreadNotification();
+    if (!next) {
+      hideNotificationPopup();
+      scheduleNotifSnoozeWake();
+      return;
+    }
+    showNotificationPopup(next);
+    scheduleNotifSnoozeWake();
+  }
+
+  function applyNotificationsFromData(d) {
+    const list = Array.isArray(d?.notifications) ? d.notifications : [];
+    hubNotifications = list.map((n) => ({
+      id: n?.id != null ? String(n.id) : "",
+      text: n?.text != null ? String(n.text) : "",
+      ts: Number(n?.ts) || 0,
+      deviceId: n?.deviceId != null ? Number(n.deviceId) : null,
+      deviceName: n?.deviceName != null ? String(n.deviceName) : "",
+    })).filter((n) => n.id && n.text);
+    const ids = Array.isArray(d?.notificationDeviceIds) ? d.notificationDeviceIds : [];
+    if (ids.length || d?.notificationDeviceIds != null) {
+      notificationDeviceIds = new Set(ids.map(Number).filter((n) => Number.isFinite(n)));
+    }
+    const alive = new Set(hubNotifications.map((n) => n.id));
+    const snooze = loadNotifSnoozeMap();
+    let snoozeChanged = false;
+    for (const id of Object.keys(snooze)) {
+      if (!alive.has(id)) {
+        delete snooze[id];
+        snoozeChanged = true;
+      }
+    }
+    if (snoozeChanged) saveNotifSnoozeMap(snooze);
+    if (notifShowingId && !alive.has(notifShowingId)) notifShowingId = null;
+    syncNotificationPopup();
+    applyTileNotificationsFromData(d);
+  }
+
+  function applyTileNotificationsFromData(d) {
+    if (!d || (d.tileNotifications == null && d.tileNotificationDeviceIds == null)) return;
+    const list = Array.isArray(d?.tileNotifications) ? d.tileNotifications : [];
+    hubTileNotifications = list.map((n) => ({
+      id: n?.id != null ? String(n.id) : "",
+      text: n?.text != null ? String(n.text) : "",
+      ts: Number(n?.ts) || 0,
+      deviceId: n?.deviceId != null ? Number(n.deviceId) : null,
+      deviceName: n?.deviceName != null ? String(n.deviceName) : "",
+    })).filter((n) => n.id && n.text);
+    hubTileNotifications.sort((a, b) => b.ts - a.ts);
+    const ids = Array.isArray(d?.tileNotificationDeviceIds) ? d.tileNotificationDeviceIds : [];
+    if (ids.length || d?.tileNotificationDeviceIds != null) {
+      tileNotificationDeviceIds = new Set(ids.map(Number).filter((n) => Number.isFinite(n)));
+    }
+    refreshNotificationTiles();
+  }
+
+  function formatNotificationTileTime(ts) {
+    const n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    try {
+      return new Date(n).toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+    } catch {
+      return "";
+    }
+  }
+
+  function refreshNotificationTiles() {
+    const root = tabMode ? favoritesPersistEl : currentBody();
+    if (!root) return;
+    for (const card of root.querySelectorAll(".fav-notif-card")) {
+      paintNotificationTileCard(card);
+    }
+  }
+
+  function paintNotificationTileCard(cardEl) {
+    if (!cardEl?._list) return;
+    const listEl = cardEl._list;
+    listEl.replaceChildren();
+    const items = hubTileNotifications.slice().sort((a, b) => b.ts - a.ts);
+    if (!items.length) {
+      const empty = ce("li", "fav-notif-empty");
+      empty.textContent = "No notifications";
+      listEl.appendChild(empty);
+      return;
+    }
+    for (const item of items) {
+      const row = ce("li", "fav-notif-item");
+      const bullet = ce("span", "fav-notif-bullet");
+      bullet.setAttribute("aria-hidden", "true");
+      bullet.textContent = "\u2022";
+      const content = ce("div", "fav-notif-content");
+      const text = ce("div", "fav-notif-text");
+      text.textContent = item.text;
+      const meta = ce("div", "fav-notif-meta");
+      const parts = [];
+      if (item.deviceName) parts.push(item.deviceName);
+      const when = formatNotificationTileTime(item.ts);
+      if (when) parts.push(when);
+      meta.textContent = parts.join(" \u00b7 ");
+      content.appendChild(text);
+      content.appendChild(meta);
+      const dismiss = ce("button", "fav-notif-dismiss");
+      dismiss.type = "button";
+      dismiss.setAttribute("aria-label", "Mark as read");
+      dismiss.textContent = "\u00d7";
+      dismiss.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void acknowledgeTileNotification(item.id, dismiss);
+      });
+      row.appendChild(bullet);
+      row.appendChild(content);
+      row.appendChild(dismiss);
+      listEl.appendChild(row);
+    }
+  }
+
+  function makeNotificationsFavoriteCard(card) {
+    const el = ce("article", "fav-notif-card");
+    el.dataset.notifId = card.id;
+    el.setAttribute("aria-label", "Notifications");
+
+    const head = ce("div", "fav-notif-head");
+    const title = ce("div", "fav-notif-title");
+    title.textContent = "Notifications";
+    head.appendChild(title);
+    el.appendChild(head);
+
+    const actions = ce("div", "fav-notif-actions");
+    const menuBtn = ce("button", "fav-notif-menu-btn");
+    menuBtn.type = "button";
+    menuBtn.setAttribute("aria-label", "Notifications tile options");
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.textContent = "\u22ef";
+    const menu = ce("div", "fav-notif-menu");
+    menu.hidden = true;
+    menu.setAttribute("role", "menu");
+    const delBtn = ce("button", "fav-notif-menu-item danger");
+    delBtn.type = "button";
+    delBtn.setAttribute("role", "menuitem");
+    delBtn.textContent = "Delete";
+    delBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      closeFavTileOverflowMenu(menu, menuBtn);
+      const ok = await confirmAction({ message: "Delete this notifications tile?", confirmLabel: "Delete", danger: true });
+      if (ok) await deleteNotificationCard(card.id);
+    });
+    menu.appendChild(delBtn);
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFavTileOverflowMenu(menuBtn, menu);
+    });
+    actions.appendChild(menuBtn);
+    actions.appendChild(menu);
+    el.appendChild(actions);
+
+    const body = ce("div", "fav-notif-body");
+    const list = ce("ul", "fav-notif-list");
+    el._list = list;
+    body.appendChild(list);
+    el.appendChild(body);
+    paintNotificationTileCard(el);
+    return el;
+  }
+
+  async function notificationCardsApi(payload) {
+    try {
+      const r = await fetch(withToken("notification-cards"), {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        flash(String(body?.error || "Could not save notifications tile"), true);
+        return null;
+      }
+      applyEmbedConfigFromData({ config: body }, { allowDuringReorder: true });
+      return body;
+    } catch {
+      flash("Could not save notifications tile", true);
+      return null;
+    }
+  }
+
+  async function deleteNotificationCard(id) {
+    const body = await notificationCardsApi({ action: "delete", id });
+    if (!body) return false;
+    if (currentCategory() === "favorites") renderFavoritesPopup();
+    updateQuickNavVisibility();
+    flash("Notifications tile deleted");
+    return true;
+  }
+
+  async function addNotificationTile() {
+    if (notificationCards.length >= MAX_NOTIFICATION_CARDS) {
+      flash("Notifications tile limit reached (" + MAX_NOTIFICATION_CARDS + ")", true);
+      return false;
+    }
+    const body = await notificationCardsApi({ action: "create", size: "tall" });
+    if (!body) return false;
+    if (currentCategory() === "favorites") renderFavoritesPopup();
+    updateQuickNavVisibility();
+    flash("Notifications tile added");
+    return true;
+  }
+
+  async function fetchNotifications() {
+    if (isDashboardGateOpen()) return;
+    if (notifFetchInFlight) {
+      notifFetchQueued = true;
+      return notifFetchInFlight;
+    }
+    notifFetchInFlight = (async () => {
+      try {
+        const r = await fetch(withToken("notifications"), {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j) applyNotificationsFromData(j);
+      } catch {
+        // Next poll /data still carries notifications as fallback.
+      } finally {
+        notifFetchInFlight = null;
+        if (notifFetchQueued) {
+          notifFetchQueued = false;
+          void fetchNotifications();
+        }
+      }
+    })();
+    return notifFetchInFlight;
+  }
+
+  function scheduleNotificationFetchFromWs() {
+    // eventsocket can beat the SmartApp subscribe handler; brief delay lets the
+    // hub queue update before we pull the slim /notifications payload.
+    if (notifWsFetchTimer) clearTimeout(notifWsFetchTimer);
+    notifWsFetchTimer = setTimeout(() => {
+      notifWsFetchTimer = null;
+      void fetchNotifications();
+      void fetchTileNotifications();
+    }, 180);
+  }
+
+  function scheduleTileNotificationFetchFromWs() {
+    if (notifTileWsFetchTimer) clearTimeout(notifTileWsFetchTimer);
+    notifTileWsFetchTimer = setTimeout(() => {
+      notifTileWsFetchTimer = null;
+      void fetchTileNotifications();
+    }, 180);
+  }
+
+  async function fetchTileNotifications() {
+    if (isDashboardGateOpen()) return;
+    if (!notificationCards.length && !tileNotificationDeviceIds.size) return;
+    if (notifTileFetchInFlight) {
+      notifTileFetchQueued = true;
+      return notifTileFetchInFlight;
+    }
+    notifTileFetchInFlight = (async () => {
+      try {
+        const r = await fetch(withToken("tile-notifications"), {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j) applyTileNotificationsFromData(j);
+      } catch {
+        // Next poll /data still carries tile notifications as fallback.
+      } finally {
+        notifTileFetchInFlight = null;
+        if (notifTileFetchQueued) {
+          notifTileFetchQueued = false;
+          void fetchTileNotifications();
+        }
+      }
+    })();
+    return notifTileFetchInFlight;
+  }
+
+  async function acknowledgeTileNotification(id, dismissBtn) {
+    if (!id || notifTileAckIds.has(id)) return;
+    notifTileAckIds.add(id);
+    if (dismissBtn) {
+      dismissBtn.disabled = true;
+      dismissBtn.setAttribute("aria-busy", "true");
+    }
+    try {
+      const r = await fetch(withToken("tile-notifications/ack"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ id }),
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.ok) {
+        flash((j && j.error) ? String(j.error) : "Could not mark as read", true);
+        return;
+      }
+      if (Array.isArray(j.tileNotifications)) {
+        applyTileNotificationsFromData({
+          tileNotifications: j.tileNotifications,
+          tileNotificationDeviceIds: [...tileNotificationDeviceIds],
+        });
+      } else {
+        hubTileNotifications = hubTileNotifications.filter((n) => n.id !== id);
+        refreshNotificationTiles();
+      }
+    } catch {
+      flash("Could not mark as read", true);
+    } finally {
+      notifTileAckIds.delete(id);
+      if (dismissBtn && dismissBtn.isConnected) {
+        dismissBtn.disabled = false;
+        dismissBtn.removeAttribute("aria-busy");
+      }
+    }
+  }
+
+  async function acknowledgeNotification(id) {
+    if (!id || notifAckInFlight) return;
+    notifAckInFlight = true;
+    const popup = ensureNotificationPopup();
+    popup._close.disabled = true;
+    popup._ack.disabled = true;
+    try {
+      const r = await fetch(withToken("notifications/ack"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ id }),
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.ok) {
+        flash((j && j.error) ? String(j.error) : "Could not mark as read", true);
+        return;
+      }
+      clearNotifSnooze(id);
+      if (Array.isArray(j.notifications)) {
+        applyNotificationsFromData({
+          notifications: j.notifications,
+          notificationDeviceIds: [...notificationDeviceIds],
+        });
+      } else {
+        hubNotifications = hubNotifications.filter((n) => n.id !== id);
+        syncNotificationPopup();
+      }
+    } catch {
+      flash("Could not mark as read", true);
+    } finally {
+      notifAckInFlight = false;
+      if (notifPopup) {
+        notifPopup._close.disabled = false;
+        notifPopup._ack.disabled = false;
+      }
+      syncNotificationPopup();
+    }
+  }
+
+  async function requestNotifSoundPermission() {
+    if (typeof Notification === "undefined") {
+      flash("Notification sounds are not supported here", true);
+      return false;
+    }
+    if (Notification.permission === "granted") return true;
+    if (Notification.permission === "denied") {
+      flash("Notification permission blocked in browser settings", true);
+      return false;
+    }
+    try {
+      const result = await Notification.requestPermission();
+      return result === "granted";
+    } catch {
+      flash("Could not request notification permission", true);
+      return false;
+    }
+  }
+
+
+
+
   // __MLD_SPLIT2__
 
   function favoritesPopupSignature() {
@@ -10787,664 +11449,6 @@
       popup.classList.add("open");
       popup._ok.focus();
     });
-  }
-
-  function pruneNotifSnoozeMap(map) {
-    const now = Date.now();
-    const next = {};
-    let changed = false;
-    for (const [id, until] of Object.entries(map || {})) {
-      const ts = Number(until);
-      if (!id || !Number.isFinite(ts) || ts <= now) {
-        changed = true;
-        continue;
-      }
-      next[id] = ts;
-    }
-    return { map: next, changed };
-  }
-
-  function isNotifSnoozed(id) {
-    if (!id) return false;
-    const pruned = pruneNotifSnoozeMap(loadNotifSnoozeMap());
-    if (pruned.changed) saveNotifSnoozeMap(pruned.map);
-    const until = Number(pruned.map[id]);
-    return Number.isFinite(until) && until > Date.now();
-  }
-
-  function snoozeNotificationLocal(id) {
-    if (!id) return;
-    const pruned = pruneNotifSnoozeMap(loadNotifSnoozeMap());
-    pruned.map[id] = Date.now() + NOTIF_SNOOZE_MS;
-    saveNotifSnoozeMap(pruned.map);
-    scheduleNotifSnoozeWake();
-  }
-
-  function clearNotifSnooze(id) {
-    if (!id) return;
-    const map = loadNotifSnoozeMap();
-    if (!(id in map)) return;
-    delete map[id];
-    saveNotifSnoozeMap(map);
-  }
-
-  function scheduleNotifSnoozeWake() {
-    if (notifSnoozeTimer) {
-      clearTimeout(notifSnoozeTimer);
-      notifSnoozeTimer = null;
-    }
-    const map = pruneNotifSnoozeMap(loadNotifSnoozeMap()).map;
-    let soonest = Infinity;
-    for (const until of Object.values(map)) {
-      const ts = Number(until);
-      if (Number.isFinite(ts) && ts < soonest) soonest = ts;
-    }
-    if (!Number.isFinite(soonest) || soonest === Infinity) return;
-    const delay = Math.max(250, soonest - Date.now() + 50);
-    notifSnoozeTimer = setTimeout(() => {
-      notifSnoozeTimer = null;
-      syncNotificationPopup();
-      scheduleNotifSnoozeWake();
-    }, delay);
-  }
-
-  function nextUnreadNotification() {
-    for (const item of hubNotifications) {
-      if (!item?.id) continue;
-      if (isNotifSnoozed(item.id)) continue;
-      return item;
-    }
-    return null;
-  }
-
-  function ensureNotificationPopup() {
-    if (notifPopup) return notifPopup;
-    const el = ce("div", "notification-popup");
-    notifPopup = el;
-    el.hidden = true;
-    el.setAttribute("role", "alertdialog");
-    el.setAttribute("aria-modal", "false");
-    el.setAttribute("aria-labelledby", "mld-notif-title");
-    el.setAttribute("aria-describedby", "mld-notif-msg");
-    const panel = ce("div", "notification-panel");
-    const title = ce("h2", "notification-title");
-    title.id = "mld-notif-title";
-    title.textContent = "Notification";
-    const from = ce("p", "notification-from");
-    from.hidden = true;
-    const msg = ce("p", "notification-msg");
-    msg.id = "mld-notif-msg";
-    const actions = ce("div", "notification-actions");
-    const closeBtn = ce("button", "notification-close");
-    closeBtn.type = "button";
-    closeBtn.textContent = "Close";
-    const ackBtn = ce("button", "notification-ack");
-    ackBtn.type = "button";
-    ackBtn.textContent = "Mark as Read";
-    actions.appendChild(closeBtn);
-    actions.appendChild(ackBtn);
-    panel.appendChild(title);
-    panel.appendChild(from);
-    panel.appendChild(msg);
-    panel.appendChild(actions);
-    el.appendChild(panel);
-    appendPopup(el);
-
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      hapticTap();
-      const id = notifShowingId;
-      if (!id) return;
-      snoozeNotificationLocal(id);
-      if (notifLastSoundId === id) notifLastSoundId = null;
-      hideNotificationPopup();
-      syncNotificationPopup();
-    });
-    ackBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      hapticTap();
-      void acknowledgeNotification(notifShowingId);
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key !== "Escape") return;
-      if (!el.classList.contains("open")) return;
-      e.preventDefault();
-      const id = notifShowingId;
-      if (!id || notifAckInFlight) return;
-      snoozeNotificationLocal(id);
-      if (notifLastSoundId === id) notifLastSoundId = null;
-      hideNotificationPopup();
-      syncNotificationPopup();
-    });
-
-    el._from = from;
-    el._msg = msg;
-    el._close = closeBtn;
-    el._ack = ackBtn;
-    return el;
-  }
-
-  function hideNotificationPopup() {
-    const popup = notifPopup || document.querySelector(".notification-popup");
-    if (!popup) return;
-    popup.hidden = true;
-    popup.classList.remove("open");
-    notifShowingId = null;
-  }
-
-  function unlockNotifAudio() {
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return false;
-      if (!notifAudioCtx) notifAudioCtx = new AC();
-      if (notifAudioCtx.state === "suspended") void notifAudioCtx.resume();
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function playNotifWebChime() {
-    try {
-      if (!unlockNotifAudio() || !notifAudioCtx) return false;
-      const ctx = notifAudioCtx;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = 880;
-      gain.gain.value = 0.0001;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      const t = ctx.currentTime;
-      gain.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
-      osc.start(t);
-      osc.stop(t + 0.5);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function dismissNotifChimeNotifications(tag) {
-    try {
-      if (!navigator.serviceWorker?.ready) return;
-      navigator.serviceWorker.ready.then((reg) => {
-        reg.getNotifications({ tag }).then((list) => {
-          for (const n of list) {
-            try { n.close(); } catch {}
-          }
-        }).catch(() => {});
-      }).catch(() => {});
-    } catch {}
-  }
-
-  function playNotificationOsSound(item) {
-    if (!cfg.enableNotifSound) return;
-    if (!item?.id || item.id === notifLastSoundId) return;
-    notifLastSoundId = item.id;
-
-    // Dashboard popup is foreground UI — Web Audio is reliable here. OS notifications
-    // are often silent while the page is focused, and closing them instantly blocked sound.
-    if (!document.hidden && playNotifWebChime()) return;
-
-    if (typeof Notification === "undefined" || Notification.permission !== "granted") {
-      playNotifWebChime();
-      return;
-    }
-
-    const tag = "mld-notif-chime";
-    const title = "mDash";
-    const opts = {
-      body: " ",
-      tag,
-      renotify: true,
-      silent: false,
-      requireInteraction: false,
-    };
-    const dismissAfterMs = 1500;
-    const scheduleDismiss = () => {
-      setTimeout(() => dismissNotifChimeNotifications(tag), dismissAfterMs);
-    };
-    try {
-      if (navigator.serviceWorker?.ready) {
-        navigator.serviceWorker.ready.then((reg) => {
-          reg.showNotification(title, opts)
-            .then(() => scheduleDismiss())
-            .catch(() => {
-              try {
-                const n = new Notification(title, opts);
-                setTimeout(() => { try { n.close(); } catch {} }, dismissAfterMs);
-              } catch {
-                playNotifWebChime();
-              }
-            });
-        }).catch(() => {
-          try {
-            const n = new Notification(title, opts);
-            setTimeout(() => { try { n.close(); } catch {} }, dismissAfterMs);
-          } catch {
-            playNotifWebChime();
-          }
-        });
-      } else {
-        const n = new Notification(title, opts);
-        setTimeout(() => { try { n.close(); } catch {} }, dismissAfterMs);
-      }
-    } catch {
-      playNotifWebChime();
-    }
-  }
-
-  function showNotificationPopup(item) {
-    if (!item?.id) return;
-    if (isDashboardGateOpen()) return;
-    const popup = ensureNotificationPopup();
-    const changed = notifShowingId !== item.id;
-    notifShowingId = item.id;
-    popup._msg.textContent = String(item.text || "");
-    if (item.deviceName) {
-      popup._from.hidden = false;
-      popup._from.textContent = String(item.deviceName);
-    } else {
-      popup._from.hidden = true;
-      popup._from.textContent = "";
-    }
-    popup._close.disabled = notifAckInFlight;
-    popup._ack.disabled = notifAckInFlight;
-    popup.hidden = false;
-    popup.classList.add("open");
-    if (changed) playNotificationOsSound(item);
-  }
-
-  function syncNotificationPopup() {
-    if (isDashboardGateOpen()) {
-      hideNotificationPopup();
-      return;
-    }
-    const next = nextUnreadNotification();
-    if (!next) {
-      hideNotificationPopup();
-      scheduleNotifSnoozeWake();
-      return;
-    }
-    showNotificationPopup(next);
-    scheduleNotifSnoozeWake();
-  }
-
-  function applyNotificationsFromData(d) {
-    const list = Array.isArray(d?.notifications) ? d.notifications : [];
-    hubNotifications = list.map((n) => ({
-      id: n?.id != null ? String(n.id) : "",
-      text: n?.text != null ? String(n.text) : "",
-      ts: Number(n?.ts) || 0,
-      deviceId: n?.deviceId != null ? Number(n.deviceId) : null,
-      deviceName: n?.deviceName != null ? String(n.deviceName) : "",
-    })).filter((n) => n.id && n.text);
-    const ids = Array.isArray(d?.notificationDeviceIds) ? d.notificationDeviceIds : [];
-    if (ids.length || d?.notificationDeviceIds != null) {
-      notificationDeviceIds = new Set(ids.map(Number).filter((n) => Number.isFinite(n)));
-    }
-    const alive = new Set(hubNotifications.map((n) => n.id));
-    const snooze = loadNotifSnoozeMap();
-    let snoozeChanged = false;
-    for (const id of Object.keys(snooze)) {
-      if (!alive.has(id)) {
-        delete snooze[id];
-        snoozeChanged = true;
-      }
-    }
-    if (snoozeChanged) saveNotifSnoozeMap(snooze);
-    if (notifShowingId && !alive.has(notifShowingId)) notifShowingId = null;
-    syncNotificationPopup();
-    applyTileNotificationsFromData(d);
-  }
-
-  function applyTileNotificationsFromData(d) {
-    if (!d || (d.tileNotifications == null && d.tileNotificationDeviceIds == null)) return;
-    const list = Array.isArray(d?.tileNotifications) ? d.tileNotifications : [];
-    hubTileNotifications = list.map((n) => ({
-      id: n?.id != null ? String(n.id) : "",
-      text: n?.text != null ? String(n.text) : "",
-      ts: Number(n?.ts) || 0,
-      deviceId: n?.deviceId != null ? Number(n.deviceId) : null,
-      deviceName: n?.deviceName != null ? String(n.deviceName) : "",
-    })).filter((n) => n.id && n.text);
-    hubTileNotifications.sort((a, b) => b.ts - a.ts);
-    const ids = Array.isArray(d?.tileNotificationDeviceIds) ? d.tileNotificationDeviceIds : [];
-    if (ids.length || d?.tileNotificationDeviceIds != null) {
-      tileNotificationDeviceIds = new Set(ids.map(Number).filter((n) => Number.isFinite(n)));
-    }
-    refreshNotificationTiles();
-  }
-
-  function formatNotificationTileTime(ts) {
-    const n = Number(ts);
-    if (!Number.isFinite(n) || n <= 0) return "";
-    try {
-      return new Date(n).toLocaleString([], {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      });
-    } catch {
-      return "";
-    }
-  }
-
-  function refreshNotificationTiles() {
-    const root = tabMode ? favoritesPersistEl : currentBody();
-    if (!root) return;
-    for (const card of root.querySelectorAll(".fav-notif-card")) {
-      paintNotificationTileCard(card);
-    }
-  }
-
-  function paintNotificationTileCard(cardEl) {
-    if (!cardEl?._list) return;
-    const listEl = cardEl._list;
-    listEl.replaceChildren();
-    const items = hubTileNotifications.slice().sort((a, b) => b.ts - a.ts);
-    if (!items.length) {
-      const empty = ce("li", "fav-notif-empty");
-      empty.textContent = "No notifications";
-      listEl.appendChild(empty);
-      return;
-    }
-    for (const item of items) {
-      const row = ce("li", "fav-notif-item");
-      const bullet = ce("span", "fav-notif-bullet");
-      bullet.setAttribute("aria-hidden", "true");
-      bullet.textContent = "\u2022";
-      const content = ce("div", "fav-notif-content");
-      const text = ce("div", "fav-notif-text");
-      text.textContent = item.text;
-      const meta = ce("div", "fav-notif-meta");
-      const parts = [];
-      if (item.deviceName) parts.push(item.deviceName);
-      const when = formatNotificationTileTime(item.ts);
-      if (when) parts.push(when);
-      meta.textContent = parts.join(" \u00b7 ");
-      content.appendChild(text);
-      content.appendChild(meta);
-      const dismiss = ce("button", "fav-notif-dismiss");
-      dismiss.type = "button";
-      dismiss.setAttribute("aria-label", "Mark as read");
-      dismiss.textContent = "\u00d7";
-      dismiss.addEventListener("click", (e) => {
-        e.stopPropagation();
-        void acknowledgeTileNotification(item.id, dismiss);
-      });
-      row.appendChild(bullet);
-      row.appendChild(content);
-      row.appendChild(dismiss);
-      listEl.appendChild(row);
-    }
-  }
-
-  function makeNotificationsFavoriteCard(card) {
-    const el = ce("article", "fav-notif-card");
-    el.dataset.notifId = card.id;
-    el.setAttribute("aria-label", "Notifications");
-
-    const head = ce("div", "fav-notif-head");
-    const title = ce("div", "fav-notif-title");
-    title.textContent = "Notifications";
-    head.appendChild(title);
-    el.appendChild(head);
-
-    const actions = ce("div", "fav-notif-actions");
-    const menuBtn = ce("button", "fav-notif-menu-btn");
-    menuBtn.type = "button";
-    menuBtn.setAttribute("aria-label", "Notifications tile options");
-    menuBtn.setAttribute("aria-haspopup", "menu");
-    menuBtn.textContent = "\u22ef";
-    const menu = ce("div", "fav-notif-menu");
-    menu.hidden = true;
-    menu.setAttribute("role", "menu");
-    const delBtn = ce("button", "fav-notif-menu-item danger");
-    delBtn.type = "button";
-    delBtn.setAttribute("role", "menuitem");
-    delBtn.textContent = "Delete";
-    delBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      closeFavTileOverflowMenu(menu, menuBtn);
-      const ok = await confirmAction({ message: "Delete this notifications tile?", confirmLabel: "Delete", danger: true });
-      if (ok) await deleteNotificationCard(card.id);
-    });
-    menu.appendChild(delBtn);
-    menuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleFavTileOverflowMenu(menuBtn, menu);
-    });
-    actions.appendChild(menuBtn);
-    actions.appendChild(menu);
-    el.appendChild(actions);
-
-    const body = ce("div", "fav-notif-body");
-    const list = ce("ul", "fav-notif-list");
-    el._list = list;
-    body.appendChild(list);
-    el.appendChild(body);
-    paintNotificationTileCard(el);
-    return el;
-  }
-
-  async function notificationCardsApi(payload) {
-    try {
-      const r = await fetch(withToken("notification-cards"), {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        flash(String(body?.error || "Could not save notifications tile"), true);
-        return null;
-      }
-      applyEmbedConfigFromData({ config: body }, { allowDuringReorder: true });
-      return body;
-    } catch {
-      flash("Could not save notifications tile", true);
-      return null;
-    }
-  }
-
-  async function deleteNotificationCard(id) {
-    const body = await notificationCardsApi({ action: "delete", id });
-    if (!body) return false;
-    if (currentCategory() === "favorites") renderFavoritesPopup();
-    updateQuickNavVisibility();
-    flash("Notifications tile deleted");
-    return true;
-  }
-
-  async function addNotificationTile() {
-    if (notificationCards.length >= MAX_NOTIFICATION_CARDS) {
-      flash("Notifications tile limit reached (" + MAX_NOTIFICATION_CARDS + ")", true);
-      return false;
-    }
-    const body = await notificationCardsApi({ action: "create", size: "tall" });
-    if (!body) return false;
-    if (currentCategory() === "favorites") renderFavoritesPopup();
-    updateQuickNavVisibility();
-    flash("Notifications tile added");
-    return true;
-  }
-
-  async function fetchNotifications() {
-    if (isDashboardGateOpen()) return;
-    if (notifFetchInFlight) {
-      notifFetchQueued = true;
-      return notifFetchInFlight;
-    }
-    notifFetchInFlight = (async () => {
-      try {
-        const r = await fetch(withToken("notifications"), {
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-        });
-        const j = await r.json().catch(() => null);
-        if (r.ok && j) applyNotificationsFromData(j);
-      } catch {
-        // Next poll /data still carries notifications as fallback.
-      } finally {
-        notifFetchInFlight = null;
-        if (notifFetchQueued) {
-          notifFetchQueued = false;
-          void fetchNotifications();
-        }
-      }
-    })();
-    return notifFetchInFlight;
-  }
-
-  function scheduleNotificationFetchFromWs() {
-    // eventsocket can beat the SmartApp subscribe handler; brief delay lets the
-    // hub queue update before we pull the slim /notifications payload.
-    if (notifWsFetchTimer) clearTimeout(notifWsFetchTimer);
-    notifWsFetchTimer = setTimeout(() => {
-      notifWsFetchTimer = null;
-      void fetchNotifications();
-      void fetchTileNotifications();
-    }, 180);
-  }
-
-  function scheduleTileNotificationFetchFromWs() {
-    if (notifTileWsFetchTimer) clearTimeout(notifTileWsFetchTimer);
-    notifTileWsFetchTimer = setTimeout(() => {
-      notifTileWsFetchTimer = null;
-      void fetchTileNotifications();
-    }, 180);
-  }
-
-  async function fetchTileNotifications() {
-    if (isDashboardGateOpen()) return;
-    if (!notificationCards.length && !tileNotificationDeviceIds.size) return;
-    if (notifTileFetchInFlight) {
-      notifTileFetchQueued = true;
-      return notifTileFetchInFlight;
-    }
-    notifTileFetchInFlight = (async () => {
-      try {
-        const r = await fetch(withToken("tile-notifications"), {
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-        });
-        const j = await r.json().catch(() => null);
-        if (r.ok && j) applyTileNotificationsFromData(j);
-      } catch {
-        // Next poll /data still carries tile notifications as fallback.
-      } finally {
-        notifTileFetchInFlight = null;
-        if (notifTileFetchQueued) {
-          notifTileFetchQueued = false;
-          void fetchTileNotifications();
-        }
-      }
-    })();
-    return notifTileFetchInFlight;
-  }
-
-  async function acknowledgeTileNotification(id, dismissBtn) {
-    if (!id || notifTileAckIds.has(id)) return;
-    notifTileAckIds.add(id);
-    if (dismissBtn) {
-      dismissBtn.disabled = true;
-      dismissBtn.setAttribute("aria-busy", "true");
-    }
-    try {
-      const r = await fetch(withToken("tile-notifications/ack"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ id }),
-        cache: "no-store",
-      });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j?.ok) {
-        flash((j && j.error) ? String(j.error) : "Could not mark as read", true);
-        return;
-      }
-      if (Array.isArray(j.tileNotifications)) {
-        applyTileNotificationsFromData({
-          tileNotifications: j.tileNotifications,
-          tileNotificationDeviceIds: [...tileNotificationDeviceIds],
-        });
-      } else {
-        hubTileNotifications = hubTileNotifications.filter((n) => n.id !== id);
-        refreshNotificationTiles();
-      }
-    } catch {
-      flash("Could not mark as read", true);
-    } finally {
-      notifTileAckIds.delete(id);
-      if (dismissBtn && dismissBtn.isConnected) {
-        dismissBtn.disabled = false;
-        dismissBtn.removeAttribute("aria-busy");
-      }
-    }
-  }
-
-  async function acknowledgeNotification(id) {
-    if (!id || notifAckInFlight) return;
-    notifAckInFlight = true;
-    const popup = ensureNotificationPopup();
-    popup._close.disabled = true;
-    popup._ack.disabled = true;
-    try {
-      const r = await fetch(withToken("notifications/ack"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: JSON.stringify({ id }),
-        cache: "no-store",
-      });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j?.ok) {
-        flash((j && j.error) ? String(j.error) : "Could not mark as read", true);
-        return;
-      }
-      clearNotifSnooze(id);
-      if (Array.isArray(j.notifications)) {
-        applyNotificationsFromData({
-          notifications: j.notifications,
-          notificationDeviceIds: [...notificationDeviceIds],
-        });
-      } else {
-        hubNotifications = hubNotifications.filter((n) => n.id !== id);
-        syncNotificationPopup();
-      }
-    } catch {
-      flash("Could not mark as read", true);
-    } finally {
-      notifAckInFlight = false;
-      if (notifPopup) {
-        notifPopup._close.disabled = false;
-        notifPopup._ack.disabled = false;
-      }
-      syncNotificationPopup();
-    }
-  }
-
-  async function requestNotifSoundPermission() {
-    if (typeof Notification === "undefined") {
-      flash("Notification sounds are not supported here", true);
-      return false;
-    }
-    if (Notification.permission === "granted") return true;
-    if (Notification.permission === "denied") {
-      flash("Notification permission blocked in browser settings", true);
-      return false;
-    }
-    try {
-      const result = await Notification.requestPermission();
-      return result === "granted";
-    } catch {
-      flash("Could not request notification permission", true);
-      return false;
-    }
   }
 
   async function tapAllOn() {

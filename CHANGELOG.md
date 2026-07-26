@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.54
+
+- **Fix:** rebalance JS upload chunks so `mld-app-post2.js` stays under the hub
+  124 KB File Manager limit (hub notification popup code moved to `mld-app-post.js`).
+
 ## 0.3.53
 
 - **HTML tiles:** zoom range extended to include **50%** (now 50%–150%).
