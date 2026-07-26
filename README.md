@@ -311,23 +311,32 @@ other apps can send messages to the dashboard.
 
 1. Install/update Modern Dashboard (HPM installs the mDash Notifications driver).
 2. In **Apps → Modern Dashboard → Notifications**, tap
-   **Create mDash Notifications device** (optionally set a name first).
-3. In Rule Machine (or another app), send a notification to that device.
+   **Create popup mDash Notifications device** and/or
+   **Create tile mDash Notifications device** (optionally set a name first).
+3. Assign devices to **Popup notification devices** and/or **Tile notification devices**.
+4. In Rule Machine (or another app), send a notification to the appropriate device.
 
-The created device is a child of the app and is selected in the Notification
-devices list when you create it. You can rename or remove it under **Devices** like
-any other device, remove it from the dashboard picker, or add other
-`capability.notification` devices; Done no longer re-adds a removed child.
+Each **Create** button adds a separate mDash Notifications child and selects it in
+the matching picker. A device in both pickers is treated as popup-only.
 
-Unread messages appear as a full-screen popup over the dashboard (one at a time,
-FIFO queue):
+You can rename or remove created devices under **Devices** like any other device,
+remove them from the dashboard picker, or add other `capability.notification` devices.
+
+**Popup notifications** — unread messages appear as a full-screen banner over the
+dashboard (one at a time, FIFO queue):
 
 | Button | Behavior |
 | ------ | -------- |
 | **Close** | Hides the popup on **this browser only**; it reappears after **5 minutes** if still unread |
 | **Mark as Read** | Removes it on the hub so every open dashboard stops showing it |
 
-**Sounds** are off by default. Enable **Notification sounds** in the overflow
+**Tile notifications** — on the **Favorites** tab, use **Add tile → Notifications**
+(or the empty-state button) to add a resizable notifications list tile. Messages
+from **Tile notification devices** appear newest-first with device name and time.
+Tap the **×** on a row to mark it as read (hub-wide). You can add multiple
+notification tiles; they all show the same tile queue.
+
+**Sounds** apply to popup notifications only (off by default). Enable **Notification sounds** in the overflow
 Preferences menu to use the browser/OS notification sound (no audio files are
 packaged). The browser will ask for notification permission when you turn sounds
 on. The OS notification is dismissed immediately so only the dashboard popup stays
@@ -697,7 +706,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Locks & garage | Locks, garage doors, unlock PIN | — | See [device selection](#device-selection) |
 | Sensors | Motion, contact, water, presence, etc. | — | See [device selection](#device-selection) |
 | Cameras | go2rtc cameras | — | See [device selection](#device-selection) |
-| Notifications | Notification devices | — | Create button installs mDash Notifications child device; other notification devices optional |
+| Notifications | Popup / tile notification devices | — | Create buttons install mDash Notifications children (popup and/or tile pickers) |
 | Dashboard options | Dashboard name | `mDash` | Browser tab and PWA title |
 | Dashboard options | Default tab | Lights | Opening tab when Category tabs is on; falls back to Lights if empty |
 | Dashboard options | Refresh interval | 5 s (2–60) | `/data` poll interval |
@@ -730,7 +739,8 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Ceiling fans | — | — | Fans popup; All fans bulk |
 | Music / speakers | — | — | Music popup |
 | Cameras (go2rtc) | — | — | Cameras tab (local URL only; requires category tabs) |
-| Notification devices | — | — | Full-screen notification popup queue |
+| Popup notification devices | — | — | Full-screen notification popup queue |
+| Tile notification devices | — | — | Favorites notifications tile queue |
 | Motion, contact, water, etc. | — | — | Sensors popup |
 | Valves | — | — | Sensors popup (open/close) |
 | Hub scenes | — | — | Scenes popup (all hub scenes) |

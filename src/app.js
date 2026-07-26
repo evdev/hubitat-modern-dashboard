@@ -23,6 +23,7 @@
   const MENU_ADD_TILE = document.getElementById("menu-add-tile");
   const MENU_ADD_EMBED_BTN = document.getElementById("menu-add-embed");
   const MENU_ADD_TIME_BTN = document.getElementById("menu-add-time");
+  const MENU_ADD_NOTIF_BTN = document.getElementById("menu-add-notif");
   const MENU_HAPTICS_EL = document.getElementById("menu-haptics");
   const MENU_NOTIF_SOUND_EL = document.getElementById("menu-notif-sound");
   const MENU_TABS_EL = document.getElementById("menu-tabs");
@@ -173,6 +174,8 @@
   };
   const MAX_EMBED_CARDS = 12;
   const MAX_TIME_CARDS = 12;
+  const MAX_NOTIFICATION_CARDS = 12;
+  const NOTIFICATION_SIZE_PRESET_SET = new Set(["compact", "standard", "square", "wide", "tall", "large", "full", "viewport"]);
   const MAX_EMBED_TITLE = 80;
   const MAX_EMBED_URL = 4096;
 
@@ -239,6 +242,10 @@
     const s = String(id || "");
     return "t:" + (s.startsWith("t_") ? s.slice(2) : s);
   }
+  function notificationFavoriteKey(id) {
+    const s = String(id || "");
+    return "n:" + (s.startsWith("n_") ? s.slice(2) : s);
+  }
   function normalizeTimeStyle(raw) {
     const s = String(raw || "").trim();
     return TIME_STYLE_SET.has(s) ? s : "time";
@@ -247,18 +254,24 @@
     const s = String(raw || "").trim();
     return TIME_SIZE_PRESET_SET.has(s) ? s : "square";
   }
+  function normalizeNotificationSize(raw) {
+    const s = String(raw || "").trim();
+    return NOTIFICATION_SIZE_PRESET_SET.has(s) ? s : "tall";
+  }
   function favoriteEntryKey(entry) {
     if (!entry) return "";
     if (entry.type === "embed") return embedFavoriteKey(entry.card?.id);
     if (entry.type === "time") return timeFavoriteKey(entry.card?.id);
+    if (entry.type === "notifications") return notificationFavoriteKey(entry.card?.id);
     if (entry.dev?.i == null) return "";
     return deviceFavoriteKey(entry.dev.i);
   }
 
-  function normalizeFavoritesLayout(layout, deviceIds, cards, timeCardsList) {
+  function normalizeFavoritesLayout(layout, deviceIds, cards, timeCardsList, notificationCardsList) {
     const validDevices = new Set((deviceIds || []).map(Number));
     const validEmbeds = new Set((cards || []).map((c) => String(c.id)));
     const validTimes = new Set((timeCardsList || []).map((c) => String(c.id)));
+    const validNotifs = new Set((notificationCardsList || []).map((c) => String(c.id)));
     const out = [];
     const seen = new Set();
     for (const raw of layout || []) {
@@ -277,11 +290,18 @@
         if (/^[A-Za-z0-9_-]+$/.test(rest)) key = "t:" + rest;
       } else if (s.startsWith("t_") && /^t_[A-Za-z0-9_-]+$/.test(s)) {
         key = "t:" + s.slice(2);
+      } else if (s.startsWith("n:")) {
+        let rest = s.slice(2);
+        if (rest.startsWith("n_")) rest = rest.slice(2);
+        if (/^[A-Za-z0-9_-]+$/.test(rest)) key = "n:" + rest;
+      } else if (s.startsWith("n_") && /^n_[A-Za-z0-9_-]+$/.test(s)) {
+        key = "n:" + s.slice(2);
       }
       if (!key || seen.has(key)) continue;
       if (key.startsWith("d:") && !validDevices.has(Number(key.slice(2)))) continue;
       if (key.startsWith("e:") && !validEmbeds.has("e_" + key.slice(2))) continue;
       if (key.startsWith("t:") && !validTimes.has("t_" + key.slice(2))) continue;
+      if (key.startsWith("n:") && !validNotifs.has("n_" + key.slice(2))) continue;
       seen.add(key);
       out.push(key);
     }
@@ -297,6 +317,10 @@
       const key = timeFavoriteKey(card.id);
       if (!seen.has(key)) { seen.add(key); out.push(key); }
     }
+    for (const card of notificationCardsList || []) {
+      const key = notificationFavoriteKey(card.id);
+      if (!seen.has(key)) { seen.add(key); out.push(key); }
+    }
     return out;
   }
 
@@ -305,6 +329,7 @@
     if (!m) return;
     m.embedCards = embedCards;
     m.timeCards = timeCards;
+    m.notificationCards = notificationCards;
     m.favoritesLayout = favoritesLayout;
     m.embedEditorOpen = embedEditorOpen;
     m.timeEditorOpen = timeEditorOpen;
@@ -317,6 +342,14 @@
       style: normalizeTimeStyle(c.style),
       size: normalizeTimeSize(c.size),
     })).filter((c) => c.id.startsWith("t_"));
+  }
+
+  function mapNotificationCardsFromConfig(list) {
+    if (!Array.isArray(list)) return null;
+    return list.map((c) => ({
+      id: String(c.id || ""),
+      size: normalizeNotificationSize(c.size),
+    })).filter((c) => c.id.startsWith("n_"));
   }
 
   function applyEmbedConfigFromData(d, { allowDuringReorder = false } = {}) {
@@ -335,22 +368,28 @@
       : embedCards.slice();
     const mappedTimes = mapTimeCardsFromConfig(d.config.timeCards);
     const nextTimeCards = mappedTimes != null ? mappedTimes : timeCards.slice();
+    const mappedNotifs = mapNotificationCardsFromConfig(d.config.notificationCards);
+    const nextNotificationCards = mappedNotifs != null ? mappedNotifs : notificationCards.slice();
     const nextLayout = normalizeFavoritesLayout(
       Array.isArray(d.config.favoritesLayout) ? d.config.favoritesLayout : favoritesLayout,
       favorites,
       nextCards,
-      nextTimeCards
+      nextTimeCards,
+      nextNotificationCards
     );
     const prevSig = favoritesLayout.join(",")
       + "|" + embedCards.map((c) => c.id + ":" + c.size + ":" + c.url).join("|")
-      + "|" + timeCards.map((c) => c.id + ":" + c.style + ":" + c.size).join("|");
+      + "|" + timeCards.map((c) => c.id + ":" + c.style + ":" + c.size).join("|")
+      + "|" + notificationCards.map((c) => c.id + ":" + c.size).join("|");
     replaceList(embedCards, nextCards);
     replaceList(timeCards, nextTimeCards);
+    replaceList(notificationCards, nextNotificationCards);
     replaceList(favoritesLayout, nextLayout);
     syncEmbedStateToMld();
     const nextSig = favoritesLayout.join(",")
       + "|" + embedCards.map((c) => c.id + ":" + c.size + ":" + c.url).join("|")
-      + "|" + timeCards.map((c) => c.id + ":" + c.style + ":" + c.size).join("|");
+      + "|" + timeCards.map((c) => c.id + ":" + c.style + ":" + c.size).join("|")
+      + "|" + notificationCards.map((c) => c.id + ":" + c.size).join("|");
     return prevSig !== nextSig;
   }
 
@@ -480,10 +519,12 @@
   let favoritesReorderSnapshotSizes = null;
   let embedCards = []; // [{id,title,url,size}]
   let timeCards = []; // [{id,style,size}]
-  let favoritesLayout = []; // ["d:123","e:abc","t:xyz",...]
+  let notificationCards = []; // [{id,size}]
+  let favoritesLayout = []; // ["d:123","e:abc","t:xyz","n:abc",...]
   let favoritesReorderSnapshotLayout = null;
   let favoritesReorderSnapshotEmbeds = null;
   let favoritesReorderSnapshotTimes = null;
+  let favoritesReorderSnapshotNotifs = null;
   let embedEditorOpen = false;
   let timeEditorOpen = false;
   let embedExpandState = null; // { cardEl, placeholder, restoreFocus }
@@ -497,16 +538,22 @@
   let hsmAlert = "";
   let hsmAlertDesc = "";
   let hubNotifications = [];
+  let hubTileNotifications = [];
   let notificationDeviceIds = new Set();
+  let tileNotificationDeviceIds = new Set();
   let notifPopup = null;
   let notifShowingId = null;
   let notifAckInFlight = false;
+  let notifTileAckIds = new Set();
   let notifSnoozeTimer = null;
   let notifLastSoundId = null;
   let notifAudioCtx = null;
   let notifFetchInFlight = null;
   let notifFetchQueued = false;
+  let notifTileFetchInFlight = null;
+  let notifTileFetchQueued = false;
   let notifWsFetchTimer = null;
+  let notifTileWsFetchTimer = null;
   let hsmEnabled = false;
   let hsmPinRequired = false;
   let thermostatsPopupEnabled = false;
@@ -1910,7 +1957,27 @@
       ".fav-time-style-label{flex:1;font-size:.9rem;font-weight:700;color:var(--text)}" +
       ".fav-time-preview{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:110px;margin-bottom:12px;padding:16px;border-radius:14px;border:1px solid var(--stroke);background:linear-gradient(165deg,color-mix(in srgb,var(--accent) 12%,var(--panel-solid)),var(--panel-solid) 58%)}" +
       ".fav-time-preview .fav-time-clock{font-size:2rem}" +
-      ".fav-time-preview[data-style=time_seconds] .fav-time-clock{font-size:1.65rem}";
+      ".fav-time-preview[data-style=time_seconds] .fav-time-clock{font-size:1.65rem}" +
+      ".fav-notif-card{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;border:1px solid var(--stroke);border-radius:16px;background:var(--panel);overflow:hidden;position:relative}" +
+      ".fav-notif-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--stroke)}" +
+      ".fav-notif-title{flex:1;min-width:0;font-size:.92rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      ".fav-notif-actions{position:absolute;top:8px;right:8px;z-index:2}" +
+      ".fav-notif-menu-btn{border:1px solid var(--stroke-2);background:color-mix(in srgb,var(--panel-solid) 88%,transparent);color:var(--text);border-radius:999px;padding:4px 10px;font-size:.78rem;font-weight:700;cursor:pointer}" +
+      ".fav-notif-menu{position:absolute;right:0;top:calc(100% + 4px);min-width:120px;z-index:5;padding:4px;background:var(--panel-solid);border:1px solid var(--stroke-2);border-radius:12px;box-shadow:var(--shadow)}" +
+      ".fav-notif-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:8px 10px;border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer}" +
+      ".fav-notif-menu-item.danger{color:#ef4444}" +
+      ".fav-notif-body{flex:1;min-height:0;overflow:auto;padding:8px 10px 10px}" +
+      ".fav-notif-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}" +
+      ".fav-notif-item{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;padding:6px 0;border-bottom:1px solid color-mix(in srgb,var(--stroke) 70%,transparent)}" +
+      ".fav-notif-item:last-child{border-bottom:0;padding-bottom:0}" +
+      ".fav-notif-bullet{color:var(--accent);font-size:1rem;line-height:1.35;font-weight:700}" +
+      ".fav-notif-content{min-width:0}" +
+      ".fav-notif-text{font-size:.86rem;font-weight:600;line-height:1.35;color:var(--text);word-break:break-word}" +
+      ".fav-notif-meta{margin-top:3px;font-size:.72rem;font-weight:600;color:var(--text-dim);line-height:1.3}" +
+      ".fav-notif-dismiss{border:1px solid var(--stroke-2);background:var(--panel-solid);color:var(--muted);border-radius:999px;width:22px;height:22px;padding:0;font-size:.95rem;line-height:1;cursor:pointer;flex-shrink:0}" +
+      ".fav-notif-dismiss:hover:not(:disabled),.fav-notif-dismiss:focus-visible:not(:disabled){color:var(--text);border-color:var(--stroke)}" +
+      ".fav-notif-dismiss:disabled{opacity:.45;cursor:not-allowed}" +
+      ".fav-notif-empty{font-size:.84rem;font-weight:600;color:var(--muted);padding:8px 2px}";
     document.head.appendChild(style);
   }
   ensureFavEmbedStyles();
@@ -4364,10 +4431,20 @@
     closeBtn.disabled = noneSelected;
     closeBtn.addEventListener("click", () => postCall("broadcastShadeCmd", "close"));
     actions.appendChild(openBtn);
+    let stopBtn = null;
+    if (selectedShades.some((s) => shadeHasStop(s))) {
+      stopBtn = ce("button", "quick-lock-btn shade-btn shade-stop-btn");
+      stopBtn.type = "button";
+      stopBtn.innerHTML = SHADE_STOP_SVG + '<span class="quick-lock-btn-label">Stop</span>';
+      stopBtn.disabled = noneSelected;
+      stopBtn.addEventListener("click", () => postCall("broadcastShadeCmd", "stop"));
+      actions.appendChild(stopBtn);
+    }
     actions.appendChild(closeBtn);
     body.appendChild(actions);
     popup._openBtn = openBtn;
     popup._closeBtn = closeBtn;
+    popup._stopBtn = stopBtn;
 
     const positioned = selectedShades.filter((s) => shadeHasPosition(s));
     if (positioned.length) {
@@ -4425,6 +4502,10 @@
       popup._closeBtn.classList.toggle("active", allClosed);
       popup._closeBtn.classList.toggle("moving", anyMoving && allClosed);
       popup._closeBtn.disabled = noneSelected;
+    }
+    if (popup._stopBtn) {
+      popup._stopBtn.classList.toggle("active", anyMoving);
+      popup._stopBtn.disabled = noneSelected;
     }
 
     const positioned = selectedShades.filter((s) => shadeHasPosition(s));
@@ -5421,7 +5502,7 @@
               for (const k of Object.keys(body.sizes)) favoriteSizes[Number(k)] = String(body.sizes[k]);
               saveFavoriteSizesCache(favoriteSizes);
             }
-            if (Array.isArray(body?.favoritesLayout) || Array.isArray(body?.embedCards) || Array.isArray(body?.timeCards)) {
+            if (Array.isArray(body?.favoritesLayout) || Array.isArray(body?.embedCards) || Array.isArray(body?.timeCards) || Array.isArray(body?.notificationCards)) {
               applyEmbedConfigFromData({ config: body }, { allowDuringReorder: true });
             }
           } catch {}
@@ -5756,11 +5837,13 @@
     }
     const embedById = new Map((Array.isArray(embedCards) ? embedCards : []).map((c) => [c.id, c]));
     const timeById = new Map((Array.isArray(timeCards) ? timeCards : []).map((c) => [c.id, c]));
+    const notifById = new Map((Array.isArray(notificationCards) ? notificationCards : []).map((c) => [c.id, c]));
     const layout = normalizeFavoritesLayout(
       Array.isArray(favoritesLayout) ? favoritesLayout : [],
       favorites,
       Array.isArray(embedCards) ? embedCards : [],
-      Array.isArray(timeCards) ? timeCards : []
+      Array.isArray(timeCards) ? timeCards : [],
+      Array.isArray(notificationCards) ? notificationCards : []
     );
     const out = [];
     const seen = new Set();
@@ -5781,6 +5864,11 @@
         if (!card) continue;
         seen.add(key);
         out.push({ type: "time", card });
+      } else if (key.startsWith("n:")) {
+        const card = notifById.get("n_" + key.slice(2));
+        if (!card) continue;
+        seen.add(key);
+        out.push({ type: "notifications", card });
       }
     }
     for (const [id, entry] of deviceById) {
@@ -5794,6 +5882,10 @@
     for (const card of Array.isArray(timeCards) ? timeCards : []) {
       const key = timeFavoriteKey(card.id);
       if (!seen.has(key)) out.push({ type: "time", card });
+    }
+    for (const card of Array.isArray(notificationCards) ? notificationCards : []) {
+      const key = notificationFavoriteKey(card.id);
+      if (!seen.has(key)) out.push({ type: "notifications", card });
     }
     return out;
   }
@@ -7650,6 +7742,7 @@
       const shade = windowShades.find((s) => s.i === id);
       if (!shade) continue;
       if (cmd === "setPosition" && !shadeHasPosition(shade)) continue;
+      if (cmd === "stop" && !shadeHasStop(shade)) continue;
       shades.push(shade);
     }
     if (!shades.length) return;
@@ -7995,10 +8088,15 @@
     default: "square",
     allowed: ["compact", "standard", "square", "wide", "tall", "large"],
   };
+  const NOTIFICATION_FAVORITE_SIZE_PROFILE = {
+    default: "tall",
+    allowed: ["compact", "standard", "square", "wide", "tall", "large", "full", "viewport"],
+  };
 
   function favoriteSizeProfile(entry) {
     if (entry?.type === "embed") return EMBED_FAVORITE_SIZE_PROFILE;
     if (entry?.type === "time") return TIME_FAVORITE_SIZE_PROFILE;
+    if (entry?.type === "notifications") return NOTIFICATION_FAVORITE_SIZE_PROFILE;
     // Locks keep square/full/tall plus compact toggle tiles (legacy wide/standard → square).
     if (entry?.type === "lock") return { default: "square", allowed: ["compact", "square", "full", "tall"] };
     // Thermostats keep square/full/tall plus compact readout tiles.
@@ -8036,7 +8134,7 @@
 
   function findDeviceFavoriteEntry(id) {
     const want = Number(id);
-    return getFavoriteEntries().find((e) => e?.type !== "embed" && e?.type !== "time" && Number(e?.dev?.i) === want);
+    return getFavoriteEntries().find((e) => e?.type !== "embed" && e?.type !== "time" && e?.type !== "notifications" && Number(e?.dev?.i) === want);
   }
 
   function normalizedFavoriteSizes(order) {
@@ -8125,7 +8223,7 @@
 
   function resolveFavoriteSize(entry) {
     const profile = favoriteSizeProfile(entry);
-    if (entry?.type === "embed" || entry?.type === "time") {
+    if (entry?.type === "embed" || entry?.type === "time" || entry?.type === "notifications") {
       return coerceFavoriteSize(entry, entry.card?.size);
     }
     const saved = favoriteSizes[entry.dev.i];
@@ -8165,6 +8263,7 @@
     let tile = null;
     if (entry.type === "embed") tile = makeEmbedFavoriteCard(entry.card);
     else if (entry.type === "time") tile = makeTimeFavoriteCard(entry.card);
+    else if (entry.type === "notifications") tile = makeNotificationsFavoriteCard(entry.card);
     else if (entry.type === "light") tile = makeTile(entry.dev, "favorites");
     else if (entry.type === "outlet") tile = makeOutletTile(entry.dev, "favorites");
     else if (entry.type === "thermostat") tile = makeQuickTstatCard(entry.dev, favTstatMap);
@@ -8188,11 +8287,12 @@
       if (!tile.dataset.name) {
         tile.dataset.name = String(
           entry.type === "time" ? (TIME_STYLE_LABELS[entry.card.style] || "Time")
+            : entry.type === "notifications" ? "Notifications"
             : entry.type === "embed" ? (entry.card.title || "")
             : (entry.dev?.n || "")
         ).toLowerCase();
       }
-      const stackable = resolveFavoriteSize(entry) === "compact" && entry.type !== "embed";
+      const stackable = resolveFavoriteSize(entry) === "compact" && entry.type !== "embed" && entry.type !== "notifications";
       if (!stackable) {
         compactStack = null;
         grid.appendChild(tile);
@@ -8500,7 +8600,8 @@
     wrap.dataset.name = String(
       entry.type === "embed" ? (entry.card.title || "")
         : entry.type === "time" ? (TIME_STYLE_LABELS[entry.card.style] || "Time")
-        : (entry.dev.n || "")
+        : entry.type === "notifications" ? "Notifications"
+        : (entry.dev?.n || "")
     ).toLowerCase();
     wrap.classList.toggle("fav-reorder-full", isFullFavoriteSize(size));
     tile.classList.add("fav-reorder-content");
@@ -8593,6 +8694,10 @@
       entry.card.size = size;
       const idx = timeCards.findIndex((c) => c.id === entry.card.id);
       if (idx >= 0) timeCards[idx] = { ...timeCards[idx], size };
+    } else if (entry.type === "notifications") {
+      entry.card.size = size;
+      const idx = notificationCards.findIndex((c) => c.id === entry.card.id);
+      if (idx >= 0) notificationCards[idx] = { ...notificationCards[idx], size };
     } else {
       const favId = Number(entry.dev.i);
       if (size === profile.default) delete favoriteSizes[favId];
@@ -8623,6 +8728,8 @@
       ? (entry.card?.title || "Embed")
       : entry.type === "time"
         ? (TIME_STYLE_LABELS[entry.card?.style] || "Time")
+      : entry.type === "notifications"
+        ? "Notifications"
       : (entry.dev?.n || "Favorite");
     const overlay = ce("div", "fav-size-sheet open");
     overlay.setAttribute("role", "dialog");
@@ -8722,6 +8829,7 @@
     favoritesReorderSnapshotLayout = favoritesLayout.slice();
     favoritesReorderSnapshotEmbeds = embedCards.map((c) => ({ ...c }));
     favoritesReorderSnapshotTimes = timeCards.map((c) => ({ ...c }));
+    favoritesReorderSnapshotNotifs = notificationCards.map((c) => ({ ...c }));
     favoritesReorderDraftOrder = null;
     favoritesReorderEls.clear();
     stopPolling();
@@ -8753,6 +8861,7 @@
     favoritesReorderSnapshotLayout = null;
     favoritesReorderSnapshotEmbeds = null;
     favoritesReorderSnapshotTimes = null;
+    favoritesReorderSnapshotNotifs = null;
     favoritesReorderEls.clear();
     favoritesReorderSaving = false;
     reorderMode = false;
@@ -8770,7 +8879,7 @@
     }
   }
 
-  async function saveFavoritesLayoutApi(layout, deviceSizes, embedSizes, timeSizes) {
+  async function saveFavoritesLayoutApi(layout, deviceSizes, embedSizes, timeSizes, notificationSizes) {
     try {
       const r = await fetch(withToken("settings/favorites-layout"), {
         method: "POST",
@@ -8781,6 +8890,7 @@
           favoriteSizes: deviceSizes,
           embedSizes,
           timeSizes,
+          notificationSizes,
         }),
       });
       if (!r.ok) {
@@ -8817,9 +8927,11 @@
     for (const card of embedCards) embedSizes[card.id] = card.size || "tall";
     const timeSizes = {};
     for (const card of timeCards) timeSizes[card.id] = card.size || "square";
+    const notificationSizes = {};
+    for (const card of notificationCards) notificationSizes[card.id] = card.size || "tall";
     favoritesReorderSaving = true;
     if (REORDER_DONE_BTN) REORDER_DONE_BTN.disabled = true;
-    const saved = await saveFavoritesLayoutApi(layout, sizes, embedSizes, timeSizes);
+    const saved = await saveFavoritesLayoutApi(layout, sizes, embedSizes, timeSizes, notificationSizes);
     favoritesReorderSaving = false;
     if (REORDER_DONE_BTN) REORDER_DONE_BTN.disabled = false;
     if (!saved) return false;
@@ -8836,6 +8948,7 @@
     if (favoritesReorderSnapshotLayout) replaceList(favoritesLayout, favoritesReorderSnapshotLayout.slice());
     if (favoritesReorderSnapshotEmbeds) replaceList(embedCards, favoritesReorderSnapshotEmbeds.map((c) => ({ ...c })));
     if (favoritesReorderSnapshotTimes) replaceList(timeCards, favoritesReorderSnapshotTimes.map((c) => ({ ...c })));
+    if (favoritesReorderSnapshotNotifs) replaceList(notificationCards, favoritesReorderSnapshotNotifs.map((c) => ({ ...c })));
     syncEmbedStateToMld();
     lastDataSig = "";
     exitFavoritesReorderMode(false);
@@ -9143,6 +9256,56 @@
     timeTickTimer = setInterval(tickFavoriteTimeCards, 1000);
   }
 
+  const FAV_TILE_MENU_SELECTOR = ".fav-time-menu, .fav-embed-menu, .fav-notif-menu";
+
+  function favTileMenuButtonFor(menu) {
+    const actions = menu?.parentElement;
+    if (!actions) return null;
+    return actions.querySelector(".fav-time-menu-btn, .fav-embed-menu-btn, .fav-notif-menu-btn");
+  }
+
+  function closeFavTileOverflowMenu(menu, menuBtn) {
+    if (!menu) return;
+    menu.hidden = true;
+    if (menuBtn) menuBtn.setAttribute("aria-expanded", "false");
+    if (menu._outsideCleanup) {
+      menu._outsideCleanup();
+      menu._outsideCleanup = null;
+    }
+  }
+
+  function closeAllOpenFavTileOverflowMenus() {
+    for (const menu of document.querySelectorAll(FAV_TILE_MENU_SELECTOR)) {
+      if (menu.hidden) continue;
+      closeFavTileOverflowMenu(menu, favTileMenuButtonFor(menu));
+    }
+  }
+
+  function toggleFavTileOverflowMenu(menuBtn, menu) {
+    if (!menu.hidden) {
+      closeFavTileOverflowMenu(menu, menuBtn);
+      return;
+    }
+    closeAllOpenFavTileOverflowMenus();
+    menu.hidden = false;
+    menuBtn.setAttribute("aria-expanded", "true");
+    const onOutside = (e) => {
+      if (menu.contains(e.target) || menuBtn.contains(e.target)) return;
+      closeFavTileOverflowMenu(menu, menuBtn);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") closeFavTileOverflowMenu(menu, menuBtn);
+    };
+    setTimeout(() => {
+      document.addEventListener("click", onOutside);
+      document.addEventListener("keydown", onKey);
+    }, 0);
+    menu._outsideCleanup = () => {
+      document.removeEventListener("click", onOutside);
+      document.removeEventListener("keydown", onKey);
+    };
+  }
+
   function makeTimeFavoriteCard(card) {
     const style = normalizeTimeStyle(card.style);
     const el = ce("article", "fav-time-card");
@@ -9165,7 +9328,7 @@
     editBtn.textContent = "Edit";
     editBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      menu.hidden = true;
+      closeFavTileOverflowMenu(menu, menuBtn);
       openTimeTileEditor(card);
     });
     const delBtn = ce("button", "fav-time-menu-item danger");
@@ -9174,7 +9337,7 @@
     delBtn.textContent = "Delete";
     delBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      menu.hidden = true;
+      closeFavTileOverflowMenu(menu, menuBtn);
       const ok = await confirmAction({ message: "Delete this time tile?", confirmLabel: "Delete", danger: true });
       if (ok) await deleteTimeCard(card.id);
     });
@@ -9182,7 +9345,7 @@
     menu.appendChild(delBtn);
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      menu.hidden = !menu.hidden;
+      toggleFavTileOverflowMenu(menuBtn, menu);
     });
     actions.appendChild(menuBtn);
     actions.appendChild(menu);
@@ -9398,7 +9561,7 @@
     editBtn.textContent = "Edit";
     editBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      menu.hidden = true;
+      closeFavTileOverflowMenu(menu, menuBtn);
       openEmbedEditor(card);
     });
     const delBtn = ce("button", "fav-embed-menu-item danger");
@@ -9407,7 +9570,7 @@
     delBtn.textContent = "Delete";
     delBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      menu.hidden = true;
+      closeFavTileOverflowMenu(menu, menuBtn);
       const ok = await confirmAction({ message: "Delete this embed card?", confirmLabel: "Delete", danger: true });
       if (ok) await deleteEmbedCard(card.id);
     });
@@ -9415,7 +9578,7 @@
     menu.appendChild(delBtn);
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      menu.hidden = !menu.hidden;
+      toggleFavTileOverflowMenu(menuBtn, menu);
     });
     actions.appendChild(openBtn);
     actions.appendChild(expandBtn);
@@ -9632,7 +9795,7 @@
   function renderFavoritesEmptyState(body) {
     const wrap = ce("div", "fav-empty");
     const p = ce("p");
-    p.textContent = "Tap the star on any device to add it here, or add an embedded or time tile.";
+    p.textContent = "Tap the star on any device to add it here, or add an embedded, time, or notifications tile.";
     const actions = ce("div", "fav-empty-actions");
     const addEmbedBtn = ce("button", "confirm-btn fav-add-embed-btn");
     addEmbedBtn.type = "button";
@@ -9648,8 +9811,16 @@
       hapticTap();
       openTimeTileEditor(null);
     });
+    const addNotifBtn = ce("button", "ghost-btn fav-add-notif-btn");
+    addNotifBtn.type = "button";
+    addNotifBtn.textContent = "Add notifications";
+    addNotifBtn.addEventListener("click", () => {
+      hapticTap();
+      void addNotificationTile();
+    });
     actions.appendChild(addEmbedBtn);
     actions.appendChild(addTimeBtn);
+    actions.appendChild(addNotifBtn);
     wrap.appendChild(p);
     wrap.appendChild(actions);
     body.appendChild(wrap);
@@ -9736,6 +9907,7 @@
 
   function renderFavoritesPopup() {
     closeFavoriteTstatModeMenu();
+    closeAllOpenFavTileOverflowMenus();
     if (!favoritesReorderActive) closeEmbedExpand();
     const body = favoritesRenderTarget();
     if (tabMode) setFavoritesPersistVisible(true);
@@ -10649,6 +10821,182 @@
     if (snoozeChanged) saveNotifSnoozeMap(snooze);
     if (notifShowingId && !alive.has(notifShowingId)) notifShowingId = null;
     syncNotificationPopup();
+    applyTileNotificationsFromData(d);
+  }
+
+  function applyTileNotificationsFromData(d) {
+    if (!d || (d.tileNotifications == null && d.tileNotificationDeviceIds == null)) return;
+    const list = Array.isArray(d?.tileNotifications) ? d.tileNotifications : [];
+    hubTileNotifications = list.map((n) => ({
+      id: n?.id != null ? String(n.id) : "",
+      text: n?.text != null ? String(n.text) : "",
+      ts: Number(n?.ts) || 0,
+      deviceId: n?.deviceId != null ? Number(n.deviceId) : null,
+      deviceName: n?.deviceName != null ? String(n.deviceName) : "",
+    })).filter((n) => n.id && n.text);
+    hubTileNotifications.sort((a, b) => b.ts - a.ts);
+    const ids = Array.isArray(d?.tileNotificationDeviceIds) ? d.tileNotificationDeviceIds : [];
+    if (ids.length || d?.tileNotificationDeviceIds != null) {
+      tileNotificationDeviceIds = new Set(ids.map(Number).filter((n) => Number.isFinite(n)));
+    }
+    refreshNotificationTiles();
+  }
+
+  function formatNotificationTileTime(ts) {
+    const n = Number(ts);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    try {
+      return new Date(n).toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+    } catch {
+      return "";
+    }
+  }
+
+  function refreshNotificationTiles() {
+    const root = tabMode ? favoritesPersistEl : currentBody();
+    if (!root) return;
+    for (const card of root.querySelectorAll(".fav-notif-card")) {
+      paintNotificationTileCard(card);
+    }
+  }
+
+  function paintNotificationTileCard(cardEl) {
+    if (!cardEl?._list) return;
+    const listEl = cardEl._list;
+    listEl.replaceChildren();
+    const items = hubTileNotifications.slice().sort((a, b) => b.ts - a.ts);
+    if (!items.length) {
+      const empty = ce("li", "fav-notif-empty");
+      empty.textContent = "No notifications";
+      listEl.appendChild(empty);
+      return;
+    }
+    for (const item of items) {
+      const row = ce("li", "fav-notif-item");
+      const bullet = ce("span", "fav-notif-bullet");
+      bullet.setAttribute("aria-hidden", "true");
+      bullet.textContent = "\u2022";
+      const content = ce("div", "fav-notif-content");
+      const text = ce("div", "fav-notif-text");
+      text.textContent = item.text;
+      const meta = ce("div", "fav-notif-meta");
+      const parts = [];
+      if (item.deviceName) parts.push(item.deviceName);
+      const when = formatNotificationTileTime(item.ts);
+      if (when) parts.push(when);
+      meta.textContent = parts.join(" \u00b7 ");
+      content.appendChild(text);
+      content.appendChild(meta);
+      const dismiss = ce("button", "fav-notif-dismiss");
+      dismiss.type = "button";
+      dismiss.setAttribute("aria-label", "Mark as read");
+      dismiss.textContent = "\u00d7";
+      dismiss.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void acknowledgeTileNotification(item.id, dismiss);
+      });
+      row.appendChild(bullet);
+      row.appendChild(content);
+      row.appendChild(dismiss);
+      listEl.appendChild(row);
+    }
+  }
+
+  function makeNotificationsFavoriteCard(card) {
+    const el = ce("article", "fav-notif-card");
+    el.dataset.notifId = card.id;
+    el.setAttribute("aria-label", "Notifications");
+
+    const head = ce("div", "fav-notif-head");
+    const title = ce("div", "fav-notif-title");
+    title.textContent = "Notifications";
+    head.appendChild(title);
+    el.appendChild(head);
+
+    const actions = ce("div", "fav-notif-actions");
+    const menuBtn = ce("button", "fav-notif-menu-btn");
+    menuBtn.type = "button";
+    menuBtn.setAttribute("aria-label", "Notifications tile options");
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.textContent = "\u22ef";
+    const menu = ce("div", "fav-notif-menu");
+    menu.hidden = true;
+    menu.setAttribute("role", "menu");
+    const delBtn = ce("button", "fav-notif-menu-item danger");
+    delBtn.type = "button";
+    delBtn.setAttribute("role", "menuitem");
+    delBtn.textContent = "Delete";
+    delBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      closeFavTileOverflowMenu(menu, menuBtn);
+      const ok = await confirmAction({ message: "Delete this notifications tile?", confirmLabel: "Delete", danger: true });
+      if (ok) await deleteNotificationCard(card.id);
+    });
+    menu.appendChild(delBtn);
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFavTileOverflowMenu(menuBtn, menu);
+    });
+    actions.appendChild(menuBtn);
+    actions.appendChild(menu);
+    el.appendChild(actions);
+
+    const body = ce("div", "fav-notif-body");
+    const list = ce("ul", "fav-notif-list");
+    el._list = list;
+    body.appendChild(list);
+    el.appendChild(body);
+    paintNotificationTileCard(el);
+    return el;
+  }
+
+  async function notificationCardsApi(payload) {
+    try {
+      const r = await fetch(withToken("notification-cards"), {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        flash(String(body?.error || "Could not save notifications tile"), true);
+        return null;
+      }
+      applyEmbedConfigFromData({ config: body }, { allowDuringReorder: true });
+      return body;
+    } catch {
+      flash("Could not save notifications tile", true);
+      return null;
+    }
+  }
+
+  async function deleteNotificationCard(id) {
+    const body = await notificationCardsApi({ action: "delete", id });
+    if (!body) return false;
+    if (currentCategory() === "favorites") renderFavoritesPopup();
+    updateQuickNavVisibility();
+    flash("Notifications tile deleted");
+    return true;
+  }
+
+  async function addNotificationTile() {
+    if (notificationCards.length >= MAX_NOTIFICATION_CARDS) {
+      flash("Notifications tile limit reached (" + MAX_NOTIFICATION_CARDS + ")", true);
+      return false;
+    }
+    const body = await notificationCardsApi({ action: "create", size: "tall" });
+    if (!body) return false;
+    if (currentCategory() === "favorites") renderFavoritesPopup();
+    updateQuickNavVisibility();
+    flash("Notifications tile added");
+    return true;
   }
 
   async function fetchNotifications() {
@@ -10685,7 +11033,83 @@
     notifWsFetchTimer = setTimeout(() => {
       notifWsFetchTimer = null;
       void fetchNotifications();
+      void fetchTileNotifications();
     }, 180);
+  }
+
+  function scheduleTileNotificationFetchFromWs() {
+    if (notifTileWsFetchTimer) clearTimeout(notifTileWsFetchTimer);
+    notifTileWsFetchTimer = setTimeout(() => {
+      notifTileWsFetchTimer = null;
+      void fetchTileNotifications();
+    }, 180);
+  }
+
+  async function fetchTileNotifications() {
+    if (isDashboardGateOpen()) return;
+    if (!notificationCards.length && !tileNotificationDeviceIds.size) return;
+    if (notifTileFetchInFlight) {
+      notifTileFetchQueued = true;
+      return notifTileFetchInFlight;
+    }
+    notifTileFetchInFlight = (async () => {
+      try {
+        const r = await fetch(withToken("tile-notifications"), {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j) applyTileNotificationsFromData(j);
+      } catch {
+        // Next poll /data still carries tile notifications as fallback.
+      } finally {
+        notifTileFetchInFlight = null;
+        if (notifTileFetchQueued) {
+          notifTileFetchQueued = false;
+          void fetchTileNotifications();
+        }
+      }
+    })();
+    return notifTileFetchInFlight;
+  }
+
+  async function acknowledgeTileNotification(id, dismissBtn) {
+    if (!id || notifTileAckIds.has(id)) return;
+    notifTileAckIds.add(id);
+    if (dismissBtn) {
+      dismissBtn.disabled = true;
+      dismissBtn.setAttribute("aria-busy", "true");
+    }
+    try {
+      const r = await fetch(withToken("tile-notifications/ack"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ id }),
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.ok) {
+        flash((j && j.error) ? String(j.error) : "Could not mark as read", true);
+        return;
+      }
+      if (Array.isArray(j.tileNotifications)) {
+        applyTileNotificationsFromData({
+          tileNotifications: j.tileNotifications,
+          tileNotificationDeviceIds: [...tileNotificationDeviceIds],
+        });
+      } else {
+        hubTileNotifications = hubTileNotifications.filter((n) => n.id !== id);
+        refreshNotificationTiles();
+      }
+    } catch {
+      flash("Could not mark as read", true);
+    } finally {
+      notifTileAckIds.delete(id);
+      if (dismissBtn && dismissBtn.isConnected) {
+        dismissBtn.disabled = false;
+        dismissBtn.removeAttribute("aria-busy");
+      }
+    }
   }
 
   async function acknowledgeNotification(id) {
@@ -11043,6 +11467,13 @@
     });
   }
 
+  if (MENU_ADD_NOTIF_BTN) {
+    MENU_ADD_NOTIF_BTN.addEventListener("click", () => {
+      closeTopbarOverflowMenu();
+      void addNotificationTile();
+    });
+  }
+
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && embedExpandState) {
       e.preventDefault();
@@ -11317,6 +11748,13 @@
           (notifAttr === "notificationText" || notifAttr === "deviceNotification" || notifAttr === "lastMessage")
         ) {
           scheduleNotificationFetchFromWs();
+          return;
+        }
+        if (
+          tileNotificationDeviceIds.has(deviceId) &&
+          (notifAttr === "notificationText" || notifAttr === "deviceNotification" || notifAttr === "lastMessage")
+        ) {
+          scheduleTileNotificationFetchFromWs();
           return;
         }
         const shade = windowShades.find(x => x.i === deviceId);
@@ -12046,7 +12484,6 @@
       if (!shadeIsMoving(shade) && effectiveShadeState(shade) !== "closed") sendShadeCmd(shade.i, "close");
     });
     actions.appendChild(openBtn);
-    actions.appendChild(closeBtn);
     let stopBtn = null;
     if (shadeHasStop(shade)) {
       stopBtn = ce("button", "quick-lock-btn shade-btn shade-stop-btn");
@@ -12055,6 +12492,7 @@
       stopBtn.addEventListener("click", () => sendShadeCmd(shade.i, "stop"));
       actions.appendChild(stopBtn);
     }
+    actions.appendChild(closeBtn);
     tile.appendChild(actions);
 
     const shadeRec = { el: tile, meta, levelLabel, slider, openBtn, closeBtn, stopBtn, favBtn: fav };

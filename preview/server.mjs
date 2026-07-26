@@ -80,8 +80,17 @@ state.notifications = [{
   deviceId: 9001,
   deviceName: "Dashboard Alerts",
 }];
+state.tileNotifications = [{
+  id: "tn_demo_1",
+  text: "Garage door left open — tile notification demo.",
+  ts: Date.now() - 120_000,
+  deviceId: 9002,
+  deviceName: "Tile Alerts",
+}];
 state.notificationDeviceIds = [9001];
+state.tileNotificationDeviceIds = [9002];
 let notifSeq = 1;
+let tileNotifSeq = 1;
 
 function mockSunTimes() {
   const d = new Date();
@@ -214,10 +223,10 @@ function buildMockData(count) {
     { i: 5102, n: "Master Bedroom Fan", r: 3, s: 0, sp: "off", supSp: "low,medium-low,medium,medium-high,high", hasSw: 1 },
     { i: 5103, n: "Patio DC Fan", r: 7, s: 1, sp: "4", supSp: "1,2,3,4,5,6", hasSw: 1 },
   ];
-  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, embedCards: [], timeCards: [], favoritesLayout: [] }, rooms, devices, outlets: [
+  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], notificationDeviceIds: [9001] };
+  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
 }
 
 function tstatOstateForMode(tm) {
@@ -249,16 +258,20 @@ function validateUnlockPin(pin) {
 const EMBED_SIZE_PRESETS = new Set(["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"]);
 const MAX_EMBED_CARDS = 12;
 const MAX_TIME_CARDS = 12;
+const MAX_NOTIFICATION_CARDS = 12;
 const MAX_EMBED_TITLE = 80;
 const MAX_EMBED_URL = 4096;
 const MAX_EMBED_STATE_BYTES = 32768;
 const MAX_TIME_STATE_BYTES = 8192;
+const MAX_NOTIFICATION_STATE_BYTES = 8192;
 const TIME_SIZE_PRESETS = new Set(["compact", "standard", "square", "wide", "tall", "large"]);
+const NOTIFICATION_SIZE_PRESETS = new Set(["compact", "standard", "square", "wide", "tall", "large", "full", "viewport"]);
 const TIME_STYLE_SET = new Set(["time", "time_seconds", "time_date"]);
 
 function ensureEmbedConfig() {
   if (!Array.isArray(state.config.embedCards)) state.config.embedCards = [];
   if (!Array.isArray(state.config.timeCards)) state.config.timeCards = [];
+  if (!Array.isArray(state.config.notificationCards)) state.config.notificationCards = [];
   if (!Array.isArray(state.config.favoritesLayout)) state.config.favoritesLayout = [];
   if (!state.config.favoriteSizes || typeof state.config.favoriteSizes !== "object") state.config.favoriteSizes = {};
 }
@@ -317,6 +330,17 @@ function normalizeLayoutKey(raw) {
     if (!/^[A-Za-z0-9_-]+$/.test(rest)) return null;
     return "t:" + rest;
   }
+  if (s.startsWith("n:")) {
+    let rest = s.slice(2).trim();
+    if (rest.startsWith("n_")) rest = rest.slice(2);
+    if (!/^[A-Za-z0-9_-]+$/.test(rest)) return null;
+    return "n:" + rest;
+  }
+  if (s.startsWith("n_")) {
+    const rest = s.slice(2);
+    if (!/^[A-Za-z0-9_-]+$/.test(rest)) return null;
+    return "n:" + rest;
+  }
   return null;
 }
 
@@ -332,6 +356,12 @@ function timeIdFromLayoutKey(key) {
   return "t_" + k.slice(2);
 }
 
+function notificationIdFromLayoutKey(key) {
+  const k = normalizeLayoutKey(key);
+  if (!k || !k.startsWith("n:")) return null;
+  return "n_" + k.slice(2);
+}
+
 function normalizeTimeStyle(raw) {
   const s = String(raw || "").trim();
   return TIME_STYLE_SET.has(s) ? s : "time";
@@ -340,6 +370,11 @@ function normalizeTimeStyle(raw) {
 function normalizeTimeSize(raw) {
   const s = String(raw || "").trim();
   return TIME_SIZE_PRESETS.has(s) ? s : "square";
+}
+
+function normalizeNotificationSize(raw) {
+  const s = String(raw || "").trim();
+  return NOTIFICATION_SIZE_PRESETS.has(s) ? s : "tall";
 }
 
 function persistEmbedCards(cards) {
@@ -356,12 +391,21 @@ function persistTimeCards(cards) {
   return { ok: true };
 }
 
-function reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, timeCards = null) {
+function persistNotificationCards(cards) {
+  const json = JSON.stringify(cards);
+  if (json.length > MAX_NOTIFICATION_STATE_BYTES) return { ok: false, error: "notification cards too large" };
+  state.config.notificationCards = cards;
+  return { ok: true };
+}
+
+function reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, timeCards = null, notificationCards = null) {
   ensureEmbedConfig();
   const validDevices = new Set(deviceIds.map(String));
   const validEmbeds = new Set(embedCards.map((c) => c.id));
   const times = Array.isArray(timeCards) ? timeCards : (state.config.timeCards || []);
+  const notifs = Array.isArray(notificationCards) ? notificationCards : (state.config.notificationCards || []);
   const validTimes = new Set(times.map((c) => c.id));
+  const validNotifs = new Set(notifs.map((c) => c.id));
   const source = preferredLayout != null ? preferredLayout : (state.config.favoritesLayout || []);
   const out = [];
   const seen = new Set();
@@ -378,6 +422,10 @@ function reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null,
       const tid = timeIdFromLayoutKey(key);
       if (!tid || !validTimes.has(tid)) continue;
       key = "t:" + tid.slice(2);
+    } else if (key.startsWith("n:")) {
+      const nid = notificationIdFromLayoutKey(key);
+      if (!nid || !validNotifs.has(nid)) continue;
+      key = "n:" + nid.slice(2);
     } else continue;
     seen.add(key);
     out.push(key);
@@ -403,6 +451,13 @@ function reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null,
       out.push(key);
     }
   }
+  for (const card of notifs) {
+    const key = "n:" + String(card.id).slice(2);
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(key);
+    }
+  }
   state.config.favoritesLayout = out;
   return out;
 }
@@ -411,6 +466,7 @@ function replaceDeviceSlotsInLayout(deviceIds) {
   ensureEmbedConfig();
   const cards = state.config.embedCards || [];
   const times = state.config.timeCards || [];
+  const notifs = state.config.notificationCards || [];
   const prev = state.config.favoritesLayout || [];
   const deviceQueue = deviceIds.map((id) => "d:" + id);
   const next = [];
@@ -429,13 +485,16 @@ function replaceDeviceSlotsInLayout(deviceIds) {
     } else if (key.startsWith("t:")) {
       const tid = timeIdFromLayoutKey(key);
       if (tid && times.some((c) => c.id === tid)) next.push("t:" + tid.slice(2));
+    } else if (key.startsWith("n:")) {
+      const nid = notificationIdFromLayoutKey(key);
+      if (nid && notifs.some((c) => c.id === nid)) next.push("n:" + nid.slice(2));
     }
   }
   while (di < deviceQueue.length) {
     next.push(deviceQueue[di]);
     di++;
   }
-  return reconcileFavoritesLayout(deviceIds, cards, next, times);
+  return reconcileFavoritesLayout(deviceIds, cards, next, times, notifs);
 }
 
 function validFavoriteDeviceIds() {
@@ -852,7 +911,8 @@ const server = createServer(async (req, res) => {
       Array.isArray(state.config.favorites) ? state.config.favorites.map(Number) : [],
       state.config.embedCards || [],
       state.config.favoritesLayout || [],
-      state.config.timeCards || []
+      state.config.timeCards || [],
+      state.config.notificationCards || []
     );
     const payload = appendDashSession(state, auth.renewed);
     if (!schedulerMockEnabled()) payload.schedules = [];
@@ -1274,6 +1334,60 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ ok: true, notifications: state.notifications }));
   }
+  if (p === "/tile-notifications") {
+    const auth = requireDashAuth(res, url, null);
+    if (!auth) return;
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({
+      ok: true,
+      tileNotifications: state.tileNotifications || [],
+      tileNotificationDeviceIds: state.tileNotificationDeviceIds || [9002],
+    }));
+  }
+  if (p === "/tile-notifications/ack") {
+    let body = null;
+    if (req.method === "POST") {
+      try { body = await readJsonBody(req); } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+      }
+    }
+    const auth = requireDashAuth(res, url, body);
+    if (!auth) return;
+    const id = String(body?.id ?? url.searchParams.get("id") ?? "").trim();
+    if (!id) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: false, error: "missing id" }));
+    }
+    state.tileNotifications = (state.tileNotifications || []).filter((n) => n.id !== id);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({
+      ok: true,
+      id,
+      tileNotifications: state.tileNotifications,
+    }));
+  }
+  if (p === "/tile-notifications/push" && req.method === "POST") {
+    let body = null;
+    try { body = await readJsonBody(req); } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+    }
+    const auth = requireDashAuth(res, url, body);
+    if (!auth) return;
+    const text = String(body?.text || "Test tile notification");
+    tileNotifSeq += 1;
+    const entry = {
+      id: `tn_preview_${Date.now()}_${tileNotifSeq}`,
+      text,
+      ts: Date.now(),
+      deviceId: 9002,
+      deviceName: "Tile Alerts",
+    };
+    state.tileNotifications = [...(state.tileNotifications || []), entry].slice(-20);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ ok: true, tileNotifications: state.tileNotifications }));
+  }
   if (p === "/favorites") {
     ensureEmbedConfig();
     const idsParam = url.searchParams.get("ids");
@@ -1317,6 +1431,7 @@ const server = createServer(async (req, res) => {
         favoritesLayout: layout,
         embedCards: state.config.embedCards,
         timeCards: state.config.timeCards,
+        notificationCards: state.config.notificationCards || [],
       }));
     };
     if (req.method === "GET" && idsParam != null) {
@@ -1370,7 +1485,7 @@ const server = createServer(async (req, res) => {
       const layout = [...(state.config.favoritesLayout || []), "e:" + id.slice(2)];
       const reconciled = reconcileFavoritesLayout(deviceIds, cards, layout, state.config.timeCards || []);
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ ok: true, id, embedCards: cards, timeCards: state.config.timeCards || [], favoritesLayout: reconciled }));
+      return res.end(JSON.stringify({ ok: true, id, embedCards: cards, timeCards: state.config.timeCards || [], notificationCards: state.config.notificationCards || [], favoritesLayout: reconciled }));
     }
     if (action === "update") {
       const id = String(body?.id || "").trim();
@@ -1395,7 +1510,7 @@ const server = createServer(async (req, res) => {
       }
       const reconciled = reconcileFavoritesLayout(deviceIds, cards, null, state.config.timeCards || []);
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ ok: true, id, embedCards: cards, timeCards: state.config.timeCards || [], favoritesLayout: reconciled }));
+      return res.end(JSON.stringify({ ok: true, id, embedCards: cards, timeCards: state.config.timeCards || [], notificationCards: state.config.notificationCards || [], favoritesLayout: reconciled }));
     }
     if (action === "delete") {
       const id = String(body?.id || "").trim();
@@ -1411,7 +1526,7 @@ const server = createServer(async (req, res) => {
       }
       const reconciled = reconcileFavoritesLayout(deviceIds, next, null, state.config.timeCards || []);
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ ok: true, id, embedCards: next, timeCards: state.config.timeCards || [], favoritesLayout: reconciled }));
+      return res.end(JSON.stringify({ ok: true, id, embedCards: next, timeCards: state.config.timeCards || [], notificationCards: state.config.notificationCards || [], favoritesLayout: reconciled }));
     }
     res.writeHead(400, { "Content-Type": "application/json" });
     return res.end('{"ok":false,"error":"invalid action"}');
@@ -1444,7 +1559,7 @@ const server = createServer(async (req, res) => {
       const layout = [...(state.config.favoritesLayout || []), "t:" + id.slice(2)];
       const reconciled = reconcileFavoritesLayout(deviceIds, embeds, layout, cards);
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ ok: true, id, timeCards: cards, embedCards: embeds, favoritesLayout: reconciled }));
+      return res.end(JSON.stringify({ ok: true, id, timeCards: cards, embedCards: embeds, notificationCards: state.config.notificationCards || [], favoritesLayout: reconciled }));
     }
     if (action === "update") {
       const id = String(body?.id || "").trim();
@@ -1464,7 +1579,7 @@ const server = createServer(async (req, res) => {
       }
       const reconciled = reconcileFavoritesLayout(deviceIds, embeds, null, cards);
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ ok: true, id, timeCards: cards, embedCards: embeds, favoritesLayout: reconciled }));
+      return res.end(JSON.stringify({ ok: true, id, timeCards: cards, embedCards: embeds, notificationCards: state.config.notificationCards || [], favoritesLayout: reconciled }));
     }
     if (action === "delete") {
       const id = String(body?.id || "").trim();
@@ -1480,7 +1595,75 @@ const server = createServer(async (req, res) => {
       }
       const reconciled = reconcileFavoritesLayout(deviceIds, embeds, null, next);
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ ok: true, id, timeCards: next, embedCards: embeds, favoritesLayout: reconciled }));
+      return res.end(JSON.stringify({ ok: true, id, timeCards: next, embedCards: embeds, notificationCards: state.config.notificationCards || [], favoritesLayout: reconciled }));
+    }
+    res.writeHead(400, { "Content-Type": "application/json" });
+    return res.end('{"ok":false,"error":"invalid action"}');
+  }
+  if (p === "/notification-cards" && req.method === "POST") {
+    ensureEmbedConfig();
+    let body;
+    try { body = await readJsonBody(req); } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end('{"ok":false,"error":"invalid json"}');
+    }
+    const action = String(body?.action || "").trim().toLowerCase();
+    let cards = Array.isArray(state.config.notificationCards) ? state.config.notificationCards.slice() : [];
+    const embeds = Array.isArray(state.config.embedCards) ? state.config.embedCards : [];
+    const times = Array.isArray(state.config.timeCards) ? state.config.timeCards : [];
+    const deviceIds = Array.isArray(state.config.favorites) ? state.config.favorites.map(Number) : [];
+    if (action === "create") {
+      if (cards.length >= MAX_NOTIFICATION_CARDS) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end('{"ok":false,"error":"notification card limit reached"}');
+      }
+      let size = normalizeNotificationSize(body?.size);
+      const id = "n_" + crypto.randomUUID().replace(/-/g, "");
+      cards.push({ id, size });
+      const persisted = persistNotificationCards(cards);
+      if (!persisted.ok) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: persisted.error }));
+      }
+      const layout = [...(state.config.favoritesLayout || []), "n:" + id.slice(2)];
+      const reconciled = reconcileFavoritesLayout(deviceIds, embeds, layout, times, cards);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, id, notificationCards: cards, embedCards: embeds, timeCards: times, favoritesLayout: reconciled }));
+    }
+    if (action === "update") {
+      const id = String(body?.id || "").trim();
+      const idx = cards.findIndex((c) => c.id === id);
+      if (!id.startsWith("n_") || idx < 0) {
+        res.writeHead(idx < 0 ? 404 : 400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: idx < 0 ? "not found" : "missing id" }));
+      }
+      let size = body?.size != null ? normalizeNotificationSize(body.size) : cards[idx].size;
+      if (!NOTIFICATION_SIZE_PRESETS.has(size)) size = cards[idx].size;
+      cards[idx] = { id, size };
+      const persisted = persistNotificationCards(cards);
+      if (!persisted.ok) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: persisted.error }));
+      }
+      const reconciled = reconcileFavoritesLayout(deviceIds, embeds, null, times, cards);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, id, notificationCards: cards, embedCards: embeds, timeCards: times, favoritesLayout: reconciled }));
+    }
+    if (action === "delete") {
+      const id = String(body?.id || "").trim();
+      const next = cards.filter((c) => c.id !== id);
+      if (!id.startsWith("n_") || next.length === cards.length) {
+        res.writeHead(next.length === cards.length ? 404 : 400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: next.length === cards.length ? "not found" : "missing id" }));
+      }
+      const persisted = persistNotificationCards(next);
+      if (!persisted.ok) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: persisted.error }));
+      }
+      const reconciled = reconcileFavoritesLayout(deviceIds, embeds, null, times, next);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, id, notificationCards: next, embedCards: embeds, timeCards: times, favoritesLayout: reconciled }));
     }
     res.writeHead(400, { "Content-Type": "application/json" });
     return res.end('{"ok":false,"error":"invalid action"}');
@@ -1508,12 +1691,18 @@ const server = createServer(async (req, res) => {
       res.writeHead(400, { "Content-Type": "application/json" });
       return res.end('{"ok":false,"error":"invalid favoriteSizes"}');
     }
+    if (body.notificationSizes != null && (typeof body.notificationSizes !== "object" || Array.isArray(body.notificationSizes))) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end('{"ok":false,"error":"invalid notificationSizes"}');
+    }
     let cards = (state.config.embedCards || []).slice();
     let times = (state.config.timeCards || []).slice();
+    let notifs = (state.config.notificationCards || []).slice();
     let deviceIds = Array.isArray(state.config.favorites) ? state.config.favorites.map(Number) : [];
     const validDevices = new Set(deviceIds.map(String));
     const cardById = new Map(cards.map((c) => [c.id, c]));
     const timeById = new Map(times.map((c) => [c.id, c]));
+    const notifById = new Map(notifs.map((c) => [c.id, c]));
     const nextLayout = [];
     const seen = new Set();
     const nextDevices = [];
@@ -1538,13 +1727,19 @@ const server = createServer(async (req, res) => {
         const nk = "t:" + tid.slice(2);
         seen.add(nk);
         nextLayout.push(nk);
+      } else if (key.startsWith("n:")) {
+        const nid = notificationIdFromLayoutKey(key);
+        if (!nid || !notifById.has(nid)) continue;
+        const nk = "n:" + nid.slice(2);
+        seen.add(nk);
+        nextLayout.push(nk);
       }
     }
     if (nextDevices.length) {
       state.config.favorites = nextDevices;
       deviceIds = nextDevices;
     }
-    let reconciled = reconcileFavoritesLayout(deviceIds, cards, nextLayout, times);
+    let reconciled = reconcileFavoritesLayout(deviceIds, cards, nextLayout, times, notifs);
     if (body.favoriteSizes != null) {
       const validSizes = new Set(["full", "square", "wide", "tall", "standard", "compact"]);
       const idSet = new Set(deviceIds.map(String));
@@ -1569,7 +1764,7 @@ const server = createServer(async (req, res) => {
         return res.end(JSON.stringify({ ok: false, error: persisted.error }));
       }
       cards = nextCards;
-      reconciled = reconcileFavoritesLayout(deviceIds, cards, reconciled, times);
+      reconciled = reconcileFavoritesLayout(deviceIds, cards, reconciled, times, notifs);
     }
     if (body.timeSizes != null) {
       const nextTimes = times.map((card) => {
@@ -1584,7 +1779,22 @@ const server = createServer(async (req, res) => {
         return res.end(JSON.stringify({ ok: false, error: persisted.error }));
       }
       times = nextTimes;
-      reconciled = reconcileFavoritesLayout(deviceIds, cards, reconciled, times);
+      reconciled = reconcileFavoritesLayout(deviceIds, cards, reconciled, times, notifs);
+    }
+    if (body.notificationSizes != null) {
+      const nextNotifs = notifs.map((card) => {
+        let size = card.size;
+        const cand = body.notificationSizes[card.id] ?? body.notificationSizes[String(card.id).slice(2)];
+        if (cand != null && NOTIFICATION_SIZE_PRESETS.has(String(cand))) size = String(cand);
+        return { ...card, size };
+      });
+      const persisted = persistNotificationCards(nextNotifs);
+      if (!persisted.ok) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: persisted.error }));
+      }
+      notifs = nextNotifs;
+      reconciled = reconcileFavoritesLayout(deviceIds, cards, reconciled, times, notifs);
     }
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({
@@ -1593,6 +1803,7 @@ const server = createServer(async (req, res) => {
       sizes: state.config.favoriteSizes || {},
       embedCards: cards,
       timeCards: times,
+      notificationCards: notifs,
       favoritesLayout: reconciled,
     }));
   }

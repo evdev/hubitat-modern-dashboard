@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.47
+// Modern Dashboard v0.3.48
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.47"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.48"
 
 definition(
     name: "Modern Dashboard",
@@ -50,7 +50,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.47 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.48 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -158,25 +158,42 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Notifications") {
-            paragraph "<small>Rule Machine and other apps can send notifications to an <b>mDash Notifications</b> device; the dashboard shows each unread message as a banner until marked as read.</small>"
+            paragraph "<small>Rule Machine and other apps can send notifications to <b>mDash Notifications</b> devices. <b>Popup</b> devices show full-screen banners; <b>tile</b> devices appear in Favorites notification tiles.</small>"
             def notifChild = getNotificationChildDevice()
             if (notifChild) {
-                paragraph "<small><b>Dashboard notification device:</b> ${htmlEsc(notifChild.displayName)} (created by this app).</small>"
+                paragraph "<small><b>Popup notification device:</b> ${htmlEsc(notifChild.displayName)} (created by this app).</small>"
             } else {
-                input "notifDeviceLabel", "string", title: "Name for new mDash Notifications device",
+                input "notifDeviceLabel", "string", title: "Name for new popup mDash Notifications device",
                     defaultValue: "Dashboard Notifications", required: false
-                input name: "btnCreateNotifDevice", type: "button", title: "Create mDash Notifications device"
+                input name: "btnCreateNotifDevice", type: "button", title: "Create popup mDash Notifications device"
                 paragraph "<small>Requires the <b>mDash Notifications</b> driver from this package (installed automatically via HPM). The device can be renamed under <b>Devices</b>; deleting it only removes it from the hub — use <b>Create</b> again to add a new one.</small>"
                 if (state.notifDeviceCreateError) {
-                    paragraph "<small><b>Could not create device:</b> ${htmlEsc(state.notifDeviceCreateError.toString())}</small>"
+                    paragraph "<small><b>Could not create popup device:</b> ${htmlEsc(state.notifDeviceCreateError.toString())}</small>"
                 }
                 if (state.notifDeviceCreateOk) {
-                    paragraph "<small><b>Created:</b> ${htmlEsc(state.notifDeviceCreateOk.toString())}</small>"
+                    paragraph "<small><b>Created popup device:</b> ${htmlEsc(state.notifDeviceCreateOk.toString())}</small>"
                 }
             }
-            input "notificationDevices", "capability.notification", title: "Notification devices",
+            input "notificationDevices", "capability.notification", title: "Popup notification devices",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            paragraph "<small>Creating the device above selects it once. You can remove it from this list or add other <code>capability.notification</code> devices; your selection is kept when you press Done.</small>"
+            def tileNotifChild = getTileNotificationChildDevice()
+            if (tileNotifChild) {
+                paragraph "<small><b>Tile notification device:</b> ${htmlEsc(tileNotifChild.displayName)} (created by this app).</small>"
+            } else {
+                input "tileNotifDeviceLabel", "string", title: "Name for new tile mDash Notifications device",
+                    defaultValue: "Dashboard Notifications (Tile)", required: false
+                input name: "btnCreateTileNotifDevice", type: "button", title: "Create tile mDash Notifications device"
+                paragraph "<small>Same driver as popup; this device is selected for <b>tile</b> messages only. Rename or delete it under <b>Devices</b> like any other device.</small>"
+                if (state.tileNotifDeviceCreateError) {
+                    paragraph "<small><b>Could not create tile device:</b> ${htmlEsc(state.tileNotifDeviceCreateError.toString())}</small>"
+                }
+                if (state.tileNotifDeviceCreateOk) {
+                    paragraph "<small><b>Created tile device:</b> ${htmlEsc(state.tileNotifDeviceCreateOk.toString())}</small>"
+                }
+            }
+            input "tileNotificationDevices", "capability.notification", title: "Tile notification devices",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            paragraph "<small>Each <b>Create</b> button adds an mDash Notifications child and selects it in the matching picker. Assign existing devices to either list. A device in both lists is treated as popup-only.</small>"
         }
         section("Dashboard options") {
             input "dashboardName", "string", title: "Dashboard name", defaultValue: "mDash", required: false
@@ -276,6 +293,8 @@ def updated() {
 def appButtonHandler(btn) {
     if (btn == "btnCreateNotifDevice") {
         createNotificationChildDeviceFromUi()
+    } else if (btn == "btnCreateTileNotifDevice") {
+        createTileNotificationChildDeviceFromUi()
     }
 }
 
@@ -1152,6 +1171,7 @@ mappings {
     path("/favorites") { action: [GET: "saveFavoritesGet", POST: "saveFavorites"] }
     path("/embed-cards") { action: [POST: "saveEmbedCards"] }
     path("/time-cards") { action: [POST: "saveTimeCards"] }
+    path("/notification-cards") { action: [POST: "saveNotificationCards"] }
     path("/settings/favorites-layout") { action: [POST: "saveFavoritesLayout"] }
     path("/snapshot/save") { action: [GET: "snapshotSaveGet", POST: "snapshotSave"] }
     path("/snapshot/restore") { action: [GET: "snapshotRestoreGet", POST: "snapshotRestore"] }
@@ -1164,6 +1184,8 @@ mappings {
     path("/schedules/test") { action: [POST: "schedulesTest"] }
     path("/notifications") { action: [GET: "notificationsGet"] }
     path("/notifications/ack") { action: [GET: "notificationsAckGet", POST: "notificationsAck"] }
+    path("/tile-notifications") { action: [GET: "tileNotificationsGet"] }
+    path("/tile-notifications/ack") { action: [GET: "tileNotificationsAckGet", POST: "tileNotificationsAck"] }
 }
 
 def readIconDataUri(String b64FileName) {
@@ -3437,6 +3459,7 @@ def favoritesJsonFragment() {
     out << favoriteSizesJsonFragment()
     out << embedCardsJsonFragment()
     out << timeCardsJsonFragment()
+    out << notificationCardsJsonFragment()
     out << favoritesLayoutJsonFragment()
     return out.toString()
 }
@@ -3446,12 +3469,15 @@ def favoritesJsonFragment() {
 // ---------------------------------------------------------------------------
 def maxEmbedCards() { return 12 }
 def maxTimeCards() { return 12 }
+def maxNotificationCards() { return 12 }
 def maxEmbedTitleLen() { return 80 }
 def maxEmbedUrlLen() { return 4096 }
 def maxEmbedCardsStateBytes() { return 32768 }
 def maxTimeCardsStateBytes() { return 8192 }
+def maxNotificationCardsStateBytes() { return 8192 }
 def embedSizePresetSet() { return ["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"] as Set }
 def timeSizePresetSet() { return ["compact", "standard", "square", "wide", "tall", "large"] as Set }
+def notificationSizePresetSet() { return ["compact", "standard", "square", "wide", "tall", "large", "full", "viewport"] as Set }
 def timeStyleSet() { return ["time", "time_seconds", "time_date"] as Set }
 
 def parseEmbedCardsState() {
@@ -3497,6 +3523,29 @@ def parseTimeCardsState() {
             if (!timeSizePresetSet().contains(size)) size = "square"
             out << [id: id, style: style, size: size]
             if (out.size() >= maxTimeCards()) break
+        }
+        return out
+    } catch (e) {
+        return []
+    }
+}
+
+def parseNotificationCardsState() {
+    if (!state.notificationCardsJson) return []
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(state.notificationCardsJson.toString())
+        if (!(parsed instanceof List)) return []
+        def out = []
+        def seen = new HashSet()
+        for (item in parsed) {
+            if (!(item instanceof Map)) continue
+            def id = item.id?.toString()?.trim()
+            if (!id || !id.startsWith("n_") || seen.contains(id)) continue
+            seen.add(id)
+            def size = item.size?.toString()?.trim()
+            if (!notificationSizePresetSet().contains(size)) size = "tall"
+            out << [id: id, size: size]
+            if (out.size() >= maxNotificationCards()) break
         }
         return out
     } catch (e) {
@@ -3550,6 +3599,18 @@ def normalizeEmbedLayoutKey(raw) {
         if (!(rest ==~ /^[A-Za-z0-9_-]+$/)) return null
         return "t:" + rest
     }
+    if (s.startsWith("n:")) {
+        def rest = s.substring(2).trim()
+        if (!rest) return null
+        if (rest.startsWith("n_")) rest = rest.substring(2)
+        if (!(rest ==~ /^[A-Za-z0-9_-]+$/)) return null
+        return "n:" + rest
+    }
+    if (s.startsWith("n_")) {
+        def rest = s.substring(2)
+        if (!(rest ==~ /^[A-Za-z0-9_-]+$/)) return null
+        return "n:" + rest
+    }
     return null
 }
 
@@ -3563,6 +3624,12 @@ def timeCardIdFromLayoutKey(key) {
     def k = normalizeEmbedLayoutKey(key)
     if (!k || !k.startsWith("t:")) return null
     return "t_" + k.substring(2)
+}
+
+def notificationCardIdFromLayoutKey(key) {
+    def k = normalizeEmbedLayoutKey(key)
+    if (!k || !k.startsWith("n:")) return null
+    return "n_" + k.substring(2)
 }
 
 def hostnameFromHttpsUrl(url) {
@@ -3620,11 +3687,22 @@ def persistTimeCards(cards) {
     return [ok: true]
 }
 
-def reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, persist = true, timeCards = null) {
+def persistNotificationCards(cards) {
+    def json = groovy.json.JsonOutput.toJson(cards)
+    if (json.toString().length() > maxNotificationCardsStateBytes()) {
+        return [ok: false, error: "notification cards too large"]
+    }
+    state.notificationCardsJson = json
+    return [ok: true]
+}
+
+def reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, persist = true, timeCards = null, notificationCards = null) {
     def times = timeCards != null ? timeCards : parseTimeCardsState()
+    def notifs = notificationCards != null ? notificationCards : parseNotificationCardsState()
     def validDevices = new HashSet(deviceIds.collect { it.toString() })
     def validEmbeds = new HashSet(embedCards.collect { it.id.toString() })
     def validTimes = new HashSet(times.collect { it.id.toString() })
+    def validNotifs = new HashSet(notifs.collect { it.id.toString() })
     def source = preferredLayout != null ? preferredLayout : parseFavoritesLayoutState()
     def out = []
     def seen = new HashSet()
@@ -3642,6 +3720,10 @@ def reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, pers
             def tid = timeCardIdFromLayoutKey(key)
             if (!tid || !validTimes.contains(tid)) continue
             key = "t:" + tid.substring(2)
+        } else if (key.startsWith("n:")) {
+            def nid = notificationCardIdFromLayoutKey(key)
+            if (!nid || !validNotifs.contains(nid)) continue
+            key = "n:" + nid.substring(2)
         } else {
             continue
         }
@@ -3669,6 +3751,13 @@ def reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, pers
             out << key
         }
     }
+    for (card in notifs) {
+        def key = "n:" + card.id.toString().substring(2)
+        if (!seen.contains(key)) {
+            seen.add(key)
+            out << key
+        }
+    }
     if (persist) state.favoritesLayoutJson = groovy.json.JsonOutput.toJson(out)
     return out
 }
@@ -3676,6 +3765,7 @@ def reconcileFavoritesLayout(deviceIds, embedCards, preferredLayout = null, pers
 def replaceDeviceSlotsInLayout(deviceIds) {
     def cards = parseEmbedCardsState()
     def times = parseTimeCardsState()
+    def notifs = parseNotificationCardsState()
     def prev = parseFavoritesLayoutState()
     def deviceQueue = deviceIds.collect { deviceLayoutKey(it) }
     def next = []
@@ -3694,13 +3784,16 @@ def replaceDeviceSlotsInLayout(deviceIds) {
         } else if (key.startsWith("t:")) {
             def tid = timeCardIdFromLayoutKey(key)
             if (tid && times.find { it.id == tid }) next << ("t:" + tid.substring(2))
+        } else if (key.startsWith("n:")) {
+            def nid = notificationCardIdFromLayoutKey(key)
+            if (nid && notifs.find { it.id == nid }) next << ("n:" + nid.substring(2))
         }
     }
     while (di < deviceQueue.size()) {
         next << deviceQueue[di]
         di++
     }
-    return reconcileFavoritesLayout(deviceIds, cards, next, true, times)
+    return reconcileFavoritesLayout(deviceIds, cards, next, true, times, notifs)
 }
 
 def embedCardsJsonFragment() {
@@ -3734,9 +3827,23 @@ def timeCardsJsonFragment() {
     return out.toString()
 }
 
+def notificationCardsJsonFragment() {
+    def cards = parseNotificationCardsState()
+    def out = new StringBuilder()
+    out << ",\"notificationCards\":["
+    boolean first = true
+    for (card in cards) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << jsonStr(card.id)
+        out << ",\"size\":" << jsonStr(card.size) << "}"
+    }
+    out << "]"
+    return out.toString()
+}
+
 def favoritesLayoutJsonFragment() {
     // Read-only reconcile for the response; do not rewrite hub state on every /data poll.
-    def layout = reconcileFavoritesLayout(parseFavoritesState(), parseEmbedCardsState(), parseFavoritesLayoutState(), false, parseTimeCardsState())
+    def layout = reconcileFavoritesLayout(parseFavoritesState(), parseEmbedCardsState(), parseFavoritesLayoutState(), false, parseTimeCardsState(), parseNotificationCardsState())
     def out = new StringBuilder()
     out << ",\"favoritesLayout\":["
     boolean first = true
@@ -3841,6 +3948,13 @@ def renderEmbedCardsResponse(cards, layout, id = null) {
         out << ",\"style\":" << jsonStr(card.style)
         out << ",\"size\":" << jsonStr(card.size) << "}"
     }
+    out << "],\"notificationCards\":["
+    first = true
+    for (card in parseNotificationCardsState()) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << jsonStr(card.id)
+        out << ",\"size\":" << jsonStr(card.size) << "}"
+    }
     out << "],\"favoritesLayout\":["
     first = true
     for (key in layout) {
@@ -3943,6 +4057,120 @@ def renderTimeCardsResponse(cards, layout, id = null) {
         out << ",\"url\":" << jsonStr(card.url)
         out << ",\"size\":" << jsonStr(card.size) << "}"
     }
+    out << "],\"notificationCards\":["
+    first = true
+    for (card in parseNotificationCardsState()) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << jsonStr(card.id)
+        out << ",\"size\":" << jsonStr(card.size) << "}"
+    }
+    out << "],\"favoritesLayout\":["
+    first = true
+    for (key in layout) {
+        if (!first) out << ","; first = false
+        out << jsonStr(key)
+    }
+    out << "]}"
+    return renderJsonNoStore(withAuthJson(out.toString()), 200)
+}
+
+def newNotificationCardId() {
+    return "n_" + UUID.randomUUID().toString().replace("-", "")
+}
+
+def saveNotificationCards() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def action = body?.action?.toString()?.trim()?.toLowerCase()
+    if (!action) return renderJsonNoStore('{"ok":false,"error":"missing action"}', 400)
+    def cards = parseNotificationCardsState()
+    def embeds = parseEmbedCardsState()
+    def times = parseTimeCardsState()
+    def deviceIds = parseFavoritesState()
+
+    if (action == "create") {
+        if (cards.size() >= maxNotificationCards()) {
+            return renderJsonNoStore('{"ok":false,"error":"notification card limit reached"}', 400)
+        }
+        def size = body?.size?.toString()?.trim()
+        if (!notificationSizePresetSet().contains(size)) size = "tall"
+        def id = newNotificationCardId()
+        cards << [id: id, size: size]
+        def persisted = persistNotificationCards(cards)
+        if (!persisted.ok) return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(persisted.error)}}", 400)
+        def layout = parseFavoritesLayoutState()
+        layout << ("n:" + id.substring(2))
+        def reconciled = reconcileFavoritesLayout(deviceIds, embeds, layout, true, times, cards)
+        return renderNotificationCardsResponse(cards, reconciled, id)
+    }
+
+    if (action == "update") {
+        def id = body?.id?.toString()?.trim()
+        if (!id || !id.startsWith("n_")) return renderJsonNoStore('{"ok":false,"error":"missing id"}', 400)
+        def idx = -1
+        for (int i = 0; i < cards.size(); i++) {
+            if (cards[i].id == id) { idx = i; break }
+        }
+        if (idx < 0) return renderJsonNoStore('{"ok":false,"error":"not found"}', 404)
+        def size = body?.size != null ? body.size.toString().trim() : cards[idx].size
+        if (!notificationSizePresetSet().contains(size)) size = cards[idx].size
+        cards[idx] = [id: id, size: size]
+        def persisted = persistNotificationCards(cards)
+        if (!persisted.ok) return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(persisted.error)}}", 400)
+        def reconciled = reconcileFavoritesLayout(deviceIds, embeds, null, true, times, cards)
+        return renderNotificationCardsResponse(cards, reconciled, id)
+    }
+
+    if (action == "delete") {
+        def id = body?.id?.toString()?.trim()
+        if (!id || !id.startsWith("n_")) return renderJsonNoStore('{"ok":false,"error":"missing id"}', 400)
+        def next = cards.findAll { it.id != id }
+        if (next.size() == cards.size()) return renderJsonNoStore('{"ok":false,"error":"not found"}', 404)
+        def persisted = persistNotificationCards(next)
+        if (!persisted.ok) return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(persisted.error)}}", 400)
+        def reconciled = reconcileFavoritesLayout(deviceIds, embeds, null, true, times, next)
+        return renderNotificationCardsResponse(next, reconciled, id)
+    }
+
+    return renderJsonNoStore('{"ok":false,"error":"invalid action"}', 400)
+}
+
+def renderNotificationCardsResponse(cards, layout, id = null) {
+    def embeds = parseEmbedCardsState()
+    def times = parseTimeCardsState()
+    def out = new StringBuilder()
+    out << "{\"ok\":true"
+    if (id != null) out << ",\"id\":" << jsonStr(id)
+    out << ",\"notificationCards\":["
+    boolean first = true
+    for (card in cards) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << jsonStr(card.id)
+        out << ",\"size\":" << jsonStr(card.size) << "}"
+    }
+    out << "],\"embedCards\":["
+    first = true
+    for (card in embeds) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << jsonStr(card.id)
+        out << ",\"title\":" << jsonStr(card.title)
+        out << ",\"url\":" << jsonStr(card.url)
+        out << ",\"size\":" << jsonStr(card.size) << "}"
+    }
+    out << "],\"timeCards\":["
+    first = true
+    for (card in times) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << jsonStr(card.id)
+        out << ",\"style\":" << jsonStr(card.style)
+        out << ",\"size\":" << jsonStr(card.size) << "}"
+    }
     out << "],\"favoritesLayout\":["
     first = true
     for (key in layout) {
@@ -3968,12 +4196,15 @@ def saveFavoritesLayout() {
     }
     def cards = parseEmbedCardsState()
     def times = parseTimeCardsState()
+    def notifs = parseNotificationCardsState()
     def deviceIds = parseFavoritesState()
     def validDevices = new HashSet(deviceIds.collect { it.toString() })
     def cardById = [:]
     for (card in cards) cardById[card.id] = card
     def timeById = [:]
     for (card in times) timeById[card.id] = card
+    def notifById = [:]
+    for (card in notifs) notifById[card.id] = card
 
     def nextLayout = []
     def seen = new HashSet()
@@ -3985,6 +4216,10 @@ def saveFavoritesLayout() {
     def timeSizes = body?.timeSizes
     if (timeSizes != null && !(timeSizes instanceof Map)) {
         return renderJsonNoStore('{"ok":false,"error":"invalid timeSizes"}', 400)
+    }
+    def notificationSizes = body?.notificationSizes
+    if (notificationSizes != null && !(notificationSizes instanceof Map)) {
+        return renderJsonNoStore('{"ok":false,"error":"invalid notificationSizes"}', 400)
     }
     def favoriteSizes = body?.favoriteSizes
     if (favoriteSizes != null && !(favoriteSizes instanceof Map)) {
@@ -4012,10 +4247,16 @@ def saveFavoritesLayout() {
             def nk = "t:" + tid.substring(2)
             seen.add(nk)
             nextLayout << nk
+        } else if (key.startsWith("n:")) {
+            def nid = notificationCardIdFromLayoutKey(key)
+            if (!nid || !notifById.containsKey(nid)) continue
+            def nk = "n:" + nid.substring(2)
+            seen.add(nk)
+            nextLayout << nk
         }
     }
-    // Preserve any omitted devices/embeds/times at the end (deterministic reconcile).
-    nextLayout = reconcileFavoritesLayout(nextDevices.size() ? nextDevices : deviceIds, cards, nextLayout, true, times)
+    // Preserve any omitted devices/embeds/times/notification tiles at the end (deterministic reconcile).
+    nextLayout = reconcileFavoritesLayout(nextDevices.size() ? nextDevices : deviceIds, cards, nextLayout, true, times, notifs)
     if (nextDevices.size()) {
         state.favorites = nextDevices.join(",")
         deviceIds = nextDevices
@@ -4054,7 +4295,7 @@ def saveFavoritesLayout() {
         def persisted = persistEmbedCards(nextCards)
         if (!persisted.ok) return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(persisted.error)}}", 400)
         cards = nextCards
-        nextLayout = reconcileFavoritesLayout(deviceIds, cards, nextLayout, true, times)
+        nextLayout = reconcileFavoritesLayout(deviceIds, cards, nextLayout, true, times, notifs)
     }
 
     // Time sizes live on each card.
@@ -4075,7 +4316,28 @@ def saveFavoritesLayout() {
         def persisted = persistTimeCards(nextTimes)
         if (!persisted.ok) return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(persisted.error)}}", 400)
         times = nextTimes
-        nextLayout = reconcileFavoritesLayout(deviceIds, cards, nextLayout, true, times)
+        nextLayout = reconcileFavoritesLayout(deviceIds, cards, nextLayout, true, times, notifs)
+    }
+
+    // Notification tile sizes live on each card.
+    if (notificationSizes != null) {
+        def allowed = notificationSizePresetSet()
+        def nextNotifs = []
+        for (card in notifs) {
+            def size = card.size
+            if (notificationSizes.containsKey(card.id)) {
+                def cand = notificationSizes[card.id]?.toString()?.trim()
+                if (allowed.contains(cand)) size = cand
+            } else if (notificationSizes.containsKey(card.id.toString().substring(2))) {
+                def cand = notificationSizes[card.id.toString().substring(2)]?.toString()?.trim()
+                if (allowed.contains(cand)) size = cand
+            }
+            nextNotifs << [id: card.id, size: size]
+        }
+        def persisted = persistNotificationCards(nextNotifs)
+        if (!persisted.ok) return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(persisted.error)}}", 400)
+        notifs = nextNotifs
+        nextLayout = reconcileFavoritesLayout(deviceIds, cards, nextLayout, true, times, notifs)
     }
 
     def out = new StringBuilder()
@@ -4102,6 +4364,13 @@ def saveFavoritesLayout() {
         if (!first) out << ","; first = false
         out << "{\"id\":" << jsonStr(card.id)
         out << ",\"style\":" << jsonStr(card.style)
+        out << ",\"size\":" << jsonStr(card.size) << "}"
+    }
+    out << "],\"notificationCards\":["
+    first = true
+    for (card in notifs) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << jsonStr(card.id)
         out << ",\"size\":" << jsonStr(card.size) << "}"
     }
     out << "],\"favoritesLayout\":["
@@ -4426,9 +4695,21 @@ def notificationChildDni() {
     return "mld-notif-${app.id}"
 }
 
+def tileNotificationChildDni() {
+    return "mld-tile-notif-${app.id}"
+}
+
 def getNotificationChildDevice() {
     try {
         return getChildDevice(notificationChildDni())
+    } catch (e) {
+        return null
+    }
+}
+
+def getTileNotificationChildDevice() {
+    try {
+        return getChildDevice(tileNotificationChildDni())
     } catch (e) {
         return null
     }
@@ -4469,6 +4750,41 @@ def createNotificationChildDeviceFromUi() {
     }
 }
 
+def createTileNotificationChildDeviceFromUi() {
+    state.remove("tileNotifDeviceCreateError")
+    state.remove("tileNotifDeviceCreateOk")
+    def existing = getTileNotificationChildDevice()
+    if (existing) {
+        state.tileNotifDeviceCreateOk = existing.displayName
+        syncTileNotificationChildSelection()
+        try { initializeNotifications() } catch (e) {}
+        return
+    }
+    def label = tileNotifDeviceLabel?.toString()?.trim()
+    if (!label) label = "Dashboard Notifications (Tile)"
+    if (label.length() > 64) label = label.substring(0, 64)
+    try {
+        def child = addChildDevice(
+            "mDash",
+            "mDash Notifications",
+            tileNotificationChildDni(),
+            [
+                name: "mDash Notifications",
+                label: label,
+                isComponent: false
+            ]
+        )
+        state.tileNotifDeviceCreateOk = child?.displayName ?: label
+        log.info "Modern Dashboard: created tile notification device ${state.tileNotifDeviceCreateOk}"
+        syncTileNotificationChildSelection()
+        try { initializeNotifications() } catch (e) {}
+    } catch (e) {
+        def msg = e?.message?.toString() ?: e?.toString() ?: "unknown error"
+        state.tileNotifDeviceCreateError = msg
+        log.warn "Modern Dashboard: could not create tile mDash Notifications device: ${msg}"
+    }
+}
+
 def notificationDeviceIdList() {
     def ids = []
     def seen = new HashSet()
@@ -4488,6 +4804,29 @@ def notificationDeviceIdList() {
     return ids
 }
 
+def tileNotificationDeviceIdList() {
+    def ids = []
+    def seen = new HashSet()
+    def addId = { id ->
+        def key = id?.toString()?.trim()
+        if (!key || seen.contains(key)) return
+        seen.add(key)
+        ids << key
+    }
+    try {
+        if (tileNotificationDevices instanceof List) {
+            tileNotificationDevices.each { d -> addId(d?.id) }
+        } else if (tileNotificationDevices) {
+            addId(tileNotificationDevices?.id)
+        }
+    } catch (e) {}
+    return ids
+}
+
+def popupNotificationDeviceIdSet() {
+    return new HashSet(notificationDeviceIdList())
+}
+
 def syncNotificationChildSelection() {
     // Only from Create button — never from updated()/installed().
     def child = getNotificationChildDevice()
@@ -4501,6 +4840,22 @@ def syncNotificationChildSelection() {
         app.updateSetting("notificationDevices", [type: "capability.notification", value: next])
     } catch (e) {
         log.warn "Modern Dashboard: could not auto-select notification child device: ${e}"
+    }
+}
+
+def syncTileNotificationChildSelection() {
+    // Only from Create button — never from updated()/installed().
+    def child = getTileNotificationChildDevice()
+    if (!child) return
+    def childId = child.id?.toString()?.trim()
+    if (!childId) return
+    def current = tileNotificationDeviceIdList()
+    if (current.contains(childId)) return
+    def next = current + [childId]
+    try {
+        app.updateSetting("tileNotificationDevices", [type: "capability.notification", value: next])
+    } catch (e) {
+        log.warn "Modern Dashboard: could not auto-select tile notification child device: ${e}"
     }
 }
 
@@ -4522,10 +4877,45 @@ def allNotificationDevices() {
     return out
 }
 
+def allTileNotificationDevices() {
+    def out = []
+    def seen = new HashSet()
+    def popupIds = popupNotificationDeviceIdSet()
+    def addDev = { d ->
+        if (d == null) return
+        def key = null
+        try { key = d.id?.toString() } catch (e) {}
+        if (!key || seen.contains(key) || popupIds.contains(key)) return
+        seen.add(key)
+        out << d
+    }
+    try {
+        if (tileNotificationDevices instanceof List) tileNotificationDevices.each { addDev(it) }
+        else if (tileNotificationDevices) addDev(tileNotificationDevices)
+    } catch (e) {}
+    return out
+}
+
+def allSubscribedNotificationDevices() {
+    def out = []
+    def seen = new HashSet()
+    def addDev = { d ->
+        if (d == null) return
+        def key = null
+        try { key = d.id?.toString() } catch (e) {}
+        if (!key || seen.contains(key)) return
+        seen.add(key)
+        out << d
+    }
+    allNotificationDevices().each { addDev(it) }
+    allTileNotificationDevices().each { addDev(it) }
+    return out
+}
+
 def initializeNotifications() {
     // Drop all notification subscriptions (including removed picker devices).
     try { unsubscribe("notificationDeviceEvent") } catch (e) {}
-    def devices = allNotificationDevices()
+    def devices = allSubscribedNotificationDevices()
     if (!devices) return
     for (d in devices) {
         try { subscribe(d, "notificationText", notificationDeviceEvent) } catch (e) {}
@@ -4545,16 +4935,24 @@ def notificationDeviceEvent(evt) {
     if (!deviceName) {
         try { deviceName = evt?.device?.displayName?.toString() ?: "" } catch (e) {}
     }
+    def deviceKey = deviceId?.toString() ?: ""
+    def popupIds = popupNotificationDeviceIdSet()
+    def tileIds = new HashSet(tileNotificationDeviceIdList())
+    def isPopup = popupIds.contains(deviceKey)
+    def isTile = !isPopup && tileIds.contains(deviceKey)
+    if (!isPopup && !isTile) return
     // Some drivers fire multiple attributes for one notify (e.g. notificationText +
     // lastMessage). Collapse same device+text within a short window into one queue item.
     def nowMs = now()
-    def dedupeKey = "${deviceId ?: ""}|${text}"
+    def channel = isPopup ? "popup" : "tile"
+    def dedupeKey = "${channel}|${deviceId ?: ""}|${text}"
     def lastKey = state.notifDedupeKey?.toString()
     def lastAt = (state.notifDedupeAt instanceof Number) ? state.notifDedupeAt.longValue() : 0L
     if (dedupeKey == lastKey && (nowMs - lastAt) < 3000L) return
     state.notifDedupeKey = dedupeKey
     state.notifDedupeAt = nowMs
-    appendNotification(text, deviceId, deviceName)
+    if (isPopup) appendNotification(text, deviceId, deviceName)
+    else appendTileNotification(text, deviceId, deviceName)
 }
 
 def parseNotificationsState() {
@@ -4609,10 +5007,61 @@ def appendNotification(text, deviceId, deviceName) {
     persistNotificationsState(list)
 }
 
-def notificationsJsonFragment() {
-    def list = parseNotificationsState()
+def parseTileNotificationsState() {
+    if (!state.tileNotificationsJson) return []
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(state.tileNotificationsJson.toString())
+        if (!(parsed instanceof List)) return []
+        def out = []
+        for (item in parsed) {
+            if (!(item instanceof Map)) continue
+            def id = item.id?.toString()?.trim()
+            def text = item.text?.toString()
+            if (!id || text == null) continue
+            def entry = [
+                id: id,
+                text: text.toString(),
+                ts: (item.ts instanceof Number) ? item.ts.longValue() : now(),
+                deviceId: item.deviceId,
+                deviceName: item.deviceName?.toString() ?: ""
+            ]
+            out << entry
+            if (out.size() >= maxNotificationQueue()) break
+        }
+        return out
+    } catch (e) {
+        return []
+    }
+}
+
+def persistTileNotificationsState(list) {
+    def capped = (list instanceof List) ? list.take(maxNotificationQueue()) : []
+    state.tileNotificationsJson = groovy.json.JsonOutput.toJson(capped)
+}
+
+def appendTileNotification(text, deviceId, deviceName) {
+    def list = parseTileNotificationsState()
+    def seq = (state.tileNotifSeq instanceof Number) ? state.tileNotifSeq.longValue() : 0L
+    seq++
+    state.tileNotifSeq = seq
+    def id = "tn_${now()}_${seq}"
+    def entry = [
+        id: id,
+        text: text?.toString() ?: "",
+        ts: now(),
+        deviceId: deviceId,
+        deviceName: deviceName?.toString() ?: ""
+    ]
+    list << entry
+    while (list.size() > maxNotificationQueue()) {
+        list.remove(0)
+    }
+    persistTileNotificationsState(list)
+}
+
+def notificationListJson(list) {
     def out = new StringBuilder()
-    out << ",\"notifications\":["
+    out << "["
     boolean first = true
     for (item in list) {
         if (!first) out << ","; first = false
@@ -4624,9 +5073,27 @@ def notificationsJsonFragment() {
         out << "}"
     }
     out << "]"
+    return out.toString()
+}
+
+def notificationsJsonFragment() {
+    def list = parseNotificationsState()
+    def tileList = parseTileNotificationsState()
+    def out = new StringBuilder()
+    out << ",\"notifications\":"
+    out << notificationListJson(list)
     out << ",\"notificationDeviceIds\":["
-    first = true
+    boolean first = true
     for (d in allNotificationDevices()) {
+        if (!first) out << ","; first = false
+        out << d.id
+    }
+    out << "]"
+    out << ",\"tileNotifications\":"
+    out << notificationListJson(tileList)
+    out << ",\"tileNotificationDeviceIds\":["
+    first = true
+    for (d in allTileNotificationDevices()) {
         if (!first) out << ","; first = false
         out << d.id
     }
@@ -4673,18 +5140,59 @@ def notificationsAckFromId(id) {
     persistNotificationsState(next)
     def out = new StringBuilder()
     out << '{"ok":true,"id":' << jsonStr(id)
-    out << ',"notifications":['
+    out << ',"notifications":' << notificationListJson(next)
+    out << "}"
+    return renderJsonNoStore(withAuthJson(out.toString()), 200)
+}
+
+def tileNotificationsGet() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def out = new StringBuilder()
+    out << '{"ok":true'
+    def tileList = parseTileNotificationsState()
+    out << ',"tileNotifications":' << notificationListJson(tileList)
+    out << ',"tileNotificationDeviceIds":['
     boolean first = true
-    for (item in next) {
+    for (d in allTileNotificationDevices()) {
         if (!first) out << ","; first = false
-        out << '{"id":' << jsonStr(item.id)
-        out << ',"text":' << jsonStr(item.text)
-        out << ',"ts":' << (item.ts ?: 0)
-        if (item.deviceId != null) out << ',"deviceId":' << item.deviceId
-        out << ',"deviceName":' << jsonStr(item.deviceName ?: "")
-        out << "}"
+        out << d.id
     }
     out << "]}"
+    return renderJsonNoStore(withAuthJson(out.toString()), 200)
+}
+
+def tileNotificationsAckGet() {
+    def id = params?.id
+    if (!id?.toString()?.trim()) {
+        return renderJsonNoStore('{"ok":false,"error":"missing id"}', 400)
+    }
+    return tileNotificationsAckFromId(id.toString().trim())
+}
+
+def tileNotificationsAck() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def id = body?.id ?: params?.id
+    if (!id?.toString()?.trim()) {
+        return renderJsonNoStore('{"ok":false,"error":"missing id"}', 400)
+    }
+    return tileNotificationsAckFromId(id.toString().trim())
+}
+
+def tileNotificationsAckFromId(id) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def list = parseTileNotificationsState()
+    def next = list.findAll { it.id?.toString() != id }
+    persistTileNotificationsState(next)
+    def out = new StringBuilder()
+    out << '{"ok":true,"id":' << jsonStr(id)
+    out << ',"tileNotifications":' << notificationListJson(next)
+    out << "}"
     return renderJsonNoStore(withAuthJson(out.toString()), 200)
 }
 
@@ -4961,6 +5469,13 @@ def saveFavoritesFromList(ids, sizes = null) {
         if (!first) out << ","; first = false
         out << "{\"id\":" << jsonStr(card.id)
         out << ",\"style\":" << jsonStr(card.style)
+        out << ",\"size\":" << jsonStr(card.size) << "}"
+    }
+    out << "],\"notificationCards\":["
+    first = true
+    for (card in parseNotificationCardsState()) {
+        if (!first) out << ","; first = false
+        out << "{\"id\":" << jsonStr(card.id)
         out << ",\"size\":" << jsonStr(card.size) << "}"
     }
     out << "]}"

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.48
+
+- **Notifications:** separate **Popup** and **Tile** notification device pickers in the
+  app — create popup and/or tile mDash Notifications children from settings.
+- **Favorites:** add **Notifications** tiles (overflow **Add tile → Notifications**)
+  showing unread messages from tile devices newest-first; tap **×** to mark read.
+  Resizable like other favorite tiles; multiple tiles share the same queue.
+
 ## 0.3.47
 
 - **Shades:** position slider and % readout only when the driver supports
