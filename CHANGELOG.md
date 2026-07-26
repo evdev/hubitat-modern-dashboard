@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.49
+
+- **Favorites:** on the Favorites tab, wide layouts show up to four compact tiles
+  side by side; phone-sized layouts keep the existing vertically paired compact stacks.
+
 ## 0.3.48
 
 - **Notifications:** separate **Popup** and **Tile** notification device pickers in the

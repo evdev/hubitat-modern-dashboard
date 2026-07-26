@@ -2102,7 +2102,9 @@ body {
    tiles that also carry .fav-size-* for content-fit rules do not fight the
    layout. Column counts and spans follow the Favorites container width
    (not the browser viewport), so tab and popup layouts agree. Compact
-   favorites are paired in one standard-size grid cell during rendering. */
+   favorites are paired in one standard-size grid cell during rendering;
+   on the wide Favorites tab (container ≥540px) those wrappers unpack so
+   each compact tile occupies one column. */
 .quick-body-favorites,
 .tab-view.quick-body-favorites {
   container-type: inline-size;
@@ -2220,6 +2222,28 @@ body {
   height: 100%;
   overflow: hidden;
   box-sizing: border-box;
+}
+
+/* Favorites tab only: wide containers — unpack compact stacks so each
+   compact tile occupies one column (four-across when all compact). */
+@container favorites (min-width: 540px) {
+  .favorites-persist.quick-body-favorites .quick-fav-grid > .fav-compact-stack {
+    display: contents;
+  }
+
+  .favorites-persist.quick-body-favorites .fav-compact-stack > .fav-size-compact {
+    grid-column: span var(--fav-span-compact);
+    min-height: var(--fav-min-h-compact);
+    height: auto;
+    align-self: start;
+  }
+
+  .favorites-reorder-mode .favorites-persist.quick-body-favorites
+    .fav-compact-stack > .fav-reorder-item.fav-size-compact {
+    grid-column: span var(--fav-span-compact);
+    min-height: var(--fav-min-h-compact);
+    height: auto;
+  }
 }
 
 /* Two-column Favorites container (phones / narrow tab / popup). */
