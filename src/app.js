@@ -271,6 +271,11 @@
     const s = String(raw || "").trim();
     return NOTIFICATION_SIZE_PRESET_SET.has(s) ? s : "tall";
   }
+  const HTML_ZOOM_PRESETS = [75, 100, 125, 150];
+  function normalizeHtmlZoom(raw) {
+    const n = Number(raw);
+    return HTML_ZOOM_PRESETS.includes(n) ? n : 100;
+  }
   function favoriteEntryKey(entry) {
     if (!entry) return "";
     if (entry.type === "embed") return embedFavoriteKey(entry.card?.id);
@@ -379,6 +384,11 @@
     const htmlSizes = d.config?.htmlSizes && typeof d.config.htmlSizes === "object"
       ? d.config.htmlSizes
       : (d.htmlSizes && typeof d.htmlSizes === "object" ? d.htmlSizes : {});
+    const hasHtmlZooms = !!(d.config?.htmlZooms && typeof d.config.htmlZooms === "object")
+      || !!(d.htmlZooms && typeof d.htmlZooms === "object");
+    const htmlZooms = d.config?.htmlZooms && typeof d.config.htmlZooms === "object"
+      ? d.config.htmlZooms
+      : (d.htmlZooms && typeof d.htmlZooms === "object" ? d.htmlZooms : {});
     const nextTiles = [];
     const seen = new Set();
     for (const raw of d.htmlTiles) {
@@ -391,12 +401,15 @@
       seen.add(parsed.id);
       const configuredSize = htmlSizes[parsed.id] ?? htmlSizes[htmlFavoriteKey(parsed.id)];
       const sizeCandidate = configuredSize ?? (hasHtmlSizes ? "tall" : raw.size);
+      const configuredZoom = htmlZooms[parsed.id] ?? htmlZooms[htmlFavoriteKey(parsed.id)];
+      const zoomCandidate = configuredZoom ?? (hasHtmlZooms ? 100 : raw.zoom);
       const tile = {
         id: parsed.id,
         deviceId: parsed.deviceId,
         attribute: parsed.attribute,
         title: String(raw.title || raw.name || parsed.attribute || "HTML").trim() || "HTML",
         size: EMBED_SIZE_PRESET_SET.has(String(sizeCandidate)) ? String(sizeCandidate) : "tall",
+        zoom: normalizeHtmlZoom(zoomCandidate),
       };
       if (Object.prototype.hasOwnProperty.call(raw, "html")) {
         tile.html = raw.html == null ? "" : String(raw.html);
@@ -428,7 +441,7 @@
     const signature = (tiles, ids, layout) => JSON.stringify({
       layout: layout.filter((key) => key.startsWith("h:")),
       tiles: tiles.filter((tile) => ids.has(tile.id)).map((tile) => [
-        tile.id, tile.title, tile.size, tile.html, tile.error, tile.roomsCss, tile.alignCss,
+        tile.id, tile.title, tile.size, tile.zoom, tile.html, tile.error, tile.roomsCss, tile.alignCss,
       ]),
     });
     const prevSig = signature(htmlTiles, favoredIdsBefore, favoritesLayout);
@@ -2002,8 +2015,8 @@
       ".favorites-persist{padding:6px 14px calc(24px + env(safe-area-inset-bottom))}" +
       ".favorites-persist[hidden]{display:none!important}" +
       ".fav-embed-expand-placeholder{border-radius:16px;border:1px dashed var(--stroke)}" +
-      ".fav-html-card{display:flex;flex-direction:column;min-width:0;min-height:0;border:1px solid var(--stroke);border-radius:16px;background:var(--panel);overflow:hidden;position:relative}" +
-      ".fav-html-media{position:relative;flex:1;min-height:160px;background:var(--panel-solid)}" +
+      ".fav-html-card{display:flex;flex-direction:column;min-width:0;min-height:0;border:1px solid var(--stroke);border-radius:16px;background:var(--panel);overflow:hidden;position:relative;--html-zoom:1}" +
+      ".fav-html-media{position:relative;flex:1;min-height:160px;background:var(--panel-solid);overflow:hidden}" +
       ".fav-size-compact.fav-html-card .fav-html-media{min-height:120px}" +
       ".fav-size-standard.fav-html-card .fav-html-media{min-height:160px}" +
       ".fav-size-wide.fav-html-card .fav-html-media{min-height:180px}" +
@@ -2014,6 +2027,7 @@
       ".fav-size-large.fav-html-card .fav-html-media{min-height:320px}" +
       ".fav-size-viewport.fav-html-card .fav-html-media{min-height:calc(100dvh - 11rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))}" +
       ".fav-html-iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent}" +
+      ".fav-html-iframe[data-html-mode=stub]{transform:scale(var(--html-zoom));transform-origin:top left;width:calc(100%/var(--html-zoom));height:calc(100%/var(--html-zoom))}" +
       ".favorites-reorder-mode .fav-html-iframe{pointer-events:none}" +
       ".fav-html-unavailable{display:grid;place-items:center;height:100%;min-height:140px;padding:16px;text-align:center;color:var(--muted);font-size:.88rem;font-weight:600;line-height:1.4}" +
       ".fav-html-card.fav-embed-expanded{position:fixed;inset:0;z-index:80;border-radius:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}" +
@@ -8317,7 +8331,11 @@
 
   function favoritesPopupSignature() {
     const entries = getFavoriteEntries();
-    const sizes = entries.map((e) => favoriteEntryKey(e) + ":" + resolveFavoriteSize(e)).join(",");
+    const sizes = entries.map((e) => {
+      const size = resolveFavoriteSize(e);
+      const zoom = e?.type === "html" ? normalizeHtmlZoom(e.tile?.zoom) : null;
+      return favoriteEntryKey(e) + ":" + size + (zoom != null ? "@" + zoom : "");
+    }).join(",");
     return entries.map((e) => favoriteEntryKey(e)).join(",") + "|" + sizes;
   }
 
@@ -8331,6 +8349,11 @@
       const tile = rendered.get(favoriteEntryKey(entry));
       const want = "fav-size-" + resolveFavoriteSize(entry);
       if (!tile?.classList.contains(want)) return false;
+      if (entry.type === "html") {
+        const htmlCard = tile.matches(".fav-html-card") ? tile : tile.querySelector(".fav-html-card");
+        const wantZoom = String(normalizeHtmlZoom(entry.tile?.zoom));
+        if (htmlCard && htmlCard.dataset.htmlZoom !== wantZoom) return false;
+      }
     }
     return true;
   }
@@ -8849,6 +8872,28 @@
     return size;
   }
 
+  function applyFavoriteHtmlZoom(wrap, tile, entry, nextZoom) {
+    if (entry?.type !== "html") return null;
+    const zoom = normalizeHtmlZoom(nextZoom);
+    entry.tile.zoom = zoom;
+    const idx = htmlTiles.findIndex((candidate) => candidate.id === entry.tile.id);
+    if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], zoom };
+    const htmlCard = tile?.classList?.contains("fav-html-card")
+      ? tile
+      : (wrap?.querySelector?.(".fav-html-card") || tile);
+    postCall("applyHtmlTileZoomToCard", htmlCard, zoom);
+    if (htmlCard?.dataset.htmlLoaded === "1") {
+      const iframe = htmlCard.querySelector(".fav-html-iframe");
+      const tileObj = htmlTiles.find((candidate) => candidate.id === entry.tile.id);
+      if (iframe && tileObj) {
+        postCall("configureHtmlTileIframe", iframe, tileObj, htmlCard.querySelector(".fav-html-unavailable"));
+      }
+    } else {
+      postCall("ensureHtmlTileLoaded", htmlCard);
+    }
+    return zoom;
+  }
+
   function closeFavoriteSizeChooser() {
     if (!favSizeChooserEl) return;
     const returnFocus = favSizeChooserReturnFocus;
@@ -8929,6 +8974,47 @@
     }
     syncSelected();
     panel.appendChild(list);
+
+    let zoomOptionBtns = [];
+    if (entry.type === "html") {
+      const zoomSection = ce("div", "fav-size-sheet-zoom");
+      const zoomLabel = ce("div", "fav-size-sheet-zoom-label");
+      zoomLabel.textContent = "Zoom";
+      zoomSection.appendChild(zoomLabel);
+      const zoomRow = ce("div", "fav-size-sheet-zoom-options");
+      zoomRow.setAttribute("role", "listbox");
+      zoomRow.setAttribute("aria-label", "Content zoom");
+      for (const zoom of HTML_ZOOM_PRESETS) {
+        const btn = ce("button", "fav-size-zoom-option");
+        btn.type = "button";
+        btn.setAttribute("role", "option");
+        btn.dataset.zoom = String(zoom);
+        btn.textContent = zoom + "%";
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (reorderBusy) return;
+          const applied = applyFavoriteHtmlZoom(wrap, tile, entry, zoom);
+          if (applied == null) return;
+          syncZoomSelected();
+          hapticTap();
+        });
+        zoomRow.appendChild(btn);
+        zoomOptionBtns.push(btn);
+      }
+      function syncZoomSelected() {
+        const cur = String(normalizeHtmlZoom(entry.tile?.zoom));
+        for (const btn of zoomOptionBtns) {
+          const selected = btn.dataset.zoom === cur;
+          btn.classList.toggle("is-selected", selected);
+          btn.setAttribute("aria-selected", selected ? "true" : "false");
+        }
+      }
+      syncZoomSelected();
+      zoomSection.appendChild(zoomRow);
+      panel.appendChild(zoomSection);
+    }
+
     overlay.appendChild(panel);
 
     const onKey = (e) => {
@@ -9023,7 +9109,7 @@
     }
   }
 
-  async function saveFavoritesLayoutApi(layout, deviceSizes, embedSizes, htmlSizes, timeSizes, notificationSizes) {
+  async function saveFavoritesLayoutApi(layout, deviceSizes, embedSizes, htmlSizes, htmlZooms, timeSizes, notificationSizes) {
     try {
       const r = await fetch(withToken("settings/favorites-layout"), {
         method: "POST",
@@ -9034,6 +9120,7 @@
           favoriteSizes: deviceSizes,
           embedSizes,
           htmlSizes,
+          htmlZooms,
           timeSizes,
           notificationSizes,
         }),
@@ -9067,16 +9154,21 @@
     const deviceOrder = layout.filter((key) => key.startsWith("d:")).map((key) => Number(key.slice(2)));
     const embedSizes = {};
     const htmlSizes = {};
+    const htmlZooms = {};
     const timeSizes = {};
     const notificationSizes = {};
     for (const card of embedCards) embedSizes[card.id] = card.size || "tall";
-    for (const tile of htmlTiles) htmlSizes[tile.id] = tile.size || "tall";
+    for (const tile of htmlTiles) {
+      htmlSizes[tile.id] = tile.size || "tall";
+      htmlZooms[tile.id] = normalizeHtmlZoom(tile.zoom);
+    }
     for (const card of timeCards) timeSizes[card.id] = card.size || "square";
     for (const card of notificationCards) notificationSizes[card.id] = card.size || "tall";
     return {
       deviceSizes: normalizedFavoriteSizes(deviceOrder),
       embedSizes,
       htmlSizes,
+      htmlZooms,
       timeSizes,
       notificationSizes,
     };
@@ -9089,6 +9181,7 @@
       sizes.deviceSizes,
       sizes.embedSizes,
       sizes.htmlSizes,
+      sizes.htmlZooms,
       sizes.timeSizes,
       sizes.notificationSizes
     );
@@ -12609,6 +12702,13 @@
   // __MLD_SPLIT3__
 
   // ---------- HTML attribute favorite tiles (post3; keeps post2 under hub limit) ----------
+  function applyHtmlTileZoomToCard(card, zoom) {
+    if (!card) return;
+    const z = normalizeHtmlZoom(zoom);
+    card.dataset.htmlZoom = String(z);
+    card.style.setProperty("--html-zoom", String(z / 100));
+  }
+
   function htmlTileThemeTokens(tile) {
     const rootStyles = getComputedStyle(document.documentElement);
     return {
@@ -12617,6 +12717,7 @@
       colorScheme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
       roomsCss: tile?.roomsCss || "",
       alignCss: tile?.alignCss || "",
+      zoom: normalizeHtmlZoom(tile?.zoom),
     };
   }
 
@@ -12671,8 +12772,10 @@
     };
     const style = doc.createElement("style");
     style.setAttribute("data-mld-theme-bridge", "");
+    const zoomPct = normalizeHtmlZoom(tokens?.zoom);
     style.textContent =
       ":root{color-scheme:" + cleanCssValue(tokens?.colorScheme, "dark") + ";}" +
+      "html{zoom:" + (zoomPct / 100) + ";}" +
       "html,body{margin:0;padding:0;background:transparent;color:" + cleanCssValue(tokens?.color, "#f5f7fb") +
       ";font-family:" + cleanCssValue(tokens?.font, "system-ui, sans-serif") + ";}" +
       cleanCss(tokens?.roomsCss) + "\n" + cleanCss(tokens?.alignCss);
@@ -12690,6 +12793,8 @@
 
   function configureHtmlTileIframe(iframe, tile, unavailableEl) {
     if (!iframe || !tile) return;
+    const card = iframe.closest(".fav-html-card");
+    if (card) applyHtmlTileZoomToCard(card, tile.zoom);
     const raw = tile.html == null ? "" : String(tile.html);
     iframe.dataset.html = raw;
     iframe.dataset.htmlTileId = tile.id;
@@ -12974,6 +13079,7 @@
     media.appendChild(iframe);
     media.appendChild(unavailable);
     el.appendChild(media);
+    applyHtmlTileZoomToCard(el, tile.zoom);
     htmlTileIframes.set(tile.id, iframe);
     observeFavHtmlCard(el);
     return el;

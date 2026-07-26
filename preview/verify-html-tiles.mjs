@@ -91,18 +91,22 @@ try {
   const saved = await postJson("/settings/favorites-layout", {
     layout,
     htmlSizes: { "9001:tile5": "wide" },
+    htmlZooms: { "9001:tile5": 125 },
   });
   assert(saved.res.ok, "HTML layout save ok");
   assert(saved.json.favoritesLayout[0] === htmlKey, "HTML layout key saved");
   assert(!saved.json.favoritesLayout.includes("h:9999:missing"), "unknown HTML key rejected");
   assert(saved.json.htmlSizes?.["9001:tile5"] === "wide", "HTML size returned");
+  assert(saved.json.htmlZooms?.["9001:tile5"] === 125, "HTML zoom returned");
 
   const afterSave = await getJson("/data");
   assert(afterSave.config?.favoritesLayout?.[0] === htmlKey, "HTML layout persisted");
   assert(afterSave.config?.htmlSizes?.["9001:tile5"] === "wide", "HTML size persisted");
+  assert(afterSave.config?.htmlZooms?.["9001:tile5"] === 125, "HTML zoom persisted");
   const activeTile = afterSave.htmlTiles.find((tile) => tile.id === "9001:tile5");
   assert(typeof activeTile?.html === "string" && activeTile.html.includes("<table"), "favorited tile includes html");
   assert(activeTile?.size === "wide", "favorited tile includes saved size");
+  assert(activeTile?.zoom === 125, "favorited tile includes saved zoom");
   const inactiveTile = afterSave.htmlTiles.find((tile) => tile.id === "9002:html");
   assert(inactiveTile?.html == null, "unfavorited tile omits html");
 

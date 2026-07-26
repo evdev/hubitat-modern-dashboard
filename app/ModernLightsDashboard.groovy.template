@@ -3577,6 +3577,7 @@ def htmlLayoutKey(deviceId, attribute) { return "h:" + deviceId.toString() + ":"
 def maxHtmlAttrBytes() { return 8192 }
 def maxHtmlAttrsPerGenericDevice() { return 6 }
 def htmlSizePresetSet() { return ["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"] as Set }
+def htmlZoomPresetSet() { return [75, 100, 125, 150] as Set }
 def htmlNamedAttrs() { return ["html", "tile", "iframe"] as Set }
 
 def isTileBuilderStorageDevice(d) {
@@ -3704,6 +3705,7 @@ def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
     if (activeIds instanceof Set) active = activeIds
     else if (activeIds instanceof Collection) active = new HashSet(activeIds)
     def sizes = parseHtmlTileSizesState()
+    def zooms = parseHtmlTileZoomsState()
     for (d in devices) {
         def tiles = discoverHtmlTilesForDevice(d, includeHtmlBodies, active)
         def roomsCss = null
@@ -3724,7 +3726,8 @@ def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
                 deviceId: t.deviceId,
                 attribute: t.attribute,
                 title: t.title,
-                size: (sizes[t.id] ?: "tall")
+                size: (sizes[t.id] ?: "tall"),
+                zoom: (zooms[t.id] ?: 100)
             ]
             if (t.html != null) {
                 def raw = t.html
@@ -3768,6 +3771,29 @@ def parseHtmlTileSizesState() {
     }
 }
 
+def parseHtmlTileZoomsState() {
+    if (!state.htmlTileZoomsJson) return [:]
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(state.htmlTileZoomsJson.toString())
+        if (!(parsed instanceof Map)) return [:]
+        def allowed = htmlZoomPresetSet()
+        def out = [:]
+        for (entry in parsed) {
+            def k = entry.key?.toString()?.trim()
+            if (!k || !(k ==~ /^\d+:[A-Za-z0-9_.-]+$/)) continue
+            def n = null
+            try {
+                n = entry.value instanceof Number ? entry.value.toInteger() : Integer.parseInt(entry.value?.toString() ?: "")
+            } catch (e) { n = null }
+            if (n == null || !allowed.contains(n)) continue
+            out[k] = n
+        }
+        return out
+    } catch (e) {
+        return [:]
+    }
+}
+
 def htmlTilesJsonFragment() {
     def activeIds = activeHtmlLayoutIds()
     def tiles = discoverHtmlTileCatalog(true, activeIds)
@@ -3781,6 +3807,7 @@ def htmlTilesJsonFragment() {
         out << ",\"attribute\":" << jsonStr(t.attribute)
         out << ",\"title\":" << jsonStr(t.title)
         out << ",\"size\":" << jsonStr(t.size ?: "tall")
+        out << ",\"zoom\":" << (t.zoom != null ? t.zoom : 100)
         if (t.html != null) out << ",\"html\":" << jsonStr(t.html)
         if (t.error) out << ",\"error\":" << jsonStr(t.error)
         if (t.roomsCss) out << ",\"roomsCss\":" << jsonStr(t.roomsCss)
@@ -4481,6 +4508,10 @@ def saveFavoritesLayout() {
     if (htmlSizes != null && !(htmlSizes instanceof Map)) {
         return renderJsonNoStore('{"ok":false,"error":"invalid htmlSizes"}', 400)
     }
+    def htmlZooms = body?.htmlZooms
+    if (htmlZooms != null && !(htmlZooms instanceof Map)) {
+        return renderJsonNoStore('{"ok":false,"error":"invalid htmlZooms"}', 400)
+    }
     def favoriteSizes = body?.favoriteSizes
     if (favoriteSizes != null && !(favoriteSizes instanceof Map)) {
         return renderJsonNoStore('{"ok":false,"error":"invalid favoriteSizes"}', 400)
@@ -4635,7 +4666,38 @@ def saveFavoritesLayout() {
         state.htmlTileSizesJson = groovy.json.JsonOutput.toJson(pruned)
     }
 
+    // HTML tile zoom levels live in a separate map keyed by deviceId:attribute.
+    if (htmlZooms != null) {
+        def allowedZoom = htmlZoomPresetSet()
+        def nextHtmlZooms = [:]
+        def activeHtmlZoom = activeHtmlLayoutIds(nextLayout)
+        for (id in activeHtmlZoom) {
+            def zoom = 100
+            if (htmlZooms.containsKey(id)) {
+                try {
+                    def cand = htmlZooms[id] instanceof Number ? htmlZooms[id].toInteger() : Integer.parseInt(htmlZooms[id]?.toString() ?: "")
+                    if (allowedZoom.contains(cand)) zoom = cand
+                } catch (e) {}
+            } else {
+                def prev = parseHtmlTileZoomsState()[id]
+                if (prev != null && allowedZoom.contains(prev)) zoom = prev
+            }
+            nextHtmlZooms[id] = zoom
+        }
+        state.htmlTileZoomsJson = groovy.json.JsonOutput.toJson(nextHtmlZooms)
+    } else {
+        def prevHtmlZooms = parseHtmlTileZoomsState()
+        def activeHtmlZoom = activeHtmlLayoutIds(nextLayout)
+        def prunedZoom = [:]
+        for (entry in prevHtmlZooms) {
+            def idKey = String.valueOf(entry.key)
+            if (activeHtmlZoom.contains(idKey)) prunedZoom[idKey] = entry.value
+        }
+        state.htmlTileZoomsJson = groovy.json.JsonOutput.toJson(prunedZoom)
+    }
+
     def htmlSizeMap = parseHtmlTileSizesState()
+    def htmlZoomMap = parseHtmlTileZoomsState()
 
     def out = new StringBuilder()
     out << "{\"ok\":true,\"favorites\":["
@@ -4675,6 +4737,12 @@ def saveFavoritesLayout() {
     for (entry in htmlSizeMap) {
         if (!first) out << ","; first = false
         out << jsonStr(entry.key.toString()) << ":" << jsonStr(entry.value.toString())
+    }
+    out << "},\"htmlZooms\":{"
+    first = true
+    for (entry in htmlZoomMap) {
+        if (!first) out << ","; first = false
+        out << jsonStr(entry.key.toString()) << ":" << entry.value
     }
     out << "},\"favoritesLayout\":["
     first = true

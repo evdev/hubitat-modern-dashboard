@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.52
+
+- **HTML tiles:** Favorites reorder **Size** sheet adds a **Zoom** control (75%–150%)
+  for HTML content, independent of card size; persisted as `htmlZooms`.
+
 ## 0.3.51
 
 - **HTML tiles:** hub sends HTML bodies only for favorited/active tiles (not every

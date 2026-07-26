@@ -25,6 +25,7 @@ const MOCK_UNLOCK_PIN = "5678";
 const MOCK_DASH_PASSWORD = "dashpass";
 const DASH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const HTML_SIZE_PRESETS = new Set(["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"]);
+const HTML_ZOOM_PRESETS = new Set([75, 100, 125, 150]);
 const MOCK_HTML_TILES = [
   {
     id: "9001:tile5",
@@ -240,7 +241,7 @@ function buildMockData(count) {
     { i: 5102, n: "Master Bedroom Fan", r: 3, s: 0, sp: "off", supSp: "low,medium-low,medium,medium-high,high", hasSw: 1 },
     { i: 5103, n: "Patio DC Fan", r: 7, s: 1, sp: "4", supSp: "1,2,3,4,5,6", hasSw: 1 },
   ];
-  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: MOCK_HTML_TILES.map((tile) => ({ ...tile })), rooms, devices, outlets: [
+  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, htmlZooms: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: MOCK_HTML_TILES.map((tile) => ({ ...tile })), rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
   ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
@@ -292,6 +293,7 @@ function ensureEmbedConfig() {
   if (!Array.isArray(state.config.favoritesLayout)) state.config.favoritesLayout = [];
   if (!state.config.favoriteSizes || typeof state.config.favoriteSizes !== "object") state.config.favoriteSizes = {};
   if (!state.config.htmlSizes || typeof state.config.htmlSizes !== "object") state.config.htmlSizes = {};
+  if (!state.config.htmlZooms || typeof state.config.htmlZooms !== "object") state.config.htmlZooms = {};
   if (!Array.isArray(state.htmlTiles)) state.htmlTiles = [];
 }
 
@@ -401,7 +403,11 @@ function htmlTilesForPayload() {
   );
   return state.htmlTiles.map((tile) => {
     const id = String(tile.id);
-    const entry = { ...tile, size: state.config.htmlSizes[id] || tile.size || "tall" };
+    const entry = {
+      ...tile,
+      size: state.config.htmlSizes[id] || tile.size || "tall",
+      zoom: state.config.htmlZooms[id] || tile.zoom || 100,
+    };
     if (activeIds.has(id)) return entry;
     const { html: _html, ...catalogEntry } = entry;
     return catalogEntry;
@@ -1488,6 +1494,7 @@ const server = createServer(async (req, res) => {
         timeCards: state.config.timeCards,
         notificationCards: state.config.notificationCards || [],
         htmlSizes: state.config.htmlSizes || {},
+        htmlZooms: state.config.htmlZooms || {},
       }));
     };
     if (req.method === "GET" && idsParam != null) {
@@ -1755,6 +1762,10 @@ const server = createServer(async (req, res) => {
       res.writeHead(400, { "Content-Type": "application/json" });
       return res.end('{"ok":false,"error":"invalid htmlSizes"}');
     }
+    if (body.htmlZooms != null && (typeof body.htmlZooms !== "object" || Array.isArray(body.htmlZooms))) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end('{"ok":false,"error":"invalid htmlZooms"}');
+    }
     let cards = (state.config.embedCards || []).slice();
     let times = (state.config.timeCards || []).slice();
     let notifs = (state.config.notificationCards || []).slice();
@@ -1885,6 +1896,28 @@ const server = createServer(async (req, res) => {
         Object.entries(state.config.htmlSizes || {}).filter(([id]) => activeHtmlIds.has(id))
       );
     }
+    if (body.htmlZooms != null) {
+      const nextHtmlZooms = {};
+      const previousHtmlZooms = state.config.htmlZooms || {};
+      const activeHtmlIds = new Set(reconciled.map(htmlIdFromLayoutKey).filter(Boolean));
+      for (const id of activeHtmlIds) {
+        let zoom = 100;
+        if (Object.hasOwn(body.htmlZooms, id)) {
+          const candidate = Number(body.htmlZooms[id]);
+          if (HTML_ZOOM_PRESETS.has(candidate)) zoom = candidate;
+        } else {
+          const previous = Number(previousHtmlZooms[id]);
+          if (HTML_ZOOM_PRESETS.has(previous)) zoom = previous;
+        }
+        nextHtmlZooms[id] = zoom;
+      }
+      state.config.htmlZooms = nextHtmlZooms;
+    } else {
+      const activeHtmlIds = new Set(reconciled.map(htmlIdFromLayoutKey).filter(Boolean));
+      state.config.htmlZooms = Object.fromEntries(
+        Object.entries(state.config.htmlZooms || {}).filter(([id]) => activeHtmlIds.has(id))
+      );
+    }
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({
       ok: true,
@@ -1894,6 +1927,7 @@ const server = createServer(async (req, res) => {
       timeCards: times,
       notificationCards: notifs,
       htmlSizes: state.config.htmlSizes || {},
+      htmlZooms: state.config.htmlZooms || {},
       favoritesLayout: reconciled,
     }));
   }

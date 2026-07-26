@@ -2450,6 +2450,40 @@ body {
 @media (max-width: 359px) {
   .fav-size-sheet-options { grid-template-columns: 1fr; }
 }
+.fav-size-sheet-zoom {
+  display: flex; flex-direction: column; gap: 8px;
+  padding-top: 4px; border-top: 1px solid var(--stroke);
+}
+.fav-size-sheet-zoom-label {
+  font-size: .82rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.fav-size-sheet-zoom-options {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+}
+.fav-size-zoom-option {
+  appearance: none;
+  border: 1px solid var(--stroke-2);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 10px 6px;
+  min-height: 44px;
+  font: inherit;
+  font-size: .88rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.fav-size-zoom-option.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--stroke-2));
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.fav-size-zoom-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* ---- Thermostat: always stack in favorites (avoid @container horizontal in short tiles) ---- */
 .quick-body-favorites .quick-fav-tstat {

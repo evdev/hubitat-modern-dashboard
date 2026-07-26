@@ -414,7 +414,9 @@ attributes (Tile Builder `tile1`–`tile26` expand automatically). Inline HTML r
 in a sandboxed frame with a light mDash theme bridge (font, text color, transparent
 background); source-defined colors stay intact. Oversized Tile Builder tiles that
 point at hub File Manager URLs work on the **local** dashboard; cloud HTTPS may block
-those local `http://` stubs. Scripts and interactive JS are not supported.
+those local `http://` stubs. Scripts and interactive JS are not supported. In Favorites
+reorder mode, **Size** opens card-size presets; HTML tiles also get a **Zoom** row
+(75% / 100% / 125% / 150%) to scale content inside the card.
 
 ### Search, collapse & reorder
 
@@ -829,7 +831,7 @@ Nothing to edit.
 | `POST /lights/bulk` | Bulk on/off by scope |
 | `POST /hub-mode`, `/hsm`, `/scene/activate` | Mode, security, scenes |
 | `GET/POST /schedules/*` | Scheduler CRUD, toggle, test |
-| `POST /settings/room-order`, `/nav-order`, `/favorites`, `/embed-cards`, `/settings/favorites-layout` | Layout sync, favorites, HTTPS embed cards, HTML tile layout/`htmlSizes` |
+| `POST /settings/room-order`, `/nav-order`, `/favorites`, `/embed-cards`, `/settings/favorites-layout` | Layout sync, favorites, HTTPS embed cards, HTML tile layout/`htmlSizes`/`htmlZooms` |
 
 All endpoints require `?access_token=…` (included automatically when you open the
 dashboard link from the app page).
