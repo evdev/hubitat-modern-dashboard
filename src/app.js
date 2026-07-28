@@ -2124,12 +2124,16 @@
     colorPopup.setAttribute("aria-label", "Light settings");
     const panel = ce("div", "ct-panel");
     const head = ce("div", "ct-head");
+    const leading = ce("div", "ct-head-leading");
+    const title = ce("div", "ct-title");
     const value = ce("div", "ct-value");
     const closeBtn = ce("button", "ct-close");
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label", "Close light settings");
     closeBtn.textContent = "×";
-    head.appendChild(value);
+    leading.appendChild(title);
+    leading.appendChild(value);
+    head.appendChild(leading);
     head.appendChild(closeBtn);
 
     const tabs = ce("div", "ct-tabs");
@@ -2219,6 +2223,7 @@
     colorPopup.appendChild(panel);
     appendPopup(colorPopup);
 
+    colorPopup._titleEl = title;
     colorPopup._valueEl = value;
     colorPopup._tabsEl = tabs;
     colorPopup._tabCt = tabCt;
@@ -2277,6 +2282,9 @@
     popup._paneCt.hidden = sess.tab !== "ct";
     popup._paneRgb.hidden = sess.tab !== "rgb";
     popup._paneLevel.hidden = sess.tab !== "level";
+    const name = sess.name || "Light";
+    popup._titleEl.textContent = name;
+    popup.setAttribute("aria-label", "Light settings — " + name);
     if (sess.tab === "ct") setCtVisual(sess.k);
     else if (sess.tab === "rgb") setRgbVisual(sess.h, sess.s);
     else setLevelVisual(sess.level);
@@ -2661,9 +2669,10 @@
     });
   }
 
-  function openColorPopup(id, anchorEl, dev) {
+  function openColorPopup(id, anchorEl, dev, displayName) {
     cancelAllSlideGestures();
     closeColorPopup(false);
+    const name = displayName || dev.n || "Light";
     const hasCt = !!dev.ct;
     const hasRgb = !!dev.rgb;
     const hasLevel = !!dev.d;
@@ -2681,7 +2690,7 @@
     const s = dev.sat != null ? Math.max(0, Math.min(100, Math.round(dev.sat))) : 100;
     const rawLevel = effectiveLevel(dev) ?? dev.l ?? 0;
     const level = Math.max(0, Math.min(100, Math.round(rawLevel)));
-    colorSession = { id, anchorEl, tab, hasCt, hasRgb, hasLevel, k, h, s, level, changed: false };
+    colorSession = { id, anchorEl, name, tab, hasCt, hasRgb, hasLevel, k, h, s, level, changed: false };
     const popup = ensureColorPopup();
     popup.removeAttribute("hidden");
     popup.classList.add("open");
@@ -7049,7 +7058,7 @@
       if (tstatSession) closeTstatPopup();
       if (colorSession && colorSession.id !== id) closeColorPopup(true);
       const rec = devMap.get(id);
-      openColorPopup(id, nameEl, rec?.data || dev);
+      openColorPopup(id, nameEl, rec?.data || dev, label);
     }
 
     nameEl.addEventListener("click", open);

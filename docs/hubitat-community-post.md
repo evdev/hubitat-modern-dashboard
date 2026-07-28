@@ -4,19 +4,11 @@
 
 `COMMUNITY_LINK` in `build.mjs` points at this thread (also set in HPM manifests on build).
 
-**Full feature documentation:** see the [User guide](../README.md#user-guide) in the README (WebSocket, snapshots, iOS PWA/local mode, scheduler details, and more).
+**Full feature documentation:** see the [User guide](../README.md#user-guide) in the README.
 
-Original draft body kept below for reference.
-
-Screenshots help a lot — capture from your hub or from the local preview
-(`node preview/server.mjs` → http://localhost:4321/). Attach a few images of the
-main lights view, scheduler, and phone home-screen icon if you can.
+Paste-ready body for updating the published thread:
 
 ---
-
-**Title:** Modern Dashboard (mDash) — control-first PWA with bulk actions & scheduler, runs entirely on your hub
-
-**Body:**
 
 ## Modern Dashboard for Hubitat
 
@@ -53,26 +45,35 @@ Maker API setup. Rooms and names come from your Hubitat room assignments. You
 
 - **Lights** — room-grouped tiles, drag-to-dim, RGB / color temperature, **per-room
   and whole-house on/off**, light snapshots (slide to save/restore)
+- **Outlets** — socket-style tiles in the room layout, or a separate Outlets tab
 - **Scheduler** — daily, weekly, one-time, sunrise/sunset (with offsets), and hub
   mode triggers; actions for lights, outlets, thermostats, and hub mode
 - **Climate** — thermostat dial (setpoints, mode, fan) and **multi-select bulk
   thermostat control**
-- **Security & home** — locks (optional PIN), HSM arm/disarm (optional PIN),
-  Hubitat scenes, hub mode
-- **Shades / blinds** — open/close/pause and drag-to-position; pickers for Window
-  Shade, Window Blind, and Switch Level (dimmer-style) drivers. The Switch Level
-  list also includes ordinary dimmers — select only real shades/blinds there
+- **Security & home** — locks & garage doors (optional PIN), HSM arm/disarm
+  (optional PIN), Hubitat scenes, hub mode
+- **Shades / blinds** — open/close/stop and drag-to-position when the driver
+  supports it; pickers for Window Shade, Window Blind, and Switch Level
+  (dimmer-style) drivers
 - **Ceiling fans** — on/off and speed control on a dedicated Fans tab
 - **Music / media** — Sonos, Echo Speaks, AirPlay, Chromecast (where supported)
 - **Sensors** — motion, contact, shock/glass-break, water, presence, humidity,
-  illuminance, smoke/CO, temperature (+ battery when available)
-- **UX** — dark/light/auto theme, search, collapsible rooms, favorites, reorderable
-  rooms and nav icons (synced across devices), local ↔ cloud switching
+  illuminance, smoke/CO, temperature, valves (+ battery when available); optional
+  flat-by-type layout instead of rooms
+- **Cameras** — live go2rtc WebRTC grid on the **local** URL (HD toggle, reorder,
+  1/2/3 columns)
+- **Notifications** — mDash Notifications driver; Rule Machine → full-screen popup
+  queue and/or Favorites notification tiles (create devices from app settings)
+- **Favorites** — star devices with named tile sizes; **Add tile** for HTTPS embeds
+  (Google Calendar, weather widgets), live **Time** clocks, **Notifications**
+  lists, and **HTML** tiles (Tile Builder, vehicle status, etc., with zoom)
+- **UX** — dark/light/auto theme, search, collapsible rooms, category tabs /
+  navigation drawer, reorderable rooms and nav icons (synced across devices),
+  local ↔ cloud switching, optional dashboard password
 
 Standalone switches (relay modules, exhaust fans, etc.) have no separate tile type.
 Add them to the **Lights** or **Outlets** picker to control them from the dashboard
-or scheduler. Outlets use socket-style tiles; enable **separate Outlets tab** in
-app settings to show them outside the Lights room view.
+or scheduler.
 
 ### Install (HPM — recommended)
 
@@ -99,14 +100,15 @@ Manager, enable OAuth).
 
 The cloud URL includes your OAuth access token (Hubitat's normal pattern). Treat
 it like a secret — anyone with the URL can control the devices you've selected.
-If you regenerate the token, open a fresh cloud link and reinstall the PWA.
+Optional **dashboard password**, lock PIN, and HSM PIN add extra gates. If you
+regenerate the token, open a fresh cloud link and reinstall the PWA.
 
 ### Links
 
 - Source & docs: https://github.com/evdev/hubitat-modern-dashboard
 - License: Apache 2.0
-- Current version: see the repo / HPM package (0.2.x)
+- Current version: see the repo / HPM package (0.3.x)
 
 Feedback, feature requests, and screenshots welcome in this thread. Happy to
-answer questions about setup, the scheduler, or how it compares to the built-in
-dashboard / other community dashboards.
+answer questions about setup, the scheduler, Favorites tiles, or how it compares
+to the built-in dashboard / other community dashboards.

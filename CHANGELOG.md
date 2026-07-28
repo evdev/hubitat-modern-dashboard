@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.55
+
+- **Lights:** color/CT/RGB popup header shows the device name (level/Kelvin/RGB readout
+  moves below as secondary text).
+- **Favorites:** compact tiles use fixed heights so stacked pairs and four-across layouts
+  stay even; compact thermostat dial shrinks in stacks.
+
 ## 0.3.54
 
 - **Fix:** rebalance JS upload chunks so `mld-app-post2.js` stays under the hub

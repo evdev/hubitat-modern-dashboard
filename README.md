@@ -17,9 +17,12 @@ can manage remotely without logging into the Hubitat admin UI, and runs
 Works over both the local URL and Hubitat's **cloud proxy**, so the same
 experience works at home and away.
 
-Supports lights (dimmers, switches, CT, RGB), motorized shades, ceiling fans,
-thermostats, locks, HSM, Hubitat scenes, hub mode, music/media players, sensors,
-live camera views (go2rtc, local URL only), virtual notification popups, and a built-in scheduler for lights, outlets, thermostats, and hub mode.
+Supports lights (dimmers, switches, CT, RGB), outlets, motorized shades, ceiling
+fans, thermostats, locks, garage doors, HSM, Hubitat scenes, hub mode,
+music/media players, sensors, live camera views (go2rtc, local URL only),
+notification popups and Favorites notification tiles, and a built-in scheduler
+for lights, outlets, thermostats, and hub mode. Favorites also support HTTPS
+embed cards, live clock tiles, and HTML tiles (Tile Builder and similar).
 Designed to show ~130 lights on one page, within Hubitat's 128 KB cloud response
 cap.
 
@@ -32,7 +35,7 @@ cap.
   - [Thermostats](#thermostats)
   - [Motorized shades & blinds](#motorized-shades--blinds)
   - [Ceiling fans](#ceiling-fans)
-  - [Locks](#locks)
+  - [Locks & garage doors](#locks--garage-doors)
   - [Hubitat Safety Monitor (HSM)](#hubitat-safety-monitor-hsm)
   - [Hub mode & scenes](#hub-mode--scenes)
   - [Music & media](#music--media)
@@ -157,10 +160,13 @@ The top-bar **All off** / **All on** buttons work the same way:
 Select thermostats in the app preferences. They appear in the **Thermostats**
 quick-nav popup (when enabled) and in room headers when assigned to a room.
 
-- **Per-thermostat dial:** heat/cool setpoints, mode, fan mode/speed
+- **Per-thermostat dial:** heat/cool setpoints, mode, fan mode/speed (uses
+  `fanAuto` / `fanOn` / `fanCirculate` when the driver supports them)
 - **All thermostats:** top-bar button (when multiple thermostats are configured)
   opens a central control with a multi-select target menu — choose which units to
   adjust, then apply mode or setpoints to the selection
+- **Compact favorites:** thermostat favorites can use **Compact** size — a mini
+  ring shows current temp with setpoint and mode beside it; tap opens the full dial
 
 Hide the thermostats quick-nav icon via **Show thermostats in dashboard quick
 menu** in app preferences if you only use per-room headers.
@@ -188,8 +194,10 @@ Commands prefer shade APIs when present (`open` / `close` / `setPosition` /
 `stop`) for dimmer-style drivers. Position and status can come from `level` /
 `switch` when `position` / `windowShade` are absent.
 
-- Open / close / pause buttons
-- Drag the position slider to set shade level
+- Open / close buttons (and **Stop** when the driver supports `stopPositionChange` /
+  `stop`)
+- Drag the position slider to set shade level — only shown when the driver supports
+  `setPosition` / `setLevel` (open/close-only motors do not show a dead slider)
 - **All blinds:** top-bar button on the Blinds tab opens a central control with a multi-select target menu — choose which shades to adjust, then open, close, or set position for the selection
 - Favorites star works on shade tiles
 
@@ -215,6 +223,8 @@ garage doors with lock/unlock or open/close controls.
   opening a garage door from the dashboard requires entering a PIN on an on-screen
   pad. Locking and closing garage doors never requires a PIN. The PIN is validated
   by this app before the command is sent.
+- **Compact favorites:** lock favorites can use **Compact** size — tap to
+  lock/unlock; unlocked shows an open lock in red, locked shows a closed lock
 
 ### Hubitat Safety Monitor (HSM)
 
@@ -301,6 +311,11 @@ keeps the generic reading as primary with temperature in the footer. Other
 multi-picker overlaps appear once, using the first matching type. Filter chips
 reflect the merged tile type (for example, temp+humidity counts as Temperature).
 
+**Organization:** by default sensors are grouped by Hubitat room. In the overflow
+menu, enable **Do not use rooms for organization** to show one flat list grouped
+by sensor type instead; each card still shows its room in the meta line. This
+preference is stored per browser.
+
 ### Notifications
 
 Hubitat has no built-in virtual notification device. This package includes a
@@ -378,20 +393,27 @@ enable/disable, or **Test** to fire immediately. Times display in 12h or 24h
 format per the **Use 24-hour time in scheduler** app preference (stored internally
 as 24h for reliable firing).
 
+On the **cloud** URL, schedules load when you open the Scheduler (`GET /schedules`)
+instead of arriving with every `/data` poll, so the main payload stays under
+Hubitat Cloud's size limit. Local mode includes schedules in `/data` as usual.
+
 ### Favorites
 
 Tap the star on a supported device tile (lights, shades, locks, garage doors, music, sensors,
 etc.) to add it to favorites. The list is stored on the hub and syncs across
 devices. Open the **Favorites** quick-nav icon for a cross-category view of
-starred devices. On the Favorites tab, use overflow menu (⋯) → **Reorder** to
+starred devices. On the Favorites tab, use overflow menu (⋯) → **Reorder/Resize** to
 drag tiles or use the move buttons, and tap **Size** on a tile to choose a
 named layout (**Compact**, **Standard**, **Wide**, **Square**, **Portrait**,
 **Full row**, **Tall**, **Large**, or **Fill screen** depending on device type).
 One size is saved per tile and adapts responsively across phone and desktop
-widths.
+widths. Adjacent **Compact** tiles pair into shared cells (two high on phones;
+up to four side by side on wide layouts).
 
-**Embed cards:** From Favorites, use overflow **Add tile → Embedded** (or the empty-state
-button) to add an HTTPS iframe widget — for example a [Google Calendar embed](https://support.google.com/calendar/answer/41207)
+From Favorites, overflow **Add tile** (or the empty-state buttons) also adds
+non-device cards: **Embedded**, **Time**, **Notifications**, and **HTML**.
+
+**Embed cards:** Use **Add tile → Embedded** to add an HTTPS iframe widget — for example a [Google Calendar embed](https://support.google.com/calendar/answer/41207)
 URL or an iframe-based weather widget. You can paste either the HTTPS URL or a
 full `<iframe …>` snippet; only the `src` is kept. Cards support sizes
 **Compact**, **Standard**, **Wide**, **Square**, **Portrait**, **Full row**,
@@ -406,6 +428,13 @@ switch tabs (hidden, not destroyed), so in-widget state like a Google Calendar
 view is preserved. Browser third-party cookie rules still apply after a full
 page refresh.
 
+**Time tiles:** Use **Add tile → Time** for a live clock card. Choose a style —
+**Just the time**, **Time with seconds**, or **Time with date** — and a size
+preset. Time tiles reorder with other favorites and sync across devices.
+
+**Notification tiles:** Use **Add tile → Notifications** for a resizable list of
+unread messages from **Tile notification devices** (see [Notifications](#notifications)).
+
 **HTML tiles:** Select HTML source devices in the Hubitat app (**HTML tiles** section) —
 for example a [Tile Builder](https://github.com/GaryMilne/Hubitat-TileBuilder) Storage
 Driver, a vehicle status device, or any driver that publishes static dashboard HTML.
@@ -414,9 +443,11 @@ attributes (Tile Builder `tile1`–`tile26` expand automatically). Inline HTML r
 in a sandboxed frame with a light mDash theme bridge (font, text color, transparent
 background); source-defined colors stay intact. Oversized Tile Builder tiles that
 point at hub File Manager URLs work on the **local** dashboard; cloud HTTPS may block
-those local `http://` stubs. Scripts and interactive JS are not supported. In Favorites
-reorder mode, **Size** opens card-size presets; HTML tiles also get a **Zoom** row
-(50% / 75% / 100% / 125% / 150%) to scale content inside the card.
+those local `http://` stubs. Scripts and interactive JS are not supported. Only
+favorited/active tiles load HTML bodies (lazy when scrolled into view) so `/data`
+stays small. In Favorites reorder mode, **Size** opens card-size presets; HTML tiles
+also get a **Zoom** row (50% / 75% / 100% / 125% / 150%) to scale content inside the
+card.
 
 ### Search, collapse & reorder
 
@@ -433,7 +464,8 @@ top-bar expand/collapse-all button toggles every room.
 - **Quick-nav icons:** drag category icons (locks, scenes, scheduler, etc.) to
   reorder. Search is hidden while reordering.
 - **Favorites tab:** drag handles and move buttons reorder favorite tiles;
-  the Size control opens a named size chooser; order and sizes sync across devices.
+  the Size control opens a named size chooser (and Zoom for HTML tiles); order,
+  sizes, and special tiles sync across devices.
 
 ### UI preferences
 
@@ -446,6 +478,8 @@ Stored **per browser** in `localStorage` (overflow menu ⋯):
 | Notification sounds | Off by default; uses OS notification sound when enabled (OS toast is closed right away) |
 | Category tabs | Show Lights / Favorites / Sensors / etc. as tabs instead of popups |
 | Navigation drawer | Move search and category icons into a side drawer; top bar shows active category |
+| Do not use rooms for organization | Sensors view: flat list by type instead of by room (see [Sensors](#sensors)) |
+| Camera columns | On Cameras tab: **1 / 2 / 3** column layout (see [Cameras](#cameras)) |
 | Local hub URL | Used for local-mode switching (see below) |
 
 ### Local vs cloud mode
@@ -517,7 +551,8 @@ preferences (default: enabled), the dashboard connects to
 
 **What WebSocket updates:** device switch/level/color changes, thermostat
 attributes, lock state, shade position, music player state, sensor readings,
-battery, HSM status, and hub mode — without waiting for the next poll.
+battery, HSM status, hub mode, and notification events — without waiting for the
+next poll.
 
 **Caveats**
 
@@ -562,8 +597,9 @@ home screen.
 - **Looks better than the built-in dashboard** — modern dark/light UI, large touch
   targets, sticky search, collapsible rooms, smooth dimmer sliders, thermostat dial.
 - **Portable across hubs** — same app code on any hub. Install, pick devices, done.
-- **Persistent config** — room order, nav order, favorites, snapshots, and schedules
-  live in the hub's app database, so they work from any device.
+- **Persistent config** — room order, nav order, favorites (including embeds, clocks,
+  HTML, and notification tiles), snapshots, and schedules live in the hub's app
+  database, so they work from any device.
 - **Works away from home** — via Hubitat's cloud proxy; no port forwarding or VPN.
 - **No Maker API dependency** — slim custom JSON (~8 KB for 130 lights) stays under
   the 128 KB cloud cap.
@@ -591,6 +627,8 @@ dist/
 docs/
   hubitat-community-post.md      Hubitat Community forum draft
   hpm-registry.md                HPM registry notes for maintainers
+drivers/
+  mDashNotifications.groovy      Notification driver (popup + tile)
 ```
 
 ## Develop the UI locally (no hub needed)
@@ -718,6 +756,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Locks & garage | Locks, garage doors, unlock PIN | — | See [device selection](#device-selection) |
 | Sensors | Motion, contact, water, presence, etc. | — | See [device selection](#device-selection) |
 | Cameras | go2rtc cameras | — | See [device selection](#device-selection) |
+| HTML tiles | HTML source devices | — | Tile Builder / vehicle status / etc.; add tiles on Favorites |
 | Notifications | Popup / tile notification devices | — | Create buttons install mDash Notifications children (popup and/or tile pickers) |
 | Dashboard options | Dashboard name | `mDash` | Browser tab and PWA title |
 | Dashboard options | Default tab | Lights | Opening tab when Category tabs is on; falls back to Lights if empty |
@@ -751,6 +790,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Ceiling fans | — | — | Fans popup; All fans bulk |
 | Music / speakers | — | — | Music popup |
 | Cameras (go2rtc) | — | — | Cameras tab (local URL only; requires category tabs) |
+| HTML source devices | — | — | Favorites HTML tiles (discovered attributes) |
 | Popup notification devices | — | — | Full-screen notification popup queue |
 | Tile notification devices | — | — | Favorites notifications tile queue |
 | Motion, contact, water, etc. | — | — | Sensors popup |
@@ -816,7 +856,11 @@ Nothing to edit.
 **Data sync**
 
 - The page polls `GET /data` on a configurable interval. Response includes devices,
-  room/nav order, favorites, snapshots, schedules, HSM state, sun times, and config.
+  room/nav order, favorites (including embed/time/notification/HTML tiles),
+  snapshots, HSM state, sun times, and config.
+- On the **cloud** URL, schedules are omitted from `/data` (Hubitat Cloud ~128 KB
+  response limit) and loaded on demand via `GET /schedules` when you open the
+  Scheduler. Local `/data` includes schedules.
 - On the LAN, optional WebSocket pushes device events for faster UI updates.
 - Commands use optimistic UI: the tile updates immediately; failed commands roll back.
 - When the page is hidden, polling stops and WebSocket disconnects; both resume on return.
@@ -831,7 +875,9 @@ Nothing to edit.
 | `POST /lights/bulk` | Bulk on/off by scope |
 | `POST /hub-mode`, `/hsm`, `/scene/activate` | Mode, security, scenes |
 | `GET/POST /schedules/*` | Scheduler CRUD, toggle, test |
-| `POST /settings/room-order`, `/nav-order`, `/favorites`, `/embed-cards`, `/settings/favorites-layout` | Layout sync, favorites, HTTPS embed cards, HTML tile layout/`htmlSizes`/`htmlZooms` |
+| `POST /settings/room-order`, `/nav-order`, `/favorites`, `/embed-cards`, `/time-cards`, `/notification-cards`, `/settings/favorites-layout` | Layout sync, favorites, special tiles, HTML `htmlSizes` / `htmlZooms` |
+| `GET/POST /notifications/*`, `/tile-notifications/*` | Popup and tile notification queues |
+| `GET/POST /auth/*` | Optional dashboard password gate |
 
 All endpoints require `?access_token=…` (included automatically when you open the
 dashboard link from the app page).

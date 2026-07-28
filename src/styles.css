@@ -1015,12 +1015,21 @@ body {
   pointer-events: auto; touch-action: none;
 }
 .ct-head {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: flex-start; justify-content: space-between;
   gap: 10px; margin-bottom: 14px;
 }
+.ct-head-leading {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+}
+.ct-title {
+  font-size: 17px; font-weight: 700; color: var(--text);
+  max-width: 100%; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .ct-value {
-  font-size: 18px; font-weight: 700; color: var(--text);
-  font-variant-numeric: tabular-nums; flex: 1; min-width: 0;
+  font-size: 14px; font-weight: 600; color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 .ct-close {
   width: 36px; height: 36px; flex-shrink: 0;
@@ -2123,7 +2132,7 @@ body {
   --fav-span-tall: 4;
   --fav-span-large: 4;
   --fav-span-viewport: 4;
-  --fav-min-h-compact: 64px;
+  --fav-min-h-compact: 72px;
   --fav-min-h-standard: 132px;
   --fav-min-h-wide: 96px;
   --fav-min-h-square: 0;
@@ -2194,7 +2203,15 @@ body {
 .quick-body-favorites .quick-fav-grid > .fav-size-compact {
   grid-column: span var(--fav-span-compact);
   min-height: var(--fav-min-h-compact);
+  height: var(--fav-min-h-compact);
+  overflow: hidden;
   align-self: start;
+}
+/* Embed/HTML/notification compact tiles manage their own content height. */
+.quick-body-favorites .quick-fav-grid > .fav-size-compact.fav-embed-card,
+.quick-body-favorites .quick-fav-grid > .fav-size-compact.fav-html-card,
+.quick-body-favorites .quick-fav-grid > .fav-size-compact.fav-notif-card {
+  height: auto;
 }
 .quick-body-favorites .quick-fav-grid > .fav-size-viewport {
   grid-column: span var(--fav-span-viewport);
@@ -2223,6 +2240,16 @@ body {
   overflow: hidden;
   box-sizing: border-box;
 }
+/* Stacked compact halves are shorter than unpacked tiles — shrink tstat dial to fit. */
+.fav-compact-stack > .fav-size-compact.quick-fav-tstat {
+  padding: 6px 8px;
+  gap: 1px 8px;
+}
+.fav-compact-stack > .fav-size-compact.quick-fav-tstat .quick-fav-tstat-dial,
+.fav-compact-stack > .fav-size-compact.quick-fav-tstat .quick-fav-tstat-ring {
+  width: 38px;
+  height: 38px;
+}
 
 /* Favorites tab only: wide containers — unpack compact stacks so each
    compact tile occupies one column (four-across when all compact). */
@@ -2234,7 +2261,7 @@ body {
   .favorites-persist.quick-body-favorites .fav-compact-stack > .fav-size-compact {
     grid-column: span var(--fav-span-compact);
     min-height: var(--fav-min-h-compact);
-    height: auto;
+    height: var(--fav-min-h-compact);
     align-self: start;
   }
 
@@ -2242,7 +2269,7 @@ body {
     .fav-compact-stack > .fav-reorder-item.fav-size-compact {
     grid-column: span var(--fav-span-compact);
     min-height: var(--fav-min-h-compact);
-    height: auto;
+    height: var(--fav-min-h-compact);
   }
 }
 
@@ -2260,7 +2287,7 @@ body {
     --fav-span-tall: 2;
     --fav-span-large: 2;
     --fav-span-viewport: 2;
-    --fav-min-h-compact: 56px;
+    --fav-min-h-compact: 64px;
     --fav-min-h-standard: 120px;
     --fav-min-h-wide: 88px;
     --fav-min-h-portrait: 220px;
@@ -2283,7 +2310,7 @@ body {
     --fav-span-tall: 1;
     --fav-span-large: 1;
     --fav-span-viewport: 1;
-    --fav-min-h-compact: 52px;
+    --fav-min-h-compact: 60px;
     --fav-min-h-standard: 112px;
     --fav-min-h-wide: 84px;
     --fav-min-h-portrait: 200px;
@@ -2336,7 +2363,7 @@ body {
   height: 100%;
 }
 
-/* Cards fill their grid area; content may grow beyond the preferred min-height. */
+/* Cards fill their grid area; compact tiles use a fixed height, others may grow past min-height. */
 .quick-body-favorites .quick-fav-card,
 .quick-body-favorites .quick-lock-row,
 .quick-body-favorites .shade-tile,
@@ -2745,7 +2772,13 @@ body {
 }
 
 /* ---- Compact lights/outlets: name + state + fav; whole tile still toggles ---- */
-.quick-body-favorites .fav-size-compact.tile { padding: 10px 12px; min-height: 0; gap: 6px; }
+.quick-body-favorites .fav-size-compact.tile {
+  padding: 10px 12px;
+  min-height: 0;
+  height: 100%;
+  gap: 6px;
+  overflow: hidden;
+}
 .quick-body-favorites .fav-size-compact.tile .tile-bulb,
 .quick-body-favorites .fav-size-compact.tile .tile-socket,
 .quick-body-favorites .fav-size-compact.tile .slider,
@@ -2765,6 +2798,8 @@ body {
   gap: 10px;
   padding: 8px 10px;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-touch-callout: none;
@@ -2821,9 +2856,12 @@ body {
     "dial sp"
     "dial mode";
   align-items: center;
+  align-content: center;
   gap: 2px 10px;
   padding: 8px 10px;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-touch-callout: none;
@@ -2928,8 +2966,11 @@ body {
     "icon name"
     "icon kind";
   align-items: center;
+  align-content: center;
   padding: 8px 36px 8px 10px;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
   gap: 1px 8px;
 }
 .quick-body-favorites .fav-size-compact.sensor-card .sensor-card-top {
@@ -3820,7 +3861,7 @@ body {
   gap: 6px;
 }
 .tstat-title {
-  font-size: 15px; font-weight: 700; color: var(--text);
+  font-size: 17px; font-weight: 700; color: var(--text);
   max-width: 100%;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
