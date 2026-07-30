@@ -15890,7 +15890,12 @@
       }
     }
     if (tr.kind === "weekly" && (!tr.days || !tr.days.length)) { flash("Pick at least one day", true); return false; }
-    if (tr.kind === "once" && !tr.at) { flash("Pick a date and time", true); return false; }
+    if (tr.kind === "once") {
+      if (!tr.at) { flash("Pick a date and time", true); return false; }
+      const atMs = new Date(tr.at.length >= 16 ? tr.at.substring(0, 16) : tr.at).getTime();
+      if (!Number.isFinite(atMs)) { flash("Invalid one-time date", true); return false; }
+      if (atMs <= Date.now()) { flash("One-time schedule must be in the future", true); return false; }
+    }
     if (tr.kind === "mode" && !tr.mode) { flash("Pick a hub mode", true); return false; }
     return true;
   }
@@ -16682,22 +16687,13 @@
     const tr = schedDraft?.trigger;
     const ac = schedDraft?.action;
     let when = "Schedule";
-    const trWhen = tr?.when || "clock";
     if (tr?.kind === "daily") {
-      if (trWhen === "clock") when = "Daily " + schedFmtClockTime(tr.time || "");
-      else {
-        const sun = trWhen === "sunset" ? "Sunset" : "Sunrise";
-        const off = Number(tr.offsetMin) || 0;
-        when = off === 0 ? ("Daily " + sun) : ("Daily " + sun + " " + schedOffsetLabel(off));
-      }
+      if (schedTriggerWhen(tr) === "clock") when = "Daily " + schedFmtClockTime(tr.time || "");
+      else when = "Daily " + schedSunLabel(schedTriggerWhen(tr), tr.offsetMin);
     } else if (tr?.kind === "weekly") {
       const days = (tr.days || []).join(",");
-      if (trWhen === "clock") when = "Weekly " + days + " " + schedFmtClockTime(tr.time || "");
-      else {
-        const sun = trWhen === "sunset" ? "Sunset" : "Sunrise";
-        const off = Number(tr.offsetMin) || 0;
-        when = off === 0 ? ("Weekly " + days + " " + sun) : ("Weekly " + days + " " + sun + " " + schedOffsetLabel(off));
-      }
+      if (schedTriggerWhen(tr) === "clock") when = "Weekly " + days + " " + schedFmtClockTime(tr.time || "");
+      else when = "Weekly " + days + " " + schedSunLabel(schedTriggerWhen(tr), tr.offsetMin);
     } else if (tr?.kind === "once") when = "Once " + schedFmtDateTimeLocal(tr.at || "");
     else if (tr?.kind === "mode") when = "When mode is " + (tr.mode || "");
     let what = "";

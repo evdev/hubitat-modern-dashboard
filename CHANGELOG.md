@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.61
+
+- **Scheduler:** one-time schedules must be in the future when saving (client-side
+  validation).
+
 ## 0.3.60
 
 - **Scheduler UI:** schedule list rows show clearer **When** / **Then** lines, mode
