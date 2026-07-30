@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.62
+
+- **Scheduler UI:** mode-restricted schedules show when they won't run in the current hub
+  mode (e.g. "Won't run in Night mode") with allowed modes listed; label reads **Next
+  trigger** when a mode restriction is set.
+
 ## 0.3.61
 
 - **Scheduler:** one-time schedules must be in the future when saving (client-side

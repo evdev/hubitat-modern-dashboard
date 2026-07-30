@@ -15483,29 +15483,70 @@
     return "No action";
   }
 
+  function schedOnlyInModesList(s) {
+    return Array.isArray(s?.onlyInModes)
+      ? s.onlyInModes.map((m) => String(m || "").trim()).filter(Boolean)
+      : [];
+  }
+
+  function schedModeRestrictionState(s) {
+    const modes = schedOnlyInModesList(s);
+    if (!modes.length) return "none";
+    if (String(s?.trigger?.kind || "") === "mode") return "none";
+    const cur = String(currentHubMode || "").trim();
+    if (!cur) return "unknown";
+    return modes.includes(cur) ? "allowed" : "blocked";
+  }
+
   function schedNextRunText(s) {
-    if (!s.enabled) return { primary: "Paused", secondary: "" };
+    if (!s.enabled) return { primary: "Paused", secondary: "", muted: false };
     const tr = s.trigger || {};
     const kind = String(tr.kind || "");
+    const restriction = schedModeRestrictionState(s);
+    const modes = schedOnlyInModesList(s);
     if (kind === "mode") {
       const mode = tr.mode ? String(tr.mode).trim() : "";
-      return { primary: mode ? ("When mode is " + mode) : "On mode change", secondary: "" };
+      return { primary: mode ? ("When mode is " + mode) : "On mode change", secondary: "", muted: false };
     }
     if (s.nextFire != null) {
       const rel = fmtSchedRelativeFuture(s.nextFire);
-      return { primary: rel || fmtSchedTime(s.nextFire), secondary: rel ? fmtSchedTime(s.nextFire) : "" };
+      const abs = fmtSchedTime(s.nextFire);
+      if (restriction === "blocked") {
+        return {
+          primary: "Won't run in " + currentHubMode + " mode",
+          secondary: "Next check " + (rel || abs) + " · only " + modes.join(", "),
+          muted: true,
+        };
+      }
+      const secondary = rel ? abs : "";
+      if (restriction === "unknown" && modes.length) {
+        return {
+          primary: rel || abs,
+          secondary: (secondary ? secondary + " · " : "") + "Only in " + modes.join(", "),
+          muted: false,
+        };
+      }
+      return { primary: rel || abs, secondary, muted: false };
     }
     if ((kind === "daily" || kind === "weekly") && schedTriggerWhen(tr) !== "clock") {
-      return { primary: schedSunLabel(schedTriggerWhen(tr), tr.offsetMin), secondary: "" };
+      const sun = schedSunLabel(schedTriggerWhen(tr), tr.offsetMin);
+      if (restriction === "blocked") {
+        return {
+          primary: "Won't run in " + currentHubMode + " mode",
+          secondary: "At " + sun.toLowerCase() + " · only " + modes.join(", "),
+          muted: true,
+        };
+      }
+      return { primary: sun, secondary: "", muted: false };
     }
-    if (kind === "once") return { primary: "Past or invalid", secondary: "" };
-    return { primary: "Pending", secondary: "" };
+    if (kind === "once") return { primary: "Past or invalid", secondary: "", muted: false };
+    return { primary: "Pending", secondary: "", muted: false };
   }
 
   function schedLastRunText(s) {
-    if (s.lastFired == null) return { primary: "Not yet run", secondary: "" };
+    if (s.lastFired == null) return { primary: "Not yet run", secondary: "", muted: false };
     const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
-    return { primary: rel || fmtSchedTime(s.lastFired), secondary: rel ? fmtSchedTime(s.lastFired) : "" };
+    return { primary: rel || fmtSchedTime(s.lastFired), secondary: rel ? fmtSchedTime(s.lastFired) : "", muted: false };
   }
 
   function schedAppendRuleLine(parent, key, value) {
@@ -15520,7 +15561,7 @@
   }
 
   function schedAppendStatusItem(parent, label, text) {
-    const item = ce("div", "sched-status-item");
+    const item = ce("div", "sched-status-item" + (text.muted ? " is-muted" : ""));
     const lbl = ce("span", "sched-status-lbl");
     lbl.textContent = label;
     const val = ce("span", "sched-status-val");
@@ -15676,7 +15717,7 @@
     }
 
     const status = ce("div", "sched-row-status");
-    schedAppendStatusItem(status, "Next run", schedNextRunText(s));
+    schedAppendStatusItem(status, onlyModes.length ? "Next trigger" : "Next run", schedNextRunText(s));
     schedAppendStatusItem(status, "Last ran", schedLastRunText(s));
     row.appendChild(status);
 
