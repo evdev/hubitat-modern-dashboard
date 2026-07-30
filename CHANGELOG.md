@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.57
+
+- **Scheduler fix:** daily clock cron now uses valid Quartz day fields (`* * ?`) so daily
+  schedules register and fire on the hub.
+- **Scheduler fix:** sunrise/sunset times use `getSunriseAndSunset` (with offsets and date)
+  instead of invalid `location.sunrise(opts)` / `location.sunset(opts)` calls.
+- **Scheduler fix:** weekly `nextFire` parses day names (`MON`–`SUN`); mode-restricted skips
+  still advance/re-arm the next run; one-time schedules are consumed on skip.
+- **Scheduler fix:** location mode/sun subscriptions are cleared on re-init to avoid
+  duplicate mode-trigger runs after app updates.
+- **Scheduler:** save/toggle validate payloads and return an error (with rollback) when a
+  schedule cannot be armed, instead of reporting success with a blank next run.
+- **Scheduler fix:** `nextFire` no longer returns the just-elapsed minute after a run.
+- **Scheduler:** fires, mode skips, and Test runs write `log.info` lines to Hubitat Logs
+  (per-device command traces still require Debug logging).
+
 ## 0.3.56
 
 - **HTML tiles:** Tile Builder `tileDescriptions` JSON is used for catalog and Favorites

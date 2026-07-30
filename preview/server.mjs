@@ -8,6 +8,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createServer } from "node:http";
 import { createIconPng } from "../lib/pwa-icons.mjs";
+import {
+  WEEKLY_DAY_NAMES,
+  scheduleCronForTrigger,
+  validateSchedulePayload,
+  recomputeNextFire,
+  scheduleOffsetMin,
+  scheduleTriggerWhen,
+} from "../lib/scheduler-core.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -151,27 +159,11 @@ function mockSunLabel(which, offsetMin) {
   return `${base} ${off}m`;
 }
 
-function mockSunNextFire(tr, fromMs) {
-  const when = tr.when || "clock";
-  if (when !== "sunrise" && when !== "sunset") return null;
-  const names = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
-  const off = (Number(tr.offsetMin) || 0) * 60 * 1000;
-  const now = new Date(fromMs);
-  for (let i = 0; i < 370; i++) {
-    const cand = new Date(now);
-    cand.setDate(now.getDate() + i);
-    cand.setHours(0, 0, 0, 0);
-    if (tr.kind === "weekly") {
-      const days = tr.days || [];
-      if (days.length && !days.includes(names[cand.getDay()])) continue;
-    }
-    const sun = mockSunTimes();
-    const base = when === "sunset" ? sun.sunset : sun.sunrise;
-    const dayDelta = i * 86400000;
-    const at = base + dayDelta + off;
-    if (at > fromMs) return at;
-  }
-  return null;
+function mockSunProvider(which, offsetMin, dayDate) {
+  const rise = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 6, 42, 0, 0);
+  const set = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 19, 18, 0, 0);
+  const base = which === "sunset" ? set.getTime() : rise.getTime();
+  return base + (Number(offsetMin) || 0) * 60 * 1000;
 }
 
 function buildMockData(count) {
@@ -1974,9 +1966,21 @@ const server = createServer(async (req, res) => {
       const id = body?.id || ("sc-" + Date.now() + "-" + Math.floor(Math.random() * 100000));
       const existing = state.schedules.find((s) => s.id === id);
       const s = mockNormalizeSchedule(body, id, existing);
+      const validationError = validateSchedulePayload(s);
+      if (validationError) {
+        res.writeHead(422, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: validationError, schedules: mockSchedulesList() }));
+      }
+      mockRecomputeNextFire(s);
+      if (s.enabled && (s.trigger?.kind === "daily" || s.trigger?.kind === "weekly") && scheduleTriggerWhen(s.trigger) === "clock") {
+        const cron = scheduleCronForTrigger(s.trigger.kind, s.trigger.time, s.trigger.days);
+        if (!cron || s.nextFire == null) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ ok: false, error: "could not compute next run time", schedules: mockSchedulesList() }));
+        }
+      }
       if (existing) Object.assign(existing, s);
       else state.schedules.push(s);
-      mockRecomputeNextFire(s);
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ ok: true, id, schedules: mockSchedulesList() }));
     }
@@ -1993,8 +1997,15 @@ const server = createServer(async (req, res) => {
         res.writeHead(404, { "Content-Type": "application/json" });
         return res.end('{"ok":false,"error":"not found"}');
       }
+      const prior = { ...s, trigger: { ...s.trigger }, action: { ...s.action } };
       s.enabled = !s.enabled;
       mockRecomputeNextFire(s);
+      if (s.enabled && (s.trigger?.kind === "daily" || s.trigger?.kind === "weekly") && scheduleTriggerWhen(s.trigger) === "clock" && s.nextFire == null) {
+        Object.assign(s, prior);
+        mockRecomputeNextFire(s);
+        res.writeHead(422, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "could not compute next run time", schedules: mockSchedulesList() }));
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ ok: true, id, enabled: s.enabled, schedules: mockSchedulesList() }));
     }
@@ -2047,21 +2058,27 @@ function mockScheduleSummary(s) {
 
 function mockNormalizeSchedule(body, id, existing) {
   const tr = body?.trigger || {};
-  const when = tr.when || "clock";
+  let when = String(tr.when || "clock").toLowerCase();
+  if (when !== "sunrise" && when !== "sunset") when = "clock";
+  const validDays = new Set(WEEKLY_DAY_NAMES);
+  const days = Array.isArray(tr.days)
+    ? tr.days.map((d) => String(d || "").trim().toUpperCase()).filter((d) => validDays.has(d))
+    : [];
+  const kind = tr.kind || "daily";
   const s = {
     id,
     name: (body?.name || "").trim() || ("Schedule " + (state.schedules.length + 1)),
     enabled: body?.enabled !== false,
     trigger: {
-      kind: tr.kind || "daily",
-      when: when === "sunrise" || when === "sunset" ? when : "clock",
-      time: tr.time || "19:30",
-      offsetMin: Number(tr.offsetMin) || 0,
-      days: tr.days || [],
+      kind,
+      when,
+      time: when === "clock" ? (tr.time || "19:30") : "",
+      offsetMin: when === "clock" ? 0 : scheduleOffsetMin(tr),
+      days: kind === "weekly" ? days : [],
       at: tr.at || "",
       mode: tr.mode || "",
     },
-    onlyInModes: tr.kind === "mode" ? [] : (body?.onlyInModes || []),
+    onlyInModes: kind === "mode" ? [] : (body?.onlyInModes || []),
     action: body?.action || { target: "lights", states: [] },
     lastFired: existing?.lastFired ?? null,
     nextFire: null,
@@ -2072,31 +2089,7 @@ function mockNormalizeSchedule(body, id, existing) {
 
 function mockRecomputeNextFire(s) {
   s.summary = mockScheduleSummary(s);
-  if (!s.enabled) { s.nextFire = null; return; }
-  const tr = s.trigger;
-  if (tr.kind === "once") {
-    const t = new Date(tr.at).getTime();
-    s.nextFire = isNaN(t) ? null : t;
-  } else if (tr.kind === "daily" || tr.kind === "weekly") {
-    const when = tr.when || "clock";
-    if (when === "sunrise" || when === "sunset") {
-      s.nextFire = mockSunNextFire(tr, Date.now());
-      return;
-    }
-    const [hh, mm] = (tr.time || "19:30").split(":").map(Number);
-    const now = new Date();
-    const days = tr.kind === "weekly" ? (tr.days || []).map((d) => ["SUN","MON","TUE","WED","THU","FRI","SAT"].indexOf(d)) : [0,1,2,3,4,5,6];
-    for (let i = 0; i < 8; i++) {
-      const cand = new Date(now);
-      cand.setDate(now.getDate() + i);
-      cand.setHours(hh, mm, 0, 0);
-      if (cand.getTime() <= now.getTime()) continue;
-      if (days.includes(cand.getDay())) { s.nextFire = cand.getTime(); return; }
-    }
-    s.nextFire = null;
-  } else {
-    s.nextFire = null;
-  }
+  recomputeNextFire(s, Date.now(), { sunProvider: mockSunProvider });
 }
 
 function mockSchedulesList() {

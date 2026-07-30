@@ -5921,21 +5921,36 @@ def scheduleNewId() {
 // Stable cron string for daily/weekly clock-time triggers.
 // kind: "daily" or "weekly"; days: list of 3-letter upper-case day names (["MON","WED"])
 // time: "HH:MM" (24h)
+// Quartz requires exactly one of day-of-month / day-of-week to be "?".
 def scheduleCronForTrigger(kind, time, days) {
     def parts = time?.toString()?.split(":")
     if (!parts || parts.length < 2) return null
-    def hh = parts[0]?.trim()
-    def mm = parts[1]?.trim()
-    try { hh.toInteger(); mm.toInteger() } catch (e) { return null }
-    def dow
-    if (kind == "weekly" && days instanceof List && days) {
-        dow = days.collect { it?.toString()?.trim()?.toUpperCase() }.findAll { it }.join(",")
-        if (!dow) dow = "*"
-    } else {
-        dow = "?"
+    def hh
+    def mm
+    try {
+        hh = parts[0]?.trim()?.toInteger()
+        mm = parts[1]?.trim()?.toInteger()
+    } catch (e) {
+        return null
     }
-    // sec min hour dom mon dow year
-    return "0 ${mm} ${hh} ? * ${dow} *".toString()
+    if (hh == null || mm == null || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null
+    def hhStr = String.format("%d", hh)
+    def mmStr = String.format("%d", mm)
+    if (kind == "weekly") {
+        def valid = scheduleWeeklyDayNames() as Set
+        def dowList = []
+        if (days instanceof List) {
+            for (d in days) {
+                def name = d?.toString()?.trim()?.toUpperCase()
+                if (name && valid.contains(name)) dowList << name
+            }
+        }
+        if (!dowList) return null
+        // sec min hour dom mon dow year — constrain DOW, leave DOM as "?"
+        return "0 ${mmStr} ${hhStr} ? * ${dowList.join(',')} *".toString()
+    }
+    // Daily: constrain DOM with "*", leave DOW as "?"
+    return "0 ${mmStr} ${hhStr} * * ? *".toString()
 }
 
 // when: "clock" | "sunrise" | "sunset"; offsetMin: minutes before (−) or after (+) sun event
@@ -5955,9 +5970,13 @@ def scheduleOffsetMin(tr) {
 
 def scheduleSunMs(which, offsetMin, forDate) {
     try {
-        def opts = [offset: (offsetMin ?: 0) as Integer]
+        def opts = [:]
+        def off = (offsetMin ?: 0) as Integer
+        if (which == "sunrise") opts.sunriseOffset = off
+        else opts.sunsetOffset = off
         if (forDate) opts.date = forDate
-        def d = (which == "sunrise") ? location.sunrise(opts) : location.sunset(opts)
+        def rs = getSunriseAndSunset(opts)
+        def d = (which == "sunrise") ? rs?.sunrise : rs?.sunset
         return d?.getTime()
     } catch (e) {
         return null
@@ -6089,6 +6108,9 @@ def shutdownScheduler() {
     try { unschedule("scheduledJobHandler") } catch (e) {}
     try { unschedule("cleanupSchedules") } catch (e) {}
     try { unschedule("schedulerMidnightRearm") } catch (e) {}
+    // Drop location subscriptions so updated()/installed() do not stack duplicates.
+    try { unsubscribe("schedulerSunTimeChanged") } catch (e) {}
+    try { unsubscribe("schedulerModeChanged") } catch (e) {}
 }
 
 def guardSchedulerEnabled() {
@@ -6177,12 +6199,12 @@ def schedulerModeChanged(evt) {
 }
 
 def rebuildScheduledJobs() {
-    if (!schedulerIsEnabled()) return
+    def result = [registered: 0, failures: [:]]
+    if (!schedulerIsEnabled()) return result
     try { unschedule("scheduledJobHandler") } catch (e) {}
     def map = parseSchedulesMap()
     def now = now()
     def updated = false
-    int registered = 0
     for (id in map.keySet().toList()) {
         def s = map[id]
         if (!s) continue
@@ -6198,33 +6220,41 @@ def rebuildScheduledJobs() {
                         def cron = scheduleCronForTrigger(kind, tr?.time, tr?.days)
                         if (cron) {
                             schedule(cron, "scheduledJobHandler", [data: [id: id.toString()], overwrite: false])
-                            registered++
+                            result.registered++
                             def nf = cronNextFire(cron, now)
                             if (nf != null) nextFire = nf
+                            else result.failures[id.toString()] = "could not compute next run time"
+                        } else {
+                            result.failures[id.toString()] = "invalid clock trigger"
                         }
                     } else {
                         def nf = scheduleSunNextFire(tr, when, now)
                         if (nf != null && nf > now) {
                             runOnce(new Date(nf), "scheduledJobHandler", [data: [id: id.toString()]])
-                            registered++
+                            result.registered++
                             nextFire = nf
+                        } else {
+                            result.failures[id.toString()] = "could not schedule next ${when}"
                         }
                     }
                 } else if (kind == "once") {
                     def atMs = scheduleOnceToMs(tr?.at)
                     if (atMs != null && atMs > now) {
                         runOnce(new Date(atMs), "scheduledJobHandler", [data: [id: id.toString()]])
-                        registered++
+                        result.registered++
                         nextFire = atMs
                     } else if (atMs != null && atMs <= now) {
                         // past one-time — will be removed by cleanupSchedules shortly
                         nextFire = null
+                    } else {
+                        result.failures[id.toString()] = "invalid one-time date"
                     }
                 } else if (kind == "mode") {
                     nextFire = null
                 }
             } catch (e) {
                 log.warn "Modern Dashboard: schedule ${id} register failed: ${e}"
+                result.failures[id.toString()] = (e?.message ?: e?.toString() ?: "register failed").toString()
             }
         }
         if (s.nextFire != nextFire) {
@@ -6233,7 +6263,8 @@ def rebuildScheduledJobs() {
         }
     }
     if (updated) saveSchedulesMap(map)
-    logDbg("scheduler rebuild — ${registered} jobs")
+    logDbg("scheduler rebuild — ${result.registered} jobs")
+    return result
 }
 
 def scheduleOnceToMs(at) {
@@ -6249,6 +6280,42 @@ def scheduleOnceToMs(at) {
         }
     } catch (e) {}
     return null
+}
+
+// Advance nextFire / re-arm after a trigger consumed (whether action ran or mode-skipped).
+// Returns true if the schedule was removed (one-time).
+def scheduleAdvanceAfterTrigger(id, s, map, boolean markFired) {
+    def kind = s?.trigger?.kind?.toString()
+    if (markFired) s.lastFired = now()
+    if (kind == "once") {
+        map.remove(id)
+        saveSchedulesMap(map)
+        return true
+    }
+    if (kind == "mode") {
+        saveSchedulesMap(map)
+        return false
+    }
+    try {
+        def tr = s?.trigger
+        if (kind == "daily" || kind == "weekly") {
+            def when = scheduleTriggerWhen(tr)
+            if (when == "clock") {
+                def cron = scheduleCronForTrigger(kind, tr?.time, tr?.days)
+                if (cron) s.nextFire = cronNextFire(cron, now())
+                saveSchedulesMap(map)
+            } else {
+                // Sun triggers use runOnce — rebuild to arm the next occurrence.
+                saveSchedulesMap(map)
+                rebuildScheduledJobs()
+            }
+            return false
+        }
+    } catch (e) {
+        log.warn "Modern Dashboard: schedule ${id} advance failed: ${e}"
+    }
+    saveSchedulesMap(map)
+    return false
 }
 
 def scheduledJobHandler(data) {
@@ -6268,47 +6335,51 @@ def scheduledJobHandler(data) {
             try { cur = location.mode?.toString() ?: "" } catch (e) {}
             def ok = false
             for (m in onlyInModes) { if (m?.toString() == cur) { ok = true; break } }
-            if (!ok) return
+            if (!ok) {
+                log.info "Modern Dashboard: schedule skipped — ${scheduleLogName(id, s)} (hub mode ${cur ?: '(none)'} not allowed)"
+                // Trigger consumed without running — still advance nextFire / re-arm sun jobs.
+                scheduleAdvanceAfterTrigger(id, s, map, false)
+                return
+            }
         }
     }
-    // Mark last fired
-    s.lastFired = now()
-    // Run actions
+    log.info "Modern Dashboard: schedule ran — ${scheduleLogName(id, s)} · ${scheduleSummary(s)} · ${scheduleActionLogSummary(s?.action)}"
     try {
         runScheduleAction(s?.action)
     } catch (e) {
         log.warn "Modern Dashboard: schedule ${id} action failed: ${e}"
     }
-    // One-time schedules self-delete after firing
-    if (kind == "once") {
-        map.remove(id)
-        saveSchedulesMap(map)
-        return
+    scheduleAdvanceAfterTrigger(id, s, map, true)
+}
+
+def scheduleLogName(id, s) {
+    def name = s?.name?.toString()?.trim()
+    if (name) return "${name} (${id})"
+    return (id ?: "?").toString()
+}
+
+def scheduleActionLogSummary(action) {
+    def target = action?.target?.toString()
+    switch (target) {
+        case "lights":
+            def n = (action?.states instanceof List) ? action.states.size() : 0
+            return "lights (${n} device(s))"
+        case "outlets":
+            def n = (action?.states instanceof List) ? action.states.size() : 0
+            return "outlets (${n} device(s))"
+        case "thermostats":
+            def n = (action?.devices instanceof List) ? action.devices.size() : 0
+            def bits = ["thermostats (${n} device(s))"]
+            if (action?.mode) bits << "mode=${action.mode}"
+            if (action?.heat != null) bits << "heat=${action.heat}"
+            if (action?.cool != null) bits << "cool=${action.cool}"
+            if (action?.fanMode) bits << "fan=${action.fanMode}"
+            return bits.join(" ")
+        case "hubMode":
+            return "hub mode → ${action?.mode ?: "?"}"
+        default:
+            return target ?: "no action"
     }
-    // Mode triggers are event-driven — nothing to re-arm
-    if (kind == "mode") {
-        saveSchedulesMap(map)
-        return
-    }
-    saveSchedulesMap(map)
-    try {
-        def tr = s?.trigger
-        if (kind == "daily" || kind == "weekly") {
-            def when = scheduleTriggerWhen(tr)
-            if (when == "clock") {
-                def cron = scheduleCronForTrigger(kind, tr?.time, tr?.days)
-                if (cron) {
-                    def nf = cronNextFire(cron, now())
-                    s.nextFire = nf
-                    saveSchedulesMap(map)
-                }
-            } else {
-                saveSchedulesMap(map)
-                rebuildScheduledJobs()
-                return
-            }
-        }
-    } catch (e) {}
 }
 
 def runScheduleAction(action) {
@@ -6327,7 +6398,12 @@ def runScheduleAction(action) {
         case "hubMode":
             def mode = action?.mode?.toString()?.trim()
             if (mode) {
-                try { location.setMode(mode) } catch (e) { log.warn "Modern Dashboard: hub mode failed — ${mode}: ${e}" }
+                try {
+                    location.setMode(mode)
+                    logDbg("schedule hub mode → ${mode}")
+                } catch (e) {
+                    log.warn "Modern Dashboard: hub mode failed — ${mode}: ${e}"
+                }
             }
             break
         default:
@@ -6344,6 +6420,8 @@ def runScheduleOnOffAction(action, deviceList) {
         def dev = deviceList?.find { it.id.toString() == id.toString() }
         if (!dev) continue
         try {
+            def cmd = (st?.on == true) ? "on" : "off"
+            logDbg("schedule cmd — ${deviceLabel(dev)} ${cmd}")
             if (st?.on == true) dev.on() else dev.off()
         } catch (e) {
             log.warn "Modern Dashboard: schedule on/off cmd failed for ${id}: ${e}"
@@ -6362,6 +6440,10 @@ def runScheduleLightAction(action) {
         try {
             def on = (st?.on == true)
             if (on) {
+                def detail = "on"
+                if (st?.level != null) detail += " level=${st.level}"
+                if (st?.ct != null) detail += " ct=${st.ct}"
+                logDbg("schedule cmd — ${deviceLabel(dev)} ${detail}")
                 dev.on()
                 def lvl = st?.level
                 if (lvl != null && dev.hasCapability("SwitchLevel")) {
@@ -6376,6 +6458,7 @@ def runScheduleLightAction(action) {
                     }
                 }
             } else {
+                logDbg("schedule cmd — ${deviceLabel(dev)} off")
                 dev.off()
             }
         } catch (e) {
@@ -6395,6 +6478,12 @@ def runScheduleThermostatAction(action) {
         def dev = thermostats?.find { it.id.toString() == id.toString() }
         if (!dev) continue
         try {
+            def bits = []
+            if (mode) bits << "mode=${mode}"
+            if (heat != null) bits << "heat=${heat}"
+            if (cool != null) bits << "cool=${cool}"
+            if (fanMode) bits << "fan=${fanMode}"
+            if (bits) logDbg("schedule cmd — ${deviceLabel(dev)} ${bits.join(' ')}")
             if (mode) {
                 try { dev.setThermostatMode(mode) } catch (e) {
                     log.warn "Modern Dashboard: schedule tstat mode failed for ${id}: ${e}"
@@ -6474,6 +6563,43 @@ def schedulesListForClient() {
     return out
 }
 
+def schedulesValidateNormalized(s) {
+    if (!s) return "invalid schedule"
+    def tr = s.trigger ?: [:]
+    def kind = tr?.kind?.toString()
+    if (!(kind in ["daily", "weekly", "once", "mode"])) return "unsupported trigger type"
+    if (kind == "daily" || kind == "weekly") {
+        def when = scheduleTriggerWhen(tr)
+        if (when == "clock") {
+            if (!scheduleCronForTrigger(kind, tr?.time, tr?.days)) return "invalid clock time or days"
+        } else {
+            def off = scheduleOffsetMin(tr)
+            if (off < -720 || off > 720) return "offset must be between -720 and 720 minutes"
+        }
+        if (kind == "weekly") {
+            def days = tr?.days
+            if (!(days instanceof List) || !days) return "pick at least one day"
+        }
+    } else if (kind == "once") {
+        def atMs = scheduleOnceToMs(tr?.at)
+        if (atMs == null) return "invalid one-time date"
+        if (atMs <= now()) return "one-time schedule must be in the future"
+    } else if (kind == "mode") {
+        if (!tr?.mode?.toString()?.trim()) return "pick a hub mode"
+    }
+    def ac = s.action ?: [:]
+    def target = ac?.target?.toString()
+    if (!(target in ["lights", "outlets", "thermostats", "hubMode"])) return "unsupported action type"
+    if (target == "lights" || target == "outlets") {
+        if (!(ac?.states instanceof List) || !ac.states) return "select at least one device"
+    } else if (target == "thermostats") {
+        if (!(ac?.devices instanceof List) || !ac.devices) return "select at least one thermostat"
+    } else if (target == "hubMode") {
+        if (!ac?.mode?.toString()?.trim()) return "pick a hub mode"
+    }
+    return null
+}
+
 def schedulesNormalizePayload(body) {
     def s = [:]
     def id = body?.id?.toString()?.trim()
@@ -6498,9 +6624,10 @@ def schedulesNormalizePayload(body) {
             }
         }
         if (tr.kind == "weekly") {
+            def valid = scheduleWeeklyDayNames() as Set
             def days = body?.trigger?.days
             if (days instanceof List) {
-                tr.days = days.collect { it?.toString()?.trim()?.toUpperCase() }.findAll { it }
+                tr.days = days.collect { it?.toString()?.trim()?.toUpperCase() }.findAll { valid.contains(it) }
             } else {
                 tr.days = []
             }
@@ -6563,14 +6690,27 @@ def schedulesSave() {
         return renderJsonNoStore( '{"ok":false,"error":"missing body"}', 400)
     }
     def s = schedulesNormalizePayload(body)
+    def validationError = schedulesValidateNormalized(s)
+    if (validationError) {
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(validationError)}}".toString(), 422)
+    }
     def map = parseSchedulesMap()
+    def priorJson = state.schedulesJson
     def id = s.id
     if (!id) id = scheduleNewId()
     def existing = map[id]
     if (existing && existing.lastFired != null) s.lastFired = existing.lastFired
     map[id] = s
     saveSchedulesMap(map)
-    rebuildScheduledJobs()
+    def rebuild = rebuildScheduledJobs()
+    def failReason = rebuild?.failures?.[id.toString()]
+    if (failReason && s.enabled == true) {
+        // Roll back so a broken schedule is never persisted as "saved".
+        if (priorJson != null) state.schedulesJson = priorJson
+        else state.remove("schedulesJson")
+        rebuildScheduledJobs()
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(failReason)},\"schedules\":${groovy.json.JsonOutput.toJson(schedulesListForClient())}}".toString(), 422)
+    }
     def out = new StringBuilder()
     out << "{\"ok\":true,\"id\":" << jsonStr(id.toString())
     out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
@@ -6612,10 +6752,18 @@ def schedulesToggle() {
     if (!s) {
         return renderJsonNoStore( '{"ok":false,"error":"not found"}', 404)
     }
+    def priorJson = state.schedulesJson
     s.enabled = (s.enabled != true)
     map[id] = s
     saveSchedulesMap(map)
-    rebuildScheduledJobs()
+    def rebuild = rebuildScheduledJobs()
+    def failReason = rebuild?.failures?.[id]
+    if (failReason && s.enabled == true) {
+        if (priorJson != null) state.schedulesJson = priorJson
+        else state.remove("schedulesJson")
+        rebuildScheduledJobs()
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(failReason)},\"schedules\":${groovy.json.JsonOutput.toJson(schedulesListForClient())}}".toString(), 422)
+    }
     def out = new StringBuilder()
     out << "{\"ok\":true,\"id\":" << jsonStr(id.toString())
     out << ",\"enabled\":" << (s.enabled == true ? "true" : "false")
@@ -6638,6 +6786,7 @@ def schedulesTest() {
         return renderJsonNoStore( '{"ok":false,"error":"not found"}', 404)
     }
     try {
+        log.info "Modern Dashboard: schedule test — ${scheduleLogName(id, s)} · ${scheduleActionLogSummary(s?.action)}"
         runScheduleAction(s?.action)
     } catch (e) {
         log.warn "Modern Dashboard: schedule ${id} test failed: ${e}"
@@ -6665,8 +6814,10 @@ def cronNextFire(String cronExpr, long fromMs) {
     cal.setTime(new Date(fromMs + 1000))
     cal.set(Calendar.SECOND, 0)
     cal.set(Calendar.MILLISECOND, 0)
-    // Cap iterations to ~2 years (2*366*24*60)
-    for (int i = 0; i < 1750000; i++) {
+    // Truncating seconds can land on the just-elapsed minute — step forward.
+    if (cal.getTimeInMillis() <= fromMs) cal.add(Calendar.MINUTE, 1)
+    // Cap iterations to ~2 years of minutes
+    for (int i = 0; i < 366 * 24 * 60 * 2; i++) {
         int s = cal.get(Calendar.SECOND)
         int mi = cal.get(Calendar.MINUTE)
         int h = cal.get(Calendar.HOUR_OF_DAY)
@@ -6676,13 +6827,22 @@ def cronNextFire(String cronExpr, long fromMs) {
         if (sec.contains(s) && min.contains(mi) && hour.contains(h) && mon.contains(mo) && dom.contains(d) && dow.contains(dw)) {
             return cal.getTimeInMillis()
         }
-        cal.add(Calendar.SECOND, 1)
+        cal.add(Calendar.MINUTE, 1)
     }
     return null
 }
 
+def cronParseDayOrInt(String tok, Map dayNames) {
+    if (dayNames != null) {
+        def named = dayNames[tok?.toUpperCase()]
+        if (named != null) return named as Integer
+    }
+    return Integer.parseInt(tok)
+}
+
 // Parse a single cron field into a Set of integers. Supports "*", numbers, ranges "a-b",
-// steps "a/b" and "*/b", and lists "a,b,c". '?' is treated as '*'.
+// steps "a/b" and "*/b", lists "a,b,c", and Quartz day names SUN–SAT when lo/hi is 1–7.
+// '?' is treated as '*'.
 def cronFieldValues(String field, int lo, int hi) {
     def out = new HashSet()
     if (field == null) return null
@@ -6690,6 +6850,10 @@ def cronFieldValues(String field, int lo, int hi) {
     if (f == "?" || f == "*") {
         for (int v = lo; v <= hi; v++) out.add(v)
         return out
+    }
+    def dayNames = null
+    if (lo == 1 && hi == 7) {
+        dayNames = [SUN: 1, MON: 2, TUE: 3, WED: 4, THU: 5, FRI: 6, SAT: 7]
     }
     for (String part : f.split(",")) {
         String p = part.trim()
@@ -6709,11 +6873,14 @@ def cronFieldValues(String field, int lo, int hi) {
             int dash = p.indexOf("-")
             if (dash >= 0) {
                 try {
-                    plo = Integer.parseInt(p.substring(0, dash).trim())
-                    phi = Integer.parseInt(p.substring(dash + 1).trim())
+                    plo = cronParseDayOrInt(p.substring(0, dash).trim(), dayNames)
+                    phi = cronParseDayOrInt(p.substring(dash + 1).trim(), dayNames)
                 } catch (e) { return null }
             } else {
-                try { plo = Integer.parseInt(p); phi = plo } catch (e) { return null }
+                try {
+                    plo = cronParseDayOrInt(p, dayNames)
+                    phi = plo
+                } catch (e) { return null }
             }
         }
         if (plo < lo) plo = lo
