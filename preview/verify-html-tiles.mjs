@@ -82,6 +82,9 @@ try {
   assert(Array.isArray(initial.htmlTiles), "htmlTiles at top level");
   assert(initial.htmlTiles.some((tile) => tile.id === "9001:tile5"), "Battery Monitor catalog entry");
   assert(initial.htmlTiles.some((tile) => tile.id === "9002:html"), "PALISADE catalog entry");
+  assert(initial.htmlTiles.some((tile) => tile.id === "9003:tile3"), "tileDescriptions catalog entry");
+  const describedTile = initial.htmlTiles.find((tile) => tile.id === "9003:tile3");
+  assert(describedTile?.title === "Sprinkler Schedule", "tileDescriptions maps attribute to title");
   assert(initial.htmlTiles.every((tile) => tile.html == null), "catalog-only tiles omit html");
   assert(initial.htmlTiles.every((tile) => tile.size === "tall"), "catalog tiles have default size");
 

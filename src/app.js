@@ -2672,7 +2672,7 @@
   function openColorPopup(id, anchorEl, dev, displayName) {
     cancelAllSlideGestures();
     closeColorPopup(false);
-    const name = displayName || dev.n || "Light";
+    const name = dev.n || displayName || "Light";
     const hasCt = !!dev.ct;
     const hasRgb = !!dev.rgb;
     const hasLevel = !!dev.d;

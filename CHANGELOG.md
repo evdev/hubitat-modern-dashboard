@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.56
+
+- **HTML tiles:** Tile Builder `tileDescriptions` JSON is used for catalog and Favorites
+  titles (e.g. `tile3` → "Sprinkler Schedule") instead of raw attribute names.
+- **Lights:** color popup title prefers the hub device name over the room display label.
+
 ## 0.3.55
 
 - **Lights:** color/CT/RGB popup header shows the device name (level/Kelvin/RGB readout

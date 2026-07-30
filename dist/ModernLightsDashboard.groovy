@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.55
+// Modern Dashboard v0.3.56
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.55"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.56"
 
 definition(
     name: "Modern Dashboard",
@@ -50,7 +50,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.55 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.56 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -3608,6 +3608,23 @@ def sanitizeHtmlForDashboard(raw) {
     return s
 }
 
+def parseTileDescriptionsMap(d) {
+    def out = [:]
+    try {
+        def raw = safeCurrent(d, "tileDescriptions")
+        if (raw == null) return out
+        def parsed = new groovy.json.JsonSlurper().parseText(raw.toString())
+        if (!(parsed instanceof Map)) return out
+        for (entry in parsed) {
+            def key = entry.key?.toString()?.trim()
+            def val = entry.value?.toString()?.trim()
+            if (!key || !val || val == "None") continue
+            out[key] = val
+        }
+    } catch (e) {}
+    return out
+}
+
 def tileBuilderDescriptions(d) {
     def map = [:]
     try {
@@ -3626,6 +3643,27 @@ def tileBuilderDescriptions(d) {
     return map
 }
 
+def mergeTileDescriptionMaps(primary, secondary) {
+    def out = [:]
+    if (secondary instanceof Map) {
+        for (entry in secondary) out[entry.key] = entry.value
+    }
+    if (primary instanceof Map) {
+        for (entry in primary) out[entry.key] = entry.value
+    }
+    return out
+}
+
+def resolveHtmlTileTitle(descMap, attr, fallback) {
+    def key = attr?.toString()
+    if (key && descMap instanceof Map) {
+        def fromMap = descMap[key]?.toString()?.trim()
+        if (fromMap && fromMap != "None") return fromMap
+    }
+    def fb = fallback?.toString()?.trim()
+    return fb ?: key ?: "HTML"
+}
+
 def htmlTileWantsBody(tileId, includeHtmlBodies, activeIds) {
     if (!includeHtmlBodies) return false
     if (activeIds == null) return true
@@ -3638,15 +3676,14 @@ def discoverHtmlTilesForDevice(d, includeHtmlBodies = false, activeIds = null) {
     def deviceName = d.displayName?.toString() ?: ("Device " + d.id)
     def deviceId = d.id
     if (isTileBuilderStorageDevice(d)) {
-        def descs = tileBuilderDescriptions(d)
+        def descs = mergeTileDescriptionMaps(parseTileDescriptionsMap(d), tileBuilderDescriptions(d))
         for (i in 1..26) {
             def attr = "tile" + i
             def val = safeCurrent(d, attr)
             if (val == null) continue
             def vs = val.toString()
             if (vs.trim() == "") continue
-            def title = descs[attr]
-            if (!title) title = "Tile " + i
+            def title = resolveHtmlTileTitle(descs, attr, "Tile " + i)
             def id = deviceId.toString() + ":" + attr
             def entry = [id: id, deviceId: deviceId, attribute: attr, title: title]
             // Keep HTML strings only for favorited/active tiles — avoids retaining large inactive bodies every /data poll.
@@ -3655,6 +3692,7 @@ def discoverHtmlTilesForDevice(d, includeHtmlBodies = false, activeIds = null) {
         }
         return out
     }
+    def descs = parseTileDescriptionsMap(d)
     def seen = new HashSet()
     def named = htmlNamedAttrs()
     try {
@@ -3663,7 +3701,7 @@ def discoverHtmlTilesForDevice(d, includeHtmlBodies = false, activeIds = null) {
             def nm = st?.name?.toString()
             if (!nm) continue
             def low = nm.toLowerCase()
-            if (low == "roomscss" || low == "alignroomtilescss" || low == "emptyattribute") continue
+            if (low == "roomscss" || low == "alignroomtilescss" || low == "emptyattribute" || low == "tiledescriptions") continue
             def val = st?.value
             if (val == null) continue
             def vs = val.toString()
@@ -3672,17 +3710,17 @@ def discoverHtmlTilesForDevice(d, includeHtmlBodies = false, activeIds = null) {
             if (seen.contains(nm)) continue
             seen.add(nm)
             def id = deviceId.toString() + ":" + nm
-            def entry = [id: id, deviceId: deviceId, attribute: nm, title: nm]
+            def entry = [id: id, deviceId: deviceId, attribute: nm, title: resolveHtmlTileTitle(descs, nm, nm)]
             if (htmlTileWantsBody(id, includeHtmlBodies, activeIds)) entry.html = vs
             out << entry
             if (out.size() >= maxHtmlAttrsPerGenericDevice()) break
         }
     } catch (e) {}
     if (out.size() == 1) {
-        out[0].title = deviceName
+        if (!descs[out[0].attribute]) out[0].title = deviceName
     } else {
         for (t in out) {
-            t.title = deviceName + " — " + t.attribute
+            if (!descs[t.attribute]) t.title = deviceName + " — " + t.attribute
         }
     }
     return out

@@ -26,6 +26,9 @@ const MOCK_DASH_PASSWORD = "dashpass";
 const DASH_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const HTML_SIZE_PRESETS = new Set(["compact", "standard", "wide", "square", "portrait", "full", "tall", "large", "viewport"]);
 const HTML_ZOOM_PRESETS = new Set([50, 75, 100, 125, 150]);
+const MOCK_HTML_TILE_DESCRIPTIONS = {
+  9003: { tile3: "Sprinkler Schedule" },
+};
 const MOCK_HTML_TILES = [
   {
     id: "9001:tile5",
@@ -41,7 +44,30 @@ const MOCK_HTML_TILES = [
     title: "2022 PALISADE",
     html: '<div style="display:grid;gap:.4rem"><strong>2022 PALISADE</strong><span>Locked · Parked at Home</span><span>Fuel 68% · Range 247 mi</span></div>',
   },
+  {
+    id: "9003:tile3",
+    deviceId: 9003,
+    attribute: "tile3",
+    title: "tile3",
+    html: '<div>Sprinkler zones</div>',
+  },
 ];
+
+function resolveMockHtmlTileTitle(tile) {
+  const deviceId = Number(tile.deviceId);
+  const descs = MOCK_HTML_TILE_DESCRIPTIONS[deviceId];
+  const attr = String(tile.attribute || "");
+  const fromMap = descs?.[attr];
+  if (fromMap) return fromMap;
+  return tile.title || attr || "HTML";
+}
+
+function mockHtmlTilesCatalog() {
+  return MOCK_HTML_TILES.map((tile) => {
+    const entry = { ...tile, title: resolveMockHtmlTileTitle(tile) };
+    return entry;
+  });
+}
 const MOCK_TRACKS = [
   "Daft Punk — Get Lucky",
   "Fleetwood Mac — Dreams",
@@ -241,7 +267,7 @@ function buildMockData(count) {
     { i: 5102, n: "Master Bedroom Fan", r: 3, s: 0, sp: "off", supSp: "low,medium-low,medium,medium-high,high", hasSw: 1 },
     { i: 5103, n: "Patio DC Fan", r: 7, s: 1, sp: "4", supSp: "1,2,3,4,5,6", hasSw: 1 },
   ];
-  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, htmlZooms: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: MOCK_HTML_TILES.map((tile) => ({ ...tile })), rooms, devices, outlets: [
+  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, htmlZooms: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: mockHtmlTilesCatalog(), rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
   ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
