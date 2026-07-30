@@ -43,4 +43,16 @@ assert(src.includes('log.info "Modern Dashboard: schedule test —'), "must log 
 
 assert(!src.includes("?.["), "must not use Groovy ?.[] safe-index (unsupported on Hubitat)");
 
+// Simple Automation Rules import (Hubitat App Export paste)
+assert(src.includes('page(name: "schedImportPage"'), "must register schedImportPage");
+assert(src.includes("schedImportConvertExport"), "must convert SAR exports");
+assert(src.includes("schedImportApplyOk"), "must apply imported schedules");
+assert(src.includes("Unsupported trigger:"), "must report unsupported trigger skips");
+assert(src.includes("Mode Changes"), "must support SAR Mode Changes trigger");
+assert(src.includes("schedImportBuildModeTrigger") || src.includes("onMode"), "must map onMode for mode triggers");
+assert(src.includes("not in Lights/Outlets") || src.includes("No devices remain after filtering"), "must report device picker skips");
+assert(src.includes("schedImportHidePaste"), "must hide paste textarea after import (Hubitat form overwrite)");
+assert(src.includes('app.clearSetting("schedImportPaste")') || src.includes('app.updateSetting("schedImportPaste"'), "must clear paste setting");
+assert(!src.includes("id.isInteger()"), "must not use String.isInteger for device ids");
+
 console.log("ok source: scheduler Groovy invariants");

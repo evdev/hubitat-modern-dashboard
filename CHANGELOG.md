@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.59
+
+- **Scheduler:** import Simple Automation Rules from a Hubitat App Export paste in
+  the companion app (**Dashboard options → Import Simple Automation Rules…**).
+  Supports time/sunrise/sunset, **Mode Changes**, Set Level / Set Temperature (CT),
+  and second-time anti-actions; unsupported items are skipped with an on-page reason.
+
 ## 0.3.58
 
 - **Scheduler fix:** save/toggle rollback no longer uses Groovy `?.[]` safe-index (unsupported

@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.58
+// Modern Dashboard v0.3.59
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.58"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.59"
 
 definition(
     name: "Modern Dashboard",
@@ -32,6 +32,7 @@ definition(
 
 preferences {
     page(name: "mainPage", uninstall: true, install: true)
+    page(name: "schedImportPage", title: "Import Simple Automation Rules", install: false, uninstall: false)
 }
 
 def mainPage() {
@@ -50,7 +51,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.58 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.59 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -227,6 +228,9 @@ def mainPage() {
                 defaultValue: false, submitOnChange: true
             if (schedulerDisabled != true) {
                 input "schedulerUse24Hour", "bool", title: "Use 24-hour time in scheduler", defaultValue: false
+                href "toSchedImport", title: "Import Simple Automation Rules…",
+                    description: "Paste a Hubitat App Export to create mDash schedules",
+                    page: "schedImportPage"
             }
             paragraph "<small>When scheduler is hidden, no schedules run. Saved schedules are kept if you turn it back on.</small>"
             input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
@@ -275,6 +279,145 @@ def mainPage() {
     }
 }
 
+def schedImportPage() {
+    dynamicPage(name: "schedImportPage", title: "Import Simple Automation Rules", install: false, uninstall: false) {
+        section("How to export") {
+            paragraph "In Hubitat: <b>Apps</b> → gear icon next to <b>Simple Automation Rules</b> (or individual rules) → <b>Export/Import/Clone</b> → export and download the file. Paste the file contents below."
+            paragraph "<small>Imports time / sunrise / sunset and <b>Mode Changes</b> (enter mode) rules, including Turn On/Off / Set Level / Set Temperature (CT) on devices in the Lights or Outlets pickers. A Simple Automation “second time” imports as the opposite on/off. Unsupported items are skipped with a reason.</small>"
+            paragraph "<small><b>Not imported:</b> device/motion/contact triggers, Mode Transition (from→to), leave-mode offMode pairs, and Toggle — create those manually in the Scheduler if needed.</small>"
+        }
+        section("Paste export") {
+            // Hubitat: updateSetting/clearSetting while an input is visible is often overwritten by the form post.
+            // Hide the textarea after import/clear so the empty value sticks.
+            if (state.schedImportHidePaste == true) {
+                paragraph "<small>Paste cleared. Tap <b>Paste another export</b> to import again.</small>"
+                input name: "btnSchedImportClear", type: "button", title: "Paste another export"
+            } else {
+                input "schedImportPaste", "textarea", title: "Hubitat App Export JSON", required: false, rows: 12, submitOnChange: true
+                input name: "btnSchedImportClear", type: "button", title: "Clear paste"
+            }
+        }
+
+        def preview = schedImportPreviewFromSettings()
+        if (state.schedImportHidePaste != true) {
+            if (preview.error) {
+                section("Error") {
+                    paragraph "<b>${htmlEsc(preview.error)}</b>"
+                }
+            } else if (preview.hasPaste) {
+                section("Will import (${preview.ok.size()})") {
+                    if (!preview.ok) {
+                        paragraph "<small>Nothing to import.</small>"
+                    } else {
+                        def lines = preview.ok.collect { row ->
+                            "<li><b>${htmlEsc(row.name)}</b> — ${htmlEsc(row.summary)}</li>"
+                        }.join("")
+                        paragraph "<ul>${lines}</ul>"
+                    }
+                }
+                if (preview.skipped) {
+                    section("Will skip (${preview.skipped.size()}) — not available in mDash scheduler") {
+                        def lines = preview.skipped.collect { row ->
+                            "<li><b>${htmlEsc(row.name)}</b>: ${htmlEsc(row.reason)}</li>"
+                        }.join("")
+                        paragraph "<ul style='color:#a33'>${lines}</ul>"
+                    }
+                }
+                section("Import") {
+                    if (preview.ok) {
+                        input name: "btnSchedImportRun", type: "button", title: "Import ${preview.ok.size()} schedule(s)"
+                        paragraph "<small>Creates or replaces mDash schedules keyed by the exported rule id. Original Simple Automation Rules are left unchanged — disable them in Hubitat after you verify.</small>"
+                    } else {
+                        paragraph "<b>No schedules can be imported.</b> Fix the skip reasons above (or select devices in Lights/Outlets), then try again."
+                    }
+                }
+            }
+        }
+
+        if (state.schedImportResult) {
+            section("Last import result") {
+                paragraph htmlEsc(state.schedImportResult.toString())
+                if (state.schedImportSkipped) {
+                    paragraph "<b>Skipped:</b><br>${state.schedImportSkipped.toString()}"
+                }
+            }
+        }
+
+        section("") {
+            href "backMain", title: "Back to Modern Dashboard settings", page: "mainPage"
+        }
+    }
+}
+
+def schedImportPreviewFromSettings() {
+    if (state.schedImportHidePaste == true) {
+        return [hasPaste: false, ok: [], skipped: [], error: null]
+    }
+    def text = schedImportPaste?.toString()
+    if (!text?.trim()) return [hasPaste: false, ok: [], skipped: [], error: null]
+    def lightIds = (lights ?: []).collect { it?.id?.toString() }.findAll { it }
+    def outletIds = (outletSwitches ?: []).collect { it?.id?.toString() }.findAll { it }
+    def result = schedImportConvertExport(text, lightIds, outletIds)
+    result.hasPaste = true
+    return result
+}
+
+def schedImportClearPaste() {
+    if (state.schedImportHidePaste == true) {
+        // "Paste another export" — show the textarea again.
+        state.schedImportHidePaste = false
+        state.remove("schedImportResult")
+        state.remove("schedImportSkipped")
+        return
+    }
+    // Clear while textarea was visible: hide it on the next render so clearSetting sticks
+    // (Hubitat often re-applies posted input values when the control remains on the page).
+    state.schedImportHidePaste = true
+    try { app.clearSetting("schedImportPaste") } catch (e1) {
+        try { app.updateSetting("schedImportPaste", [type: "textarea", value: ""]) } catch (e2) {}
+    }
+    state.remove("schedImportResult")
+    state.remove("schedImportSkipped")
+}
+
+def schedImportRunFromUi() {
+    def preview = schedImportPreviewFromSettings()
+    if (preview.error) {
+        state.schedImportResult = "Import failed: ${preview.error}"
+        state.schedImportSkipped = null
+        return
+    }
+    if (!preview.ok) {
+        state.schedImportResult = "Nothing imported."
+        state.schedImportSkipped = schedImportFormatSkippedHtml(preview.skipped)
+        return
+    }
+    def applied = schedImportApplyOk(preview.ok)
+    if (applied.error) {
+        state.schedImportResult = "Import failed: ${applied.error}"
+        state.schedImportSkipped = schedImportFormatSkippedHtml(preview.skipped)
+        return
+    }
+    state.schedImportResult = "Imported ${applied.count} schedule(s)."
+    state.schedImportSkipped = schedImportFormatSkippedHtml(preview.skipped)
+    try {
+        log.info "Modern Dashboard: imported ${applied.count} schedule(s) from Simple Automation export" +
+            (preview.skipped ? " (${preview.skipped.size()} skipped)" : "")
+    } catch (e) {}
+    // Hide textarea before clear so Hubitat does not re-apply the posted paste value.
+    state.schedImportHidePaste = true
+    try { app.clearSetting("schedImportPaste") } catch (e1) {
+        try { app.updateSetting("schedImportPaste", [type: "textarea", value: ""]) } catch (e2) {}
+    }
+}
+
+def schedImportFormatSkippedHtml(skipped) {
+    if (!skipped) return null
+    return skipped.collect { row ->
+        "• ${htmlEsc(row.name)}: ${htmlEsc(row.reason)}"
+    }.join("<br>")
+}
+
 def installed() {
     if (!state.accessToken) { createAccessToken() }
     logInit()
@@ -300,6 +443,10 @@ def appButtonHandler(btn) {
         createNotificationChildDeviceFromUi()
     } else if (btn == "btnCreateTileNotifDevice") {
         createTileNotificationChildDeviceFromUi()
+    } else if (btn == "btnSchedImportRun") {
+        schedImportRunFromUi()
+    } else if (btn == "btnSchedImportClear") {
+        schedImportClearPaste()
     }
 }
 
@@ -5892,6 +6039,501 @@ def saveFavoritesFromList(ids, sizes = null) {
 }
 
 // ===========================================================================
+// Simple Automation Rules → mDash schedule import (Hubitat App Export paste)
+// Mirrors lib/sar-import.mjs — deterministic allowlist only.
+// ===========================================================================
+
+def schedImportConvertExport(text, lightIds, outletIds) {
+    def parsed = schedImportParseExport(text)
+    if (parsed.error) return [ok: [], skipped: [], error: parsed.error]
+    def root = parsed.root
+    def appData = root.appData ?: [:]
+    def appReplacements = root.appReplacements ?: [:]
+    def deviceMeta = root.deviceReplacements ?: [:]
+    def ok = []
+    def skipped = []
+    appData.each { appId, data ->
+        def meta = appReplacements[appId.toString()] ?: (appReplacements.containsKey(appId) ? appReplacements[appId] : [:])
+        if (!(meta instanceof Map)) meta = [:]
+        def typeName = meta.appTypeName?.toString() ?: ""
+        def lowerType = typeName.trim().toLowerCase()
+        // Parent container app — skip silently
+        if (lowerType == "simple automation rules") {
+            def hasHow = false
+            def settingsList = data?.appSettings
+            if (settingsList instanceof List) {
+                settingsList.each { s ->
+                    if (s?.name?.toString() == "howToTrigger") hasHow = true
+                }
+            }
+            if (!hasHow) return
+        }
+        def result = schedImportConvertApp(appId.toString(), data, meta, deviceMeta, lightIds, outletIds)
+        if (result.schedules) ok.addAll(result.schedules)
+        if (result.skipped) skipped.addAll(result.skipped)
+    }
+    if (!ok && !skipped) {
+        return [ok: [], skipped: [], error: "No Simple Automation Rules found in export"]
+    }
+    return [ok: ok, skipped: skipped, error: null]
+}
+
+def schedImportParseExport(text) {
+    def raw = text?.toString()?.trim()
+    if (!raw) return [error: "Paste is empty", root: null]
+    def fixed = raw.replace("\\\\", "\\")
+    def root = null
+    try {
+        root = new groovy.json.JsonSlurper().parseText(fixed)
+    } catch (e1) {
+        try {
+            root = new groovy.json.JsonSlurper().parseText(raw.replace('\\"', '"').replace("\\\\", "\\"))
+        } catch (e2) {
+            return [error: "Invalid export JSON: ${e1.message ?: e1}", root: null]
+        }
+    }
+    if (!(root instanceof Map)) return [error: "Export must be a JSON object", root: null]
+    if (!(root.appData instanceof Map)) return [error: "Export has no appData", root: null]
+    return [error: null, root: root]
+}
+
+def schedImportSettingsMap(appSettings) {
+    def m = [:]
+    if (!(appSettings instanceof List)) return m
+    appSettings.each { s ->
+        if (s?.name) m[s.name.toString()] = s
+    }
+    return m
+}
+
+def schedImportSettingValue(settings, name) {
+    def s = settings[name]
+    if (!s) return null
+    def v = s.value
+    if (v == null || v.toString().trim() == "") return null
+    return v
+}
+
+def schedImportStripHtml(s) {
+    return (s?.toString() ?: "").replaceAll(/<[^>]*>/, "").trim()
+}
+
+def schedImportIsSarApp(meta) {
+    def t = (meta?.appTypeName?.toString() ?: meta?.appName?.toString() ?: "").trim().toLowerCase()
+    return t.startsWith("simple automation rule")
+}
+
+def schedImportParseModes(raw) {
+    if (raw == null || raw.toString().trim() == "") return []
+    if (raw instanceof List) return raw.collect { it?.toString() }.findAll { it }
+    def s = raw.toString().trim()
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(s)
+        if (parsed instanceof List) return parsed.collect { it?.toString() }.findAll { it }
+    } catch (e) {}
+    if (s.startsWith("[") && s.endsWith("]")) {
+        def inner = s.substring(1, s.length() - 1).trim()
+        if (!inner) return []
+        return inner.split(",").collect { p ->
+            def t = p.trim()
+            if ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'"))) {
+                if (t.length() >= 2) t = t.substring(1, t.length() - 1)
+            }
+            t
+        }.findAll { it }
+    }
+    return [s]
+}
+
+def schedImportParseDays(raw) {
+    if (raw == null || raw.toString().trim() == "") return []
+    def list = raw
+    if (raw instanceof String) {
+        try {
+            list = new groovy.json.JsonSlurper().parseText(raw)
+        } catch (e) {
+            list = raw.split(",").collect { it.trim() }.findAll { it }
+        }
+    }
+    if (!(list instanceof List)) return []
+    def valid = scheduleWeeklyDayNames() as Set
+    return list.collect { d ->
+        def s = d?.toString()?.trim()?.toUpperCase() ?: ""
+        if (s.length() > 3) s = s.substring(0, 3)
+        s
+    }.findAll { valid.contains(it) }
+}
+
+def schedImportDeviceIds(settings) {
+    def s = settings["lights"]
+    if (!s) return []
+    def dl = s.deviceList
+    if (dl instanceof Map) return dl.keySet().collect { it.toString() }
+    def v = s.value
+    if (v instanceof List) return v.collect { it.toString() }
+    if (v instanceof String && v.trim()) {
+        try {
+            def parsed = new groovy.json.JsonSlurper().parseText(v)
+            if (parsed instanceof List) return parsed.collect { it.toString() }
+        } catch (e) {
+            return v.split(",").collect { it.trim() }.findAll { it }
+        }
+    }
+    return []
+}
+
+def schedImportDeviceLabel(deviceMeta, id) {
+    def d = null
+    if (deviceMeta instanceof Map) {
+        def sid = id.toString()
+        if (deviceMeta.containsKey(sid)) d = deviceMeta[sid]
+        else if (deviceMeta.containsKey(id)) d = deviceMeta[id]
+    }
+    return d?.deviceLabel?.toString() ?: d?.deviceName?.toString() ?: id.toString()
+}
+
+def schedImportParseClockTime(raw) {
+    if (raw == null || raw.toString().trim() == "") return null
+    def s = raw.toString().trim()
+    // Hubitat time inputs are often "HH:MM" or an ISO-like string containing HH:MM.
+    def m = (s =~ /(\d{1,2}):(\d{2})/)
+    if (!m.find()) return null
+    int hh
+    int mm
+    try {
+        hh = m.group(1).toInteger()
+        mm = m.group(2).toInteger()
+    } catch (e) {
+        return null
+    }
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null
+    return String.format("%02d:%02d", hh, mm)
+}
+
+def schedImportParseOffset(raw) {
+    if (raw == null || raw.toString().trim() == "") return 0
+    try {
+        def n = raw.toString().toInteger()
+        return Math.max(-720, Math.min(720, n))
+    } catch (e) {
+        return 0
+    }
+}
+
+def schedImportBuildTrigger(settings, slot) {
+    def atTKey = (slot == "secondary") ? "at2T" : "atT"
+    def atTimeKey = (slot == "secondary") ? "at2Time" : "atTime"
+    def atT = schedImportSettingValue(settings, atTKey)?.toString()?.trim()?.toLowerCase() ?: ""
+    if (!atT) {
+        return (slot == "secondary") ? [trigger: null, error: null] : [trigger: null, error: "Missing time type (atT)"]
+    }
+    def days = schedImportParseDays(schedImportSettingValue(settings, "days"))
+    def kind = days ? "weekly" : "daily"
+    def trigger = [kind: kind]
+    if (atT == "time") {
+        def time = schedImportParseClockTime(schedImportSettingValue(settings, atTimeKey))
+        if (!time) return [trigger: null, error: "Invalid or missing clock time (${atTimeKey})"]
+        trigger.when = "clock"
+        trigger.time = time
+        trigger.offsetMin = 0
+    } else if (atT == "sunrise" || atT == "sunset") {
+        trigger.when = atT
+        trigger.time = ""
+        def off
+        if (slot == "secondary") {
+            off = schedImportSettingValue(settings, (atT == "sunrise") ? "sunrise2Offset" : "sunset2Offset")
+        } else {
+            off = schedImportSettingValue(settings, (atT == "sunrise") ? "sunriseOffset" : "sunsetOffset")
+        }
+        trigger.offsetMin = schedImportParseOffset(off)
+    } else {
+        return [trigger: null, error: "Unsupported time type: ${atT}"]
+    }
+    if (kind == "weekly") trigger.days = days
+    return [trigger: trigger, error: null]
+}
+
+def schedImportSummary(s) {
+    def tr = s.trigger ?: [:]
+    if (tr.kind == "mode") {
+        return ("Mode " + (tr.mode ?: "")).trim()
+    }
+    if (tr.kind == "daily" || tr.kind == "weekly") {
+        def prefix = (tr.kind == "weekly") ? "Weekly ${(tr.days ?: []).join(',')}" : "Daily"
+        if (tr.when == "sunrise" || tr.when == "sunset") {
+            def off = (tr.offsetMin ?: 0) as int
+            def offLabel = (off == 0) ? tr.when : "${tr.when} ${off > 0 ? '+' : ''}${off}"
+            return "${prefix} ${offLabel}"
+        }
+        return "${prefix} ${tr.time ?: ''}"
+    }
+    return tr.kind?.toString() ?: "schedule"
+}
+
+def schedImportBuildModeTrigger(settings) {
+    def mode = schedImportSettingValue(settings, "onMode")?.toString()?.trim() ?: ""
+    if (!mode) return [trigger: null, error: "Mode Changes rule missing onMode"]
+    def offMode = schedImportSettingValue(settings, "offMode")
+    if (offMode == true || offMode?.toString()?.trim()?.equalsIgnoreCase("true")) {
+        return [trigger: null, error: "Mode Changes with offMode (leave-mode action) is not imported — create manually if needed"]
+    }
+    return [trigger: [kind: "mode", mode: mode], error: null]
+}
+
+def schedImportConvertApp(appId, appData, appMeta, deviceMeta, lightIds, outletIds) {
+    def skipped = []
+    def settings = schedImportSettingsMap(appData?.appSettings ?: [])
+    def name = schedImportStripHtml(appData?.state?.appName)
+    if (!name) name = schedImportStripHtml(schedImportSettingValue(settings, "newName"))
+    if (!name) name = schedImportStripHtml(appMeta?.appLabel)
+    if (!name) name = "SAR ${appId}"
+
+    if (!schedImportIsSarApp(appMeta)) {
+        def typeName = appMeta?.appTypeName?.toString() ?: ""
+        def lower = typeName.trim().toLowerCase()
+        if (!lower.startsWith("simple automation rule")) {
+            skipped << [appId: appId.toString(), name: name, reason: "Not a Simple Automation Rule (${typeName ?: 'unknown type'})"]
+            return [schedules: [], skipped: skipped]
+        }
+    }
+
+    def how = schedImportSettingValue(settings, "howToTrigger")?.toString()?.trim() ?: ""
+    def timeTrigger = (how == "At a Specific Time")
+    def modeTrigger = (how == "Mode Changes")
+    if (!timeTrigger && !modeTrigger) {
+        skipped << [appId: appId.toString(), name: name, reason: how ? "Unsupported trigger: ${how}" : "Missing howToTrigger"]
+        return [schedules: [], skipped: skipped]
+    }
+
+    def action = schedImportSettingValue(settings, "action")?.toString()?.trim() ?: ""
+    def allowed = ["Turn On", "Turn Off", "Turn On & Set Level", "Turn On & Set Temperature"] as Set
+    if (!allowed.contains(action)) {
+        skipped << [appId: appId.toString(), name: name, reason: action ? "Unsupported action: ${action}" : "Missing action"]
+        return [schedules: [], skipped: skipped]
+    }
+
+    def onVal = (action != "Turn Off")
+    def setLevel = (action == "Turn On & Set Level" || action == "Turn On & Set Temperature")
+    def setCt = (action == "Turn On & Set Temperature")
+    def level = null
+    def ct = null
+    if (setLevel || setCt) {
+        if (setLevel) {
+            try {
+                def lv = schedImportSettingValue(settings, "level")?.toString()?.toInteger()
+                if (lv != null && lv >= 0 && lv <= 100) level = lv
+            } catch (e) {}
+            if (action == "Turn On & Set Level" && level == null) {
+                skipped << [appId: appId.toString(), name: name, reason: "Turn On & Set Level requires a valid level (0-100)"]
+                return [schedules: [], skipped: skipped]
+            }
+        }
+        if (setCt) {
+            try {
+                ct = schedImportSettingValue(settings, "temperature")?.toString()?.toInteger()
+            } catch (e) { ct = null }
+            if (ct == null || ct < 1500 || ct > 9000) {
+                skipped << [appId: appId.toString(), name: name, reason: "Turn On & Set Temperature requires a valid color temperature (Kelvin)"]
+                return [schedules: [], skipped: skipped]
+            }
+        }
+    }
+
+    def ids = schedImportDeviceIds(settings)
+    if (!ids) {
+        skipped << [appId: appId.toString(), name: name, reason: "No devices in rule"]
+        return [schedules: [], skipped: skipped]
+    }
+
+    def lightSet = (lightIds ?: []).collect { it.toString() } as Set
+    def outletSet = (outletIds ?: []).collect { it.toString() } as Set
+    def lightDevs = []
+    def outletDevs = []
+    ids.each { id ->
+        def sid = id.toString()
+        if (outletSet.contains(sid)) outletDevs << sid
+        else if (lightSet.contains(sid)) lightDevs << sid
+        else {
+            def label = schedImportDeviceLabel(deviceMeta, sid)
+            skipped << [appId: appId.toString(), name: name,
+                reason: "Partial: device ${sid} (${label}) is not in Lights/Outlets (other devices in this rule can still import)"]
+        }
+    }
+    if (!lightDevs && !outletDevs) {
+        skipped = skipped.findAll { row -> !(row?.reason?.toString()?.startsWith("Partial:")) }
+        skipped << [appId: appId.toString(), name: name, reason: "No devices remain after filtering to Lights/Outlets pickers"]
+        return [schedules: [], skipped: skipped]
+    }
+
+    def enabled = !(appData?.state?.disabled == true || appData?.state?.paused == true)
+    def targets = []
+    if (lightDevs) targets << [target: "lights", ids: lightDevs]
+    if (outletDevs) targets << [target: "outlets", ids: outletDevs]
+    def partialCount = skipped.findAll { row ->
+        row?.appId?.toString() == appId.toString() && row?.reason?.toString()?.startsWith("Partial:")
+    }.size()
+    def partialNote = partialCount ? " (${partialCount} device(s) omitted)" : ""
+
+    def schedules = []
+
+    if (modeTrigger) {
+        def built = schedImportBuildModeTrigger(settings)
+        if (built.error) {
+            skipped << [appId: appId.toString(), name: name, reason: built.error.toString()]
+            return [schedules: [], skipped: skipped]
+        }
+        targets.each { t ->
+            def states = t.ids.collect { id ->
+                def sid = id.toString()
+                def idVal = (sid ==~ /^\d+$/) ? sid.toInteger() : sid
+                def o = [id: idVal, on: onVal]
+                if (t.target == "lights" && onVal) {
+                    if (setLevel && level != null) o.level = level
+                    if (setCt && ct != null) o.ct = ct
+                }
+                o
+            }
+            def importKey = "sar-${appId}-${t.target}".toString()
+            def draft = [
+                name: name.toString(),
+                enabled: enabled,
+                importKey: importKey,
+                onlyInModes: [],
+                trigger: built.trigger,
+                action: [target: t.target.toString(), states: states]
+            ]
+            def verr = schedulesValidateNormalized(schedulesNormalizePayload(draft))
+            if (verr) {
+                skipped << [appId: appId.toString(), name: name, reason: "Validation failed: ${verr}"]
+                return
+            }
+            schedules << [
+                importKey: importKey,
+                name: name.toString(),
+                summary: (schedImportSummary(draft) + partialNote).toString(),
+                schedule: draft
+            ]
+        }
+        if (!schedules && !skipped) {
+            skipped << [appId: appId.toString(), name: name, reason: "Could not build a schedule"]
+        }
+        return [schedules: schedules, skipped: skipped]
+    }
+
+    def onlyInModes = schedImportParseModes(schedImportSettingValue(settings, "modes"))
+    def at2T = schedImportSettingValue(settings, "at2T")?.toString()?.trim()
+    def slots = ["primary"]
+    // at2T uses doAntiAction in SAR (opposite on/off) — import as a second schedule.
+    if (at2T) slots << "secondary"
+
+    slots.each { slot ->
+        def built = schedImportBuildTrigger(settings, slot)
+        if (built.error == null && built.trigger == null) return
+        if (built.error) {
+            def errText = built.error.toString()
+            skipped << [appId: appId.toString(), name: name,
+                reason: (slot == "secondary") ? ("Secondary time: " + errText) : errText]
+            return
+        }
+        def slotOn = (slot == "secondary") ? (!onVal) : onVal
+        def slotLevel = (slot == "secondary") ? null : level
+        def slotCt = (slot == "secondary") ? null : ct
+        def slotName = (slot == "secondary") ? "${name} (2nd time)".toString() : name.toString()
+        def keyMid = (slot == "secondary") ? "-2-" : "-"
+        targets.each { t ->
+            def states = t.ids.collect { id ->
+                def sid = id.toString()
+                def idVal = (sid ==~ /^\d+$/) ? sid.toInteger() : sid
+                def o = [id: idVal, on: slotOn]
+                if (t.target == "lights" && slotOn) {
+                    if (setLevel && slotLevel != null) o.level = slotLevel
+                    if (setCt && slotCt != null) o.ct = slotCt
+                }
+                o
+            }
+            def importKey = "sar-${appId}${keyMid}${t.target}".toString()
+            def draft = [
+                name: slotName,
+                enabled: enabled,
+                importKey: importKey,
+                onlyInModes: onlyInModes.collect { it.toString() },
+                trigger: built.trigger,
+                action: [target: t.target.toString(), states: states]
+            ]
+            def verr = schedulesValidateNormalized(schedulesNormalizePayload(draft))
+            if (verr) {
+                skipped << [appId: appId.toString(), name: slotName, reason: "Validation failed: ${verr}"]
+                return
+            }
+            def modesNote = onlyInModes ? (" [" + onlyInModes.join(", ") + "]") : ""
+            schedules << [
+                importKey: importKey,
+                name: slotName,
+                summary: (schedImportSummary(draft) + modesNote + partialNote).toString(),
+                schedule: draft
+            ]
+        }
+    }
+    if (!schedules && !skipped) {
+        skipped << [appId: appId.toString(), name: name, reason: "Could not build a schedule"]
+    }
+    return [schedules: schedules, skipped: skipped]
+}
+
+def schedImportApplyOk(okRows) {
+    if (schedulerIsEnabled() != true) {
+        return [error: "Scheduler is disabled in app settings", count: 0]
+    }
+    def map = parseSchedulesMap()
+    def priorJson = state.schedulesJson
+    def count = 0
+    try {
+        okRows.each { row ->
+            def draft = row.schedule
+            def s = schedulesNormalizePayload(draft)
+            def verr = schedulesValidateNormalized(s)
+            if (verr) throw new RuntimeException(verr.toString())
+            def key = s.importKey?.toString()
+            def priorLastFired = null
+            if (key) {
+                def removeIds = []
+                map.each { k, v ->
+                    if (v?.importKey?.toString() == key) {
+                        if (priorLastFired == null && v?.lastFired != null) priorLastFired = v.lastFired
+                        removeIds << k
+                    }
+                }
+                removeIds.each { rid -> map.remove(rid) }
+            }
+            def id = scheduleNewId()
+            s.id = id
+            if (priorLastFired != null) s.lastFired = priorLastFired
+            map[id] = s
+            count++
+        }
+        saveSchedulesMap(map)
+        def rebuild = rebuildScheduledJobs()
+        def failures = rebuild?.failures
+        if (failures instanceof Map && failures) {
+            if (priorJson != null) state.schedulesJson = priorJson
+            else state.remove("schedulesJson")
+            rebuildScheduledJobs()
+            def first = "schedule registration failed"
+            failures.each { k, v ->
+                if (v && first == "schedule registration failed") first = v.toString()
+            }
+            return [error: first, count: 0]
+        }
+        return [error: null, count: count]
+    } catch (e) {
+        if (priorJson != null) state.schedulesJson = priorJson
+        else state.remove("schedulesJson")
+        try { rebuildScheduledJobs() } catch (e2) {}
+        return [error: (e.message ?: e).toString(), count: 0]
+    }
+}
+
+// ===========================================================================
 // Scheduler
 // ===========================================================================
 // Schedules are stored as a JSON map id->schedule in state.schedulesJson.
@@ -6678,6 +7320,8 @@ def schedulesNormalizePayload(body) {
         ac.mode = body?.action?.mode?.toString()?.trim() ?: ""
     }
     s.action = ac
+    def importKey = body?.importKey?.toString()?.trim()
+    if (importKey) s.importKey = importKey
     s.ts = now()
     return s
 }

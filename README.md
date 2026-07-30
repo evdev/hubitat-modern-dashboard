@@ -397,6 +397,26 @@ On the **cloud** URL, schedules load when you open the Scheduler (`GET /schedule
 instead of arriving with every `/data` poll, so the main payload stays under
 Hubitat Cloud's size limit. Local mode includes schedules in `/data` as usual.
 
+**Import from Simple Automation Rules**
+
+In the Modern Dashboard Hubitat app (not the dashboard UI): **Dashboard options →
+Import Simple Automation Rules…**. Export rules from Hubitat (**Apps** → gear →
+**Export/Import/Clone**), paste the file contents, preview what will import, then
+**Import**.
+
+Only schedules the mDash scheduler can run are imported (specific time / sunrise /
+sunset, hub **mode change**, optional mode restrictions, Turn On / Off / Set Level /
+Set Temperature on devices already in the **Lights** or **Outlets** pickers). A
+Simple Automation “second time” imports as a second schedule with the opposite
+on/off (matching SAR’s anti-action). Unsupported rules are listed with a reason
+and are not created. Re-importing the same export replaces prior imports from
+those rule ids. Disable the original Simple Automation Rules after you verify
+the new schedules.
+
+**Not imported (by design):** device/motion/contact triggers, Mode Transition
+(from→to), leave-mode `offMode` pairs, and Toggle. Create those manually in the
+Scheduler if needed.
+
 ### Favorites
 
 Tap the star on a supported device tile (lights, shades, locks, garage doors, music, sensors,
@@ -764,6 +784,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Dashboard options | Enable eventsocket | On | LAN WebSocket; see [WebSocket](#real-time-updates-websocket) |
 | Dashboard options | Hub mode / scenes quick menu | On | Hides quick-nav only |
 | Dashboard options | Scheduler | On | Hide stops schedules from running |
+| Dashboard options | Import Simple Automation Rules… | — | Paste Hubitat App Export; imports only mDash-capable schedules |
 | Dashboard options | Debug logging | Off | Command traces in Hubitat Logs; auto-off after 30 min |
 | Dashboard options | 24-hour time display | Off | Display only; stored times are 24h |
 | Light control | Disable metering | Off | When off, commands are staggered |
