@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.60
+
+- **Scheduler UI:** schedule list rows show clearer **When** / **Then** lines, mode
+  restrictions, and **Next** / **Last ran** status (with relative times like "in 5 min").
+  Tap a row to edit; disabled schedules are visually dimmed.
+
 ## 0.3.59
 
 - **Scheduler:** import Simple Automation Rules from a Hubitat App Export paste in

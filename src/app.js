@@ -15411,6 +15411,143 @@
     } catch { return "\u2014"; }
   }
 
+  function fmtSchedRelativeFuture(ms) {
+    const n = Number(ms);
+    if (ms == null || isNaN(n)) return "";
+    const diff = n - Date.now();
+    if (diff < 0) return "";
+    if (diff < 45000) return "Soon";
+    if (diff < 3600000) {
+      const mins = Math.max(1, Math.floor(diff / 60000));
+      return "in " + mins + " min";
+    }
+    if (diff < 86400000) {
+      const hrs = Math.max(1, Math.floor(diff / 3600000));
+      return "in " + hrs + " hr";
+    }
+    return "";
+  }
+
+  function schedSunLabel(which, offsetMin) {
+    const base = which === "sunrise" ? "Sunrise" : "Sunset";
+    const off = Number(offsetMin) || 0;
+    if (off === 0) return base;
+    if (off > 0) return base + " +" + off + "m";
+    return base + " " + off + "m";
+  }
+
+  function schedTriggerWhen(tr) {
+    const w = String(tr?.when || "").trim().toLowerCase();
+    return w === "sunrise" || w === "sunset" ? w : "clock";
+  }
+
+  function schedActionDescription(action) {
+    const ac = action || {};
+    const target = String(ac.target || "");
+    if (target === "lights" || target === "outlets") {
+      const states = Array.isArray(ac.states) ? ac.states : [];
+      const n = states.length;
+      const label = target === "lights" ? "light" : "outlet";
+      const labelPl = target === "lights" ? "lights" : "outlets";
+      if (!n) return "No " + labelPl + " selected";
+      const allOn = states.every((st) => st.on === true);
+      const allOff = states.every((st) => st.on !== true);
+      const noun = n === 1 ? label : labelPl;
+      if (allOn) {
+        const withLevel = states.filter((st) => st.level != null);
+        if (withLevel.length === states.length && withLevel.every((st) => st.level === withLevel[0].level)) {
+          const lv = withLevel[0].level;
+          return lv === 100 ? "Turn on " + n + " " + noun : "Turn on " + n + " " + noun + " \u00b7 " + lv + "%";
+        }
+        return "Turn on " + n + " " + noun;
+      }
+      if (allOff) return "Turn off " + n + " " + noun;
+      return "Set " + n + " " + noun;
+    }
+    if (target === "thermostats") {
+      const devices = Array.isArray(ac.devices) ? ac.devices : [];
+      const n = devices.length;
+      if (!n) return "No thermostats selected";
+      const bits = [n + " thermostat" + (n === 1 ? "" : "s")];
+      const mode = ac.mode ? String(ac.mode) : "";
+      if (mode && mode !== "auto") bits.push(mode);
+      if (ac.heat != null && mode !== "cool") bits.push("heat " + ac.heat + "\u00b0");
+      if (ac.cool != null && mode !== "heat") bits.push("cool " + ac.cool + "\u00b0");
+      if (ac.fanMode && ac.fanMode !== "auto") bits.push("fan " + ac.fanMode);
+      return bits.join(" \u00b7 ");
+    }
+    if (target === "hubMode") {
+      const mode = ac.mode ? String(ac.mode).trim() : "";
+      return mode ? "Set hub mode to " + mode : "Change hub mode";
+    }
+    return "No action";
+  }
+
+  function schedNextRunText(s) {
+    if (!s.enabled) return { primary: "Paused", secondary: "" };
+    const tr = s.trigger || {};
+    const kind = String(tr.kind || "");
+    if (kind === "mode") {
+      const mode = tr.mode ? String(tr.mode).trim() : "";
+      return { primary: mode ? ("When mode is " + mode) : "On mode change", secondary: "" };
+    }
+    if (s.nextFire != null) {
+      const rel = fmtSchedRelativeFuture(s.nextFire);
+      return { primary: rel || fmtSchedTime(s.nextFire), secondary: rel ? fmtSchedTime(s.nextFire) : "" };
+    }
+    if ((kind === "daily" || kind === "weekly") && schedTriggerWhen(tr) !== "clock") {
+      return { primary: schedSunLabel(schedTriggerWhen(tr), tr.offsetMin), secondary: "" };
+    }
+    if (kind === "once") return { primary: "Past or invalid", secondary: "" };
+    return { primary: "Pending", secondary: "" };
+  }
+
+  function schedLastRunText(s) {
+    if (s.lastFired == null) return { primary: "Not yet run", secondary: "" };
+    const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
+    return { primary: rel || fmtSchedTime(s.lastFired), secondary: rel ? fmtSchedTime(s.lastFired) : "" };
+  }
+
+  function schedAppendRuleLine(parent, key, value) {
+    const line = ce("div", "sched-rule-line");
+    const keyEl = ce("span", "sched-rule-key");
+    keyEl.textContent = key;
+    const valEl = ce("span", "sched-rule-val");
+    valEl.textContent = value;
+    line.appendChild(keyEl);
+    line.appendChild(valEl);
+    parent.appendChild(line);
+  }
+
+  function schedAppendStatusItem(parent, label, text) {
+    const item = ce("div", "sched-status-item");
+    const lbl = ce("span", "sched-status-lbl");
+    lbl.textContent = label;
+    const val = ce("span", "sched-status-val");
+    val.textContent = text.primary;
+    item.appendChild(lbl);
+    item.appendChild(val);
+    if (text.secondary) {
+      const sub = ce("span", "sched-status-sub");
+      sub.textContent = text.secondary;
+      item.appendChild(sub);
+    }
+    parent.appendChild(item);
+  }
+
+  function openSchedForEdit(s) {
+    schedDraft = JSON.parse(JSON.stringify(s));
+    schedDraft.trigger = schedDraft.trigger || { kind: "daily", when: "clock", time: "19:30", offsetMin: 0, mode: "" };
+    if (!schedDraft.trigger.when) schedDraft.trigger.when = "clock";
+    if (schedDraft.trigger.offsetMin == null) schedDraft.trigger.offsetMin = 0;
+    if (!schedDraft.trigger.mode) schedDraft.trigger.mode = "";
+    schedDraft.onlyInModes = Array.isArray(schedDraft.onlyInModes) ? schedDraft.onlyInModes : [];
+    schedDraft.action = schedDraft.action || { target: "lights", states: [] };
+    schedEditingId = s.id;
+    schedStep = 1;
+    renderSchedulerActive();
+  }
+
   function newSchedDraft() {
     return {
       name: "",
@@ -15496,36 +15633,19 @@
   }
 
   function renderSchedRow(s) {
-    const row = ce("div", "sched-row");
-    const info = ce("div", "sched-row-info");
+    const row = ce("div", "sched-row" + (s.enabled ? "" : " is-off"));
+
+    const head = ce("div", "sched-row-head");
     const nameEl = ce("div", "sched-row-name");
     nameEl.textContent = s.name || "Untitled schedule";
-    info.appendChild(nameEl);
-    const sum = ce("div", "sched-row-summary");
-    sum.textContent = s.summary || "";
-    info.appendChild(sum);
-    const times = ce("div", "sched-row-times");
-    const nextLbl = ce("span", "sched-time-lbl");
-    nextLbl.textContent = "Next: ";
-    const nextVal = ce("span", "sched-time-val");
-    nextVal.textContent = s.trigger?.kind === "mode" ? "On mode change" : (s.nextFire == null ? "On schedule" : fmtSchedTime(s.nextFire));
-    times.appendChild(nextLbl);
-    times.appendChild(nextVal);
-    const lastLbl = ce("span", "sched-time-lbl");
-    lastLbl.textContent = " \u00b7 Last: ";
-    const lastVal = ce("span", "sched-time-val");
-    lastVal.textContent = fmtSchedTime(s.lastFired);
-    times.appendChild(lastLbl);
-    times.appendChild(lastVal);
-    info.appendChild(times);
-    row.appendChild(info);
+    head.appendChild(nameEl);
 
-    const controls = ce("div", "sched-row-controls");
     const toggle = ce("button", "sched-toggle " + (s.enabled ? "is-on" : "is-off"));
     toggle.type = "button";
     toggle.setAttribute("aria-pressed", s.enabled ? "true" : "false");
     toggle.textContent = s.enabled ? "Enabled" : "Disabled";
-    toggle.addEventListener("click", async () => {
+    toggle.addEventListener("click", async (e) => {
+      e.stopPropagation();
       hapticTap();
       toggle.disabled = true;
       const res = await schedApi("toggle", { id: s.id });
@@ -15540,41 +15660,55 @@
         flash(res?.error || "Toggle failed", true);
       }
     });
-    controls.appendChild(toggle);
+    head.appendChild(toggle);
+    row.appendChild(head);
 
+    const rule = ce("div", "sched-row-rule");
+    schedAppendRuleLine(rule, "When", s.summary || "");
+    schedAppendRuleLine(rule, "Then", schedActionDescription(s.action));
+    row.appendChild(rule);
+
+    const onlyModes = Array.isArray(s.onlyInModes) ? s.onlyInModes.filter(Boolean) : [];
+    if (onlyModes.length) {
+      const modesEl = ce("div", "sched-row-modes");
+      modesEl.textContent = "Only in: " + onlyModes.join(", ");
+      row.appendChild(modesEl);
+    }
+
+    const status = ce("div", "sched-row-status");
+    schedAppendStatusItem(status, "Next run", schedNextRunText(s));
+    schedAppendStatusItem(status, "Last ran", schedLastRunText(s));
+    row.appendChild(status);
+
+    const foot = ce("div", "sched-row-foot");
     const editBtn = ce("button", "ghost-btn sched-icon-btn");
     editBtn.type = "button";
     editBtn.textContent = "Edit";
-    editBtn.addEventListener("click", () => {
-      schedDraft = JSON.parse(JSON.stringify(s));
-      schedDraft.trigger = schedDraft.trigger || { kind: "daily", when: "clock", time: "19:30", offsetMin: 0, mode: "" };
-      if (!schedDraft.trigger.when) schedDraft.trigger.when = "clock";
-      if (schedDraft.trigger.offsetMin == null) schedDraft.trigger.offsetMin = 0;
-      if (!schedDraft.trigger.mode) schedDraft.trigger.mode = "";
-      schedDraft.onlyInModes = Array.isArray(schedDraft.onlyInModes) ? schedDraft.onlyInModes : [];
-      schedDraft.action = schedDraft.action || { target: "lights", states: [] };
-      schedEditingId = s.id;
-      schedStep = 1;
-      renderSchedulerActive();
+    editBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hapticTap();
+      openSchedForEdit(s);
     });
-    controls.appendChild(editBtn);
+    foot.appendChild(editBtn);
 
     const testBtn = ce("button", "ghost-btn sched-icon-btn");
     testBtn.type = "button";
     testBtn.textContent = "Test";
-    testBtn.addEventListener("click", async () => {
+    testBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
       hapticTap();
       testBtn.disabled = true;
       const res = await schedApi("test", { id: s.id });
       testBtn.disabled = false;
       flash(res?.ok ? "Ran schedule actions" : (res?.error || "Test failed"), !res?.ok);
     });
-    controls.appendChild(testBtn);
+    foot.appendChild(testBtn);
 
     const delBtn = ce("button", "ghost-btn sched-icon-btn sched-del-btn");
     delBtn.type = "button";
     delBtn.textContent = "Delete";
-    delBtn.addEventListener("click", async () => {
+    delBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
       if (!confirm("Delete this schedule?")) return;
       hapticTap();
       delBtn.disabled = true;
@@ -15590,8 +15724,14 @@
         flash(res?.error || "Delete failed", true);
       }
     });
-    controls.appendChild(delBtn);
-    row.appendChild(controls);
+    foot.appendChild(delBtn);
+    row.appendChild(foot);
+
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      hapticTap();
+      openSchedForEdit(s);
+    });
     return row;
   }
 
