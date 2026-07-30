@@ -41,4 +41,6 @@ assert(src.includes('log.info "Modern Dashboard: schedule ran —'), "must log s
 assert(src.includes('log.info "Modern Dashboard: schedule skipped —'), "must log mode skips at info");
 assert(src.includes('log.info "Modern Dashboard: schedule test —'), "must log schedule tests at info");
 
+assert(!src.includes("?.["), "must not use Groovy ?.[] safe-index (unsupported on Hubitat)");
+
 console.log("ok source: scheduler Groovy invariants");

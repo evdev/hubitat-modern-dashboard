@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.57
+// Modern Dashboard v0.3.58
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.57"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.58"
 
 definition(
     name: "Modern Dashboard",
@@ -50,7 +50,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.57 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.58 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -6703,7 +6703,8 @@ def schedulesSave() {
     map[id] = s
     saveSchedulesMap(map)
     def rebuild = rebuildScheduledJobs()
-    def failReason = rebuild?.failures?.[id.toString()]
+    def failReason = null
+    try { failReason = rebuild?.failures ? rebuild.failures[id.toString()] : null } catch (e) {}
     if (failReason && s.enabled == true) {
         // Roll back so a broken schedule is never persisted as "saved".
         if (priorJson != null) state.schedulesJson = priorJson
@@ -6757,7 +6758,8 @@ def schedulesToggle() {
     map[id] = s
     saveSchedulesMap(map)
     def rebuild = rebuildScheduledJobs()
-    def failReason = rebuild?.failures?.[id]
+    def failReason = null
+    try { failReason = rebuild?.failures ? rebuild.failures[id] : null } catch (e) {}
     if (failReason && s.enabled == true) {
         if (priorJson != null) state.schedulesJson = priorJson
         else state.remove("schedulesJson")

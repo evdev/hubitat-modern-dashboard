@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.58
+
+- **Scheduler fix:** save/toggle rollback no longer uses Groovy `?.[]` safe-index (unsupported
+  on Hubitat), so schedule validation errors are handled correctly.
+
 ## 0.3.57
 
 - **Scheduler fix:** daily clock cron now uses valid Quartz day fields (`* * ?`) so daily

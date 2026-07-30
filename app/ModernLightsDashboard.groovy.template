@@ -6703,7 +6703,8 @@ def schedulesSave() {
     map[id] = s
     saveSchedulesMap(map)
     def rebuild = rebuildScheduledJobs()
-    def failReason = rebuild?.failures?.[id.toString()]
+    def failReason = null
+    try { failReason = rebuild?.failures ? rebuild.failures[id.toString()] : null } catch (e) {}
     if (failReason && s.enabled == true) {
         // Roll back so a broken schedule is never persisted as "saved".
         if (priorJson != null) state.schedulesJson = priorJson
@@ -6757,7 +6758,8 @@ def schedulesToggle() {
     map[id] = s
     saveSchedulesMap(map)
     def rebuild = rebuildScheduledJobs()
-    def failReason = rebuild?.failures?.[id]
+    def failReason = null
+    try { failReason = rebuild?.failures ? rebuild.failures[id] : null } catch (e) {}
     if (failReason && s.enabled == true) {
         if (priorJson != null) state.schedulesJson = priorJson
         else state.remove("schedulesJson")
