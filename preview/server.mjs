@@ -234,11 +234,12 @@ function buildMockData(count) {
     { i: 4005, n: "Patio Speaker", r: 7, st: "stopped", v: 0, tr: "", m: "muted", trackIdx: 2, f: AUDIO_F_FULL },
   ];
   const cameras = [
-    { i: 4201, n: "Front Door", u: "http://127.0.0.1:1984/webrtc.html?src=front_door_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=front_door&media=video+audio" },
-    { i: 4202, n: "Driveway", u: "http://127.0.0.1:1984/webrtc.html?src=driveway_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=driveway&media=video+audio" },
-    { i: 4203, n: "Back Yard", u: "http://127.0.0.1:1984/webrtc.html?src=backyard_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=backyard&media=video+audio" },
-    { i: 4204, n: "Garage", u: "http://127.0.0.1:1984/webrtc.html?src=garage_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=garage&media=video+audio" },
-    { i: 4205, n: "Side Gate", u: "http://127.0.0.1:1984/webrtc.html?src=sidegate_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=sidegate&media=video+audio" },
+    { i: 4201, n: "Front Door", u: "http://127.0.0.1:1984/webrtc.html?src=front_door_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=front_door&media=video+audio", t: "webrtc" },
+    { i: 4202, n: "Driveway", u: "http://127.0.0.1:1984/webrtc.html?src=driveway_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=driveway&media=video+audio", t: "webrtc" },
+    { i: 4203, n: "Back Yard", u: "http://127.0.0.1:1984/webrtc.html?src=backyard_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=backyard&media=video+audio", t: "webrtc" },
+    { i: 4204, n: "Garage", u: "http://127.0.0.1:1984/webrtc.html?src=garage_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=garage&media=video+audio", t: "webrtc" },
+    { i: 4205, n: "Side Gate", u: "http://127.0.0.1:1984/webrtc.html?src=sidegate_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=sidegate&media=video+audio", t: "webrtc" },
+    { i: 4206, n: "RTSP Porch", u: "/hub2/videoStream/4206.mjpg", t: "mjpg" },
   ];
   const windowShades = [
     { i: 5001, n: "Living Room Shade", r: 1, st: "open", pos: 100, hasPos: 1, hasStop: 1 },
@@ -413,9 +414,13 @@ function htmlTilesForPayload() {
   );
   return state.htmlTiles.map((tile) => {
     const id = String(tile.id);
+    const liveTitle = tile.title || tile.attribute || "HTML";
+    const override = state.config.htmlTitles[id];
+    const displayTitle = override && override !== liveTitle ? override : liveTitle;
     const entry = {
       ...tile,
-      title: state.config.htmlTitles[id] || tile.title || tile.attribute || "HTML",
+      liveTitle,
+      title: displayTitle,
       size: state.config.htmlSizes[id] || tile.size || "tall",
       zoom: state.config.htmlZooms[id] || tile.zoom || 100,
     };
@@ -819,6 +824,12 @@ function requireDashAuth(res, url, body) {
 const distUpload = join(root, "dist", "upload");
 const readDist = (name) => readFileSync(join(distUpload, name), "utf8");
 
+// Minimal 1x1 JPEG for native RTSP camera preview tiles.
+const MOCK_MJPEG_JPEG = Buffer.from(
+  "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAb/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=",
+  "base64"
+);
+
 const mime = {
   "/": "text/html",
   "/app.css": "text/css",
@@ -887,6 +898,10 @@ const server = createServer(async (req, res) => {
   if (p === "/icons/icon-512.png") {
     res.writeHead(200, { "Content-Type": "image/png" });
     return res.end(readB64Icon("mld-icon-512.png", 512));
+  }
+  if (/^\/hub2\/videoStream\/\d+\.mjpg$/.test(p)) {
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "no-store" });
+    return res.end(MOCK_MJPEG_JPEG);
   }
   if (p === "/auth/status") {
     if (!dashboardPasswordRequired()) syncDashPasswordEpoch();
@@ -1935,16 +1950,15 @@ const server = createServer(async (req, res) => {
     }
     if (body.htmlTitles != null) {
       const nextHtmlTitles = {};
-      const previousHtmlTitles = state.config.htmlTitles || {};
       const activeHtmlIds = new Set(reconciled.map(htmlIdFromLayoutKey).filter(Boolean));
       for (const id of activeHtmlIds) {
-        let title = null;
-        if (Object.hasOwn(body.htmlTitles, id)) {
-          title = normalizeHtmlTileTitle(body.htmlTitles[id], id.split(":").slice(1).join(":"));
-        } else {
-          title = normalizeHtmlTileTitle(previousHtmlTitles[id], id.split(":").slice(1).join(":"));
-        }
-        if (title) nextHtmlTitles[id] = title;
+        if (!Object.hasOwn(body.htmlTitles, id)) continue;
+        const title = normalizeHtmlTileTitle(body.htmlTitles[id], id.split(":").slice(1).join(":"));
+        if (!title) continue;
+        const tile = state.htmlTiles.find((candidate) => String(candidate.id) === id);
+        const live = normalizeHtmlTileTitle(tile?.title, id.split(":").slice(1).join(":"));
+        if (live && title === live) continue;
+        nextHtmlTitles[id] = title;
       }
       state.config.htmlTitles = nextHtmlTitles;
     } else {

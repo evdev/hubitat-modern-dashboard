@@ -154,8 +154,10 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("Cameras") {
-            paragraph "<small>Select <b>go2rtc Camera</b> devices. Requires <b>Enable tabs</b> and the <b>local hub dashboard URL</b>. Grid tiles use the sub stream; tap <b>HD</b> for the main stream.</small>"
+            paragraph "<small>Select <b>go2rtc Camera</b> and/or <b>native RTSP Camera Stream</b> devices. Requires <b>Enable tabs</b> and the <b>local hub dashboard URL</b>. go2rtc tiles use the sub stream with an <b>HD</b> toggle; native RTSP uses the hub MJPEG proxy (C-8 Pro).</small>"
             input "cameras", "capability.imageCapture", title: "Cameras (go2rtc)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "rtspCameras", "device.RTSPCameraStream", title: "Cameras (native RTSP)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
         section("HTML tiles") {
@@ -529,7 +531,8 @@ def logInit() {
     if (ceilingFans) { log.info "Modern Dashboard: ${ceilingFans.size()} ceiling fan(s) authorized" }
     if (valves) { log.info "Modern Dashboard: ${valves.size()} valve(s) authorized" }
     if (garageDoors) { log.info "Modern Dashboard: ${garageDoors.size()} garage door(s) authorized" }
-    if (cameras) { log.info "Modern Dashboard: ${cameras.size()} camera(s) authorized" }
+    def cameraCount = allCameraDevices()?.size() ?: 0
+    if (cameraCount) { log.info "Modern Dashboard: ${cameraCount} camera(s) authorized" }
     if (state.accessToken == null) { state.accessToken = createAccessToken() }
     if (!assetsPresent()) { log.warn "Modern Dashboard: upload all mld-* dashboard files to File Manager (see app setup page)" }
 }
@@ -1672,15 +1675,18 @@ def renderData() {
     out << "],\"cameras\":["
     first = true
     def cameraDevs = orderedCamerasList()
+    def rtspIds = rtspCameraIdSet()
     if (cameraDevs) {
         for (d in cameraDevs) {
-            def urls = cameraStreamUrls(d)
+            def key = d.id.toString()
+            def urls = rtspIds.contains(key) ? cameraRtspStreamUrls(d) : cameraStreamUrls(d)
             if (!urls?.u) continue
             if (!first) out << ","; first = false
             out << "{\"i\":" << d.id
             out << ",\"n\":" << jsonStr(d.displayName)
             out << ",\"u\":" << jsonStr(urls.u)
             if (urls.uh) out << ",\"uh\":" << jsonStr(urls.uh)
+            out << ",\"t\":" << jsonStr(urls.t ?: "webrtc")
             out << "}"
         }
     }
@@ -3403,6 +3409,51 @@ def cameraStreamEmbedUrl(dev) {
     return urls ? urls.u : null
 }
 
+def allCameraDevices() {
+    def out = []
+    def seen = [:]
+    for (list in [cameras, rtspCameras]) {
+        for (d in asDeviceList(list)) {
+            if (d == null) continue
+            def key = null
+            try { key = d.id?.toString() } catch (e) { key = null }
+            if (!key || seen[key]) continue
+            seen[key] = true
+            out << d
+        }
+    }
+    return out
+}
+
+def rtspCameraIdSet() {
+    def set = new HashSet()
+    if (rtspCameras) {
+        for (d in rtspCameras) {
+            try { set.add(d.id.toString()) } catch (e) {}
+        }
+    }
+    return set
+}
+
+def cameraRtspMjpegUrl(dev) {
+    def url = safeCurrent(dev, "imageUrl")?.toString()?.trim()
+    if (!url) return null
+    def expected = "/hub2/videoStream/${dev.id}.mjpg"
+    try {
+        def path = (url.startsWith("http://") || url.startsWith("https://"))
+            ? new URI(url).path
+            : url.split("\\?", 2)[0]
+        return path == expected ? expected : null
+    } catch (e) {
+        return null
+    }
+}
+
+def cameraRtspStreamUrls(dev) {
+    def u = cameraRtspMjpegUrl(dev)
+    return u ? [u: u, t: "mjpg"] : null
+}
+
 def parseNavOrderState() {
     if (!state.navOrder) return []
     try {
@@ -3503,17 +3554,15 @@ def cameraOrderJsonFragment() {
 
 def validCameraIdSet() {
     def set = new HashSet()
-    if (cameras) {
-        for (d in cameras) {
-            try { set.add(d.id.toString()) } catch (e) {}
-        }
+    for (d in allCameraDevices()) {
+        try { set.add(d.id.toString()) } catch (e) {}
     }
     return set
 }
 
 def orderedCamerasList() {
-    if (!cameras) return []
-    def list = cameras.toList()
+    def list = allCameraDevices()
+    if (!list) return []
     def order = parseCameraOrderState()
     if (!order) return list
     def byId = [:]
@@ -3910,12 +3959,16 @@ def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
             }
         }
         for (t in tiles) {
-            def title = titles[t.id] ?: t.title
+            def liveTitle = t.title?.toString()?.trim() ?: ""
+            def override = titles[t.id]
+            def displayTitle = liveTitle
+            if (override && override != liveTitle) displayTitle = override
             def entry = [
                 id: t.id,
                 deviceId: t.deviceId,
                 attribute: t.attribute,
-                title: title,
+                title: displayTitle,
+                liveTitle: liveTitle,
                 size: (sizes[t.id] ?: "tall"),
                 zoom: (zooms[t.id] ?: 100)
             ]
@@ -3930,6 +3983,16 @@ def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
                 }
             }
             out << entry
+        }
+    }
+    return out
+}
+
+def liveHtmlTileTitleMap() {
+    def out = [:]
+    for (d in htmlTileDevices ?: []) {
+        for (t in discoverHtmlTilesForDevice(d, false, null)) {
+            out[t.id] = t.title
         }
     }
     return out
@@ -4021,6 +4084,7 @@ def htmlTilesJsonFragment() {
         out << ",\"deviceId\":" << t.deviceId
         out << ",\"attribute\":" << jsonStr(t.attribute)
         out << ",\"title\":" << jsonStr(t.title)
+        if (t.liveTitle) out << ",\"liveTitle\":" << jsonStr(t.liveTitle)
         out << ",\"size\":" << jsonStr(t.size ?: "tall")
         out << ",\"zoom\":" << (t.zoom != null ? t.zoom : 100)
         if (t.html != null) out << ",\"html\":" << jsonStr(t.html)
@@ -4915,18 +4979,18 @@ def saveFavoritesLayout() {
         state.htmlTileZoomsJson = groovy.json.JsonOutput.toJson(prunedZoom)
     }
 
-    // HTML tile display titles (user overrides; Tile Builder descriptions are driver state only).
+    // HTML tile display titles (user overrides only — never persist live hub/Tile Builder names).
     if (htmlTitles != null) {
         def nextHtmlTitles = [:]
         def activeHtmlTitles = activeHtmlLayoutIds(nextLayout)
+        def liveTitles = liveHtmlTileTitleMap()
         for (id in activeHtmlTitles) {
-            def title = null
-            if (htmlTitles.containsKey(id)) {
-                title = normalizeHtmlTileTitle(htmlTitles[id])
-            } else {
-                title = parseHtmlTileTitlesState()[id]
-            }
-            if (title) nextHtmlTitles[id] = title
+            if (!htmlTitles.containsKey(id)) continue
+            def title = normalizeHtmlTileTitle(htmlTitles[id])
+            if (!title) continue
+            def live = liveTitles[id]?.toString()?.trim() ?: ""
+            if (live && title == live) continue
+            nextHtmlTitles[id] = title
         }
         state.htmlTileTitlesJson = groovy.json.JsonOutput.toJson(nextHtmlTitles)
     } else {

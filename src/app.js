@@ -212,6 +212,35 @@
     return fb || "HTML";
   }
 
+  function applyHtmlTitleOverridesFromConfig(source, liveTitlesById = null) {
+    const next = {};
+    if (!source || typeof source !== "object") {
+      htmlTileTitleOverrides = next;
+      return;
+    }
+    for (const k of Object.keys(source)) {
+      const override = normalizeHtmlTileTitle(source[k], k.split(":").slice(1).join(":"));
+      if (!override) continue;
+      if (liveTitlesById) {
+        const live = liveTitlesById[k] ?? liveTitlesById[htmlFavoriteKey(k)];
+        if (live && override === live) continue;
+      }
+      next[k] = override;
+    }
+    htmlTileTitleOverrides = next;
+  }
+
+  function htmlTitleOverridesForLayout(layout = favoritesLayout, overrides = htmlTileTitleOverrides) {
+    const out = {};
+    for (const key of layout || []) {
+      if (!key.startsWith("h:")) continue;
+      const id = key.slice(2);
+      const title = overrides[id];
+      if (title) out[id] = title;
+    }
+    return out;
+  }
+
   function parseEmbedInput(raw) {
     const text = String(raw || "").trim();
     if (!text) return { ok: false, error: "Enter an HTTPS embed URL or iframe code" };
@@ -401,6 +430,20 @@
     const htmlTitles = d.config?.htmlTitles && typeof d.config.htmlTitles === "object"
       ? d.config.htmlTitles
       : (d.htmlTitles && typeof d.htmlTitles === "object" ? d.htmlTitles : {});
+    const liveTitlesById = {};
+    for (const raw of d.htmlTiles) {
+      if (!raw || typeof raw !== "object") continue;
+      const candidateId = raw.id != null
+        ? raw.id
+        : String(raw.deviceId == null ? "" : raw.deviceId) + ":" + String(raw.attribute || "");
+      const parsed = parseHtmlTileId(candidateId);
+      if (!parsed) continue;
+      liveTitlesById[parsed.id] = normalizeHtmlTileTitle(
+        raw.liveTitle ?? raw.title ?? raw.name ?? parsed.attribute,
+        parsed.attribute
+      );
+    }
+    applyHtmlTitleOverridesFromConfig(htmlTitles, liveTitlesById);
     const nextTiles = [];
     const seen = new Set();
     for (const raw of d.htmlTiles) {
@@ -415,13 +458,16 @@
       const sizeCandidate = configuredSize ?? (hasHtmlSizes ? "tall" : raw.size);
       const configuredZoom = htmlZooms[parsed.id] ?? htmlZooms[htmlFavoriteKey(parsed.id)];
       const zoomCandidate = configuredZoom ?? (hasHtmlZooms ? 100 : raw.zoom);
-      const configuredTitle = htmlTitles[parsed.id] ?? htmlTitles[htmlFavoriteKey(parsed.id)];
-      const titleCandidate = configuredTitle ?? raw.title ?? raw.name ?? parsed.attribute;
+      const liveTitle = liveTitlesById[parsed.id]
+        ?? normalizeHtmlTileTitle(raw.liveTitle ?? raw.title ?? raw.name ?? parsed.attribute, parsed.attribute);
+      const configuredOverride = htmlTileTitleOverrides[parsed.id]
+        ?? htmlTileTitleOverrides[htmlFavoriteKey(parsed.id)];
       const tile = {
         id: parsed.id,
         deviceId: parsed.deviceId,
         attribute: parsed.attribute,
-        title: normalizeHtmlTileTitle(titleCandidate, parsed.attribute),
+        liveTitle,
+        title: normalizeHtmlTileTitle(configuredOverride ?? liveTitle, parsed.attribute),
         size: EMBED_SIZE_PRESET_SET.has(String(sizeCandidate)) ? String(sizeCandidate) : "tall",
         zoom: normalizeHtmlZoom(zoomCandidate),
       };
@@ -636,7 +682,9 @@
   let embedCards = []; // [{id,title,url,size}]
   let timeCards = []; // [{id,style,size}]
   let notificationCards = []; // [{id,size}]
-  let htmlTiles = []; // [{id,deviceId,attribute,title,size,html?,error?,roomsCss?,alignCss?}]
+  let htmlTiles = []; // [{id,deviceId,attribute,title,liveTitle?,size,html?,error?,roomsCss?,alignCss?}]
+  let htmlTileTitleOverrides = {}; // id -> user-renamed display title (not live hub titles)
+  let favoritesReorderSnapshotHtmlTitles = null;
   let favoritesLayout = []; // ["d:123","e:abc","t:xyz","n:abc","h:123:attribute",...]
   let favoritesReorderSnapshotLayout = null;
   let favoritesReorderSnapshotEmbeds = null;
@@ -9750,6 +9798,7 @@
     favoritesReorderSnapshotTimes = timeCards.map((c) => ({ ...c }));
     favoritesReorderSnapshotNotifs = notificationCards.map((c) => ({ ...c }));
     favoritesReorderSnapshotHtml = htmlTiles.map((tile) => ({ ...tile }));
+    favoritesReorderSnapshotHtmlTitles = { ...htmlTileTitleOverrides };
     favoritesReorderDraftOrder = null;
     favoritesReorderEls.clear();
     stopPolling();
@@ -9783,6 +9832,7 @@
     favoritesReorderSnapshotTimes = null;
     favoritesReorderSnapshotNotifs = null;
     favoritesReorderSnapshotHtml = null;
+    favoritesReorderSnapshotHtmlTitles = null;
     favoritesReorderEls.clear();
     favoritesReorderSaving = false;
     reorderMode = false;
@@ -9834,6 +9884,12 @@
         saveFavoriteSizesCache(favoriteSizes);
       }
       applyHtmlCatalogFromData({ htmlTiles: htmlTiles.map((tile) => ({ ...tile })), config: body });
+      if (body?.htmlTitles && typeof body.htmlTitles === "object") {
+        const liveTitlesById = Object.fromEntries(
+          htmlTiles.map((tile) => [tile.id, tile.liveTitle ?? tile.title])
+        );
+        applyHtmlTitleOverridesFromConfig(body.htmlTitles, liveTitlesById);
+      }
       applyEmbedConfigFromData({ config: body }, { allowDuringReorder: true });
       return true;
     } catch {
@@ -9847,17 +9903,16 @@
     const embedSizes = {};
     const htmlSizes = {};
     const htmlZooms = {};
-    const htmlTitles = {};
     const timeSizes = {};
     const notificationSizes = {};
     for (const card of embedCards) embedSizes[card.id] = card.size || "tall";
     for (const tile of htmlTiles) {
       htmlSizes[tile.id] = tile.size || "tall";
       htmlZooms[tile.id] = normalizeHtmlZoom(tile.zoom);
-      htmlTitles[tile.id] = normalizeHtmlTileTitle(tile.title, tile.attribute);
     }
     for (const card of timeCards) timeSizes[card.id] = card.size || "square";
     for (const card of notificationCards) notificationSizes[card.id] = card.size || "tall";
+    const htmlTitles = htmlTitleOverridesForLayout(layout);
     return {
       deviceSizes: normalizedFavoriteSizes(deviceOrder),
       embedSizes,
@@ -9908,6 +9963,7 @@
     if (favoritesReorderSnapshotTimes) replaceList(timeCards, favoritesReorderSnapshotTimes.map((c) => ({ ...c })));
     if (favoritesReorderSnapshotNotifs) replaceList(notificationCards, favoritesReorderSnapshotNotifs.map((c) => ({ ...c })));
     if (favoritesReorderSnapshotHtml) replaceList(htmlTiles, favoritesReorderSnapshotHtml.map((tile) => ({ ...tile })));
+    if (favoritesReorderSnapshotHtmlTitles) htmlTileTitleOverrides = { ...favoritesReorderSnapshotHtmlTitles };
     syncEmbedStateToMld();
     lastDataSig = "";
     exitFavoritesReorderMode(false);
@@ -12805,12 +12861,15 @@
       const prevTitle = idx >= 0 ? htmlTiles[idx].title : tile.title;
       if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: nextTitle };
       tile.title = nextTitle;
+      htmlTileTitleOverrides[tile.id] = nextTitle;
       save.disabled = true;
       const saved = await persistFavoriteLayout(favoritesLayout);
       save.disabled = false;
       if (!saved) {
         if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: prevTitle };
         tile.title = prevTitle;
+        if (prevTitle === tile.liveTitle) delete htmlTileTitleOverrides[tile.id];
+        else htmlTileTitleOverrides[tile.id] = prevTitle;
         return;
       }
       close();
@@ -14914,13 +14973,55 @@
   }
 
   function camerasListSig() {
-    return cameras.map(c => `${c.i}:${c.n}:${c.u || ""}:${c.uh || ""}`).join("|");
+    return cameras.map(c => `${c.i}:${c.n}:${c.t || ""}:${c.u || ""}:${c.uh || ""}`).join("|");
+  }
+
+  function cameraStreamType(cam) {
+    if (cam?.t === "mjpg" || cam?.t === "webrtc") return cam.t;
+    const u = cam?.u || "";
+    return u.includes(".mjpg") ? "mjpg" : "webrtc";
+  }
+
+  function cameraTileStreamType(tile) {
+    return tile?.dataset.streamType === "mjpg" ? "mjpg" : "webrtc";
+  }
+
+  function cameraTileMedia(tile) {
+    if (!tile) return null;
+    return cameraTileStreamType(tile) === "mjpg"
+      ? tile.querySelector("img.camera-mjpeg")
+      : tile.querySelector("iframe.camera-iframe");
+  }
+
+  function cameraTileStreamUrl(cam, hi) {
+    if (!cam) return "";
+    if (cameraStreamType(cam) === "mjpg") return cam.u || "";
+    const base = hi ? (cam.uh || cam.u) : cam.u;
+    return cameraEmbedUrl(base || "");
   }
 
   /** Normalize to go2rtc webrtc.html with audio track available (player starts muted; unmute in iframe). */
   function isBlankIframe(iframe) {
     const src = iframe?.src || "";
     return !src || src === "about:blank" || src.endsWith("about:blank");
+  }
+
+  function isStoppedCameraMedia(media, type) {
+    if (!media) return true;
+    if (type === "mjpg") return !media.getAttribute("src");
+    return isBlankIframe(media);
+  }
+
+  function startCameraMedia(media, type, url) {
+    if (!media || !url) return;
+    if (type === "mjpg") media.setAttribute("src", url);
+    else media.src = url;
+  }
+
+  function stopCameraMedia(media, type) {
+    if (!media) return;
+    if (type === "mjpg") media.removeAttribute("src");
+    else media.src = "about:blank";
   }
 
   function cameraEmbedUrl(baseUrl) {
@@ -14937,7 +15038,8 @@
 
   function cameraTilePlayUrl(tile) {
     if (!tile) return "";
-    return tile.dataset.hdActive === "1" ? (tile.dataset.streamUrlHi || tile.dataset.streamUrl) : tile.dataset.streamUrl;
+    const onHi = tile.dataset.hdActive === "1";
+    return onHi ? (tile.dataset.streamUrlHi || tile.dataset.streamUrl) : tile.dataset.streamUrl;
   }
 
   function syncCameraHdBtn(tile) {
@@ -14955,9 +15057,9 @@
     const onHi = tile.dataset.hdActive === "1";
     tile.dataset.hdActive = onHi ? "" : "1";
     syncCameraHdBtn(tile);
-    const iframe = tile.querySelector("iframe");
+    const media = cameraTileMedia(tile);
     const url = cameraTilePlayUrl(tile);
-    if (iframe && url) iframe.src = url;
+    if (media && url) startCameraMedia(media, "webrtc", url);
     hapticTap();
   }
 
@@ -14970,7 +15072,9 @@
     camerasStopTimers.clear();
     const grid = tabViewEl?.querySelector(".cameras-grid");
     if (grid) {
-      for (const iframe of grid.querySelectorAll("iframe")) iframe.src = "about:blank";
+      for (const tile of grid.querySelectorAll(".camera-tile")) {
+        stopCameraMedia(cameraTileMedia(tile), cameraTileStreamType(tile));
+      }
     }
     camerasRenderedSig = "";
   }
@@ -15018,7 +15122,7 @@
     body.innerHTML = "";
     camerasRenderedSig = camerasRenderedSigKey();
     if (!cameras.length) {
-      renderCamerasMessage(body, "No cameras", "Add go2rtc Camera devices in the Hubitat app settings.");
+      renderCamerasMessage(body, "No cameras", "Add go2rtc or native RTSP cameras in the Hubitat app settings.");
       return;
     }
     const grid = ce("div", "cameras-grid");
@@ -15031,19 +15135,28 @@
       const tile = ce("article", "camera-tile");
       tile.dataset.camId = String(cam.i);
       tile.dataset.name = String(cam.n || "").toLowerCase();
-      const lowUrl = cameraEmbedUrl(cam.u || "");
-      const hiUrl = cam.uh ? cameraEmbedUrl(cam.uh) : "";
+      const streamType = cameraStreamType(cam);
+      tile.dataset.streamType = streamType;
+      const lowUrl = cameraTileStreamUrl(cam, false);
+      const hiUrl = streamType === "webrtc" ? cameraTileStreamUrl(cam, true) : "";
       const streamAvailable = !!lowUrl;
       tile.dataset.streamUrl = lowUrl;
       tile.dataset.streamUrlHi = hiUrl || lowUrl;
       if (!streamAvailable) tile.classList.add("camera-tile-unavailable");
       const media = ce("div", "camera-media");
-      const iframe = ce("iframe", "camera-iframe");
-      iframe.setAttribute("title", cam.n || "Camera");
-      iframe.setAttribute("allow", "autoplay; encrypted-media; fullscreen");
-      iframe.loading = "lazy";
-      iframe.src = "about:blank";
-      media.appendChild(iframe);
+      let player;
+      if (streamType === "mjpg") {
+        player = ce("img", "camera-mjpeg");
+        player.setAttribute("alt", cam.n || "Camera");
+        player.loading = "lazy";
+      } else {
+        player = ce("iframe", "camera-iframe");
+        player.setAttribute("title", cam.n || "Camera");
+        player.setAttribute("allow", "autoplay; encrypted-media; fullscreen");
+        player.loading = "lazy";
+        player.src = "about:blank";
+      }
+      media.appendChild(player);
       if (!streamAvailable) {
         const unavail = ce("div", "camera-unavailable");
         unavail.textContent = "Stream unavailable";
@@ -15052,7 +15165,7 @@
       const nameEl = ce("span", "camera-name");
       nameEl.textContent = cam.n || "Camera";
       media.appendChild(nameEl);
-      if (hiUrl && streamAvailable && !cameraReorderActive) {
+      if (streamType === "webrtc" && hiUrl && hiUrl !== lowUrl && streamAvailable && !cameraReorderActive) {
         const hdBtn = ce("button", "camera-hd-btn");
         hdBtn.type = "button";
         hdBtn.addEventListener("click", (e) => {
@@ -15096,30 +15209,33 @@
     if (!("IntersectionObserver" in window)) {
       const tiles = grid.querySelectorAll(".camera-tile");
       for (let i = 0; i < tiles.length; i++) {
-        const iframe = tiles[i].querySelector("iframe");
-        const url = cameraTilePlayUrl(tiles[i]);
-        if (i < 3 && iframe && url) iframe.src = url;
-        armCameraNameHide(tiles[i]);
+        const tile = tiles[i];
+        const media = cameraTileMedia(tile);
+        const type = cameraTileStreamType(tile);
+        const url = cameraTilePlayUrl(tile);
+        if (i < 3 && media && url) startCameraMedia(media, type, url);
+        armCameraNameHide(tile);
       }
       return;
     }
     camerasObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         const tile = entry.target;
-        const iframe = tile.querySelector("iframe");
+        const media = cameraTileMedia(tile);
+        const type = cameraTileStreamType(tile);
         const url = cameraTilePlayUrl(tile);
-        const key = String(tile.dataset.name || url || tile.dataset.camId || "");
+        const key = String(tile.dataset.camId || tile.dataset.name || url || "");
         if (entry.isIntersecting) {
-          if (iframe && url) {
+          if (media && url) {
             const pending = camerasStopTimers.get(key);
             if (pending) { clearTimeout(pending); camerasStopTimers.delete(key); }
-            if (isBlankIframe(iframe)) iframe.src = url;
+            if (isStoppedCameraMedia(media, type)) startCameraMedia(media, type, url);
           }
           armCameraNameHide(tile);
-        } else if (iframe && url && !camerasStopTimers.has(key)) {
+        } else if (media && url && !camerasStopTimers.has(key)) {
           camerasStopTimers.set(key, setTimeout(() => {
             camerasStopTimers.delete(key);
-            iframe.src = "about:blank";
+            stopCameraMedia(media, type);
           }, HYSTERESIS_MS));
         }
       }

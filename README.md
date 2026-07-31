@@ -19,7 +19,7 @@ experience works at home and away.
 
 Supports lights (dimmers, switches, CT, RGB), outlets, motorized shades, ceiling
 fans, thermostats, locks, garage doors, HSM, Hubitat scenes, hub mode,
-music/media players, sensors, live camera views (go2rtc, local URL only),
+music/media players, sensors, live camera views (go2rtc and native RTSP, local URL only),
 notification popups and Favorites notification tiles, and a built-in scheduler
 for lights, outlets, thermostats, and hub mode. Favorites also support HTTPS
 embed cards, live clock tiles, and HTML tiles (Tile Builder and similar).
@@ -261,29 +261,35 @@ on the album icon indicates playback (respects reduced-motion preferences).
 
 ### Cameras
 
-A simple **live-view grid** for **go2rtc Camera** devices from the go2rtc
-Hubitat app. This is not a full NVR — use your go2rtc or camera app for
-recordings, PTZ, and other advanced features.
+A simple **live-view grid** for **go2rtc Camera** devices (from the go2rtc
+Hubitat app) and **native RTSP Camera Stream** devices (Hubitat C-8 Pro).
+This is not a full NVR — use your camera app for recordings, PTZ, and other
+advanced features.
+
+**How native RTSP works:** the hub pulls your camera’s RTSP stream (typically
+H.264) and re-publishes it as MJPEG at `/hub2/videoStream/<deviceId>.mjpg` for
+browser playback. mDash uses that hub endpoint — not the raw `rtsp://` URL.
 
 **Requirements**
 
 | Requirement | Why |
 | ----------- | --- |
 | **Category tabs** enabled (overflow menu ⋯) | Cameras is a tab, not a quick-nav popup |
-| **Local hub URL** (`http://<hub-ip>:8080/...`) | go2rtc streams are HTTP on your LAN; the tab is hidden on the cloud HTTPS URL to avoid mixed-content errors |
-| Cameras selected in app preferences | **Cameras (go2rtc)** picker — grouped main + sub stream devices |
+| **Local hub URL** (`http://<hub-ip>:8080/...`) | Streams are HTTP on your LAN; the tab is hidden on the cloud HTTPS URL to avoid mixed-content errors |
+| Cameras selected in app preferences | **Cameras (go2rtc)** and/or **Cameras (native RTSP)** pickers |
+| Native RTSP only | **C-8 Pro** hub with platform **2.5.1.138+** |
 
 **Controls**
 
 | Action | How |
 | ------ | --- |
 | Watch live stream | Open the **Cameras** tab; streams start when a tile scrolls into view |
-| Switch to HD | Tap **HD** on a tile (when a main/high stream is available) |
+| Switch to HD | Tap **HD** on a go2rtc tile (when a main/high stream is available); native RTSP has one stream |
 | Reorder cameras | Overflow menu → **Reorder**; drag or use arrows; order syncs to the hub |
 | Change layout | Overflow menu → **1 / 2 / 3** columns (saved per browser) |
 
 Streams stop when a tile scrolls off screen or when you leave the Cameras tab,
-to keep the hub and network load low.
+to keep hub CPU and network load low (especially for native RTSP MJPEG).
 
 ### Sensors
 
@@ -775,7 +781,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Shades, fans & media | Shades, blinds, fans, music, speakers | — | See [device selection](#device-selection) |
 | Locks & garage | Locks, garage doors, unlock PIN | — | See [device selection](#device-selection) |
 | Sensors | Motion, contact, water, presence, etc. | — | See [device selection](#device-selection) |
-| Cameras | go2rtc cameras | — | See [device selection](#device-selection) |
+| Cameras | go2rtc and/or native RTSP cameras | — | See [device selection](#device-selection) |
 | HTML tiles | HTML source devices | — | Tile Builder / vehicle status / etc.; add tiles on Favorites |
 | Notifications | Popup / tile notification devices | — | Create buttons install mDash Notifications children (popup and/or tile pickers) |
 | Dashboard options | Dashboard name | `mDash` | Browser tab and PWA title |
@@ -811,6 +817,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Ceiling fans | — | — | Fans popup; All fans bulk |
 | Music / speakers | — | — | Music popup |
 | Cameras (go2rtc) | — | — | Cameras tab (local URL only; requires category tabs) |
+| Cameras (native RTSP) | — | — | C-8 Pro; hub MJPEG proxy; Cameras tab (local URL only) |
 | HTML source devices | — | — | Favorites HTML tiles (discovered attributes) |
 | Popup notification devices | — | — | Full-screen notification popup queue |
 | Tile notification devices | — | — | Favorites notifications tile queue |

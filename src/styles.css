@@ -303,6 +303,7 @@ body {
 .camera-tile { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
 .camera-media { position: absolute; inset: 0; }
 .camera-iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+.camera-mjpeg { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
 .camera-name {
   position: absolute; left: 0; right: 0; top: 0; z-index: 1;
   padding: 8px 12px; text-align: center;
@@ -366,6 +367,7 @@ body {
 .cameras-reorder-mode .camera-move-btns { display: flex; }
 .cameras-reorder-mode .camera-tile { outline: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); cursor: default; }
 .cameras-reorder-mode .camera-iframe { pointer-events: none; }
+.cameras-reorder-mode .camera-mjpeg { pointer-events: none; }
 .camera-tile.camera-dragging { position: fixed; z-index: 10001; opacity: 0.92; box-shadow: 0 12px 40px rgba(0,0,0,.45); }
 .camera-drag-placeholder { width: 100%; aspect-ratio: 16 / 9; background: rgba(255,255,255,.06); border: 1px dashed rgba(255,255,255,.2); }
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.65
+
+- **Cameras:** native **RTSP Camera Stream** devices (Hubitat C-8 Pro) on the Cameras tab
+  via the hub MJPEG proxy (`/hub2/videoStream/<id>.mjpg`); new **Cameras (native RTSP)**
+  picker in app settings alongside go2rtc.
+- **Fix:** favorites layout save no longer freezes HTML tile titles — only explicit
+  user renames are stored as overrides; live hub/Tile Builder titles keep updating.
+
 ## 0.3.64
 
 - **Fix:** move HTML tile rename/picker UI out of `mld-app-post3.js` so that chunk
