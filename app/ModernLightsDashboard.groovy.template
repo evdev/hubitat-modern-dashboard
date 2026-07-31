@@ -531,7 +531,8 @@ def logInit() {
     if (ceilingFans) { log.info "Modern Dashboard: ${ceilingFans.size()} ceiling fan(s) authorized" }
     if (valves) { log.info "Modern Dashboard: ${valves.size()} valve(s) authorized" }
     if (garageDoors) { log.info "Modern Dashboard: ${garageDoors.size()} garage door(s) authorized" }
-    def cameraCount = allCameraDevices()?.size() ?: 0
+    def camDevs = allCameraDevices()
+    def cameraCount = camDevs ? camDevs.size() : 0
     if (cameraCount) { log.info "Modern Dashboard: ${cameraCount} camera(s) authorized" }
     if (state.accessToken == null) { state.accessToken = createAccessToken() }
     if (!assetsPresent()) { log.warn "Modern Dashboard: upload all mld-* dashboard files to File Manager (see app setup page)" }
@@ -1680,13 +1681,14 @@ def renderData() {
         for (d in cameraDevs) {
             def key = d.id.toString()
             def urls = rtspIds.contains(key) ? cameraRtspStreamUrls(d) : cameraStreamUrls(d)
-            if (!urls?.u) continue
+            if (urls == null || !urls.u) continue
             if (!first) out << ","; first = false
             out << "{\"i\":" << d.id
             out << ",\"n\":" << jsonStr(d.displayName)
             out << ",\"u\":" << jsonStr(urls.u)
             if (urls.uh) out << ",\"uh\":" << jsonStr(urls.uh)
-            out << ",\"t\":" << jsonStr(urls.t ?: "webrtc")
+            def streamType = urls.t ? urls.t : "webrtc"
+            out << ",\"t\":" << jsonStr(streamType)
             out << "}"
         }
     }
@@ -3427,22 +3429,25 @@ def allCameraDevices() {
 
 def rtspCameraIdSet() {
     def set = new HashSet()
-    if (rtspCameras) {
-        for (d in rtspCameras) {
-            try { set.add(d.id.toString()) } catch (e) {}
-        }
+    for (d in asDeviceList(rtspCameras)) {
+        try { set.add(d.id.toString()) } catch (e) {}
     }
     return set
 }
 
 def cameraRtspMjpegUrl(dev) {
-    def url = safeCurrent(dev, "imageUrl")?.toString()?.trim()
+    def urlRaw = safeCurrent(dev, "imageUrl")
+    if (urlRaw == null) return null
+    def url = urlRaw.toString().trim()
     if (!url) return null
     def expected = "/hub2/videoStream/${dev.id}.mjpg"
     try {
-        def path = (url.startsWith("http://") || url.startsWith("https://"))
-            ? new URI(url).path
-            : url.split("\\?", 2)[0]
+        def path
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            path = new java.net.URI(url).path
+        } else {
+            path = url.split("\\?", 2)[0]
+        }
         return path == expected ? expected : null
     } catch (e) {
         return null
@@ -3990,7 +3995,7 @@ def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
 
 def liveHtmlTileTitleMap() {
     def out = [:]
-    for (d in htmlTileDevices ?: []) {
+    for (d in asDeviceList(htmlTileDevices)) {
         for (t in discoverHtmlTilesForDevice(d, false, null)) {
             out[t.id] = t.title
         }

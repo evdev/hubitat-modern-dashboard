@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.66
+
+- **Fix:** Hubitat Groovy compatibility for native RTSP cameras and HTML title overrides
+  — avoid unsupported safe-navigation / Elvis patterns in camera and tile catalog paths.
+
 ## 0.3.65
 
 - **Cameras:** native **RTSP Camera Stream** devices (Hubitat C-8 Pro) on the Cameras tab
