@@ -2848,6 +2848,10 @@ body {
 .quick-body-favorites .fav-size-compact.tile .tile-state { font-size: 12px; font-weight: 700; }
 .quick-body-favorites .fav-size-compact.tile.dimmer { cursor: pointer; }
 .quick-body-favorites .fav-size-compact.tile.dimmer:active { transform: scale(.98); }
+.quick-body-favorites .fav-size-compact.tile.dimmer .tile-foot .tile-level {
+  display: block;
+  font-size: 12px;
+}
 
 /* ---- Compact locks: icon + name + status; whole tile toggles ---- */
 .quick-body-favorites .fav-size-compact.quick-lock-row {

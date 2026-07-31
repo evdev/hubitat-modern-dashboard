@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.68
+
+- **Favorites:** compact dimmable lights show the brightness % in the footer.
+
 ## 0.3.67
 
 - **Favorites:** compact dimmable lights — tap the tile body to toggle on/off (same as
