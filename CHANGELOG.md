@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.67
+
+- **Favorites:** compact dimmable lights — tap the tile body to toggle on/off (same as
+  switches); tap the name to open light settings (Brightness tab by default).
+
 ## 0.3.66
 
 - **Fix:** Hubitat Groovy compatibility for native RTSP cameras and HTML title overrides

@@ -6979,9 +6979,7 @@
     foot.appendChild(level);
     tile.appendChild(foot);
 
-    if (!isDim) {
-      attachSwitchTap(tile, dev.i);
-    }
+    attachSwitchTap(tile, dev.i);
 
     const rec = { el: tile, data: dev, isDim, levelEl: level, stateEl: state, sliderEl: isDim ? qs(".slider", tile) : null };
     if (inFavorites) favDevMap.set(dev.i, rec);
@@ -7073,6 +7071,7 @@
     const TAP_MAX_MS = 500;
     let downX = 0, downY = 0, downT = 0, active = false;
     const isOutlet = tile.classList.contains("outlet");
+    const isDimmer = tile.classList.contains("dimmer");
 
     tile.addEventListener("pointerdown", (e) => {
       if (e.button != null && e.button !== 0) return;
@@ -7094,6 +7093,13 @@
       const dy = Math.abs(e.clientY - downY);
       if (dx > TAP_MOVE || dy > TAP_MOVE) return;
       if (Date.now() - downT > TAP_MAX_MS) return;
+      if (isDimmer) {
+        if (!tile.classList.contains("fav-size-compact")) return;
+        if (colorSession && colorSession.id !== id) closeColorPopup(true);
+        if (tstatSession) closeTstatPopup();
+        toggleDimmer(id);
+        return;
+      }
       if (isOutlet) toggleOutlet(id);
       else toggleSwitch(id);
     }, { passive: true });

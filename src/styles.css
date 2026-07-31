@@ -2846,27 +2846,8 @@ body {
 }
 .quick-body-favorites .fav-size-compact.tile .tile-foot { margin-top: auto; }
 .quick-body-favorites .fav-size-compact.tile .tile-state { font-size: 12px; font-weight: 700; }
-
-/* ---- Compact dimmers: name + bulb toggle + footer; slider via name popup ---- */
-.quick-body-favorites .fav-size-compact.tile.dimmer .tile-bulb { display: grid; }
-.quick-body-favorites .fav-size-compact.tile.dimmer .tile-foot .tile-level { display: block; font-size: 12px; }
-.quick-body-favorites .fav-size-compact.tile.dimmer .tile-head { justify-content: space-between; }
-.quick-body-favorites .fav-size-compact.tile.dimmer .tile-name {
-  padding-right: 4px;
-}
-.quick-body-favorites .fav-size-compact.tile.dimmer .tile-bulb {
-  width: 32px;
-  height: 32px;
-  margin: -4px -4px -4px 0;
-}
-.quick-body-favorites .fav-size-compact.tile.dimmer .tile-bulb::before {
-  width: 20px;
-  height: 20px;
-}
-.quick-body-favorites .fav-size-compact.tile.dimmer .tile-bulb::after {
-  width: 14px;
-  height: 14px;
-}
+.quick-body-favorites .fav-size-compact.tile.dimmer { cursor: pointer; }
+.quick-body-favorites .fav-size-compact.tile.dimmer:active { transform: scale(.98); }
 
 /* ---- Compact locks: icon + name + status; whole tile toggles ---- */
 .quick-body-favorites .fav-size-compact.quick-lock-row {
