@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.63
+
+- **Favorites:** dimmable lights can use compact size — bulb dot toggles on/off, tap the
+  name to open light settings (Brightness tab by default).
+- **HTML tiles:** rename tiles from Favorites reorder (**Rename** on the Size sheet);
+  titles are stored on the hub as `htmlTitles` (Tile Builder descriptions live in driver
+  state and aren't readable by the app).
+
 ## 0.3.62
 
 - **Scheduler UI:** mode-restricted schedules show when they won't run in the current hub

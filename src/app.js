@@ -204,6 +204,14 @@
     return hostnameFromHttpsUrl(url) || "Embed";
   }
 
+  function normalizeHtmlTileTitle(raw, fallback) {
+    let t = raw == null ? "" : String(raw).replace(/[\u0000-\u001F\u007F]/g, " ").trim();
+    if (t.length > MAX_EMBED_TITLE) t = t.slice(0, MAX_EMBED_TITLE).trim();
+    if (t) return t;
+    const fb = fallback == null ? "" : String(fallback).trim();
+    return fb || "HTML";
+  }
+
   function parseEmbedInput(raw) {
     const text = String(raw || "").trim();
     if (!text) return { ok: false, error: "Enter an HTTPS embed URL or iframe code" };
@@ -389,6 +397,9 @@
     const htmlZooms = d.config?.htmlZooms && typeof d.config.htmlZooms === "object"
       ? d.config.htmlZooms
       : (d.htmlZooms && typeof d.htmlZooms === "object" ? d.htmlZooms : {});
+    const htmlTitles = d.config?.htmlTitles && typeof d.config.htmlTitles === "object"
+      ? d.config.htmlTitles
+      : (d.htmlTitles && typeof d.htmlTitles === "object" ? d.htmlTitles : {});
     const nextTiles = [];
     const seen = new Set();
     for (const raw of d.htmlTiles) {
@@ -403,11 +414,13 @@
       const sizeCandidate = configuredSize ?? (hasHtmlSizes ? "tall" : raw.size);
       const configuredZoom = htmlZooms[parsed.id] ?? htmlZooms[htmlFavoriteKey(parsed.id)];
       const zoomCandidate = configuredZoom ?? (hasHtmlZooms ? 100 : raw.zoom);
+      const configuredTitle = htmlTitles[parsed.id] ?? htmlTitles[htmlFavoriteKey(parsed.id)];
+      const titleCandidate = configuredTitle ?? raw.title ?? raw.name ?? parsed.attribute;
       const tile = {
         id: parsed.id,
         deviceId: parsed.deviceId,
         attribute: parsed.attribute,
-        title: String(raw.title || raw.name || parsed.attribute || "HTML").trim() || "HTML",
+        title: normalizeHtmlTileTitle(titleCandidate, parsed.attribute),
         size: EMBED_SIZE_PRESET_SET.has(String(sizeCandidate)) ? String(sizeCandidate) : "tall",
         zoom: normalizeHtmlZoom(zoomCandidate),
       };
@@ -630,6 +643,7 @@
   let favoritesReorderSnapshotHtml = null;
   let embedEditorOpen = false;
   let timeEditorOpen = false;
+  let htmlTitleEditorOpen = false;
   let embedExpandState = null; // { cardEl, placeholder, restoreFocus }
   let favEmbedObserver = null;
   let favHtmlObserver = null;
@@ -2669,7 +2683,7 @@
     });
   }
 
-  function openColorPopup(id, anchorEl, dev, displayName) {
+  function openColorPopup(id, anchorEl, dev, displayName, opts) {
     cancelAllSlideGestures();
     closeColorPopup(false);
     const name = dev.n || displayName || "Light";
@@ -2677,7 +2691,10 @@
     const hasRgb = !!dev.rgb;
     const hasLevel = !!dev.d;
     let tab = "level";
-    if (hasCt || hasRgb) {
+    const forcedTab = opts && opts.defaultTab;
+    if (forcedTab === "level" || forcedTab === "ct" || forcedTab === "rgb") {
+      tab = forcedTab;
+    } else if (hasCt || hasRgb) {
       tab = "ct";
       if (hasRgb && !hasCt) tab = "rgb";
       else if (hasCt && hasRgb) {
@@ -7057,8 +7074,11 @@
       e.stopPropagation();
       if (tstatSession) closeTstatPopup();
       if (colorSession && colorSession.id !== id) closeColorPopup(true);
-      const rec = devMap.get(id);
-      openColorPopup(id, nameEl, rec?.data || dev, label);
+      const rec = devMap.get(id) || favDevMap.get(id);
+      const tile = nameEl.closest(".tile");
+      const compactFav = tile?.classList.contains("fav-size-compact");
+      const popupOpts = compactFav ? { defaultTab: "level" } : null;
+      openColorPopup(id, nameEl, rec?.data || dev, label, popupOpts);
     }
 
     nameEl.addEventListener("click", open);
@@ -8258,9 +8278,7 @@
     const t = entry.type;
     if (t === "garage") return { default: "full", allowed: ["full", "square", "wide"] };
     if (t === "light") {
-      return entry.dev && entry.dev.d
-        ? { default: "standard", allowed: ["standard", "wide"] }
-        : { default: "standard", allowed: ["standard", "wide", "compact"] };
+      return { default: "standard", allowed: ["standard", "wide", "compact"] };
     }
     if (t === "outlet") return { default: "standard", allowed: ["standard", "wide", "compact"] };
     if (t === "sensor") return { default: "standard", allowed: ["standard", "wide", "compact", "square"] };
@@ -9780,7 +9798,7 @@
     }
   }
 
-  async function saveFavoritesLayoutApi(layout, deviceSizes, embedSizes, htmlSizes, htmlZooms, timeSizes, notificationSizes) {
+  async function saveFavoritesLayoutApi(layout, deviceSizes, embedSizes, htmlSizes, htmlZooms, htmlTitles, timeSizes, notificationSizes) {
     try {
       const r = await fetch(withToken("settings/favorites-layout"), {
         method: "POST",
@@ -9792,6 +9810,7 @@
           embedSizes,
           htmlSizes,
           htmlZooms,
+          htmlTitles,
           timeSizes,
           notificationSizes,
         }),
@@ -9826,12 +9845,14 @@
     const embedSizes = {};
     const htmlSizes = {};
     const htmlZooms = {};
+    const htmlTitles = {};
     const timeSizes = {};
     const notificationSizes = {};
     for (const card of embedCards) embedSizes[card.id] = card.size || "tall";
     for (const tile of htmlTiles) {
       htmlSizes[tile.id] = tile.size || "tall";
       htmlZooms[tile.id] = normalizeHtmlZoom(tile.zoom);
+      htmlTitles[tile.id] = normalizeHtmlTileTitle(tile.title, tile.attribute);
     }
     for (const card of timeCards) timeSizes[card.id] = card.size || "square";
     for (const card of notificationCards) notificationSizes[card.id] = card.size || "tall";
@@ -9840,6 +9861,7 @@
       embedSizes,
       htmlSizes,
       htmlZooms,
+      htmlTitles,
       timeSizes,
       notificationSizes,
     };
@@ -9853,6 +9875,7 @@
       sizes.embedSizes,
       sizes.htmlSizes,
       sizes.htmlZooms,
+      sizes.htmlTitles,
       sizes.timeSizes,
       sizes.notificationSizes
     );
@@ -12933,6 +12956,90 @@
     return true;
   }
 
+  function closeHtmlTileTitleEditor() {
+    const popup = document.getElementById("fav-html-title-editor");
+    if (popup) popup.remove();
+    htmlTitleEditorOpen = false;
+  }
+
+  function openHtmlTileTitleEditor(tile) {
+    if (postCall("isFavoritesReorderActive")) {
+      flash("Finish reordering favorites first", true);
+      return;
+    }
+    closeHtmlTileTitleEditor();
+    const popup = ce("div", "confirm-popup open fav-html-title-editor");
+    popup.id = "fav-html-title-editor";
+    popup.setAttribute("role", "dialog");
+    popup.setAttribute("aria-modal", "true");
+    popup.setAttribute("aria-labelledby", "fav-html-title-editor-heading");
+    const panel = ce("div", "confirm-panel fav-embed-editor-panel");
+    const heading = ce("h2", "fav-embed-editor-heading");
+    heading.id = "fav-html-title-editor-heading";
+    heading.textContent = "Rename HTML tile";
+    const help = ce("p", "fav-embed-editor-help");
+    help.textContent = "Tile Builder names live in driver state and are not readable by mDash. Set a display name here (syncs across devices).";
+    const titleLabel = ce("label", "fav-embed-field");
+    const titleSpan = ce("span");
+    titleSpan.textContent = "Display name";
+    const titleInput = ce("input", "topbar-overflow-input fav-embed-title-input");
+    titleInput.type = "text";
+    titleInput.maxLength = MAX_EMBED_TITLE;
+    titleInput.value = tile.title || tile.attribute || "HTML";
+    titleLabel.appendChild(titleSpan);
+    titleLabel.appendChild(titleInput);
+    const err = ce("div", "fav-embed-editor-error");
+    err.hidden = true;
+    const actions = ce("div", "confirm-actions");
+    const cancel = ce("button", "ghost-btn confirm-cancel");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    const save = ce("button", "confirm-btn");
+    save.type = "button";
+    save.textContent = "Save";
+    actions.appendChild(cancel);
+    actions.appendChild(save);
+    panel.appendChild(heading);
+    panel.appendChild(help);
+    panel.appendChild(titleLabel);
+    panel.appendChild(err);
+    panel.appendChild(actions);
+    popup.appendChild(panel);
+    appendPopup(popup);
+    const close = () => closeHtmlTileTitleEditor();
+    cancel.addEventListener("click", close);
+    bindPopupDismiss(popup, panel, null, close);
+    save.addEventListener("click", async () => {
+      const nextTitle = normalizeHtmlTileTitle(titleInput.value, tile.attribute);
+      if (!nextTitle) {
+        err.hidden = false;
+        err.textContent = "Enter a display name";
+        return;
+      }
+      err.hidden = true;
+      const idx = htmlTiles.findIndex((candidate) => candidate.id === tile.id);
+      const prevTitle = idx >= 0 ? htmlTiles[idx].title : tile.title;
+      if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: nextTitle };
+      tile.title = nextTitle;
+      save.disabled = true;
+      const saved = await persistFavoriteLayout(favoritesLayout);
+      save.disabled = false;
+      if (!saved) {
+        if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: prevTitle };
+        tile.title = prevTitle;
+        return;
+      }
+      close();
+      if (currentCategory() === "favorites") renderFavoritesPopup();
+      flash("HTML tile renamed");
+    });
+    htmlTitleEditorOpen = true;
+    requestAnimationFrame(() => {
+      titleInput.focus();
+      titleInput.select();
+    });
+  }
+
   function openHtmlTilePicker() {
     if (postCall("isFavoritesReorderActive")) {
       flash("Finish reordering favorites first", true);
@@ -13060,6 +13167,15 @@
     const menu = ce("div", "fav-embed-menu fav-html-menu");
     menu.hidden = true;
     menu.setAttribute("role", "menu");
+    const renameBtn = ce("button", "fav-embed-menu-item");
+    renameBtn.type = "button";
+    renameBtn.setAttribute("role", "menuitem");
+    renameBtn.textContent = "Rename";
+    renameBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeFavTileOverflowMenu(menu, menuBtn);
+      openHtmlTileTitleEditor(tile);
+    });
     const removeBtn = ce("button", "fav-embed-menu-item danger");
     removeBtn.type = "button";
     removeBtn.setAttribute("role", "menuitem");
@@ -13070,6 +13186,7 @@
       const ok = await confirmAction({ message: "Remove this HTML tile from favorites?", confirmLabel: "Remove", danger: true });
       if (ok) await removeHtmlFavoriteTile(tile.id);
     });
+    menu.appendChild(renameBtn);
     menu.appendChild(removeBtn);
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();

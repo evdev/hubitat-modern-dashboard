@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.62
+// Modern Dashboard v0.3.63
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.62"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.63"
 
 definition(
     name: "Modern Dashboard",
@@ -51,7 +51,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.62 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.63 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -3756,6 +3756,7 @@ def sanitizeHtmlForDashboard(raw) {
 }
 
 def parseTileDescriptionsMap(d) {
+    // Only works when a driver publishes tileDescriptions as a device attribute (not Tile Builder state).
     def out = [:]
     try {
         def raw = safeCurrent(d, "tileDescriptions")
@@ -3773,6 +3774,8 @@ def parseTileDescriptionsMap(d) {
 }
 
 def tileBuilderDescriptions(d) {
+    // Best-effort: Tile Builder stores descriptions in driver state; getTileList() may not
+    // return data to arbitrary SmartApps. mDash title overrides are the reliable path.
     def map = [:]
     try {
         def list = d.getTileList()
@@ -3891,6 +3894,7 @@ def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
     else if (activeIds instanceof Collection) active = new HashSet(activeIds)
     def sizes = parseHtmlTileSizesState()
     def zooms = parseHtmlTileZoomsState()
+    def titles = parseHtmlTileTitlesState()
     for (d in devices) {
         def tiles = discoverHtmlTilesForDevice(d, includeHtmlBodies, active)
         def roomsCss = null
@@ -3906,11 +3910,12 @@ def discoverHtmlTileCatalog(includeHtmlBodies = false, activeIds = null) {
             }
         }
         for (t in tiles) {
+            def title = titles[t.id] ?: t.title
             def entry = [
                 id: t.id,
                 deviceId: t.deviceId,
                 attribute: t.attribute,
-                title: t.title,
+                title: title,
                 size: (sizes[t.id] ?: "tall"),
                 zoom: (zooms[t.id] ?: 100)
             ]
@@ -3972,6 +3977,31 @@ def parseHtmlTileZoomsState() {
             } catch (e) { n = null }
             if (n == null || !allowed.contains(n)) continue
             out[k] = n
+        }
+        return out
+    } catch (e) {
+        return [:]
+    }
+}
+
+def normalizeHtmlTileTitle(raw) {
+    def t = raw?.toString()?.trim() ?: ""
+    if (!t) return ""
+    if (t.length() > maxEmbedTitleLen()) t = t.substring(0, maxEmbedTitleLen()).trim()
+    return t
+}
+
+def parseHtmlTileTitlesState() {
+    if (!state.htmlTileTitlesJson) return [:]
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(state.htmlTileTitlesJson.toString())
+        if (!(parsed instanceof Map)) return [:]
+        def out = [:]
+        for (entry in parsed) {
+            def k = entry.key?.toString()?.trim()
+            def v = normalizeHtmlTileTitle(entry.value)
+            if (!k || !(k ==~ /^\d+:[A-Za-z0-9_.-]+$/) || !v) continue
+            out[k] = v
         }
         return out
     } catch (e) {
@@ -4697,6 +4727,10 @@ def saveFavoritesLayout() {
     if (htmlZooms != null && !(htmlZooms instanceof Map)) {
         return renderJsonNoStore('{"ok":false,"error":"invalid htmlZooms"}', 400)
     }
+    def htmlTitles = body?.htmlTitles
+    if (htmlTitles != null && !(htmlTitles instanceof Map)) {
+        return renderJsonNoStore('{"ok":false,"error":"invalid htmlTitles"}', 400)
+    }
     def favoriteSizes = body?.favoriteSizes
     if (favoriteSizes != null && !(favoriteSizes instanceof Map)) {
         return renderJsonNoStore('{"ok":false,"error":"invalid favoriteSizes"}', 400)
@@ -4881,8 +4915,34 @@ def saveFavoritesLayout() {
         state.htmlTileZoomsJson = groovy.json.JsonOutput.toJson(prunedZoom)
     }
 
+    // HTML tile display titles (user overrides; Tile Builder descriptions are driver state only).
+    if (htmlTitles != null) {
+        def nextHtmlTitles = [:]
+        def activeHtmlTitles = activeHtmlLayoutIds(nextLayout)
+        for (id in activeHtmlTitles) {
+            def title = null
+            if (htmlTitles.containsKey(id)) {
+                title = normalizeHtmlTileTitle(htmlTitles[id])
+            } else {
+                title = parseHtmlTileTitlesState()[id]
+            }
+            if (title) nextHtmlTitles[id] = title
+        }
+        state.htmlTileTitlesJson = groovy.json.JsonOutput.toJson(nextHtmlTitles)
+    } else {
+        def prevHtmlTitles = parseHtmlTileTitlesState()
+        def activeHtmlTitles = activeHtmlLayoutIds(nextLayout)
+        def prunedTitles = [:]
+        for (entry in prevHtmlTitles) {
+            def idKey = String.valueOf(entry.key)
+            if (activeHtmlTitles.contains(idKey)) prunedTitles[idKey] = String.valueOf(entry.value)
+        }
+        state.htmlTileTitlesJson = groovy.json.JsonOutput.toJson(prunedTitles)
+    }
+
     def htmlSizeMap = parseHtmlTileSizesState()
     def htmlZoomMap = parseHtmlTileZoomsState()
+    def htmlTitleMap = parseHtmlTileTitlesState()
 
     def out = new StringBuilder()
     out << "{\"ok\":true,\"favorites\":["
@@ -4928,6 +4988,12 @@ def saveFavoritesLayout() {
     for (entry in htmlZoomMap) {
         if (!first) out << ","; first = false
         out << jsonStr(entry.key.toString()) << ":" << entry.value
+    }
+    out << "},\"htmlTitles\":{"
+    first = true
+    for (entry in htmlTitleMap) {
+        if (!first) out << ","; first = false
+        out << jsonStr(entry.key.toString()) << ":" << jsonStr(entry.value.toString())
     }
     out << "},\"favoritesLayout\":["
     first = true

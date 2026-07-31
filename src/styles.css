@@ -2167,7 +2167,7 @@ body {
   --fav-span-large: 4;
   --fav-span-viewport: 4;
   --fav-min-h-compact: 72px;
-  --fav-min-h-standard: 132px;
+  --fav-min-h-standard: 180px;
   --fav-min-h-wide: 96px;
   --fav-min-h-square: 0;
   --fav-min-h-portrait: 240px;
@@ -2232,6 +2232,8 @@ body {
 .quick-body-favorites .quick-fav-grid > .fav-size-standard {
   grid-column: span var(--fav-span-standard);
   min-height: var(--fav-min-h-standard);
+  height: var(--fav-min-h-standard);
+  overflow: hidden;
   align-self: start;
 }
 .quick-body-favorites .quick-fav-grid > .fav-size-compact {
@@ -2241,7 +2243,10 @@ body {
   overflow: hidden;
   align-self: start;
 }
-/* Embed/HTML/notification compact tiles manage their own content height. */
+/* Embed/HTML/notification tiles manage their own content height. */
+.quick-body-favorites .quick-fav-grid > .fav-size-standard.fav-embed-card,
+.quick-body-favorites .quick-fav-grid > .fav-size-standard.fav-html-card,
+.quick-body-favorites .quick-fav-grid > .fav-size-standard.fav-notif-card,
 .quick-body-favorites .quick-fav-grid > .fav-size-compact.fav-embed-card,
 .quick-body-favorites .quick-fav-grid > .fav-size-compact.fav-html-card,
 .quick-body-favorites .quick-fav-grid > .fav-size-compact.fav-notif-card {
@@ -2322,7 +2327,7 @@ body {
     --fav-span-large: 2;
     --fav-span-viewport: 2;
     --fav-min-h-compact: 64px;
-    --fav-min-h-standard: 120px;
+    --fav-min-h-standard: 164px;
     --fav-min-h-wide: 88px;
     --fav-min-h-portrait: 220px;
     --fav-min-h-full: 96px;
@@ -2345,7 +2350,7 @@ body {
     --fav-span-large: 1;
     --fav-span-viewport: 1;
     --fav-min-h-compact: 60px;
-    --fav-min-h-standard: 112px;
+    --fav-min-h-standard: 152px;
     --fav-min-h-wide: 84px;
     --fav-min-h-portrait: 200px;
     --fav-min-h-full: 88px;
@@ -2397,7 +2402,7 @@ body {
   height: 100%;
 }
 
-/* Cards fill their grid area; compact tiles use a fixed height, others may grow past min-height. */
+/* Cards fill their grid area; compact/standard tiles use a fixed height. */
 .quick-body-favorites .quick-fav-card,
 .quick-body-favorites .quick-lock-row,
 .quick-body-favorites .shade-tile,
@@ -2805,11 +2810,26 @@ body {
   .fav-size-full.music-row .music-btn { min-height: 38px; }
 }
 
+/* ---- Standard lights/outlets/sensors: fixed cell height, content fills ---- */
+.quick-body-favorites .fav-size-standard.tile {
+  overflow: hidden;
+}
+.quick-body-favorites .fav-size-standard.tile .tile-foot { margin-top: auto; }
+.quick-body-favorites .fav-size-standard.sensor-card {
+  overflow: hidden;
+}
+.quick-body-favorites .fav-size-standard.sensor-card .sensor-card-foot {
+  margin-top: auto;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+.quick-body-favorites .fav-size-standard.fav-time-card {
+  overflow: hidden;
+}
+
 /* ---- Compact lights/outlets: name + state + fav; whole tile still toggles ---- */
 .quick-body-favorites .fav-size-compact.tile {
   padding: 10px 12px;
-  min-height: 0;
-  height: 100%;
   gap: 6px;
   overflow: hidden;
 }
@@ -2824,6 +2844,27 @@ body {
 }
 .quick-body-favorites .fav-size-compact.tile .tile-foot { margin-top: auto; }
 .quick-body-favorites .fav-size-compact.tile .tile-state { font-size: 12px; font-weight: 700; }
+
+/* ---- Compact dimmers: name + bulb toggle + footer; slider via name popup ---- */
+.quick-body-favorites .fav-size-compact.tile.dimmer .tile-bulb { display: grid; }
+.quick-body-favorites .fav-size-compact.tile.dimmer .tile-foot .tile-level { display: block; font-size: 12px; }
+.quick-body-favorites .fav-size-compact.tile.dimmer .tile-head { justify-content: space-between; }
+.quick-body-favorites .fav-size-compact.tile.dimmer .tile-name {
+  padding-right: 4px;
+}
+.quick-body-favorites .fav-size-compact.tile.dimmer .tile-bulb {
+  width: 32px;
+  height: 32px;
+  margin: -4px -4px -4px 0;
+}
+.quick-body-favorites .fav-size-compact.tile.dimmer .tile-bulb::before {
+  width: 20px;
+  height: 20px;
+}
+.quick-body-favorites .fav-size-compact.tile.dimmer .tile-bulb::after {
+  width: 14px;
+  height: 14px;
+}
 
 /* ---- Compact locks: icon + name + status; whole tile toggles ---- */
 .quick-body-favorites .fav-size-compact.quick-lock-row {

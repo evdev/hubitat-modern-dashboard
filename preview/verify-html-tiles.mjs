@@ -82,9 +82,9 @@ try {
   assert(Array.isArray(initial.htmlTiles), "htmlTiles at top level");
   assert(initial.htmlTiles.some((tile) => tile.id === "9001:tile5"), "Battery Monitor catalog entry");
   assert(initial.htmlTiles.some((tile) => tile.id === "9002:html"), "PALISADE catalog entry");
-  assert(initial.htmlTiles.some((tile) => tile.id === "9003:tile3"), "tileDescriptions catalog entry");
-  const describedTile = initial.htmlTiles.find((tile) => tile.id === "9003:tile3");
-  assert(describedTile?.title === "Sprinkler Schedule", "tileDescriptions maps attribute to title");
+  assert(initial.htmlTiles.some((tile) => tile.id === "9003:tile3"), "HTML tile catalog entry");
+  const defaultTile = initial.htmlTiles.find((tile) => tile.id === "9003:tile3");
+  assert(defaultTile?.title === "Tile 3", "default HTML tile title before rename");
   assert(initial.htmlTiles.every((tile) => tile.html == null), "catalog-only tiles omit html");
   assert(initial.htmlTiles.every((tile) => tile.size === "tall"), "catalog tiles have default size");
 
@@ -95,8 +95,10 @@ try {
     layout,
     htmlSizes: { "9001:tile5": "wide" },
     htmlZooms: { "9001:tile5": 125 },
+    htmlTitles: { "9001:tile5": "Sprinkler Schedule" },
   });
   assert(saved.res.ok, "HTML layout save ok");
+  assert(saved.json.htmlTitles?.["9001:tile5"] === "Sprinkler Schedule", "HTML title returned");
   assert(saved.json.favoritesLayout[0] === htmlKey, "HTML layout key saved");
   assert(!saved.json.favoritesLayout.includes("h:9999:missing"), "unknown HTML key rejected");
   assert(saved.json.htmlSizes?.["9001:tile5"] === "wide", "HTML size returned");
@@ -106,6 +108,9 @@ try {
   assert(afterSave.config?.favoritesLayout?.[0] === htmlKey, "HTML layout persisted");
   assert(afterSave.config?.htmlSizes?.["9001:tile5"] === "wide", "HTML size persisted");
   assert(afterSave.config?.htmlZooms?.["9001:tile5"] === 125, "HTML zoom persisted");
+  assert(afterSave.config?.htmlTitles?.["9001:tile5"] === "Sprinkler Schedule", "HTML title persisted");
+  const renamedTile = afterSave.htmlTiles.find((tile) => tile.id === "9001:tile5");
+  assert(renamedTile?.title === "Sprinkler Schedule", "favorited tile uses saved title");
   const activeTile = afterSave.htmlTiles.find((tile) => tile.id === "9001:tile5");
   assert(typeof activeTile?.html === "string" && activeTile.html.includes("<table"), "favorited tile includes html");
   assert(activeTile?.size === "wide", "favorited tile includes saved size");
