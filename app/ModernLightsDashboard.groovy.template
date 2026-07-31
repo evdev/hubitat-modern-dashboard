@@ -3664,6 +3664,9 @@ def favoritesJsonFragment() {
     }
     out << "]"
     out << favoriteSizesJsonFragment()
+    out << htmlTileSizesJsonFragment()
+    out << htmlTileZoomsJsonFragment()
+    out << htmlTileTitlesJsonFragment()
     out << embedCardsJsonFragment()
     out << timeCardsJsonFragment()
     out << notificationCardsJsonFragment()
@@ -4989,9 +4992,11 @@ def saveFavoritesLayout() {
         def nextHtmlTitles = [:]
         def activeHtmlTitles = activeHtmlLayoutIds(nextLayout)
         def liveTitles = liveHtmlTileTitleMap()
-        for (id in activeHtmlTitles) {
-            if (!htmlTitles.containsKey(id)) continue
-            def title = normalizeHtmlTileTitle(htmlTitles[id])
+        // Prefer iterating the payload so Hubitat LazyMap key typing cannot drop overrides.
+        for (entry in htmlTitles) {
+            def id = entry.key?.toString()?.trim()
+            if (!id || !activeHtmlTitles.contains(id)) continue
+            def title = normalizeHtmlTileTitle(entry.value)
             if (!title) continue
             def live = liveTitles[id]?.toString()?.trim() ?: ""
             if (live && title == live) continue
@@ -5091,6 +5096,45 @@ def favoriteSizesJsonFragment() {
     out << ",\"favoriteSizes\":{"
     boolean first = true
     for (entry in sizes) {
+        if (!first) out << ","; first = false
+        out << jsonStr(String.valueOf(entry.key)) << ":" << jsonStr(String.valueOf(entry.value))
+    }
+    out << "}"
+    return out.toString()
+}
+
+def htmlTileSizesJsonFragment() {
+    def sizes = parseHtmlTileSizesState()
+    def out = new StringBuilder()
+    out << ",\"htmlSizes\":{"
+    boolean first = true
+    for (entry in sizes) {
+        if (!first) out << ","; first = false
+        out << jsonStr(String.valueOf(entry.key)) << ":" << jsonStr(String.valueOf(entry.value))
+    }
+    out << "}"
+    return out.toString()
+}
+
+def htmlTileZoomsJsonFragment() {
+    def zooms = parseHtmlTileZoomsState()
+    def out = new StringBuilder()
+    out << ",\"htmlZooms\":{"
+    boolean first = true
+    for (entry in zooms) {
+        if (!first) out << ","; first = false
+        out << jsonStr(String.valueOf(entry.key)) << ":" << entry.value
+    }
+    out << "}"
+    return out.toString()
+}
+
+def htmlTileTitlesJsonFragment() {
+    def titles = parseHtmlTileTitlesState()
+    def out = new StringBuilder()
+    out << ",\"htmlTitles\":{"
+    boolean first = true
+    for (entry in titles) {
         if (!first) out << ","; first = false
         out << jsonStr(String.valueOf(entry.key)) << ":" << jsonStr(String.valueOf(entry.value))
     }

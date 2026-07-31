@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.68
+// Modern Dashboard v0.3.69
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.68"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.69"
 
 definition(
     name: "Modern Dashboard",
@@ -51,7 +51,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.68 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.69 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -3664,6 +3664,9 @@ def favoritesJsonFragment() {
     }
     out << "]"
     out << favoriteSizesJsonFragment()
+    out << htmlTileSizesJsonFragment()
+    out << htmlTileZoomsJsonFragment()
+    out << htmlTileTitlesJsonFragment()
     out << embedCardsJsonFragment()
     out << timeCardsJsonFragment()
     out << notificationCardsJsonFragment()
@@ -4989,9 +4992,11 @@ def saveFavoritesLayout() {
         def nextHtmlTitles = [:]
         def activeHtmlTitles = activeHtmlLayoutIds(nextLayout)
         def liveTitles = liveHtmlTileTitleMap()
-        for (id in activeHtmlTitles) {
-            if (!htmlTitles.containsKey(id)) continue
-            def title = normalizeHtmlTileTitle(htmlTitles[id])
+        // Prefer iterating the payload so Hubitat LazyMap key typing cannot drop overrides.
+        for (entry in htmlTitles) {
+            def id = entry.key?.toString()?.trim()
+            if (!id || !activeHtmlTitles.contains(id)) continue
+            def title = normalizeHtmlTileTitle(entry.value)
             if (!title) continue
             def live = liveTitles[id]?.toString()?.trim() ?: ""
             if (live && title == live) continue
@@ -5091,6 +5096,45 @@ def favoriteSizesJsonFragment() {
     out << ",\"favoriteSizes\":{"
     boolean first = true
     for (entry in sizes) {
+        if (!first) out << ","; first = false
+        out << jsonStr(String.valueOf(entry.key)) << ":" << jsonStr(String.valueOf(entry.value))
+    }
+    out << "}"
+    return out.toString()
+}
+
+def htmlTileSizesJsonFragment() {
+    def sizes = parseHtmlTileSizesState()
+    def out = new StringBuilder()
+    out << ",\"htmlSizes\":{"
+    boolean first = true
+    for (entry in sizes) {
+        if (!first) out << ","; first = false
+        out << jsonStr(String.valueOf(entry.key)) << ":" << jsonStr(String.valueOf(entry.value))
+    }
+    out << "}"
+    return out.toString()
+}
+
+def htmlTileZoomsJsonFragment() {
+    def zooms = parseHtmlTileZoomsState()
+    def out = new StringBuilder()
+    out << ",\"htmlZooms\":{"
+    boolean first = true
+    for (entry in zooms) {
+        if (!first) out << ","; first = false
+        out << jsonStr(String.valueOf(entry.key)) << ":" << entry.value
+    }
+    out << "}"
+    return out.toString()
+}
+
+def htmlTileTitlesJsonFragment() {
+    def titles = parseHtmlTileTitlesState()
+    def out = new StringBuilder()
+    out << ",\"htmlTitles\":{"
+    boolean first = true
+    for (entry in titles) {
         if (!first) out << ","; first = false
         out << jsonStr(String.valueOf(entry.key)) << ":" << jsonStr(String.valueOf(entry.value))
     }

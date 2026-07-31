@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.69
+
+- **Fix:** HTML tile renames persist correctly — overrides save on the hub, reload after
+  refresh, and survive cancel/reorder; clearing a rename removes the override when it
+  matches the live hub title.
+- **Fix:** `/data` includes `htmlTitles`, `htmlSizes`, and `htmlZooms` so renamed HTML
+  favorites stay in sync across devices without a separate layout fetch.
+- **Fix:** HTML title override map stays synced across JS chunks (no reassignment that
+  broke post2/post3 rename UI).
+
 ## 0.3.68
 
 - **Favorites:** compact dimmable lights show the brightness % in the footer.

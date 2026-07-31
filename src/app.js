@@ -212,22 +212,28 @@
     return fb || "HTML";
   }
 
+  // Mutate in place — never reassign. Exported `let` bindings are snapshotted onto
+  // __MLD at load; reassignment desyncs part1 closures from post2/post3 chunks.
+  function replaceMap(map, next) {
+    for (const k of Object.keys(map)) delete map[k];
+    if (!next || typeof next !== "object") return;
+    for (const k of Object.keys(next)) map[k] = next[k];
+  }
+
   function applyHtmlTitleOverridesFromConfig(source, liveTitlesById = null) {
     const next = {};
-    if (!source || typeof source !== "object") {
-      htmlTileTitleOverrides = next;
-      return;
-    }
-    for (const k of Object.keys(source)) {
-      const override = normalizeHtmlTileTitle(source[k], k.split(":").slice(1).join(":"));
-      if (!override) continue;
-      if (liveTitlesById) {
-        const live = liveTitlesById[k] ?? liveTitlesById[htmlFavoriteKey(k)];
-        if (live && override === live) continue;
+    if (source && typeof source === "object") {
+      for (const k of Object.keys(source)) {
+        const override = normalizeHtmlTileTitle(source[k], k.split(":").slice(1).join(":"));
+        if (!override) continue;
+        if (liveTitlesById) {
+          const live = liveTitlesById[k] ?? liveTitlesById[htmlFavoriteKey(k)];
+          if (live && override === live) continue;
+        }
+        next[k] = override;
       }
-      next[k] = override;
     }
-    htmlTileTitleOverrides = next;
+    replaceMap(htmlTileTitleOverrides, next);
   }
 
   function htmlTitleOverridesForLayout(layout = favoritesLayout, overrides = htmlTileTitleOverrides) {
@@ -392,6 +398,7 @@
     m.timeCards = timeCards;
     m.notificationCards = notificationCards;
     m.htmlTiles = htmlTiles;
+    m.htmlTileTitleOverrides = htmlTileTitleOverrides;
     m.favoritesLayout = favoritesLayout;
     m.embedEditorOpen = embedEditorOpen;
     m.timeEditorOpen = timeEditorOpen;
@@ -427,10 +434,13 @@
     const htmlZooms = d.config?.htmlZooms && typeof d.config.htmlZooms === "object"
       ? d.config.htmlZooms
       : (d.htmlZooms && typeof d.htmlZooms === "object" ? d.htmlZooms : {});
+    const hasHtmlTitles = Object.prototype.hasOwnProperty.call(d.config || {}, "htmlTitles")
+      || Object.prototype.hasOwnProperty.call(d, "htmlTitles");
     const htmlTitles = d.config?.htmlTitles && typeof d.config.htmlTitles === "object"
       ? d.config.htmlTitles
       : (d.htmlTitles && typeof d.htmlTitles === "object" ? d.htmlTitles : {});
     const liveTitlesById = {};
+    const hubDisplayById = {};
     for (const raw of d.htmlTiles) {
       if (!raw || typeof raw !== "object") continue;
       const candidateId = raw.id != null
@@ -438,12 +448,25 @@
         : String(raw.deviceId == null ? "" : raw.deviceId) + ":" + String(raw.attribute || "");
       const parsed = parseHtmlTileId(candidateId);
       if (!parsed) continue;
-      liveTitlesById[parsed.id] = normalizeHtmlTileTitle(
-        raw.liveTitle ?? raw.title ?? raw.name ?? parsed.attribute,
+      // liveTitle is the hub/device default; title may already include an override from the hub.
+      const liveTitle = normalizeHtmlTileTitle(
+        raw.liveTitle != null ? raw.liveTitle : (raw.name ?? parsed.attribute),
         parsed.attribute
       );
+      const hubDisplay = normalizeHtmlTileTitle(raw.title ?? liveTitle, parsed.attribute);
+      liveTitlesById[parsed.id] = liveTitle;
+      hubDisplayById[parsed.id] = hubDisplay;
     }
-    applyHtmlTitleOverridesFromConfig(htmlTitles, liveTitlesById);
+    if (hasHtmlTitles) {
+      applyHtmlTitleOverridesFromConfig(htmlTitles, liveTitlesById);
+    } else {
+      // /data historically omitted config.htmlTitles — infer overrides from hub title vs live.
+      for (const id of Object.keys(hubDisplayById)) {
+        const live = liveTitlesById[id];
+        const hubDisplay = hubDisplayById[id];
+        if (hubDisplay && live && hubDisplay !== live) htmlTileTitleOverrides[id] = hubDisplay;
+      }
+    }
     const nextTiles = [];
     const seen = new Set();
     for (const raw of d.htmlTiles) {
@@ -459,15 +482,16 @@
       const configuredZoom = htmlZooms[parsed.id] ?? htmlZooms[htmlFavoriteKey(parsed.id)];
       const zoomCandidate = configuredZoom ?? (hasHtmlZooms ? 100 : raw.zoom);
       const liveTitle = liveTitlesById[parsed.id]
-        ?? normalizeHtmlTileTitle(raw.liveTitle ?? raw.title ?? raw.name ?? parsed.attribute, parsed.attribute);
+        ?? normalizeHtmlTileTitle(parsed.attribute, parsed.attribute);
       const configuredOverride = htmlTileTitleOverrides[parsed.id]
         ?? htmlTileTitleOverrides[htmlFavoriteKey(parsed.id)];
+      const hubDisplay = hubDisplayById[parsed.id] ?? liveTitle;
       const tile = {
         id: parsed.id,
         deviceId: parsed.deviceId,
         attribute: parsed.attribute,
         liveTitle,
-        title: normalizeHtmlTileTitle(configuredOverride ?? liveTitle, parsed.attribute),
+        title: normalizeHtmlTileTitle(configuredOverride ?? hubDisplay ?? liveTitle, parsed.attribute),
         size: EMBED_SIZE_PRESET_SET.has(String(sizeCandidate)) ? String(sizeCandidate) : "tall",
         zoom: normalizeHtmlZoom(zoomCandidate),
       };
@@ -9079,7 +9103,8 @@
     const sizes = entries.map((e) => {
       const size = resolveFavoriteSize(e);
       const zoom = e?.type === "html" ? normalizeHtmlZoom(e.tile?.zoom) : null;
-      return favoriteEntryKey(e) + ":" + size + (zoom != null ? "@" + zoom : "");
+      const title = e?.type === "html" ? String(e.tile?.title || "") : "";
+      return favoriteEntryKey(e) + ":" + size + (zoom != null ? "@" + zoom : "") + (title ? "#" + title : "");
     }).join(",");
     return entries.map((e) => favoriteEntryKey(e)).join(",") + "|" + sizes;
   }
@@ -9890,13 +9915,18 @@
         saveFavoriteSizesCache(favoriteSizes);
       }
       applyHtmlCatalogFromData({ htmlTiles: htmlTiles.map((tile) => ({ ...tile })), config: body });
-      if (body?.htmlTitles && typeof body.htmlTitles === "object") {
+      if (Object.prototype.hasOwnProperty.call(body || {}, "htmlTitles") && body.htmlTitles && typeof body.htmlTitles === "object") {
         const liveTitlesById = Object.fromEntries(
-          htmlTiles.map((tile) => [tile.id, tile.liveTitle ?? tile.title])
+          htmlTiles.map((tile) => [tile.id, tile.liveTitle || tile.attribute || tile.title])
         );
         applyHtmlTitleOverridesFromConfig(body.htmlTitles, liveTitlesById);
+        for (const tile of htmlTiles) {
+          const override = htmlTileTitleOverrides[tile.id];
+          if (override) tile.title = override;
+        }
       }
       applyEmbedConfigFromData({ config: body }, { allowDuringReorder: true });
+      syncEmbedStateToMld();
       return true;
     } catch {
       flash("Could not save favorites layout", true);
@@ -9969,7 +9999,7 @@
     if (favoritesReorderSnapshotTimes) replaceList(timeCards, favoritesReorderSnapshotTimes.map((c) => ({ ...c })));
     if (favoritesReorderSnapshotNotifs) replaceList(notificationCards, favoritesReorderSnapshotNotifs.map((c) => ({ ...c })));
     if (favoritesReorderSnapshotHtml) replaceList(htmlTiles, favoritesReorderSnapshotHtml.map((tile) => ({ ...tile })));
-    if (favoritesReorderSnapshotHtmlTitles) htmlTileTitleOverrides = { ...favoritesReorderSnapshotHtmlTitles };
+    if (favoritesReorderSnapshotHtmlTitles) replaceMap(htmlTileTitleOverrides, favoritesReorderSnapshotHtmlTitles);
     syncEmbedStateToMld();
     lastDataSig = "";
     exitFavoritesReorderMode(false);
@@ -12865,20 +12895,28 @@
       err.hidden = true;
       const idx = htmlTiles.findIndex((candidate) => candidate.id === tile.id);
       const prevTitle = idx >= 0 ? htmlTiles[idx].title : tile.title;
-      if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: nextTitle };
+      const prevOverride = htmlTileTitleOverrides[tile.id];
+      const liveTitle = tile.liveTitle || (idx >= 0 ? htmlTiles[idx].liveTitle : null) || tile.attribute;
+      if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: nextTitle, liveTitle: liveTitle || htmlTiles[idx].liveTitle };
       tile.title = nextTitle;
-      htmlTileTitleOverrides[tile.id] = nextTitle;
+      if (!tile.liveTitle && liveTitle) tile.liveTitle = liveTitle;
+      if (nextTitle === liveTitle) delete htmlTileTitleOverrides[tile.id];
+      else htmlTileTitleOverrides[tile.id] = nextTitle;
+      syncEmbedStateToMld();
       save.disabled = true;
       const saved = await persistFavoriteLayout(favoritesLayout);
       save.disabled = false;
       if (!saved) {
         if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: prevTitle };
         tile.title = prevTitle;
-        if (prevTitle === tile.liveTitle) delete htmlTileTitleOverrides[tile.id];
-        else htmlTileTitleOverrides[tile.id] = prevTitle;
+        if (prevOverride == null) delete htmlTileTitleOverrides[tile.id];
+        else htmlTileTitleOverrides[tile.id] = prevOverride;
+        syncEmbedStateToMld();
         return;
       }
       close();
+      lastDataSig = "";
+      favPopupSig = "";
       if (currentCategory() === "favorites") renderFavoritesPopup();
       flash("HTML tile renamed");
     });
