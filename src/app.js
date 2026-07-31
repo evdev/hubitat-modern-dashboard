@@ -366,6 +366,7 @@
     m.favoritesLayout = favoritesLayout;
     m.embedEditorOpen = embedEditorOpen;
     m.timeEditorOpen = timeEditorOpen;
+    m.htmlTitleEditorOpen = htmlTitleEditorOpen;
   }
 
   function mapTimeCardsFromConfig(list) {
@@ -467,9 +468,10 @@
 
   function applyEmbedConfigFromData(d, { allowDuringReorder = false } = {}) {
     if (!d?.config) return false;
-    const editorOpen = embedEditorOpen || timeEditorOpen
+    const editorOpen = embedEditorOpen || timeEditorOpen || htmlTitleEditorOpen
       || !!globalThis.__MLD?.embedEditorOpen
-      || !!globalThis.__MLD?.timeEditorOpen;
+      || !!globalThis.__MLD?.timeEditorOpen
+      || !!globalThis.__MLD?.htmlTitleEditorOpen;
     if (!allowDuringReorder && (postCall("isFavoritesReorderActive") || editorOpen)) return false;
     const nextCards = Array.isArray(d.config.embedCards)
       ? d.config.embedCards.map((c) => ({
@@ -12735,6 +12737,195 @@
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
 
+  // HTML title editor + picker live in post2 so mld-app-post3.js stays under Hubitat
+  // Cloud's ~122 KB OAuth/MQTT response limit (scheduler/cameras ship in post3).
+  function closeHtmlTileTitleEditor() {
+    const popup = document.getElementById("fav-html-title-editor");
+    if (popup) popup.remove();
+    htmlTitleEditorOpen = false;
+    syncEmbedStateToMld();
+  }
+
+  function openHtmlTileTitleEditor(tile) {
+    if (postCall("isFavoritesReorderActive")) {
+      flash("Finish reordering favorites first", true);
+      return;
+    }
+    closeHtmlTileTitleEditor();
+    const popup = ce("div", "confirm-popup open fav-html-title-editor");
+    popup.id = "fav-html-title-editor";
+    popup.setAttribute("role", "dialog");
+    popup.setAttribute("aria-modal", "true");
+    popup.setAttribute("aria-labelledby", "fav-html-title-editor-heading");
+    const panel = ce("div", "confirm-panel fav-embed-editor-panel");
+    const heading = ce("h2", "fav-embed-editor-heading");
+    heading.id = "fav-html-title-editor-heading";
+    heading.textContent = "Rename HTML tile";
+    const help = ce("p", "fav-embed-editor-help");
+    help.textContent = "Tile Builder names live in driver state and are not readable by mDash. Set a display name here (syncs across devices).";
+    const titleLabel = ce("label", "fav-embed-field");
+    const titleSpan = ce("span");
+    titleSpan.textContent = "Display name";
+    const titleInput = ce("input", "topbar-overflow-input fav-embed-title-input");
+    titleInput.type = "text";
+    titleInput.maxLength = MAX_EMBED_TITLE;
+    titleInput.value = tile.title || tile.attribute || "HTML";
+    titleLabel.appendChild(titleSpan);
+    titleLabel.appendChild(titleInput);
+    const err = ce("div", "fav-embed-editor-error");
+    err.hidden = true;
+    const actions = ce("div", "confirm-actions");
+    const cancel = ce("button", "ghost-btn confirm-cancel");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    const save = ce("button", "confirm-btn");
+    save.type = "button";
+    save.textContent = "Save";
+    actions.appendChild(cancel);
+    actions.appendChild(save);
+    panel.appendChild(heading);
+    panel.appendChild(help);
+    panel.appendChild(titleLabel);
+    panel.appendChild(err);
+    panel.appendChild(actions);
+    popup.appendChild(panel);
+    appendPopup(popup);
+    const close = () => closeHtmlTileTitleEditor();
+    cancel.addEventListener("click", close);
+    bindPopupDismiss(popup, panel, null, close);
+    save.addEventListener("click", async () => {
+      const nextTitle = normalizeHtmlTileTitle(titleInput.value, tile.attribute);
+      if (!nextTitle) {
+        err.hidden = false;
+        err.textContent = "Enter a display name";
+        return;
+      }
+      err.hidden = true;
+      const idx = htmlTiles.findIndex((candidate) => candidate.id === tile.id);
+      const prevTitle = idx >= 0 ? htmlTiles[idx].title : tile.title;
+      if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: nextTitle };
+      tile.title = nextTitle;
+      save.disabled = true;
+      const saved = await persistFavoriteLayout(favoritesLayout);
+      save.disabled = false;
+      if (!saved) {
+        if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: prevTitle };
+        tile.title = prevTitle;
+        return;
+      }
+      close();
+      if (currentCategory() === "favorites") renderFavoritesPopup();
+      flash("HTML tile renamed");
+    });
+    htmlTitleEditorOpen = true;
+    syncEmbedStateToMld();
+    requestAnimationFrame(() => {
+      titleInput.focus();
+      titleInput.select();
+    });
+  }
+
+  function openHtmlTilePicker() {
+    if (postCall("isFavoritesReorderActive")) {
+      flash("Finish reordering favorites first", true);
+      return;
+    }
+    const popup = ce("div", "confirm-popup open");
+    popup.setAttribute("role", "dialog");
+    popup.setAttribute("aria-modal", "true");
+    popup.setAttribute("aria-labelledby", "fav-html-picker-title");
+    const panel = ce("div", "confirm-panel fav-html-picker-panel");
+    const heading = ce("h2", "fav-embed-editor-heading");
+    heading.id = "fav-html-picker-title";
+    heading.textContent = "Add HTML tiles";
+    panel.appendChild(heading);
+    const selected = new Set();
+    const existing = new Set(favoritesLayout.filter((key) => key.startsWith("h:")));
+    const available = htmlTiles.filter((tile) => !existing.has(htmlFavoriteKey(tile.id)));
+    const list = ce("div", "fav-html-picker-list");
+    if (!htmlTiles.length) {
+      const empty = ce("p", "fav-embed-editor-help");
+      empty.textContent = "Select HTML source devices in the Modern Dashboard Hubitat app settings, then return here.";
+      panel.appendChild(empty);
+    } else if (!available.length) {
+      const empty = ce("p", "fav-embed-editor-help");
+      empty.textContent = "All configured HTML sources are already in Favorites.";
+      panel.appendChild(empty);
+    } else {
+      const help = ce("p", "fav-embed-editor-help");
+      help.textContent = "Choose one or more configured device attributes.";
+      panel.appendChild(help);
+      for (const tile of available) {
+        const option = ce("label", "fav-html-picker-option");
+        const input = ce("input");
+        input.type = "checkbox";
+        input.value = tile.id;
+        const copy = ce("span", "fav-html-picker-copy");
+        const name = ce("span", "fav-html-picker-name");
+        name.textContent = tile.title || tile.attribute || "HTML";
+        const meta = ce("span", "fav-html-picker-meta");
+        meta.textContent = "Device " + tile.deviceId + " · " + tile.attribute;
+        copy.appendChild(name);
+        copy.appendChild(meta);
+        option.appendChild(input);
+        option.appendChild(copy);
+        list.appendChild(option);
+        input.addEventListener("change", () => {
+          if (input.checked) selected.add(tile.id);
+          else selected.delete(tile.id);
+          addBtn.disabled = selected.size === 0;
+        });
+      }
+      panel.appendChild(list);
+    }
+    const actions = ce("div", "confirm-actions");
+    const cancel = ce("button", "ghost-btn confirm-cancel");
+    cancel.type = "button";
+    cancel.textContent = available.length ? "Cancel" : "Close";
+    const addBtn = ce("button", "confirm-btn");
+    addBtn.type = "button";
+    addBtn.textContent = "Add selected";
+    addBtn.disabled = true;
+    if (available.length) actions.appendChild(addBtn);
+    actions.appendChild(cancel);
+    panel.appendChild(actions);
+    popup.appendChild(panel);
+    const close = () => popup.remove();
+    cancel.addEventListener("click", close);
+    bindPopupDismiss(popup, panel, null, close);
+    addBtn.addEventListener("click", async () => {
+      if (!selected.size) return;
+      const previousLayout = favoritesLayout.slice();
+      const nextLayout = favoritesLayout.slice();
+      for (const id of selected) {
+        const key = htmlFavoriteKey(id);
+        if (!nextLayout.includes(key)) nextLayout.push(key);
+      }
+      replaceList(favoritesLayout, nextLayout);
+      addBtn.disabled = true;
+      const saved = await persistFavoriteLayout(nextLayout);
+      if (!saved) {
+        replaceList(favoritesLayout, previousLayout);
+        addBtn.disabled = false;
+        return;
+      }
+      close();
+      try {
+        const data = await fetchData();
+        render(data);
+      } catch {
+        if (currentCategory() === "favorites") renderFavoritesPopup();
+      }
+      updateQuickNavVisibility();
+      flash(selected.size === 1 ? "HTML tile added" : selected.size + " HTML tiles added");
+    });
+    appendPopup(popup);
+    requestAnimationFrame(() => {
+      const first = list.querySelector("input") || cancel;
+      first.focus();
+    });
+  }
+
   // __MLD_SPLIT3__
 
   // ---------- HTML attribute favorite tiles (post3; keeps post2 under hub limit) ----------
@@ -12954,191 +13145,6 @@
     updateQuickNavVisibility();
     flash("HTML tile removed");
     return true;
-  }
-
-  function closeHtmlTileTitleEditor() {
-    const popup = document.getElementById("fav-html-title-editor");
-    if (popup) popup.remove();
-    htmlTitleEditorOpen = false;
-  }
-
-  function openHtmlTileTitleEditor(tile) {
-    if (postCall("isFavoritesReorderActive")) {
-      flash("Finish reordering favorites first", true);
-      return;
-    }
-    closeHtmlTileTitleEditor();
-    const popup = ce("div", "confirm-popup open fav-html-title-editor");
-    popup.id = "fav-html-title-editor";
-    popup.setAttribute("role", "dialog");
-    popup.setAttribute("aria-modal", "true");
-    popup.setAttribute("aria-labelledby", "fav-html-title-editor-heading");
-    const panel = ce("div", "confirm-panel fav-embed-editor-panel");
-    const heading = ce("h2", "fav-embed-editor-heading");
-    heading.id = "fav-html-title-editor-heading";
-    heading.textContent = "Rename HTML tile";
-    const help = ce("p", "fav-embed-editor-help");
-    help.textContent = "Tile Builder names live in driver state and are not readable by mDash. Set a display name here (syncs across devices).";
-    const titleLabel = ce("label", "fav-embed-field");
-    const titleSpan = ce("span");
-    titleSpan.textContent = "Display name";
-    const titleInput = ce("input", "topbar-overflow-input fav-embed-title-input");
-    titleInput.type = "text";
-    titleInput.maxLength = MAX_EMBED_TITLE;
-    titleInput.value = tile.title || tile.attribute || "HTML";
-    titleLabel.appendChild(titleSpan);
-    titleLabel.appendChild(titleInput);
-    const err = ce("div", "fav-embed-editor-error");
-    err.hidden = true;
-    const actions = ce("div", "confirm-actions");
-    const cancel = ce("button", "ghost-btn confirm-cancel");
-    cancel.type = "button";
-    cancel.textContent = "Cancel";
-    const save = ce("button", "confirm-btn");
-    save.type = "button";
-    save.textContent = "Save";
-    actions.appendChild(cancel);
-    actions.appendChild(save);
-    panel.appendChild(heading);
-    panel.appendChild(help);
-    panel.appendChild(titleLabel);
-    panel.appendChild(err);
-    panel.appendChild(actions);
-    popup.appendChild(panel);
-    appendPopup(popup);
-    const close = () => closeHtmlTileTitleEditor();
-    cancel.addEventListener("click", close);
-    bindPopupDismiss(popup, panel, null, close);
-    save.addEventListener("click", async () => {
-      const nextTitle = normalizeHtmlTileTitle(titleInput.value, tile.attribute);
-      if (!nextTitle) {
-        err.hidden = false;
-        err.textContent = "Enter a display name";
-        return;
-      }
-      err.hidden = true;
-      const idx = htmlTiles.findIndex((candidate) => candidate.id === tile.id);
-      const prevTitle = idx >= 0 ? htmlTiles[idx].title : tile.title;
-      if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: nextTitle };
-      tile.title = nextTitle;
-      save.disabled = true;
-      const saved = await persistFavoriteLayout(favoritesLayout);
-      save.disabled = false;
-      if (!saved) {
-        if (idx >= 0) htmlTiles[idx] = { ...htmlTiles[idx], title: prevTitle };
-        tile.title = prevTitle;
-        return;
-      }
-      close();
-      if (currentCategory() === "favorites") renderFavoritesPopup();
-      flash("HTML tile renamed");
-    });
-    htmlTitleEditorOpen = true;
-    requestAnimationFrame(() => {
-      titleInput.focus();
-      titleInput.select();
-    });
-  }
-
-  function openHtmlTilePicker() {
-    if (postCall("isFavoritesReorderActive")) {
-      flash("Finish reordering favorites first", true);
-      return;
-    }
-    const popup = ce("div", "confirm-popup open");
-    popup.setAttribute("role", "dialog");
-    popup.setAttribute("aria-modal", "true");
-    popup.setAttribute("aria-labelledby", "fav-html-picker-title");
-    const panel = ce("div", "confirm-panel fav-html-picker-panel");
-    const heading = ce("h2", "fav-embed-editor-heading");
-    heading.id = "fav-html-picker-title";
-    heading.textContent = "Add HTML tiles";
-    panel.appendChild(heading);
-    const selected = new Set();
-    const existing = new Set(favoritesLayout.filter((key) => key.startsWith("h:")));
-    const available = htmlTiles.filter((tile) => !existing.has(htmlFavoriteKey(tile.id)));
-    const list = ce("div", "fav-html-picker-list");
-    if (!htmlTiles.length) {
-      const empty = ce("p", "fav-embed-editor-help");
-      empty.textContent = "Select HTML source devices in the Modern Dashboard Hubitat app settings, then return here.";
-      panel.appendChild(empty);
-    } else if (!available.length) {
-      const empty = ce("p", "fav-embed-editor-help");
-      empty.textContent = "All configured HTML sources are already in Favorites.";
-      panel.appendChild(empty);
-    } else {
-      const help = ce("p", "fav-embed-editor-help");
-      help.textContent = "Choose one or more configured device attributes.";
-      panel.appendChild(help);
-      for (const tile of available) {
-        const option = ce("label", "fav-html-picker-option");
-        const input = ce("input");
-        input.type = "checkbox";
-        input.value = tile.id;
-        const copy = ce("span", "fav-html-picker-copy");
-        const name = ce("span", "fav-html-picker-name");
-        name.textContent = tile.title || tile.attribute || "HTML";
-        const meta = ce("span", "fav-html-picker-meta");
-        meta.textContent = "Device " + tile.deviceId + " · " + tile.attribute;
-        copy.appendChild(name);
-        copy.appendChild(meta);
-        option.appendChild(input);
-        option.appendChild(copy);
-        list.appendChild(option);
-        input.addEventListener("change", () => {
-          if (input.checked) selected.add(tile.id);
-          else selected.delete(tile.id);
-          addBtn.disabled = selected.size === 0;
-        });
-      }
-      panel.appendChild(list);
-    }
-    const actions = ce("div", "confirm-actions");
-    const cancel = ce("button", "ghost-btn confirm-cancel");
-    cancel.type = "button";
-    cancel.textContent = available.length ? "Cancel" : "Close";
-    const addBtn = ce("button", "confirm-btn");
-    addBtn.type = "button";
-    addBtn.textContent = "Add selected";
-    addBtn.disabled = true;
-    if (available.length) actions.appendChild(addBtn);
-    actions.appendChild(cancel);
-    panel.appendChild(actions);
-    popup.appendChild(panel);
-    const close = () => popup.remove();
-    cancel.addEventListener("click", close);
-    bindPopupDismiss(popup, panel, null, close);
-    addBtn.addEventListener("click", async () => {
-      if (!selected.size) return;
-      const previousLayout = favoritesLayout.slice();
-      const nextLayout = favoritesLayout.slice();
-      for (const id of selected) {
-        const key = htmlFavoriteKey(id);
-        if (!nextLayout.includes(key)) nextLayout.push(key);
-      }
-      replaceList(favoritesLayout, nextLayout);
-      addBtn.disabled = true;
-      const saved = await persistFavoriteLayout(nextLayout);
-      if (!saved) {
-        replaceList(favoritesLayout, previousLayout);
-        addBtn.disabled = false;
-        return;
-      }
-      close();
-      try {
-        const data = await fetchData();
-        render(data);
-      } catch {
-        if (currentCategory() === "favorites") renderFavoritesPopup();
-      }
-      updateQuickNavVisibility();
-      flash(selected.size === 1 ? "HTML tile added" : selected.size + " HTML tiles added");
-    });
-    appendPopup(popup);
-    requestAnimationFrame(() => {
-      const first = list.querySelector("input") || cancel;
-      first.focus();
-    });
   }
 
   function makeHtmlFavoriteCard(tile) {

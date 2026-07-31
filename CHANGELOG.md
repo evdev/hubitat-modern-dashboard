@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.64
+
+- **Fix:** move HTML tile rename/picker UI out of `mld-app-post3.js` so that chunk
+  stays under Hubitat Cloud's ~122 KB OAuth/MQTT response limit. 0.3.63 had grown
+  post3 to ~123 KB, which could prevent the scheduler (and cameras) module from
+  loading on the cloud URL.
+
 ## 0.3.63
 
 - **Favorites:** dimmable lights can use compact size — bulb dot toggles on/off, tap the
