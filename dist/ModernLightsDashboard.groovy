@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.72
+// Modern Dashboard v0.3.73
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.72"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.73"
 
 definition(
     name: "Modern Dashboard",
@@ -53,7 +53,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.72 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.73 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -387,7 +387,7 @@ def schedImportPage() {
     }
 }
 
-def triggersPage() {
+def triggersPage(ignoredParams = null) {
     dynamicPage(name: "triggersPage", title: "Dashboard trigger rules", install: false, uninstall: false) {
         section("About") {
             paragraph "<small>Each rule watches one device event and can show a camera overlay, play a browser tone, and/or queue notification text. Max ${maxTriggerRules()} rules. Select eligible devices under <b>Dashboard triggers</b> on the main page first.</small>"
@@ -432,14 +432,27 @@ def triggersPage() {
 
 def triggerEditPage(hrefParams) {
     if (state.triggerEditReturnToList == true) {
+        def msg = state.triggerReturnToListMsg ?: "Returning to trigger rules."
         state.remove("triggerEditReturnToList")
+        state.remove("triggerReturnToListMsg")
         state.remove("triggerEditLoadedId")
-        return triggersPage()
+        state.remove("triggerEditRuleId")
+        triggerReturnToListBridge(msg)
+        return
     }
     // Hubitat passes href params as this method argument (not the HTTP params map).
     if (hrefParams != null) {
         def incoming = hrefParams.ruleId
-        if (incoming != null) state.triggerEditRuleId = incoming.toString().trim()
+        if (incoming != null) {
+            def incomingId = incoming.toString().trim()
+            if (incomingId && !parseTriggerRulesMap()[incomingId]) {
+                state.remove("triggerEditRuleId")
+                state.remove("triggerEditLoadedId")
+                triggerReturnToListBridge("That rule no longer exists.")
+                return
+            }
+            state.triggerEditRuleId = incomingId
+        }
     }
     def ruleId = state.triggerEditRuleId?.toString()?.trim() ?: ""
     def existing = ruleId ? parseTriggerRulesMap()[ruleId] : null
@@ -638,6 +651,10 @@ def appButtonHandler(btn) {
     } else if (btn?.toString()?.startsWith("btnTrigDel_")) {
         def rid = btn.toString().substring("btnTrigDel_".length())
         triggerDeleteRule(rid)
+        state.remove("triggerEditRuleId")
+        state.remove("triggerEditLoadedId")
+        state.triggerReturnToListMsg = "Rule deleted."
+        state.triggerEditReturnToList = true
     }
 }
 
@@ -5623,6 +5640,12 @@ def initializeHsm() {
 // ---------------------------------------------------------------------------
 // Dashboard triggers (camera overlay / tones / notification text)
 // ---------------------------------------------------------------------------
+def triggerReturnToListBridge(msg) {
+    dynamicPage(name: "triggerEditPage", title: "Trigger rules", install: false, uninstall: false, nextPage: "triggersPage") {
+        section { paragraph "<small>${htmlEsc(msg?.toString() ?: "Returning to trigger rules.")}</small>" }
+    }
+}
+
 def maxTriggerRules() { return 6 }
 def maxTriggerQueue() { return 20 }
 def maxTriggerTextLen() { return 240 }
@@ -5868,6 +5891,7 @@ def triggerSaveRuleFromUi() {
     state.triggerEditRuleId = ""
     state.remove("triggerEditLoadedId")
     state.remove("triggerEditError")
+    state.triggerReturnToListMsg = existingId ? "Rule saved." : "Rule added."
     state.triggerEditReturnToList = true
     try { initializeTriggers() } catch (e) {}
 }

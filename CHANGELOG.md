@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.73
+
+- **Fix:** Trigger rule save/delete return via a bridge page so Hubitat `nextPage` navigation
+  stays reliable.
+- **Fix:** Deleting a trigger rule returns to the rules list; stale rule IDs show a clear
+  message.
+- **PWA:** Refreshed app icon — cleaner dashboard tile motif with maskable safe-zone
+  compliance.
+
 ## 0.3.72
 
 - **Fix:** Saving a trigger rule returns to the trigger rules list instead of leaving the
