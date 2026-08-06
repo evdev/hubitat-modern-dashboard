@@ -431,6 +431,11 @@ def triggersPage() {
 }
 
 def triggerEditPage(hrefParams) {
+    if (state.triggerEditReturnToList == true) {
+        state.remove("triggerEditReturnToList")
+        state.remove("triggerEditLoadedId")
+        return triggersPage()
+    }
     // Hubitat passes href params as this method argument (not the HTTP params map).
     if (hrefParams != null) {
         def incoming = hrefParams.ruleId
@@ -479,7 +484,10 @@ def triggerEditPage(hrefParams) {
         } catch (e) {}
     }
 
-    dynamicPage(name: "triggerEditPage", title: ruleId ? "Edit trigger rule" : "Add trigger rule", install: false, uninstall: false) {
+    dynamicPage(name: "triggerEditPage", title: ruleId ? "Edit trigger rule" : "Add trigger rule", install: false, uninstall: false, nextPage: "triggersPage") {
+        section("Navigation") {
+            href name: "backTrigListTop", page: "triggersPage", title: "Back to trigger rules"
+        }
         def kindOpts = [["contact": "Contact opens"], ["motion": "Motion active"], ["button": "Button pushed"]]
         def curKind = trigEditKind?.toString() ?: (existing instanceof Map ? existing.kind?.toString() : null) ?: "contact"
         def deviceOpts = triggerDeviceEnumOptions(curKind)
@@ -519,9 +527,6 @@ def triggerEditPage(hrefParams) {
             if (ruleId) {
                 paragraph "<small>Editing rule id <code>${htmlEsc(ruleId)}</code></small>"
             }
-        }
-        section("") {
-            href "backTrigList", title: "Back to trigger rules", page: "triggersPage"
         }
     }
 }
@@ -5860,9 +5865,10 @@ def triggerSaveRuleFromUi() {
     def rule = result.rule
     map[rule.id] = rule
     saveTriggerRulesMap(map)
-    state.triggerEditLoadedId = rule.id
-    state.triggerEditRuleId = rule.id
+    state.triggerEditRuleId = ""
+    state.remove("triggerEditLoadedId")
     state.remove("triggerEditError")
+    state.triggerEditReturnToList = true
     try { initializeTriggers() } catch (e) {}
 }
 

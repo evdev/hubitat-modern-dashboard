@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.72
+
+- **Fix:** Saving a trigger rule returns to the trigger rules list instead of leaving the
+  edit page in a stale state.
+- **Fix:** Trigger rule edit page adds top **Back to trigger rules** navigation and
+  `nextPage` linkage for Hubitat page flow.
+
 ## 0.3.71
 
 - **Fix:** Trigger rule edit pages open correctly — Hubitat passes href params as the page

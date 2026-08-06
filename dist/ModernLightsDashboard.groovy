@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.71
+// Modern Dashboard v0.3.72
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.71"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.72"
 
 definition(
     name: "Modern Dashboard",
@@ -53,7 +53,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.71 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.72 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -431,6 +431,11 @@ def triggersPage() {
 }
 
 def triggerEditPage(hrefParams) {
+    if (state.triggerEditReturnToList == true) {
+        state.remove("triggerEditReturnToList")
+        state.remove("triggerEditLoadedId")
+        return triggersPage()
+    }
     // Hubitat passes href params as this method argument (not the HTTP params map).
     if (hrefParams != null) {
         def incoming = hrefParams.ruleId
@@ -479,7 +484,10 @@ def triggerEditPage(hrefParams) {
         } catch (e) {}
     }
 
-    dynamicPage(name: "triggerEditPage", title: ruleId ? "Edit trigger rule" : "Add trigger rule", install: false, uninstall: false) {
+    dynamicPage(name: "triggerEditPage", title: ruleId ? "Edit trigger rule" : "Add trigger rule", install: false, uninstall: false, nextPage: "triggersPage") {
+        section("Navigation") {
+            href name: "backTrigListTop", page: "triggersPage", title: "Back to trigger rules"
+        }
         def kindOpts = [["contact": "Contact opens"], ["motion": "Motion active"], ["button": "Button pushed"]]
         def curKind = trigEditKind?.toString() ?: (existing instanceof Map ? existing.kind?.toString() : null) ?: "contact"
         def deviceOpts = triggerDeviceEnumOptions(curKind)
@@ -519,9 +527,6 @@ def triggerEditPage(hrefParams) {
             if (ruleId) {
                 paragraph "<small>Editing rule id <code>${htmlEsc(ruleId)}</code></small>"
             }
-        }
-        section("") {
-            href "backTrigList", title: "Back to trigger rules", page: "triggersPage"
         }
     }
 }
@@ -5860,9 +5865,10 @@ def triggerSaveRuleFromUi() {
     def rule = result.rule
     map[rule.id] = rule
     saveTriggerRulesMap(map)
-    state.triggerEditLoadedId = rule.id
-    state.triggerEditRuleId = rule.id
+    state.triggerEditRuleId = ""
+    state.remove("triggerEditLoadedId")
     state.remove("triggerEditError")
+    state.triggerEditReturnToList = true
     try { initializeTriggers() } catch (e) {}
 }
 
