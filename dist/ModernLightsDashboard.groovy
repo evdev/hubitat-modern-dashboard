@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.70
+// Modern Dashboard v0.3.71
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.70"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.71"
 
 definition(
     name: "Modern Dashboard",
@@ -53,7 +53,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.70 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.71 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -205,12 +205,12 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             paragraph "<small>Each <b>Create</b> button adds an mDash Notifications child and selects it in the matching picker. Assign existing devices to either list. A device in both lists is treated as popup-only.</small>"
         }
-        section("Dashboard triggers", hideable: true, hidden: true) {
+        section("Dashboard triggers", hideable: true, hidden: triggersSectionCollapsed()) {
             paragraph "<small>Hub-evaluated rules can show a near full-screen camera overlay, play a browser tone, and queue notification text on open dashboards. Expand <b>Edit trigger rules…</b> to configure. Sound is gated by the arm/shunt switch (ON = tones armed) and each tablet’s local sound preference.</small>"
             input "triggersEnabled", "bool", title: "Enable dashboard triggers", defaultValue: false, submitOnChange: true
             if (triggersEnabled == true) {
                 input "alertsArmSwitch", "capability.switch", title: "Sound arm / shunt switch (ON = tones armed)",
-                    multiple: false, required: false, submitOnChange: true
+                    multiple: false, required: false
                 def armSw = alertsArmSwitch
                 if (armSw) {
                     def armOn = safeCurrent(armSw, "switch")
@@ -222,11 +222,11 @@ def mainPage() {
                     options: [["15": "15 seconds"], ["30": "30 seconds"], ["60": "60 seconds"], ["120": "2 minutes"], ["300": "5 minutes"]],
                     defaultValue: "60", required: false
                 input "triggerContactDevices", "capability.contactSensor", title: "Contact sensors available to trigger rules",
-                    multiple: true, required: false, showFilter: true, submitOnChange: true
+                    multiple: true, required: false, showFilter: true
                 input "triggerMotionDevices", "capability.motionSensor", title: "Motion sensors available to trigger rules",
-                    multiple: true, required: false, showFilter: true, submitOnChange: true
+                    multiple: true, required: false, showFilter: true
                 input "triggerButtonDevices", "capability.pushableButton", title: "Buttons / doorbells available to trigger rules",
-                    multiple: true, required: false, showFilter: true, submitOnChange: true
+                    multiple: true, required: false, showFilter: true
                 href "toTriggers", title: "Edit trigger rules…",
                     description: triggerRulesSummary(),
                     page: "triggersPage"
@@ -409,8 +409,8 @@ def triggersPage() {
                     if (broken) warn = " — source device missing"
                     else if (camMissing) warn = " — camera no longer configured"
                     paragraph "<b>${htmlEsc(triggerRuleLabel(r))}</b><br><small>${htmlEsc(triggerRuleSummary(r))}${htmlEsc(warn)}</small>"
-                    href "editTrig_${rid}", title: "Edit…", description: rid,
-                        page: "triggerEditPage", params: [ruleId: rid]
+                    href name: "editTrig_${rid}", page: "triggerEditPage", title: "Edit…", description: rid,
+                        params: [ruleId: rid]
                     input name: "btnTrigDel_${rid}", type: "button", title: "Delete ${triggerRuleLabel(r)}"
                 }
             }
@@ -419,9 +419,9 @@ def triggersPage() {
             if (ids.size() >= maxTriggerRules()) {
                 paragraph "<small>Rule limit reached (${maxTriggerRules()}).</small>"
             } else {
-                href "editTrigNew", title: "Add trigger rule…",
+                href name: "editTrigNew", page: "triggerEditPage", title: "Add trigger rule…",
                     description: "Contact open, motion active, or button",
-                    page: "triggerEditPage", params: [ruleId: ""]
+                    params: [ruleId: ""]
             }
         }
         section("") {
@@ -430,9 +430,13 @@ def triggersPage() {
     }
 }
 
-def triggerEditPage() {
-    def ruleId = params?.ruleId?.toString()?.trim()
-    if (ruleId == null) ruleId = ""
+def triggerEditPage(hrefParams) {
+    // Hubitat passes href params as this method argument (not the HTTP params map).
+    if (hrefParams != null) {
+        def incoming = hrefParams.ruleId
+        if (incoming != null) state.triggerEditRuleId = incoming.toString().trim()
+    }
+    def ruleId = state.triggerEditRuleId?.toString()?.trim() ?: ""
     def existing = ruleId ? parseTriggerRulesMap()[ruleId] : null
     if (existing instanceof Map) {
         try {
@@ -5618,6 +5622,15 @@ def maxTriggerRules() { return 6 }
 def maxTriggerQueue() { return 20 }
 def maxTriggerTextLen() { return 240 }
 def defaultToneExpireMs() { return 15000L }
+
+def triggersSectionCollapsed() {
+    if (triggersEnabled == true) return false
+    if (alertsArmSwitch) return false
+    if (asDeviceList(triggerContactDevices)) return false
+    if (asDeviceList(triggerMotionDevices)) return false
+    if (asDeviceList(triggerButtonDevices)) return false
+    return true
+}
 
 def triggersIsEnabled() {
     return triggersEnabled == true

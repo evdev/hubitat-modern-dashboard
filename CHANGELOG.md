@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.71
+
+- **Fix:** Trigger rule edit pages open correctly — Hubitat passes href params as the page
+  method argument; rule ID is stored in state for reliable edit navigation.
+- **Fix:** Trigger rules list Edit/Add links use explicit `name:` for reliable Hubitat navigation.
+- **Fix:** Dashboard triggers section auto-expands when triggers are enabled or any trigger
+  device pickers / arm switch are configured.
+- **Fix:** Remove unnecessary `submitOnChange` on trigger device pickers and arm switch.
+
 ## 0.3.70
 
 - **Dashboard triggers:** companion-app rules (contact open, motion active, button)
