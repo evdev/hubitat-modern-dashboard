@@ -543,6 +543,7 @@ function substituteGroovyTemplate(template) {
     .replaceAll("__APP_VERSION__", pkg.version)
     .replaceAll("__APP_AUTHOR__", APP_AUTHOR)
     .replaceAll("__GITHUB_URL__", GITHUB_URL)
+    .replaceAll("__PWA_ICON_BASE_URL__", `${HPM_BASE_URL}/upload`)
     .replaceAll("__LICENSE_NAME__", LICENSE_NAME)
     .replaceAll("__APP_NAMESPACE__", NS)
     .replaceAll("__NOTIF_DRIVER_NAME__", DRIVER_DISPLAY_NAME);
@@ -625,6 +626,17 @@ assertUploadBlobLimits();
 
 const groovyRaw = readFileSync(join(root, "app", "ModernLightsDashboard.groovy.template"), "utf8");
 const groovy = substituteGroovyTemplate(groovyRaw);
+if (groovy.includes("__PWA_ICON_BASE_URL__")) {
+  throw new Error("PWA icon base URL placeholder was not replaced");
+}
+const expectedIconUrlTemplate =
+  `${HPM_BASE_URL}/upload/mld-icon-\${size}.png?v=${pkg.version}`;
+if (
+  !groovy.includes(expectedIconUrlTemplate) ||
+  !groovy.includes('for (def size : ["192", "512"])')
+) {
+  throw new Error("Generated Groovy manifest is missing public 192/512px PWA icon URLs");
+}
 writeFileSync(join(dist, "ModernLightsDashboard.groovy"), groovy);
 
 const driverSrc = join(root, "drivers", DRIVER_FILE);

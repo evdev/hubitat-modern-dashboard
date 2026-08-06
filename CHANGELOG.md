@@ -1,11 +1,18 @@
 # Changelog
 
+## 0.3.77
+
+- **Fix:** Restore Android / Pixel PWA installability after the 0.3.76 regression.
+  The small hub-generated manifest now references public release PNGs; Hubitat's
+  OAuth rendering path corrupts proxied binary PNG responses and caused Chrome to
+  suppress the install prompt.
+
 ## 0.3.76
 
-- **Fix:** Android / Pixel PWA install no longer quietly fails — hub-generated
-  manifest uses tokenized `icons/icon-*.png` URLs instead of inlining ~104 KB of
-  data-URI PNGs (Hubitat Cloud can drop OAuth responses near ~118 KB). Icon
-  `purpose` split into separate `any` and `maskable` entries for Chrome WebAPK.
+- **PWA:** Reduced the hub-generated manifest by replacing inlined icon data with
+  tokenized icon URLs and split `any` / `maskable` icon entries. The hub-proxied
+  icon URLs proved incompatible with Chrome installability and were replaced in
+  0.3.77.
 
 ## 0.3.75
 

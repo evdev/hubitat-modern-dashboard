@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.76
+// Modern Dashboard v0.3.77
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.76"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.77"
 
 definition(
     name: "Modern Dashboard",
@@ -52,7 +52,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.76 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.77 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -1651,9 +1651,9 @@ def renderJsPost3() {
 }
 
 def renderManifest() {
-    // Use HTTP icon URLs with the OAuth token — do NOT inline data: URIs.
-    // Embedding both PNGs made the cloud manifest ~104 KB; Hubitat Cloud can drop
-    // OAuth responses near ~118 KB, which silently breaks Android / Pixel WebAPK install.
+    // Keep the manifest small, but do not proxy PNG bytes through Hubitat Cloud:
+    // Hubitat's text-oriented render path corrupts binary image responses. Published
+    // release assets are public, valid PNGs that Chrome's WebAPK service can fetch.
     def token = params?.access_token
     def q = token ? "?access_token=${token}" : ""
     def out = new StringBuilder()
@@ -1669,7 +1669,7 @@ def renderManifest() {
     // and Android launchers prefer an explicit maskable icon.
     def icons = []
     for (def size : ["192", "512"]) {
-        def src = "icons/icon-${size}.png${q}"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}.png?v=0.3.77"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'

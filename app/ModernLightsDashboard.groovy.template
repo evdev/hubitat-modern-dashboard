@@ -1651,9 +1651,9 @@ def renderJsPost3() {
 }
 
 def renderManifest() {
-    // Use HTTP icon URLs with the OAuth token — do NOT inline data: URIs.
-    // Embedding both PNGs made the cloud manifest ~104 KB; Hubitat Cloud can drop
-    // OAuth responses near ~118 KB, which silently breaks Android / Pixel WebAPK install.
+    // Keep the manifest small, but do not proxy PNG bytes through Hubitat Cloud:
+    // Hubitat's text-oriented render path corrupts binary image responses. Published
+    // release assets are public, valid PNGs that Chrome's WebAPK service can fetch.
     def token = params?.access_token
     def q = token ? "?access_token=${token}" : ""
     def out = new StringBuilder()
@@ -1669,7 +1669,7 @@ def renderManifest() {
     // and Android launchers prefer an explicit maskable icon.
     def icons = []
     for (def size : ["192", "512"]) {
-        def src = "icons/icon-${size}.png${q}"
+        def src = "__PWA_ICON_BASE_URL__/mld-icon-${size}.png?v=__APP_VERSION__"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
