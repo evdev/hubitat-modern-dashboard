@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.73
+// Modern Dashboard v0.3.74
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.73"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.74"
 
 definition(
     name: "Modern Dashboard",
@@ -34,7 +34,6 @@ preferences {
     page(name: "mainPage", uninstall: true, install: true)
     page(name: "schedImportPage", title: "Import Simple Automation Rules", install: false, uninstall: false)
     page(name: "triggersPage", title: "Dashboard trigger rules", install: false, uninstall: false)
-    page(name: "triggerEditPage", title: "Edit trigger rule", install: false, uninstall: false)
 }
 
 def mainPage() {
@@ -53,7 +52,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.73 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.74 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -387,7 +386,12 @@ def schedImportPage() {
     }
 }
 
-def triggersPage(ignoredParams = null) {
+def triggersPage() {
+    // Edit/Add runs on this same page (state.triggerUiMode) — avoids Hubitat href params,
+    // which can throw String.call() when the page method signature does not match.
+    if (state.triggerUiMode == "edit") {
+        return triggerEditUi()
+    }
     dynamicPage(name: "triggersPage", title: "Dashboard trigger rules", install: false, uninstall: false) {
         section("About") {
             paragraph "<small>Each rule watches one device event and can show a camera overlay, play a browser tone, and/or queue notification text. Max ${maxTriggerRules()} rules. Select eligible devices under <b>Dashboard triggers</b> on the main page first.</small>"
@@ -409,8 +413,7 @@ def triggersPage(ignoredParams = null) {
                     if (broken) warn = " — source device missing"
                     else if (camMissing) warn = " — camera no longer configured"
                     paragraph "<b>${htmlEsc(triggerRuleLabel(r))}</b><br><small>${htmlEsc(triggerRuleSummary(r))}${htmlEsc(warn)}</small>"
-                    href name: "editTrig_${rid}", page: "triggerEditPage", title: "Edit…", description: rid,
-                        params: [ruleId: rid]
+                    input name: "btnTrigEdit_${rid}", type: "button", title: "Edit ${triggerRuleLabel(r)}"
                     input name: "btnTrigDel_${rid}", type: "button", title: "Delete ${triggerRuleLabel(r)}"
                 }
             }
@@ -419,43 +422,41 @@ def triggersPage(ignoredParams = null) {
             if (ids.size() >= maxTriggerRules()) {
                 paragraph "<small>Rule limit reached (${maxTriggerRules()}).</small>"
             } else {
-                href name: "editTrigNew", page: "triggerEditPage", title: "Add trigger rule…",
-                    description: "Contact open, motion active, or button",
-                    params: [ruleId: ""]
+                input name: "btnTrigAdd", type: "button", title: "Add trigger rule"
             }
         }
         section("") {
-            href "backMainTrig", title: "Back to Modern Dashboard settings", page: "mainPage"
+            href name: "backMainTrig", page: "mainPage", title: "Back to Modern Dashboard settings"
         }
     }
 }
 
-def triggerEditPage(hrefParams) {
-    if (state.triggerEditReturnToList == true) {
-        def msg = state.triggerReturnToListMsg ?: "Returning to trigger rules."
-        state.remove("triggerEditReturnToList")
-        state.remove("triggerReturnToListMsg")
-        state.remove("triggerEditLoadedId")
-        state.remove("triggerEditRuleId")
-        triggerReturnToListBridge(msg)
-        return
-    }
-    // Hubitat passes href params as this method argument (not the HTTP params map).
-    if (hrefParams != null) {
-        def incoming = hrefParams.ruleId
-        if (incoming != null) {
-            def incomingId = incoming.toString().trim()
-            if (incomingId && !parseTriggerRulesMap()[incomingId]) {
-                state.remove("triggerEditRuleId")
-                state.remove("triggerEditLoadedId")
-                triggerReturnToListBridge("That rule no longer exists.")
-                return
-            }
-            state.triggerEditRuleId = incomingId
-        }
-    }
+def triggerBeginEdit(ruleId) {
+    state.triggerUiMode = "edit"
+    state.triggerEditRuleId = (ruleId ?: "").toString().trim()
+    state.remove("triggerEditLoadedId")
+    state.remove("triggerEditError")
+    state.remove("triggerEditReturnToList")
+    state.remove("triggerReturnToListMsg")
+}
+
+def triggerCancelEdit() {
+    state.remove("triggerUiMode")
+    state.remove("triggerEditRuleId")
+    state.remove("triggerEditLoadedId")
+    state.remove("triggerEditError")
+    state.remove("triggerEditReturnToList")
+    state.remove("triggerReturnToListMsg")
+}
+
+def triggerEditUi() {
     def ruleId = state.triggerEditRuleId?.toString()?.trim() ?: ""
     def existing = ruleId ? parseTriggerRulesMap()[ruleId] : null
+    if (ruleId && !(existing instanceof Map)) {
+        // Stale id (deleted elsewhere) — return to list.
+        triggerCancelEdit()
+        return triggersPage()
+    }
     if (existing instanceof Map) {
         try {
             if (state.triggerEditLoadedId?.toString() != ruleId) {
@@ -497,9 +498,9 @@ def triggerEditPage(hrefParams) {
         } catch (e) {}
     }
 
-    dynamicPage(name: "triggerEditPage", title: ruleId ? "Edit trigger rule" : "Add trigger rule", install: false, uninstall: false, nextPage: "triggersPage") {
+    dynamicPage(name: "triggersPage", title: ruleId ? "Edit trigger rule" : "Add trigger rule", install: false, uninstall: false) {
         section("Navigation") {
-            href name: "backTrigListTop", page: "triggersPage", title: "Back to trigger rules"
+            input name: "btnTrigCancel", type: "button", title: "Back to trigger rules"
         }
         def kindOpts = [["contact": "Contact opens"], ["motion": "Motion active"], ["button": "Button pushed"]]
         def curKind = trigEditKind?.toString() ?: (existing instanceof Map ? existing.kind?.toString() : null) ?: "contact"
@@ -536,7 +537,6 @@ def triggerEditPage(hrefParams) {
         }
         section("Save") {
             input name: "btnTrigSave", type: "button", title: ruleId ? "Save rule" : "Add rule"
-            state.triggerEditRuleId = ruleId ?: ""
             if (ruleId) {
                 paragraph "<small>Editing rule id <code>${htmlEsc(ruleId)}</code></small>"
             }
@@ -648,13 +648,16 @@ def appButtonHandler(btn) {
         triggerSendTestAction()
     } else if (btn == "btnTrigSave") {
         triggerSaveRuleFromUi()
+    } else if (btn == "btnTrigCancel" || btn == "btnTrigAdd") {
+        if (btn == "btnTrigAdd") triggerBeginEdit("")
+        else triggerCancelEdit()
+    } else if (btn?.toString()?.startsWith("btnTrigEdit_")) {
+        def rid = btn.toString().substring("btnTrigEdit_".length())
+        triggerBeginEdit(rid)
     } else if (btn?.toString()?.startsWith("btnTrigDel_")) {
         def rid = btn.toString().substring("btnTrigDel_".length())
         triggerDeleteRule(rid)
-        state.remove("triggerEditRuleId")
-        state.remove("triggerEditLoadedId")
-        state.triggerReturnToListMsg = "Rule deleted."
-        state.triggerEditReturnToList = true
+        triggerCancelEdit()
     }
 }
 
@@ -5640,12 +5643,6 @@ def initializeHsm() {
 // ---------------------------------------------------------------------------
 // Dashboard triggers (camera overlay / tones / notification text)
 // ---------------------------------------------------------------------------
-def triggerReturnToListBridge(msg) {
-    dynamicPage(name: "triggerEditPage", title: "Trigger rules", install: false, uninstall: false, nextPage: "triggersPage") {
-        section { paragraph "<small>${htmlEsc(msg?.toString() ?: "Returning to trigger rules.")}</small>" }
-    }
-}
-
 def maxTriggerRules() { return 6 }
 def maxTriggerQueue() { return 20 }
 def maxTriggerTextLen() { return 240 }
@@ -5888,11 +5885,7 @@ def triggerSaveRuleFromUi() {
     def rule = result.rule
     map[rule.id] = rule
     saveTriggerRulesMap(map)
-    state.triggerEditRuleId = ""
-    state.remove("triggerEditLoadedId")
-    state.remove("triggerEditError")
-    state.triggerReturnToListMsg = existingId ? "Rule saved." : "Rule added."
-    state.triggerEditReturnToList = true
+    triggerCancelEdit()
     try { initializeTriggers() } catch (e) {}
 }
 
@@ -6033,12 +6026,51 @@ def triggerDeviceEvent(evt) {
     }
 }
 
+def liveNotificationIdSet() {
+    def ids = new HashSet()
+    for (item in parseNotificationsState()) {
+        def nid = item?.id?.toString()?.trim()
+        if (nid) ids.add(nid)
+    }
+    return ids
+}
+
+def pruneTriggerActionsForNotification(notifId) {
+    def key = notifId?.toString()?.trim()
+    if (!key) return
+    def list = parseTriggerActionsState()
+    def next = []
+    for (item in list) {
+        if (!(item instanceof Map)) continue
+        if (item.notificationId?.toString() != key) {
+            next << item
+            continue
+        }
+        // Text-only actions die with their notification.
+        if (!item.cameraId && !item.toneId) continue
+        // Keep live camera/tone actions; drop the dead notification link.
+        next << [
+            id: item.id,
+            ts: item.ts,
+            ruleId: item.ruleId,
+            cameraId: item.cameraId,
+            toneId: item.toneId,
+            caption: item.caption ?: "",
+            notificationId: null,
+            cameraExpiresAt: item.cameraExpiresAt,
+            toneExpiresAt: item.toneExpiresAt
+        ]
+    }
+    persistTriggerActionsState(next)
+}
+
 def parseTriggerActionsState() {
     if (!state.triggerActionsJson) return []
     try {
         def parsed = new groovy.json.JsonSlurper().parseText(state.triggerActionsJson.toString())
         if (!(parsed instanceof List)) return []
         def nowMs = now()
+        def liveNotifs = null
         def out = []
         for (item in parsed) {
             if (!(item instanceof Map)) continue
@@ -6051,7 +6083,13 @@ def parseTriggerActionsState() {
             // Drop fully expired entries.
             def camLive = (item.cameraId && camExp != null && camExp > nowMs)
             def toneLive = (item.toneId && toneExp != null && toneExp > nowMs)
-            def textOnly = (!item.cameraId && !item.toneId && item.notificationId)
+            def notifId = item.notificationId?.toString()?.trim()
+            def textOnly = (!item.cameraId && !item.toneId && notifId)
+            if (textOnly) {
+                // Drop orphaned text-only actions whose notification was already acked.
+                if (liveNotifs == null) liveNotifs = liveNotificationIdSet()
+                if (!liveNotifs.contains(notifId)) continue
+            }
             if (!camLive && !toneLive && !textOnly) continue
             out << [
                 id: id,
@@ -6060,7 +6098,7 @@ def parseTriggerActionsState() {
                 cameraId: item.cameraId?.toString(),
                 toneId: item.toneId?.toString(),
                 caption: item.caption?.toString() ?: "",
-                notificationId: item.notificationId?.toString(),
+                notificationId: notifId,
                 cameraExpiresAt: camExp,
                 toneExpiresAt: toneExp
             ]
@@ -6742,6 +6780,8 @@ def notificationsAckFromId(id) {
     def list = parseNotificationsState()
     def next = list.findAll { it.id?.toString() != id }
     persistNotificationsState(next)
+    // Drop linked text-only trigger actions so they do not fill the queue forever.
+    try { pruneTriggerActionsForNotification(id) } catch (e) {}
     def out = new StringBuilder()
     out << '{"ok":true,"id":' << jsonStr(id)
     out << ',"notifications":' << notificationListJson(next)

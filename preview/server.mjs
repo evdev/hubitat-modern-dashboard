@@ -1398,6 +1398,12 @@ const server = createServer(async (req, res) => {
       return res.end(JSON.stringify({ ok: false, error: "missing id" }));
     }
     state.notifications = (state.notifications || []).filter((n) => n.id !== id);
+    // Mirror hub: drop text-only trigger actions linked to this notification.
+    state.triggerActions = (state.triggerActions || []).flatMap((a) => {
+      if (a.notificationId !== id) return [a];
+      if (!a.cameraId && !a.toneId) return [];
+      return [{ ...a, notificationId: null }];
+    });
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({
       ok: true,
@@ -1464,10 +1470,13 @@ const server = createServer(async (req, res) => {
     const auth = requireDashAuth(res, url, null);
     if (!auth) return;
     const now = Date.now();
+    const liveNotifIds = new Set((state.notifications || []).map((n) => n.id));
     state.triggerActions = (state.triggerActions || []).filter((a) => {
       const camOk = a.cameraId != null && Number(a.cameraExpiresAt) > now;
       const toneOk = a.toneId && Number(a.toneExpiresAt) > now;
-      return camOk || toneOk || a.notificationId;
+      const textOnly = a.notificationId && a.cameraId == null && !a.toneId;
+      if (textOnly) return liveNotifIds.has(a.notificationId);
+      return camOk || toneOk;
     });
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     return res.end(JSON.stringify({
@@ -1510,7 +1519,16 @@ const server = createServer(async (req, res) => {
     const auth = requireDashAuth(res, url, body);
     if (!auth) return;
     const now = Date.now();
-    const cameraId = body?.cameraId != null ? Number(body.cameraId) : (state.cameras?.[0]?.i ?? null);
+    // Explicit null/false/"" disables camera; omitted key defaults to first mock camera.
+    let cameraId = null;
+    if (Object.prototype.hasOwnProperty.call(body || {}, "cameraId")) {
+      if (body.cameraId != null && body.cameraId !== "" && body.cameraId !== false) {
+        cameraId = Number(body.cameraId);
+        if (Number.isNaN(cameraId)) cameraId = null;
+      }
+    } else {
+      cameraId = state.cameras?.[0]?.i ?? null;
+    }
     const durationSec = Number(body?.durationSec) || 60;
     const toneId = body?.toneId === "none" ? null : (body?.toneId || (state.alertsArmed ? "chime" : null));
     const caption = String(body?.text || body?.caption || "Front door motion — preview trigger");

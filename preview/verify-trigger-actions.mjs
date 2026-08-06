@@ -128,6 +128,25 @@ async function main() {
     assert(notifAck.json?.ok, "notification ack failed");
     assert(!(notifAck.json.notifications || []).some((n) => n.id === shuntedAction.notificationId), "notif still present");
 
+    // Text-only trigger actions must leave the queue when their notification is acked.
+    const pushText = await postJson("/trigger-actions/push", {
+      cameraId: null,
+      toneId: "none",
+      text: "Contact open — tone-free caption",
+    });
+    assert(pushText.json?.ok, "text-only push failed");
+    const textAction = (pushText.json.triggerActions || []).find(
+      (a) => a.notificationId && !a.cameraId && !a.toneId
+    );
+    assert(textAction?.notificationId, "text-only action missing");
+    const textNotifAck = await postJson("/notifications/ack", { id: textAction.notificationId });
+    assert(textNotifAck.json?.ok, "text-only notification ack failed");
+    const afterTextAck = await getJson("/trigger-actions");
+    assert(
+      !(afterTextAck.triggerActions || []).some((a) => a.id === textAction.id),
+      "text-only trigger action should be pruned after notification ack"
+    );
+
     console.log("verify-trigger-actions: ok");
   } finally {
     child.kill("SIGTERM");

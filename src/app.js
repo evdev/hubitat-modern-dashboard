@@ -2088,7 +2088,11 @@
     for (const r of rooms) roomMap.set(r.id, r.name);
   }
 
+  // ---------- render ----------
+  // __MLD_SPLIT_CORE__
+
   // Embed / time card chrome styles live in JS (not mld-app.css) to stay under Hubitat's 124 KB CSS blob limit.
+  // Kept in mld-app-core.js so mld-app.js (cloud-critical) stays under the 118 KB limit.
   function ensureFavEmbedStyles() {
     if (document.getElementById("mld-fav-embed-css")) return;
     const style = document.createElement("style");
@@ -2219,9 +2223,6 @@
     document.head.appendChild(style);
   }
   ensureFavEmbedStyles();
-
-  // ---------- render ----------
-  // __MLD_SPLIT_CORE__
 
   function ensureColorPopup() {
     if (colorPopup) return colorPopup;

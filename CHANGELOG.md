@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.74
+
+- **Fix:** Cloud dashboard blank / missing icons — move favorites embed CSS injector into
+  `mld-app-core.js` so `mld-app.js` stays under Hubitat Cloud’s ~118 KB OAuth/MQTT limit
+  (trigger work had pushed it over).
+- **Fix:** Trigger Add/Edit no longer uses Hubitat `href` `params` (which caused
+  `String.call()` errors). Edit/Add/Save/Cancel run on the same `triggersPage` via
+  buttons and `state`.
+- **Build / docs:** Enforce **118 KB** only for cloud-critical JS (`mld-app.js`,
+  `mld-app-post3.js`); all File Manager blobs remain ≤ 124 KB. README documents the rule.
+- **Fix:** Deleting a trigger rule from the list no longer sets the edit-page return flag,
+  so the next Add/Edit opens the form instead of the “Rule deleted” bridge.
+- **Fix:** Acknowledging a notification prunes linked text-only trigger actions (and clears
+  the notification link on live camera/tone actions) so ghosts cannot fill the queue.
+
 ## 0.3.73
 
 - **Fix:** Trigger rule save/delete return via a bridge page so Hubitat `nextPage` navigation

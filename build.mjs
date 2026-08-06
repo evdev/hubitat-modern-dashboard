@@ -25,8 +25,10 @@ const MLD_SPLIT2 = "// __MLD_SPLIT2__";
 const MLD_SPLIT3 = "// __MLD_SPLIT3__";
 const HUB_MAX_BLOB = 124 * 1024;
 // Hubitat Cloud MQTT drops OAuth responses near ~122 KB in practice (see 0.3.20 /
-// post2 split). Keep the scheduler/cameras chunk (post3) under this so cloud URL loads.
+// post2 split). Keep cloud-critical chunks (boot mld-app.js + deferred post3) under
+// 118 KB so the cloud URL loads.
 const CLOUD_SAFE_JS_BLOB = 118 * 1024;
+const CLOUD_CRITICAL_JS = new Set(["mld-app.js", "mld-app-post3.js"]);
 
 // Must match definition(namespace:, name:) in the Groovy template
 const NS = "mDash";
@@ -472,7 +474,7 @@ function assertUnderCloudSafeJsLimit(label, content) {
   if (size >= CLOUD_SAFE_JS_BLOB) {
     throw new Error(
       `${label} is ${size} bytes (cloud-safe limit ${CLOUD_SAFE_JS_BLOB} / 118 KB). ` +
-        `Hubitat Cloud can drop OAuth JS near ~122 KB — move code out of this chunk.`
+        `Hubitat Cloud can drop OAuth JS near ~122 KB — move code out of this cloud-critical chunk.`
     );
   }
 }
@@ -480,7 +482,9 @@ function assertUnderCloudSafeJsLimit(label, content) {
 function assertUploadBlobLimits() {
   for (const { name } of FILE_MANAGER_ASSETS) {
     const path = join(upload, name);
-    assertUnderHubLimit(name, readFileSync(path));
+    const body = readFileSync(path);
+    assertUnderHubLimit(name, body);
+    if (CLOUD_CRITICAL_JS.has(name)) assertUnderCloudSafeJsLimit(name, body);
   }
 }
 
@@ -608,7 +612,8 @@ const jsOutputs = [
 
 for (const [name, content] of jsOutputs) {
   assertUnderHubLimit(name, content);
-  if (name === "mld-app-post3.js") assertUnderCloudSafeJsLimit(name, content);
+  // Boot + deferred post3 are cloud-critical OAuth responses — keep under 118 KB.
+  if (CLOUD_CRITICAL_JS.has(name)) assertUnderCloudSafeJsLimit(name, content);
   writeFileSync(join(upload, name), content);
 }
 
@@ -758,13 +763,17 @@ const hpmRepository = {
 writeFileSync(join(hubitat, "repository.json"), JSON.stringify(hpmRepository, null, "\t") + "\n");
 
 const kb = (p) => (byteSize(readFileSync(p)) / 1024).toFixed(1);
-const blobHeadroom = (p) => ((HUB_MAX_BLOB - byteSize(readFileSync(p))) / 1024).toFixed(1);
+const blobHeadroom = (p, name) => {
+  const limit = CLOUD_CRITICAL_JS.has(name) ? CLOUD_SAFE_JS_BLOB : HUB_MAX_BLOB;
+  return ((limit - byteSize(readFileSync(p))) / 1024).toFixed(1);
+};
 console.log("Built:");
 console.log(`  dist/ModernLightsDashboard.groovy       ${kb(join(dist, "ModernLightsDashboard.groovy"))} KB`);
 console.log(`  dist/ModernLightsDashboard.bundle.zip   ${kb(bundleZip)} KB  ← manual Bundles → Import`);
 for (const { name } of FILE_MANAGER_ASSETS) {
   const path = join(upload, name);
-  console.log(`  dist/upload/${name.padEnd(24)} ${kb(path).padStart(6)} KB  (${blobHeadroom(path)} KB headroom)`);
+  const limitNote = CLOUD_CRITICAL_JS.has(name) ? "vs 118 KB cloud" : "vs 124 KB";
+  console.log(`  dist/upload/${name.padEnd(24)} ${kb(path).padStart(6)} KB  (${blobHeadroom(path, name)} KB headroom ${limitNote})`);
 }
 console.log(`  hubitat/packageManifest.json            (HPM: app + oauth + driver + ${FILE_MANAGER_ASSETS.length} files)`);
 console.log(`  hubitat/repository.json                 (HPM repository listing; in default HPM registry)`);

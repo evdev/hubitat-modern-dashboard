@@ -719,12 +719,24 @@ HPM_BASE_URL=https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/ma
 The Groovy app does **not** embed the UI (Hubitat cannot compile huge blobs). The
 app reads **12 files** from File Manager at runtime. JS is split into
 `mld-app.js`, `mld-app-core.js`, `mld-app-post.js`,
-`mld-app-post2.js`, and `mld-app-post3.js` to stay under the hub's ~128 KB
-per-file limit (constants from `src/app-pre.js` are merged into `mld-app.js`). CSS is
-split into `mld-app.css` and `mld-app-post.css`. PWA assets
+`mld-app-post2.js`, and `mld-app-post3.js` to stay under the hub's **124 KB**
+per-file File Manager limit (constants from `src/app-pre.js` are merged into
+`mld-app.js`). CSS is split into `mld-app.css` and `mld-app-post.css`. PWA assets
 (`mld-manifest.webmanifest`, `mld-sw.js`, icon `.b64` files) enable home-screen
 install on the cloud URL. Icons are stored as base64 text because Hubitat cannot
 reliably serve binary PNGs from File Manager.
+
+**Blob size rules (enforced by `npm run build` and `npm run verify:blobs`):**
+
+| Asset type | Max size | Why |
+| ---------- | -------- | --- |
+| All File Manager JS/CSS | 124 KB | Hubitat File Manager per-file ceiling |
+| Cloud-critical JS: `mld-app.js`, `mld-app-post3.js` | **118 KB** | Hubitat Cloud OAuth/MQTT; oversized → blank cloud dashboard / missing icons |
+
+Other JS chunks (`mld-app-core.js`, `mld-app-post.js`, `mld-app-post2.js`, `mld-sw.js`)
+may use the full 124 KB. When a cloud-critical chunk approaches 118 KB, move code
+across the `__MLD_SPLIT*` markers in `src/app.js` into a non-critical chunk. Do not
+raise the 118 KB cloud-critical limit.
 
 ### File Manager assets (exact names)
 
@@ -906,7 +918,9 @@ Nothing to edit.
 
 - UI assets live in Hubitat **File Manager** (`mld-*` files). The Groovy SmartApp
   serves them and implements a slim JSON API — no Maker API.
-- JS is split into six chunks to stay under Hubitat's ~128 KB per-file limit.
+- JS is split into five app chunks (+ service worker) under the **124 KB** File Manager
+  limit. Cloud-critical chunks (`mld-app.js`, `mld-app-post3.js`) must stay ≤ **118 KB**
+  (cloud OAuth/MQTT).
 - PWA manifest and pass-through service worker enable home-screen install from the
   cloud URL.
 
