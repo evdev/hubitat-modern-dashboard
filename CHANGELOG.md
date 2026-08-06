@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.75
+
+- **PWA:** Organic “M” app icon (cyan live-wire with amber tip); manifest icons use
+  `any maskable` purpose.
+- **Fix:** Apple-touch / favicon links include `?v=` cache buster; OAuth `access_token`
+  appends correctly when the hub inlines the icon as a data URI.
+- **Preview:** Local preview always renders icons from `lib/pwa-icons.mjs` (not stale
+  `dist/` PNGs).
+
 ## 0.3.74
 
 - **Fix:** Cloud dashboard blank / missing icons — move favorites embed CSS injector into

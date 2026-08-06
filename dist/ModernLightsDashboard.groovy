@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.74
+// Modern Dashboard v0.3.75
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.74"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.75"
 
 definition(
     name: "Modern Dashboard",
@@ -52,7 +52,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.74 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.75 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -1580,7 +1580,8 @@ def renderIndex() {
     def token = params?.access_token
     def iconHref = readIconDataUri(assetIcon192File())
     if (iconHref) {
-        html = html.replace('href="icons/icon-192.png"', "href=\"${iconHref}\"")
+        // Match optional ?v= cache-buster on apple-touch / favicon links.
+        html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     }
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1592,7 +1593,11 @@ def renderIndex() {
         html = appendAccessToken(html, "href", "app-post.css", token)
         html = html.replace('href="manifest.webmanifest"', "href=\"manifest.webmanifest${q}\"")
         if (!iconHref) {
-            html = html.replace('href="icons/icon-192.png"', "href=\"icons/icon-192.png${q}\"")
+            html = html.replaceAll(/href="icons\/icon-192\.png(\?[^"]*)?"/) { m ->
+                def existing = m[1] ?: ""
+                def sep = existing ? "&" : "?"
+                return "href=\"icons/icon-192.png${existing}${sep}access_token=${token}\""
+            }
         }
         for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"]) {
             html = appendAccessToken(html, "src", asset, token)

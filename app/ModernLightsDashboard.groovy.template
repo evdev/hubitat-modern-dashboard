@@ -1580,7 +1580,8 @@ def renderIndex() {
     def token = params?.access_token
     def iconHref = readIconDataUri(assetIcon192File())
     if (iconHref) {
-        html = html.replace('href="icons/icon-192.png"', "href=\"${iconHref}\"")
+        // Match optional ?v= cache-buster on apple-touch / favicon links.
+        html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     }
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1592,7 +1593,11 @@ def renderIndex() {
         html = appendAccessToken(html, "href", "app-post.css", token)
         html = html.replace('href="manifest.webmanifest"', "href=\"manifest.webmanifest${q}\"")
         if (!iconHref) {
-            html = html.replace('href="icons/icon-192.png"', "href=\"icons/icon-192.png${q}\"")
+            html = html.replaceAll(/href="icons\/icon-192\.png(\?[^"]*)?"/) { m ->
+                def existing = m[1] ?: ""
+                def sep = existing ? "&" : "?"
+                return "href=\"icons/icon-192.png${existing}${sep}access_token=${token}\""
+            }
         }
         for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"]) {
             html = appendAccessToken(html, "src", asset, token)

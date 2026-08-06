@@ -20,11 +20,9 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
-const readB64Icon = (name, size) => {
-  const built = join(root, "dist", "upload", name);
-  if (existsSync(built)) return readFileSync(built);
-  return createIconPng(size);
-};
+// Always render from lib/pwa-icons.mjs so preview reflects icon source edits
+// even when dist/ still has an older PNG from a previous build.
+const readB64Icon = (_name, size) => createIconPng(size);
 
 const ROOM_NAMES = ["Living Room", "Kitchen", "Master Bedroom", "Office", "Hallway", "Garage", "Backyard", "Bathroom", "Kids Room", "Dining Room", "Foyer", "Basement"];
 const NAMES = ["Ceiling", "Recessed", "Pendant", "Lamp", "Sconce", "Strip", "Spot", "Track", "Vanity", "Porch", "Flood", "Cabinet"];
