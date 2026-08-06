@@ -12874,7 +12874,11 @@
   if (cfg.enableDrawer) setDrawerMode(true);
   updateCurrentCategoryTitle();
   if (location.protocol === "https:" && "serviceWorker" in navigator) {
-    navigator.serviceWorker.register(withToken("sw.js"), { scope: "./" }).catch(() => {});
+    // Android Chrome WebAPK install needs a controlling SW; log failures instead of
+    // swallowing them (a failed register looks like a silent Install-app no-op).
+    navigator.serviceWorker.register(withToken("sw.js"), { scope: "./" }).catch((err) => {
+      console.warn("mDash: service worker registration failed (PWA install may not work)", err);
+    });
   }
 
   // Password gate UI lives here (post2) so mld-app.js stays under Hubitat's 128 KB

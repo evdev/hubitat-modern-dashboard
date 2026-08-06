@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.76
+
+- **Fix:** Android / Pixel PWA install no longer quietly fails — hub-generated
+  manifest uses tokenized `icons/icon-*.png` URLs instead of inlining ~104 KB of
+  data-URI PNGs (Hubitat Cloud can drop OAuth responses near ~118 KB). Icon
+  `purpose` split into separate `any` and `maskable` entries for Chrome WebAPK.
+
 ## 0.3.75
 
 - **PWA:** Organic “M” app icon (cyan live-wire with amber tip); manifest icons use

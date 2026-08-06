@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.75
+// Modern Dashboard v0.3.76
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.75"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.76"
 
 definition(
     name: "Modern Dashboard",
@@ -52,7 +52,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.75 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.76 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -1651,10 +1651,11 @@ def renderJsPost3() {
 }
 
 def renderManifest() {
+    // Use HTTP icon URLs with the OAuth token — do NOT inline data: URIs.
+    // Embedding both PNGs made the cloud manifest ~104 KB; Hubitat Cloud can drop
+    // OAuth responses near ~118 KB, which silently breaks Android / Pixel WebAPK install.
     def token = params?.access_token
     def q = token ? "?access_token=${token}" : ""
-    def icon192 = readLocalAsset(assetIcon192File())?.trim()
-    def icon512 = readLocalAsset(assetIcon512File())?.trim()
     def out = new StringBuilder()
     def pwaName = (dashboardName?.trim()) ?: "mDash"
     out << '{"name":' << jsonStr(pwaName) << ',"short_name":' << jsonStr(pwaName)
@@ -1664,14 +1665,14 @@ def renderManifest() {
     out << ',"background_color":"#0b0d12"'
     out << ',"theme_color":"#0b0d12"'
     out << ',"icons":['
+    // Separate any + maskable entries: Chrome installability requires purpose "any",
+    // and Android launchers prefer an explicit maskable icon.
     def icons = []
-    if (icon192) {
-        def uri192 = "data:image/png;base64,${icon192}"
-        icons << '{"src":"' + uri192 + '","sizes":"192x192","type":"image/png","purpose":"any maskable"}'
-    }
-    if (icon512) {
-        def uri512 = "data:image/png;base64,${icon512}"
-        icons << '{"src":"' + uri512 + '","sizes":"512x512","type":"image/png","purpose":"any maskable"}'
+    for (def size : ["192", "512"]) {
+        def src = "icons/icon-${size}.png${q}"
+        def sizes = "${size}x${size}"
+        icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
+        icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
     }
     out << icons.join(',')
     out << ']}'

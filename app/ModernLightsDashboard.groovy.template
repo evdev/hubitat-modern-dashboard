@@ -1651,10 +1651,11 @@ def renderJsPost3() {
 }
 
 def renderManifest() {
+    // Use HTTP icon URLs with the OAuth token — do NOT inline data: URIs.
+    // Embedding both PNGs made the cloud manifest ~104 KB; Hubitat Cloud can drop
+    // OAuth responses near ~118 KB, which silently breaks Android / Pixel WebAPK install.
     def token = params?.access_token
     def q = token ? "?access_token=${token}" : ""
-    def icon192 = readLocalAsset(assetIcon192File())?.trim()
-    def icon512 = readLocalAsset(assetIcon512File())?.trim()
     def out = new StringBuilder()
     def pwaName = (dashboardName?.trim()) ?: "mDash"
     out << '{"name":' << jsonStr(pwaName) << ',"short_name":' << jsonStr(pwaName)
@@ -1664,14 +1665,14 @@ def renderManifest() {
     out << ',"background_color":"#0b0d12"'
     out << ',"theme_color":"#0b0d12"'
     out << ',"icons":['
+    // Separate any + maskable entries: Chrome installability requires purpose "any",
+    // and Android launchers prefer an explicit maskable icon.
     def icons = []
-    if (icon192) {
-        def uri192 = "data:image/png;base64,${icon192}"
-        icons << '{"src":"' + uri192 + '","sizes":"192x192","type":"image/png","purpose":"any maskable"}'
-    }
-    if (icon512) {
-        def uri512 = "data:image/png;base64,${icon512}"
-        icons << '{"src":"' + uri512 + '","sizes":"512x512","type":"image/png","purpose":"any maskable"}'
+    for (def size : ["192", "512"]) {
+        def src = "icons/icon-${size}.png${q}"
+        def sizes = "${size}x${size}"
+        icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
+        icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
     }
     out << icons.join(',')
     out << ']}'
