@@ -42,6 +42,7 @@ cap.
   - [Cameras](#cameras)
   - [Sensors](#sensors)
   - [Notifications](#notifications)
+  - [Dashboard triggers](#dashboard-triggers)
   - [Scheduler](#scheduler)
   - [Favorites](#favorites)
   - [Search, collapse & reorder](#search-collapse--reorder)
@@ -343,13 +344,14 @@ the matching picker. A device in both pickers is treated as popup-only.
 You can rename or remove created devices under **Devices** like any other device,
 remove them from the dashboard picker, or add other `capability.notification` devices.
 
-**Popup notifications** — unread messages appear as a full-screen banner over the
+**Popup notifications** — unread messages appear as a banner over the
 dashboard (one at a time, FIFO queue):
 
 | Button | Behavior |
 | ------ | -------- |
-| **Close** | Hides the popup on **this browser only**; it reappears after **5 minutes** if still unread |
-| **Mark as Read** | Removes it on the hub so every open dashboard stops showing it |
+| **Dismiss** | Removes it on the hub so every open dashboard stops showing it |
+| **Mark as Read** | Same hub-wide dismiss |
+| Escape | Same hub-wide dismiss |
 
 **Tile notifications** — on the **Favorites** tab, use **Add tile → Notifications**
 (or the empty-state button) to add a resizable notifications list tile. Messages
@@ -357,12 +359,39 @@ from **Tile notification devices** appear newest-first with device name and time
 Tap the **×** on a row to mark it as read (hub-wide). You can add multiple
 notification tiles; they all show the same tile queue.
 
-**Sounds** apply to popup notifications only (off by default). Enable **Notification sounds** in the overflow
-Preferences menu to use the browser/OS notification sound (no audio files are
-packaged). The browser will ask for notification permission when you turn sounds
-on. The OS notification is dismissed immediately so only the dashboard popup stays
-on screen; a brief flash may still appear on some platforms. iOS PWA support for
-notification sound varies by OS version.
+**Sounds** apply to popup notifications and dashboard trigger tones (off by default).
+Enable **Notification & trigger sounds** in the overflow Preferences menu. The
+browser will ask for notification permission when you turn sounds on. Trigger tones
+also require the companion **sound arm / shunt** switch to be ON (see [Dashboard
+triggers](#dashboard-triggers)).
+
+### Dashboard triggers
+
+Always-on tablets can react to Hubitat events in the browser — no native app on the
+tablet. Rules are evaluated on the hub; open dashboards fetch a slim action queue.
+
+**Setup**
+
+1. In **Apps → Modern Dashboard**, expand **Dashboard triggers** (closed by default).
+2. Enable triggers, pick a **Sound arm / shunt** switch (ON = tones armed), set the
+   default camera overlay duration (default 60 seconds), and select contact / motion /
+   button devices that rules may use.
+3. Open **Edit trigger rules…** and add rules (max 6): when contact opens / motion is
+   active / button is pushed → optional camera overlay, tone (chime or alert), and
+   notification/caption text.
+4. Optionally use **Send test trigger action** to enqueue a sample action.
+5. On each tablet, enable **Notification & trigger sounds** if you want tones. Use
+   overflow **Trigger tones armed** (or Rule Machine on the shunt switch) for quiet hours.
+
+**Behavior**
+
+- Camera overlays are **local URL only**, near full-screen, muted by default, with a
+  visible **Dismiss** control, Escape, and hub auto-dismiss.
+- While a camera overlay is up, related notification text shows as a caption; after
+  the overlay ends, unread notifications still appear as the normal popup.
+- Shunting silences **tones only**; overlays and notification text still fire.
+- Dismissing a camera overlay (or its auto-dismiss) clears that action on every tablet.
+  It does not mark the captioned notification as read.
 
 ### Scheduler
 

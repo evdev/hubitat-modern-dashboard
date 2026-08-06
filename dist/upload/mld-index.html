@@ -11,8 +11,9 @@
 <title>mDash</title>
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192.png" />
-<link rel="stylesheet" href="app.css?v=0.3.69" />
-<link rel="stylesheet" href="app-post.css?v=0.3.69" />
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+<link rel="stylesheet" href="app.css?v=0.3.70" />
+<link rel="stylesheet" href="app-post.css?v=0.3.70" />
 </head>
 <body>
 <div id="app">
@@ -94,7 +95,11 @@
             </label>
             <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="false">
               <input type="checkbox" id="menu-notif-sound" />
-              <span>Notification sounds</span>
+              <span>Notification &amp; trigger sounds</span>
+            </label>
+            <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="false" id="menu-alerts-arm-wrap" hidden>
+              <input type="checkbox" id="menu-alerts-arm" />
+              <span>Trigger tones armed</span>
             </label>
             <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="true">
               <input type="checkbox" id="menu-tabs" checked />
@@ -140,11 +145,11 @@
 
   <div id="status" class="status" hidden></div>
 </div>
-<script src="app.js?v=0.3.69"></script>
-<script src="app-core.js?v=0.3.69"></script>
-<script src="app-post.js?v=0.3.69"></script>
-<script src="app-post2.js?v=0.3.69"></script>
-<script src="app-post3.js?v=0.3.69"></script>
-<meta name="mld-post3" content="app-post3.js?v=0.3.69" />
+<script src="app.js?v=0.3.70"></script>
+<script src="app-core.js?v=0.3.70"></script>
+<script src="app-post.js?v=0.3.70"></script>
+<script src="app-post2.js?v=0.3.70"></script>
+<script src="app-post3.js?v=0.3.70"></script>
+<meta name="mld-post3" content="app-post3.js?v=0.3.70" />
 </body>
 </html>

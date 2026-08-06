@@ -11,6 +11,7 @@
 <title>mDash</title>
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
 <link rel="stylesheet" href="app.css?v=__APP_VERSION__" />
 <link rel="stylesheet" href="app-post.css?v=__APP_VERSION__" />
 </head>
@@ -94,7 +95,11 @@
             </label>
             <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="false">
               <input type="checkbox" id="menu-notif-sound" />
-              <span>Notification sounds</span>
+              <span>Notification &amp; trigger sounds</span>
+            </label>
+            <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="false" id="menu-alerts-arm-wrap" hidden>
+              <input type="checkbox" id="menu-alerts-arm" />
+              <span>Trigger tones armed</span>
             </label>
             <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="true">
               <input type="checkbox" id="menu-tabs" checked />

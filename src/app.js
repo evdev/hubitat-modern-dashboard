@@ -27,6 +27,8 @@
   const MENU_ADD_HTML_BTN = document.getElementById("menu-add-html");
   const MENU_HAPTICS_EL = document.getElementById("menu-haptics");
   const MENU_NOTIF_SOUND_EL = document.getElementById("menu-notif-sound");
+  const MENU_ALERTS_ARM_EL = document.getElementById("menu-alerts-arm");
+  const MENU_ALERTS_ARM_WRAP = document.getElementById("menu-alerts-arm-wrap");
   const MENU_TABS_EL = document.getElementById("menu-tabs");
   const MENU_DRAWER_EL = document.getElementById("menu-drawer");
   const MENU_THEME_SEGMENT = document.getElementById("menu-theme-segment");
@@ -40,7 +42,6 @@
   const HAPTICS_STORAGE_KEY = "mld_haptics";
   const NOTIF_SOUND_STORAGE_KEY = "mld_notif_sound";
   const NOTIF_SNOOZE_STORAGE_KEY = "mld_notif_snooze";
-  const NOTIF_SNOOZE_MS = 5 * 60 * 1000;
   const THEME_STORAGE_KEY = "mld_theme";
   const TABS_STORAGE_KEY = "mld_tabs";
   const DRAWER_STORAGE_KEY = "mld_drawer";
@@ -747,6 +748,22 @@
   let notifTileFetchQueued = false;
   let notifWsFetchTimer = null;
   let notifTileWsFetchTimer = null;
+  let triggersEnabled = false;
+  let alertsArmed = false;
+  let alertsArmSwitchId = null;
+  let triggerSourceIds = new Set();
+  let hubTriggerActions = [];
+  let triggerFetchInFlight = null;
+  let triggerFetchQueued = false;
+  let triggerWsFetchTimer = null;
+  let triggerAckInFlight = false;
+  let activeCameraOverlayId = null;
+  let activeCameraOverlayCamId = null;
+  let cameraOverlayPopup = null;
+  let cameraOverlayDismissTimer = null;
+  let cameraOverlayFocusRestore = null;
+  let playedTriggerToneIds = new Map(); // id -> expiresAt
+  let alertToneStop = null;
   let hsmEnabled = false;
   let hsmPinRequired = false;
   let thermostatsPopupEnabled = false;
@@ -1835,7 +1852,10 @@
       if (!isDashSessionFresh()) return;
       slideDashSessionExpiry();
     };
-    document.addEventListener("pointerdown", renew, { passive: true });
+    document.addEventListener("pointerdown", () => {
+      renew();
+      postCall("unlockNotifAudio");
+    }, { passive: true });
     document.addEventListener("keydown", renew);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") renewDashSessionFromServer(true);
@@ -4931,7 +4951,7 @@
         if (document.fullscreenElement) return true;
       } catch {}
       return !!document.querySelector(
-        ".quick-popup.open, .ct-popup.open, .tstat-popup.open, .music-master-popup.open, .confirm-popup.open, .pin-pad-popup.open, .dash-gate-popup.open"
+        ".quick-popup.open, .ct-popup.open, .tstat-popup.open, .music-master-popup.open, .confirm-popup.open, .pin-pad-popup.open, .dash-gate-popup.open, .camera-overlay-popup.open"
       );
     }
 
@@ -6682,9 +6702,21 @@
     scenesPopupEnabled = d.scenesPopupEnabled !== false;
     roomClimateEnabled = d.roomClimateEnabled !== false;
     schedulerEnabled = d.schedulerEnabled !== false;
+    if (d.triggersEnabled != null) triggersEnabled = !!d.triggersEnabled;
+    if (d.alertsArmed != null) applyAlertsArmed(!!d.alertsArmed);
+    if (d.alertsArmSwitchId != null) {
+      const n = Number(d.alertsArmSwitchId);
+      alertsArmSwitchId = Number.isFinite(n) ? n : null;
+    }
+    if (Array.isArray(d.triggerSourceIds)) {
+      triggerSourceIds = new Set(
+        d.triggerSourceIds.map((x) => Number(x)).filter((n) => Number.isFinite(n))
+      );
+    }
     unlockPinEnabled = !!d.unlockPinEnabled;
     unlockPinRequired = !!d.unlockPinRequired;
     postCall("applyNotificationsFromData", d);
+    void postCall("fetchTriggerActions");
     replaceList(scenes, d.scenes);
     replaceList(locks, d.locks);
     replaceList(garageDoors, d.garageDoors);
@@ -8458,13 +8490,8 @@
     return Number.isFinite(until) && until > Date.now();
   }
 
-  function snoozeNotificationLocal(id) {
-    if (!id) return;
-    const pruned = pruneNotifSnoozeMap(loadNotifSnoozeMap());
-    pruned.map[id] = Date.now() + NOTIF_SNOOZE_MS;
-    saveNotifSnoozeMap(pruned.map);
-    scheduleNotifSnoozeWake();
-  }
+  // Local snooze was removed from Dismiss/Escape (those now hub-ack). Keep
+  // isNotifSnoozed/clearNotifSnooze so leftover localStorage entries still expire.
 
   function clearNotifSnooze(id) {
     if (!id) return;
@@ -8516,6 +8543,8 @@
     const title = ce("h2", "notification-title");
     title.id = "mld-notif-title";
     title.textContent = "Notification";
+    const time = ce("p", "notification-time");
+    time.hidden = true;
     const from = ce("p", "notification-from");
     from.hidden = true;
     const msg = ce("p", "notification-msg");
@@ -8523,13 +8552,14 @@
     const actions = ce("div", "notification-actions");
     const closeBtn = ce("button", "notification-close");
     closeBtn.type = "button";
-    closeBtn.textContent = "Close";
+    closeBtn.textContent = "Dismiss";
     const ackBtn = ce("button", "notification-ack");
     ackBtn.type = "button";
     ackBtn.textContent = "Mark as Read";
     actions.appendChild(closeBtn);
     actions.appendChild(ackBtn);
     panel.appendChild(title);
+    panel.appendChild(time);
     panel.appendChild(from);
     panel.appendChild(msg);
     panel.appendChild(actions);
@@ -8541,10 +8571,7 @@
       hapticTap();
       const id = notifShowingId;
       if (!id) return;
-      snoozeNotificationLocal(id);
-      if (notifLastSoundId === id) notifLastSoundId = null;
-      hideNotificationPopup();
-      syncNotificationPopup();
+      void acknowledgeNotification(id);
     });
     ackBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -8554,15 +8581,15 @@
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
       if (!el.classList.contains("open")) return;
+      // Camera overlay owns Escape while open.
+      if (activeCameraOverlayId) return;
       e.preventDefault();
       const id = notifShowingId;
       if (!id || notifAckInFlight) return;
-      snoozeNotificationLocal(id);
-      if (notifLastSoundId === id) notifLastSoundId = null;
-      hideNotificationPopup();
-      syncNotificationPopup();
+      void acknowledgeNotification(id);
     });
 
+    el._time = time;
     el._from = from;
     el._msg = msg;
     el._close = closeBtn;
@@ -8689,6 +8716,14 @@
     const changed = notifShowingId !== item.id;
     notifShowingId = item.id;
     popup._msg.textContent = String(item.text || "");
+    const when = formatNotificationTileTime(item.ts);
+    if (when) {
+      popup._time.hidden = false;
+      popup._time.textContent = when;
+    } else {
+      popup._time.hidden = true;
+      popup._time.textContent = "";
+    }
     if (item.deviceName) {
       popup._from.hidden = false;
       popup._from.textContent = String(item.deviceName);
@@ -8705,6 +8740,10 @@
 
   function syncNotificationPopup() {
     if (isDashboardGateOpen()) {
+      hideNotificationPopup();
+      return;
+    }
+    if (activeCameraOverlayId) {
       hideNotificationPopup();
       return;
     }
@@ -9093,8 +9132,418 @@
     }
   }
 
+  // ---------- dashboard triggers (tones + action transport; camera overlay in post3) ----------
+  function prunePlayedTriggerTones(nowMs) {
+    for (const [id, exp] of playedTriggerToneIds) {
+      if (!exp || exp <= nowMs) playedTriggerToneIds.delete(id);
+    }
+  }
 
+  function stopAlertTone() {
+    try { if (typeof alertToneStop === "function") alertToneStop(); } catch {}
+    alertToneStop = null;
+  }
 
+  function playAlertTonePattern(toneId) {
+    if (!cfg.enableNotifSound || !alertsArmed) return false;
+    if (document.hidden) return false;
+    if (!unlockNotifAudio() || !notifAudioCtx) return false;
+    stopAlertTone();
+    const ctx = notifAudioCtx;
+    const nodes = [];
+    const stopAll = () => {
+      for (const n of nodes) {
+        try { n.stop(); } catch {}
+        try { n.disconnect(); } catch {}
+      }
+      nodes.length = 0;
+    };
+    alertToneStop = stopAll;
+    try {
+      const t0 = ctx.currentTime;
+      const beep = (freq, start, dur, gainPeak) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.value = 0.0001;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        gain.gain.exponentialRampToValueAtTime(gainPeak, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        osc.start(start);
+        osc.stop(start + dur + 0.02);
+        nodes.push(osc);
+      };
+      if (toneId === "alert") {
+        beep(660, t0, 0.18, 0.14);
+        beep(880, t0 + 0.22, 0.18, 0.14);
+        beep(660, t0 + 0.44, 0.28, 0.16);
+      } else {
+        // chime (default)
+        beep(784, t0, 0.22, 0.12);
+        beep(1046, t0 + 0.18, 0.35, 0.1);
+      }
+      setTimeout(() => {
+        if (alertToneStop === stopAll) {
+          stopAll();
+          alertToneStop = null;
+        }
+      }, 1200);
+      return true;
+    } catch {
+      stopAll();
+      alertToneStop = null;
+      return false;
+    }
+  }
+
+  function applyAlertsArmed(next) {
+    const on = !!next;
+    if (alertsArmed && !on) stopAlertTone();
+    alertsArmed = on;
+    postCall("syncAlertsArmUi");
+  }
+
+  function captionTextForTriggerAction(action) {
+    if (!action) return "";
+    if (action.caption) return String(action.caption);
+    if (action.notificationId) {
+      const linked = hubNotifications.find((n) => n.id === action.notificationId);
+      if (linked?.text) return String(linked.text);
+    }
+    const unread = nextUnreadNotification();
+    return unread?.text ? String(unread.text) : "";
+  }
+
+  function applyTriggerActionsFromData(d) {
+    if (!d) return;
+    if (d.triggersEnabled != null) triggersEnabled = !!d.triggersEnabled;
+    if (d.alertsArmed != null) applyAlertsArmed(d.alertsArmed);
+    if (d.alertsArmSwitchId != null) {
+      const n = Number(d.alertsArmSwitchId);
+      alertsArmSwitchId = Number.isFinite(n) ? n : null;
+    }
+    if (Array.isArray(d.triggerSourceIds)) {
+      triggerSourceIds = new Set(
+        d.triggerSourceIds.map((x) => Number(x)).filter((n) => Number.isFinite(n))
+      );
+    }
+    if (!Array.isArray(d.triggerActions)) return;
+    const nowMs = Date.now();
+    prunePlayedTriggerTones(nowMs);
+    hubTriggerActions = d.triggerActions.filter((a) => a && a.id);
+    const live = hubTriggerActions.filter((a) => {
+      const camOk = a.cameraId != null && Number(a.cameraExpiresAt) > nowMs;
+      const toneOk = a.toneId && Number(a.toneExpiresAt) > nowMs;
+      return camOk || toneOk || a.notificationId;
+    });
+    hubTriggerActions = live;
+
+    // Trigger rules often enqueue a linked notification; refresh that queue so
+    // captions / post-overlay popups do not wait for the next /data poll.
+    if (live.some((a) => a.notificationId)) {
+      void fetchNotifications();
+    }
+
+    // Prefer newest camera action.
+    let camAction = null;
+    for (let i = live.length - 1; i >= 0; i--) {
+      const a = live[i];
+      if (a.cameraId != null && Number(a.cameraExpiresAt) > nowMs) {
+        camAction = a;
+        break;
+      }
+    }
+    if (camAction && isLocalOrigin() && !isDashboardGateOpen()) {
+      void (async () => {
+        const ready = await postCall("ensurePost3Loaded");
+        if (ready === false) {
+          // Keep text alerts usable if the cameras/scheduler chunk fails to load.
+          syncNotificationPopup();
+          return;
+        }
+        postCall("showTriggerCameraOverlay", camAction);
+        postCall("setTriggerCameraCaption", captionTextForTriggerAction(camAction));
+      })();
+      hideNotificationPopup();
+    } else if (activeCameraOverlayId) {
+      const still = live.some((a) => a.id === activeCameraOverlayId && Number(a.cameraExpiresAt) > nowMs);
+      if (!still) postCall("teardownTriggerCameraOverlay", "hub");
+      syncNotificationPopup();
+    } else {
+      syncNotificationPopup();
+    }
+
+    for (const a of live) {
+      if (!a.toneId || Number(a.toneExpiresAt) <= nowMs) continue;
+      if (playedTriggerToneIds.has(a.id)) continue;
+      playedTriggerToneIds.set(a.id, Number(a.toneExpiresAt) || (nowMs + 15000));
+      playAlertTonePattern(String(a.toneId));
+      break; // one tone per reconcile
+    }
+  }
+
+  async function fetchTriggerActions() {
+    if (!triggersEnabled && hubTriggerActions.length === 0) return;
+    if (isDashboardGateOpen()) return;
+    if (triggerFetchInFlight) {
+      triggerFetchQueued = true;
+      return triggerFetchInFlight;
+    }
+    triggerFetchInFlight = (async () => {
+      try {
+        const r = await fetch(withToken("trigger-actions"), { cache: "no-store", headers: { Accept: "application/json" } });
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j?.ok) return;
+        applyTriggerActionsFromData(j);
+      } catch {}
+      finally {
+        triggerFetchInFlight = null;
+        if (triggerFetchQueued) {
+          triggerFetchQueued = false;
+          void fetchTriggerActions();
+        }
+      }
+    })();
+    return triggerFetchInFlight;
+  }
+
+  function scheduleTriggerFetchFromWs() {
+    if (triggerWsFetchTimer) clearTimeout(triggerWsFetchTimer);
+    triggerWsFetchTimer = setTimeout(() => {
+      triggerWsFetchTimer = null;
+      void fetchTriggerActions();
+      // Rules often enqueue popup text with the action.
+      scheduleNotificationFetchFromWs();
+    }, 180);
+  }
+
+  async function acknowledgeTriggerAction(id) {
+    if (!id || triggerAckInFlight) return;
+    triggerAckInFlight = true;
+    try {
+      const r = await fetch(withToken("trigger-actions/ack"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ id }),
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => null);
+      if (r.ok && j?.ok) applyTriggerActionsFromData(j);
+      else hubTriggerActions = hubTriggerActions.filter((a) => a.id !== id);
+    } catch {
+      hubTriggerActions = hubTriggerActions.filter((a) => a.id !== id);
+    } finally {
+      triggerAckInFlight = false;
+    }
+  }
+
+  async function setAlertsArmed(armed) {
+    try {
+      const r = await fetch(withToken("alerts/arm"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ armed: !!armed }),
+        cache: "no-store",
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.ok) {
+        flash((j && j.error) ? String(j.error) : "Could not update alert arm", true);
+        return;
+      }
+      applyAlertsArmed(!!j.alertsArmed);
+      postCall("syncAlertsArmUi");
+      flash(j.alertsArmed ? "Trigger tones armed" : "Trigger tones shunted");
+    } catch {
+      flash("Could not update alert arm", true);
+    }
+  }
+
+  function cameraOverlayEmbedUrl(baseUrl) {
+    if (!baseUrl) return "";
+    try {
+      const u = new URL(baseUrl, location.href);
+      if (/stream\.html$/i.test(u.pathname)) u.pathname = u.pathname.replace(/stream\.html$/i, "webrtc.html");
+      u.searchParams.set("media", "video");
+      return u.toString();
+    } catch {
+      return baseUrl;
+    }
+  }
+
+  function clearCameraOverlayDismissTimer() {
+    if (cameraOverlayDismissTimer) {
+      clearTimeout(cameraOverlayDismissTimer);
+      cameraOverlayDismissTimer = null;
+    }
+  }
+
+  function ensureTriggerCameraOverlay() {
+    if (cameraOverlayPopup) return cameraOverlayPopup;
+    const el = ce("div", "camera-overlay-popup");
+    el.hidden = true;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-labelledby", "mld-cam-overlay-title");
+    const scrim = ce("div", "camera-overlay-scrim");
+    const panel = ce("div", "camera-overlay-panel");
+    const chrome = ce("div", "camera-overlay-chrome");
+    const title = ce("h2", "camera-overlay-title");
+    title.id = "mld-cam-overlay-title";
+    const caption = ce("p", "camera-overlay-caption");
+    caption.setAttribute("aria-live", "polite");
+    caption.hidden = true;
+    const dismiss = ce("button", "camera-overlay-dismiss");
+    dismiss.type = "button";
+    dismiss.textContent = "Dismiss";
+    chrome.appendChild(title);
+    chrome.appendChild(caption);
+    chrome.appendChild(dismiss);
+    const mediaHost = ce("div", "camera-overlay-media");
+    panel.appendChild(chrome);
+    panel.appendChild(mediaHost);
+    el.appendChild(scrim);
+    el.appendChild(panel);
+    appendPopup(el);
+    const dismissFn = () => {
+      hapticTap();
+      void dismissTriggerCameraOverlay();
+    };
+    dismiss.addEventListener("click", (e) => { e.stopPropagation(); dismissFn(); });
+    scrim.addEventListener("click", dismissFn);
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if (!el.classList.contains("open")) return;
+      e.preventDefault();
+      dismissFn();
+    });
+    el._title = title;
+    el._caption = caption;
+    el._dismiss = dismiss;
+    el._mediaHost = mediaHost;
+    cameraOverlayPopup = el;
+    return el;
+  }
+
+  function stopTriggerOverlayMedia() {
+    const el = cameraOverlayPopup;
+    if (!el?._mediaHost) return;
+    const iframe = el._mediaHost.querySelector("iframe");
+    const img = el._mediaHost.querySelector("img");
+    if (iframe) postCall("stopCameraMedia", iframe, "webrtc");
+    if (img) postCall("stopCameraMedia", img, "mjpg");
+    el._mediaHost.replaceChildren();
+  }
+
+  function teardownTriggerCameraOverlay(reason) {
+    clearCameraOverlayDismissTimer();
+    stopTriggerOverlayMedia();
+    const el = cameraOverlayPopup;
+    if (el) {
+      el.hidden = true;
+      el.classList.remove("open");
+    }
+    activeCameraOverlayId = null;
+    activeCameraOverlayCamId = null;
+    if (cameraOverlayFocusRestore) {
+      try { cameraOverlayFocusRestore.focus?.(); } catch {}
+      cameraOverlayFocusRestore = null;
+    }
+    if (reason !== "replace" && reason !== "pause") syncNotificationPopup();
+  }
+
+  function pauseTriggerCameraOverlay() {
+    if (!activeCameraOverlayId) return;
+    clearCameraOverlayDismissTimer();
+    stopTriggerOverlayMedia();
+  }
+
+  function setTriggerCameraCaption(text) {
+    const el = ensureTriggerCameraOverlay();
+    const t = String(text || "").trim();
+    if (!t) {
+      el._caption.hidden = true;
+      el._caption.textContent = "";
+      return;
+    }
+    el._caption.hidden = false;
+    el._caption.textContent = t;
+  }
+
+  function scheduleTriggerOverlayDismiss(action) {
+    clearCameraOverlayDismissTimer();
+    const exp = Number(action?.cameraExpiresAt);
+    if (!Number.isFinite(exp)) return;
+    const ms = Math.max(0, exp - Date.now());
+    cameraOverlayDismissTimer = setTimeout(() => {
+      cameraOverlayDismissTimer = null;
+      void dismissTriggerCameraOverlay();
+    }, ms);
+  }
+
+  function showTriggerCameraOverlay(action) {
+    if (!action?.id || !isLocalOrigin() || isDashboardGateOpen()) return;
+    const camId = Number(action.cameraId);
+    if (!Number.isFinite(camId)) return;
+    const exp = Number(action.cameraExpiresAt);
+    if (!Number.isFinite(exp) || exp <= Date.now()) return;
+    const cam = cameras.find((c) => Number(c.i) === camId);
+    if (!cam) return;
+
+    const sameCam = activeCameraOverlayId && activeCameraOverlayCamId === camId;
+    if (activeCameraOverlayId && activeCameraOverlayId !== action.id && !sameCam) {
+      teardownTriggerCameraOverlay("replace");
+    }
+
+    activeCameraOverlayId = action.id;
+    activeCameraOverlayCamId = camId;
+    const el = ensureTriggerCameraOverlay();
+    const name = String(cam.n || "Camera");
+    el._title.textContent = name;
+    el.setAttribute("aria-label", name + " camera alert");
+    setTriggerCameraCaption(action.caption || "");
+
+    if (!sameCam || !el._mediaHost.querySelector("iframe, img")) {
+      stopTriggerOverlayMedia();
+      const streamType = postCall("cameraStreamType", cam) || (String(cam.u || "").includes(".mjpg") ? "mjpg" : "webrtc");
+      let url = "";
+      if (streamType === "mjpg") url = cam.u || "";
+      else {
+        const play = postCall("cameraTileStreamUrl", cam, false) || cam.u || "";
+        url = cameraOverlayEmbedUrl(play);
+      }
+      if (!url) {
+        teardownTriggerCameraOverlay("hub");
+        return;
+      }
+      let media;
+      if (streamType === "mjpg") {
+        media = ce("img", "camera-overlay-mjpeg");
+        media.alt = name;
+      } else {
+        media = ce("iframe", "camera-overlay-iframe");
+        media.title = name;
+        media.setAttribute("allow", "autoplay");
+        media.setAttribute("loading", "eager");
+      }
+      el._mediaHost.appendChild(media);
+      postCall("startCameraMedia", media, streamType, url);
+    }
+
+    el.hidden = false;
+    el.classList.add("open");
+    if (!cameraOverlayFocusRestore) cameraOverlayFocusRestore = document.activeElement;
+    try { el._dismiss.focus(); } catch {}
+    scheduleTriggerOverlayDismiss(action);
+    hideNotificationPopup();
+  }
+
+  async function dismissTriggerCameraOverlay() {
+    const id = activeCameraOverlayId;
+    teardownTriggerCameraOverlay("dismiss");
+    if (id) await acknowledgeTriggerAction(id);
+  }
 
   // __MLD_SPLIT2__
 
@@ -11923,18 +12372,37 @@
           if (soundLabel) soundLabel.setAttribute("aria-checked", "true");
           playNotifWebChime();
           if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-            flash("Notification sounds on");
+            flash("Notification & trigger sounds on");
           } else {
-            flash("Notification sounds on in app");
+            flash("Notification & trigger sounds on in app");
           }
           return;
         }
         cfg.enableNotifSound = false;
         saveNotifSoundPref(false);
         if (soundLabel) soundLabel.setAttribute("aria-checked", "false");
-        flash("Notification sounds off");
+        flash("Notification & trigger sounds off");
       })();
     });
+  }
+
+  function syncAlertsArmUi() {
+    if (!MENU_ALERTS_ARM_WRAP || !MENU_ALERTS_ARM_EL) return;
+    const show = !!triggersEnabled && alertsArmSwitchId != null;
+    MENU_ALERTS_ARM_WRAP.hidden = !show;
+    MENU_ALERTS_ARM_EL.checked = !!alertsArmed;
+    MENU_ALERTS_ARM_WRAP.setAttribute("aria-checked", alertsArmed ? "true" : "false");
+  }
+
+  if (MENU_ALERTS_ARM_EL) {
+    MENU_ALERTS_ARM_EL.addEventListener("click", (e) => e.stopPropagation());
+    MENU_ALERTS_ARM_EL.addEventListener("change", () => {
+      const want = MENU_ALERTS_ARM_EL.checked;
+      void postCall("setAlertsArmed", want);
+      // Re-sync from hub state after command; optimistic UI for responsiveness.
+      MENU_ALERTS_ARM_WRAP?.setAttribute("aria-checked", want ? "true" : "false");
+    });
+    syncAlertsArmUi();
   }
 
   if (MENU_TABS_EL) {
@@ -12102,6 +12570,8 @@
   function pauseApp() {
     stopPolling();
     stopWS();
+    postCall("stopAlertTone");
+    postCall("pauseTriggerCameraOverlay");
   }
 
   function resetUiOnResume() {
@@ -12170,6 +12640,14 @@
         ) {
           scheduleTileNotificationFetchFromWs();
           return;
+        }
+        if (alertsArmSwitchId != null && deviceId === alertsArmSwitchId && notifAttr === "switch") {
+          postCall("applyAlertsArmed", String(m.value) === "on");
+          postCall("scheduleTriggerFetchFromWs");
+          return;
+        }
+        if (triggerSourceIds.has(deviceId)) {
+          postCall("scheduleTriggerFetchFromWs");
         }
         const shade = windowShades.find(x => x.i === deviceId);
         const shadeName = String(m.name || "");
@@ -12595,6 +13073,7 @@
     gatePopup.hidden = true;
     gateState = null;
     syncNotificationPopup();
+    void postCall("fetchTriggerActions");
   }
 
   function promptDashboardPassword() {

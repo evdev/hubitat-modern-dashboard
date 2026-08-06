@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.70
+
+- **Dashboard triggers:** companion-app rules (contact open, motion active, button)
+  can show a near full-screen muted camera overlay, play a browser tone, and queue
+  notification text on open dashboards. Configure under **Dashboard triggers**
+  (collapsed section) → **Edit trigger rules…**.
+- **Sound shunt:** pick a Hubitat switch (ON = tones armed). Rule Machine / Mode
+  Manager / dashboard overflow **Trigger tones armed** can flip it; camera overlays
+  and notification text still run when shunted. Per-tablet **Notification & trigger
+  sounds** preference stays local.
+- **Camera overlay:** covers most of the viewport with Dismiss / Escape / auto-dismiss
+  (default 60s, configurable); go2rtc uses video-only so the stream stays muted.
+- **Notifications:** **Dismiss** and Escape now acknowledge on the hub (synced across
+  tablets), matching **Mark as Read** — no more local-only snooze for Dismiss.
+- **Triggers hardening:** combo sensors subscribe to every attribute used by rules;
+  post3 load failure falls back to the notification popup; trigger WS also refreshes
+  notifications; password-gate unlock reconciles pending camera actions; add-rule form
+  resets; missing source/camera devices are flagged in the rule list.
+
 ## 0.3.69
 
 - **Fix:** HTML tile renames persist correctly — overrides save on the hub, reload after

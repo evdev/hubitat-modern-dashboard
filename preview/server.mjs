@@ -118,7 +118,7 @@ state.schedules = [{
 for (const s of state.schedules) mockRecomputeNextFire(s);
 state.notifications = [{
   id: "n_demo_1",
-  text: "Washer cycle finished — demo notification. Close snoozes 5 minutes; Mark as Read dismisses it.",
+  text: "Washer cycle finished — demo notification. Dismiss or Mark as Read clears it on every tablet.",
   ts: Date.now() - 60_000,
   deviceId: 9001,
   deviceName: "Dashboard Alerts",
@@ -132,8 +132,14 @@ state.tileNotifications = [{
 }];
 state.notificationDeviceIds = [9001];
 state.tileNotificationDeviceIds = [9002];
+state.triggersEnabled = true;
+state.alertsArmed = true;
+state.alertsArmSwitchId = 9100;
+state.triggerSourceIds = [101, 201];
+state.triggerActions = [];
 let notifSeq = 1;
 let tileNotifSeq = 1;
+let triggerActionSeq = 1;
 
 function mockSunTimes() {
   const d = new Date();
@@ -254,7 +260,7 @@ function buildMockData(count) {
   return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, htmlZooms: {}, htmlTitles: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: mockHtmlTilesCatalog(), rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
+  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, triggersEnabled: true, alertsArmed: true, alertsArmSwitchId: 9100, triggerSourceIds: [101, 201], triggerActions: [], unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
 }
 
 function tstatOstateForMode(tm) {
@@ -1452,6 +1458,117 @@ const server = createServer(async (req, res) => {
       ok: true,
       id,
       tileNotifications: state.tileNotifications,
+    }));
+  }
+  if (p === "/trigger-actions") {
+    const auth = requireDashAuth(res, url, null);
+    if (!auth) return;
+    const now = Date.now();
+    state.triggerActions = (state.triggerActions || []).filter((a) => {
+      const camOk = a.cameraId != null && Number(a.cameraExpiresAt) > now;
+      const toneOk = a.toneId && Number(a.toneExpiresAt) > now;
+      return camOk || toneOk || a.notificationId;
+    });
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({
+      ok: true,
+      alertsArmed: !!state.alertsArmed,
+      triggersEnabled: state.triggersEnabled !== false,
+      triggerActions: state.triggerActions,
+    }));
+  }
+  if (p === "/trigger-actions/ack") {
+    let body = null;
+    if (req.method === "POST") {
+      try { body = await readJsonBody(req); } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+      }
+    }
+    const auth = requireDashAuth(res, url, body);
+    if (!auth) return;
+    const id = String(body?.id ?? url.searchParams.get("id") ?? "").trim();
+    if (!id) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: false, error: "missing id" }));
+    }
+    state.triggerActions = (state.triggerActions || []).filter((a) => a.id !== id);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({
+      ok: true,
+      id,
+      alertsArmed: !!state.alertsArmed,
+      triggerActions: state.triggerActions,
+    }));
+  }
+  if (p === "/trigger-actions/push" && req.method === "POST") {
+    let body = null;
+    try { body = await readJsonBody(req); } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+    }
+    const auth = requireDashAuth(res, url, body);
+    if (!auth) return;
+    const now = Date.now();
+    const cameraId = body?.cameraId != null ? Number(body.cameraId) : (state.cameras?.[0]?.i ?? null);
+    const durationSec = Number(body?.durationSec) || 60;
+    const toneId = body?.toneId === "none" ? null : (body?.toneId || (state.alertsArmed ? "chime" : null));
+    const caption = String(body?.text || body?.caption || "Front door motion — preview trigger");
+    let notificationId = null;
+    if (caption) {
+      notifSeq += 1;
+      notificationId = `n_preview_${Date.now()}_${notifSeq}`;
+      state.notifications = [...(state.notifications || []), {
+        id: notificationId,
+        text: caption,
+        ts: now,
+        deviceId: 9001,
+        deviceName: "Dashboard Alerts",
+      }].slice(-20);
+    }
+    if (cameraId != null) {
+      state.triggerActions = (state.triggerActions || []).filter((a) => a.cameraId == null);
+    }
+    triggerActionSeq += 1;
+    const entry = {
+      id: `ta_preview_${now}_${triggerActionSeq}`,
+      ts: now,
+      ruleId: "preview",
+      cameraId,
+      toneId: toneId && state.alertsArmed ? toneId : null,
+      caption,
+      notificationId,
+      cameraExpiresAt: cameraId != null ? now + durationSec * 1000 : null,
+      toneExpiresAt: toneId && state.alertsArmed ? now + 15000 : null,
+    };
+    state.triggerActions = [...(state.triggerActions || []), entry].slice(-20);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ ok: true, triggerActions: state.triggerActions, notifications: state.notifications }));
+  }
+  if (p === "/alerts/arm") {
+    let body = null;
+    if (req.method === "POST") {
+      try { body = await readJsonBody(req); } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+      }
+    }
+    const auth = requireDashAuth(res, url, body);
+    if (!auth) return;
+    const raw = body?.armed ?? url.searchParams.get("armed");
+    let want = null;
+    if (raw === true || raw === "true" || raw === "1" || raw === "on") want = true;
+    else if (raw === false || raw === "false" || raw === "0" || raw === "off") want = false;
+    if (want == null) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: false, error: "missing armed" }));
+    }
+    state.alertsArmed = want;
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({
+      ok: true,
+      alertsArmed: state.alertsArmed,
+      alertsArmSwitchId: state.alertsArmSwitchId ?? 9100,
     }));
   }
   if (p === "/tile-notifications/push" && req.method === "POST") {

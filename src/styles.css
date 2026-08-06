@@ -1270,6 +1270,10 @@ body {
   margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--muted);
 }
+.notification-time {
+  margin: 0; font-size: 12px; font-weight: 500; color: var(--muted);
+  line-height: 1.35;
+}
 .notification-from {
   margin: 0; font-size: 13px; font-weight: 600; color: var(--muted);
   line-height: 1.35;
@@ -1606,6 +1610,89 @@ body {
 .scheduler-placeholder { margin: 12px 4px; color: var(--muted); font-size: 1rem; }
 
 /* ---------- scheduler (touch-optimized) ---------- */
+/* Near full-screen camera trigger overlay */
+.camera-overlay-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 84;
+  display: grid;
+  place-items: stretch;
+}
+.camera-overlay-popup[hidden] { display: none; }
+.camera-overlay-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+}
+.camera-overlay-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #000;
+  color: #fff;
+}
+.camera-overlay-chrome {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: max(10px, env(safe-area-inset-top)) 12px 10px;
+  background: rgba(0, 0, 0, 0.72);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+.camera-overlay-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.camera-overlay-caption {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.88);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.camera-overlay-dismiss {
+  flex: 0 0 auto;
+  min-height: var(--tap);
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+.camera-overlay-media {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #000;
+}
+.camera-overlay-iframe,
+.camera-overlay-mjpeg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: contain;
+  background: #000;
+}
+
 /* __MLD_CSS_SPLIT__ */
 .sched-list-wrap { display: flex; flex-direction: column; gap: 14px; }
 .sched-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 4px; }

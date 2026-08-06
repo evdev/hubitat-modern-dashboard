@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.69
+// Modern Dashboard v0.3.70
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.69"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.70"
 
 definition(
     name: "Modern Dashboard",
@@ -33,6 +33,8 @@ definition(
 preferences {
     page(name: "mainPage", uninstall: true, install: true)
     page(name: "schedImportPage", title: "Import Simple Automation Rules", install: false, uninstall: false)
+    page(name: "triggersPage", title: "Dashboard trigger rules", install: false, uninstall: false)
+    page(name: "triggerEditPage", title: "Edit trigger rule", install: false, uninstall: false)
 }
 
 def mainPage() {
@@ -51,7 +53,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.69 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.70 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -203,6 +205,40 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             paragraph "<small>Each <b>Create</b> button adds an mDash Notifications child and selects it in the matching picker. Assign existing devices to either list. A device in both lists is treated as popup-only.</small>"
         }
+        section("Dashboard triggers", hideable: true, hidden: true) {
+            paragraph "<small>Hub-evaluated rules can show a near full-screen camera overlay, play a browser tone, and queue notification text on open dashboards. Expand <b>Edit trigger rules…</b> to configure. Sound is gated by the arm/shunt switch (ON = tones armed) and each tablet’s local sound preference.</small>"
+            input "triggersEnabled", "bool", title: "Enable dashboard triggers", defaultValue: false, submitOnChange: true
+            if (triggersEnabled == true) {
+                input "alertsArmSwitch", "capability.switch", title: "Sound arm / shunt switch (ON = tones armed)",
+                    multiple: false, required: false, submitOnChange: true
+                def armSw = alertsArmSwitch
+                if (armSw) {
+                    def armOn = safeCurrent(armSw, "switch")
+                    paragraph "<small><b>Current:</b> ${htmlEsc(armSw.displayName)} is <b>${armOn == "on" ? "armed (tones on)" : "shunted (tones off)"}</b>. Use Rule Machine or the dashboard to flip this switch for quiet hours.</small>"
+                } else {
+                    paragraph "<small>Pick any Hubitat switch (virtual or physical). When it is <b>off</b>, trigger tones are silenced on every tablet; camera overlays and notification text still run.</small>"
+                }
+                input "triggerOverlaySec", "enum", title: "Default camera overlay duration",
+                    options: [["15": "15 seconds"], ["30": "30 seconds"], ["60": "60 seconds"], ["120": "2 minutes"], ["300": "5 minutes"]],
+                    defaultValue: "60", required: false
+                input "triggerContactDevices", "capability.contactSensor", title: "Contact sensors available to trigger rules",
+                    multiple: true, required: false, showFilter: true, submitOnChange: true
+                input "triggerMotionDevices", "capability.motionSensor", title: "Motion sensors available to trigger rules",
+                    multiple: true, required: false, showFilter: true, submitOnChange: true
+                input "triggerButtonDevices", "capability.pushableButton", title: "Buttons / doorbells available to trigger rules",
+                    multiple: true, required: false, showFilter: true, submitOnChange: true
+                href "toTriggers", title: "Edit trigger rules…",
+                    description: triggerRulesSummary(),
+                    page: "triggersPage"
+                input name: "btnTriggerTest", type: "button", title: "Send test trigger action"
+                if (state.triggerTestOk) {
+                    paragraph "<small><b>Test:</b> ${htmlEsc(state.triggerTestOk.toString())}</small>"
+                }
+                if (state.triggerTestError) {
+                    paragraph "<small><b>Test failed:</b> ${htmlEsc(state.triggerTestError.toString())}</small>"
+                }
+            }
+        }
         section("Dashboard options") {
             input "dashboardName", "string", title: "Dashboard name", defaultValue: "mDash", required: false
             input "pollSec", "number", title: "Refresh interval (seconds)", defaultValue: 5, required: false, range: "2..60"
@@ -351,6 +387,141 @@ def schedImportPage() {
     }
 }
 
+def triggersPage() {
+    dynamicPage(name: "triggersPage", title: "Dashboard trigger rules", install: false, uninstall: false) {
+        section("About") {
+            paragraph "<small>Each rule watches one device event and can show a camera overlay, play a browser tone, and/or queue notification text. Max ${maxTriggerRules()} rules. Select eligible devices under <b>Dashboard triggers</b> on the main page first.</small>"
+        }
+        def rules = parseTriggerRulesMap()
+        def ids = rules.keySet().collect { it.toString() }.sort()
+        if (!ids) {
+            section("Rules") {
+                paragraph "<small>No rules yet.</small>"
+            }
+        } else {
+            section("Rules (${ids.size()})") {
+                for (rid in ids) {
+                    def r = rules[rid]
+                    if (!(r instanceof Map)) continue
+                    def broken = !triggerDeviceById(r.deviceId)
+                    def camMissing = r.cameraId && !validCameraIdSet().contains(r.cameraId?.toString())
+                    def warn = ""
+                    if (broken) warn = " — source device missing"
+                    else if (camMissing) warn = " — camera no longer configured"
+                    paragraph "<b>${htmlEsc(triggerRuleLabel(r))}</b><br><small>${htmlEsc(triggerRuleSummary(r))}${htmlEsc(warn)}</small>"
+                    href "editTrig_${rid}", title: "Edit…", description: rid,
+                        page: "triggerEditPage", params: [ruleId: rid]
+                    input name: "btnTrigDel_${rid}", type: "button", title: "Delete ${triggerRuleLabel(r)}"
+                }
+            }
+        }
+        section("Add") {
+            if (ids.size() >= maxTriggerRules()) {
+                paragraph "<small>Rule limit reached (${maxTriggerRules()}).</small>"
+            } else {
+                href "editTrigNew", title: "Add trigger rule…",
+                    description: "Contact open, motion active, or button",
+                    page: "triggerEditPage", params: [ruleId: ""]
+            }
+        }
+        section("") {
+            href "backMainTrig", title: "Back to Modern Dashboard settings", page: "mainPage"
+        }
+    }
+}
+
+def triggerEditPage() {
+    def ruleId = params?.ruleId?.toString()?.trim()
+    if (ruleId == null) ruleId = ""
+    def existing = ruleId ? parseTriggerRulesMap()[ruleId] : null
+    if (existing instanceof Map) {
+        try {
+            if (state.triggerEditLoadedId?.toString() != ruleId) {
+                app.updateSetting("trigEditEnabled", [type: "bool", value: existing.enabled != false])
+                app.updateSetting("trigEditKind", [type: "enum", value: existing.kind?.toString() ?: "contact"])
+                app.updateSetting("trigEditDevice", [type: "enum", value: existing.deviceId?.toString() ?: ""])
+                app.updateSetting("trigEditButton", [type: "number", value: existing.button ?: 1])
+                app.updateSetting("trigEditCamera", [type: "enum", value: existing.cameraId?.toString() ?: ""])
+                app.updateSetting("trigEditTone", [type: "enum", value: existing.toneId?.toString() ?: "none"])
+                app.updateSetting("trigEditText", [type: "text", value: existing.text?.toString() ?: ""])
+                app.updateSetting("trigEditDuration", [type: "enum", value: existing.durationSec != null ? existing.durationSec.toString() : ""])
+                app.updateSetting("trigEditCooldown", [type: "number", value: existing.cooldownSec ?: 10])
+                state.triggerEditLoadedId = ruleId
+            }
+        } catch (e) {}
+    } else {
+        // New rule: reset form fields so Hubitat does not keep the last edit's values.
+        try {
+            if (state.triggerEditLoadedId?.toString() != "__new__") {
+                app.updateSetting("trigEditEnabled", [type: "bool", value: true])
+                app.updateSetting("trigEditKind", [type: "enum", value: "contact"])
+                try { app.clearSetting("trigEditDevice") } catch (e1) {
+                    try { app.updateSetting("trigEditDevice", [type: "enum", value: ""]) } catch (e2) {}
+                }
+                app.updateSetting("trigEditButton", [type: "number", value: 1])
+                try { app.clearSetting("trigEditCamera") } catch (e1) {
+                    try { app.updateSetting("trigEditCamera", [type: "enum", value: ""]) } catch (e2) {}
+                }
+                app.updateSetting("trigEditTone", [type: "enum", value: "none"])
+                try { app.clearSetting("trigEditText") } catch (e1) {
+                    try { app.updateSetting("trigEditText", [type: "text", value: ""]) } catch (e2) {}
+                }
+                try { app.clearSetting("trigEditDuration") } catch (e1) {
+                    try { app.updateSetting("trigEditDuration", [type: "enum", value: ""]) } catch (e2) {}
+                }
+                app.updateSetting("trigEditCooldown", [type: "number", value: 10])
+                state.triggerEditLoadedId = "__new__"
+            }
+        } catch (e) {}
+    }
+
+    dynamicPage(name: "triggerEditPage", title: ruleId ? "Edit trigger rule" : "Add trigger rule", install: false, uninstall: false) {
+        def kindOpts = [["contact": "Contact opens"], ["motion": "Motion active"], ["button": "Button pushed"]]
+        def curKind = trigEditKind?.toString() ?: (existing instanceof Map ? existing.kind?.toString() : null) ?: "contact"
+        def deviceOpts = triggerDeviceEnumOptions(curKind)
+        def cameraOpts = triggerCameraEnumOptions()
+        def toneOpts = [["none": "No tone"], ["chime": "Door chime"], ["alert": "Alert"]]
+        def durOpts = [["": "Use default"], ["15": "15 seconds"], ["30": "30 seconds"], ["60": "60 seconds"], ["120": "2 minutes"], ["300": "5 minutes"]]
+
+        section("When") {
+            input "trigEditEnabled", "bool", title: "Rule enabled", defaultValue: true, submitOnChange: true
+            input "trigEditKind", "enum", title: "Trigger type", options: kindOpts,
+                defaultValue: "contact", required: true, submitOnChange: true
+            if (!deviceOpts) {
+                paragraph "<small>No devices available for this type. Select contact, motion, or button devices under <b>Dashboard triggers</b> on the main page.</small>"
+            } else {
+                input "trigEditDevice", "enum", title: "Device", options: deviceOpts, required: true, submitOnChange: true
+            }
+            if (curKind == "button") {
+                input "trigEditButton", "number", title: "Button number", defaultValue: 1, required: false, range: "1..20"
+            }
+        }
+        section("Then") {
+            input "trigEditCamera", "enum", title: "Camera overlay", options: cameraOpts, required: false, submitOnChange: true
+            input "trigEditTone", "enum", title: "Browser tone", options: toneOpts, defaultValue: "none", required: false
+            input "trigEditText", "text", title: "Notification / caption text (optional)", required: false
+            input "trigEditDuration", "enum", title: "Overlay duration override", options: durOpts, required: false
+            input "trigEditCooldown", "number", title: "Cooldown (seconds)", defaultValue: 10, required: false, range: "1..600"
+            paragraph "<small>At least one of camera, tone (not none), or notification text is required.</small>"
+        }
+        if (state.triggerEditError) {
+            section("Error") {
+                paragraph "<b>${htmlEsc(state.triggerEditError.toString())}</b>"
+            }
+        }
+        section("Save") {
+            input name: "btnTrigSave", type: "button", title: ruleId ? "Save rule" : "Add rule"
+            state.triggerEditRuleId = ruleId ?: ""
+            if (ruleId) {
+                paragraph "<small>Editing rule id <code>${htmlEsc(ruleId)}</code></small>"
+            }
+        }
+        section("") {
+            href "backTrigList", title: "Back to trigger rules", page: "triggersPage"
+        }
+    }
+}
+
 def schedImportPreviewFromSettings() {
     if (state.schedImportHidePaste == true) {
         return [hasPaste: false, ok: [], skipped: [], error: null]
@@ -427,6 +598,7 @@ def installed() {
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
+    try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
 }
 
 def updated() {
@@ -437,6 +609,7 @@ def updated() {
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
+    try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
     syncDebugLoggingAutoOff()
 }
 
@@ -449,6 +622,13 @@ def appButtonHandler(btn) {
         schedImportRunFromUi()
     } else if (btn == "btnSchedImportClear") {
         schedImportClearPaste()
+    } else if (btn == "btnTriggerTest") {
+        triggerSendTestAction()
+    } else if (btn == "btnTrigSave") {
+        triggerSaveRuleFromUi()
+    } else if (btn?.toString()?.startsWith("btnTrigDel_")) {
+        def rid = btn.toString().substring("btnTrigDel_".length())
+        triggerDeleteRule(rid)
     }
 }
 
@@ -1342,6 +1522,9 @@ mappings {
     path("/notifications/ack") { action: [GET: "notificationsAckGet", POST: "notificationsAck"] }
     path("/tile-notifications") { action: [GET: "tileNotificationsGet"] }
     path("/tile-notifications/ack") { action: [GET: "tileNotificationsAckGet", POST: "tileNotificationsAck"] }
+    path("/trigger-actions") { action: [GET: "triggerActionsGet"] }
+    path("/trigger-actions/ack") { action: [GET: "triggerActionsAckGet", POST: "triggerActionsAck"] }
+    path("/alerts/arm") { action: [GET: "alertsArmGet", POST: "alertsArm"] }
 }
 
 def readIconDataUri(String b64FileName) {
@@ -1437,6 +1620,7 @@ def renderManifest() {
     def token = params?.access_token
     def q = token ? "?access_token=${token}" : ""
     def icon192 = readLocalAsset(assetIcon192File())?.trim()
+    def icon512 = readLocalAsset(assetIcon512File())?.trim()
     def out = new StringBuilder()
     def pwaName = (dashboardName?.trim()) ?: "mDash"
     out << '{"name":' << jsonStr(pwaName) << ',"short_name":' << jsonStr(pwaName)
@@ -1446,13 +1630,16 @@ def renderManifest() {
     out << ',"background_color":"#0b0d12"'
     out << ',"theme_color":"#0b0d12"'
     out << ',"icons":['
+    def icons = []
     if (icon192) {
-        def uri = "data:image/png;base64,${icon192}"
-        out << '{"src":"' << uri << '","sizes":"192x192","type":"image/png","purpose":"any"},'
-        out << '{"src":"' << uri << '","sizes":"512x512","type":"image/png","purpose":"any"},'
-        out << '{"src":"' << uri << '","sizes":"192x192","type":"image/png","purpose":"maskable"},'
-        out << '{"src":"' << uri << '","sizes":"512x512","type":"image/png","purpose":"maskable"}'
+        def uri192 = "data:image/png;base64,${icon192}"
+        icons << '{"src":"' + uri192 + '","sizes":"192x192","type":"image/png","purpose":"any maskable"}'
     }
+    if (icon512) {
+        def uri512 = "data:image/png;base64,${icon512}"
+        icons << '{"src":"' + uri512 + '","sizes":"512x512","type":"image/png","purpose":"any maskable"}'
+    }
+    out << icons.join(',')
     out << ']}'
     renderNoStore("application/manifest+json", out.toString(), 200)
 }
@@ -1830,6 +2017,10 @@ def renderData() {
     out << ",\"roomClimateEnabled\":" << (roomClimateEnabled == null ? "true" : (roomClimateEnabled == true ? "true" : "false"))
     out << ",\"schedulerEnabled\":" << (schedulerIsEnabled() ? "true" : "false")
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
+    out << ",\"triggersEnabled\":" << (triggersIsEnabled() ? "true" : "false")
+    out << ",\"alertsArmed\":" << (readAlertsArmed() ? "true" : "false")
+    out << ",\"alertsArmSwitchId\":" << (alertsArmSwitch?.id != null ? alertsArmSwitch.id.toString() : "null")
+    out << ",\"triggerSourceIds\":" << triggerSourceIdsJsonArray()
     out << ",\"unlockPinEnabled\":" << (unlockPinEnabled == true ? "true" : "false")
     out << ",\"unlockPinRequired\":" << (unlockPinEnabled == true && unlockPin?.toString()?.trim() ? "true" : "false")
     out << ",\"dashboardPasswordRequired\":" << (dashboardPasswordRequired() ? "true" : "false")
@@ -5418,6 +5609,641 @@ def initializeHsm() {
     if (alert) state.hsmAlert = alert
     def alertDesc = readHsmAlertDesc()
     if (alertDesc) state.hsmAlertDesc = alertDesc
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard triggers (camera overlay / tones / notification text)
+// ---------------------------------------------------------------------------
+def maxTriggerRules() { return 6 }
+def maxTriggerQueue() { return 20 }
+def maxTriggerTextLen() { return 240 }
+def defaultToneExpireMs() { return 15000L }
+
+def triggersIsEnabled() {
+    return triggersEnabled == true
+}
+
+def triggerDefaultDurationSec() {
+    def v = 60
+    try {
+        if (triggerOverlaySec != null) v = triggerOverlaySec.toString().toInteger()
+    } catch (e) { v = 60 }
+    if (v != 15 && v != 30 && v != 60 && v != 120 && v != 300) v = 60
+    return v
+}
+
+def parseTriggerRulesMap() {
+    if (!state.triggerRulesJson) return [:]
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(state.triggerRulesJson.toString())
+        return (parsed instanceof Map) ? parsed : [:]
+    } catch (e) {
+        return [:]
+    }
+}
+
+def saveTriggerRulesMap(map) {
+    state.triggerRulesJson = groovy.json.JsonOutput.toJson(map ?: [:])
+}
+
+def parseTriggerCooldownMap() {
+    if (!state.triggerCooldownJson) return [:]
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(state.triggerCooldownJson.toString())
+        return (parsed instanceof Map) ? parsed : [:]
+    } catch (e) {
+        return [:]
+    }
+}
+
+def saveTriggerCooldownMap(map) {
+    state.triggerCooldownJson = groovy.json.JsonOutput.toJson(map ?: [:])
+}
+
+def triggerRulesSummary() {
+    def n = parseTriggerRulesMap().size()
+    if (!triggersIsEnabled()) return "Disabled"
+    return n == 1 ? "1 rule" : "${n} rules"
+}
+
+def triggerRuleLabel(r) {
+    if (!(r instanceof Map)) return "Rule"
+    def name = r.name?.toString()?.trim()
+    if (name) return name
+    def kind = r.kind?.toString() ?: "trigger"
+    return kind.substring(0, 1).toUpperCase() + kind.substring(1) + " rule"
+}
+
+def triggerRuleSummary(r) {
+    if (!(r instanceof Map)) return ""
+    def parts = []
+    def kind = r.kind?.toString() ?: ""
+    def dname = r.deviceName?.toString() ?: ("device " + (r.deviceId ?: "?"))
+    if (kind == "contact") parts << "${dname} opens"
+    else if (kind == "motion") parts << "${dname} active"
+    else if (kind == "button") parts << "${dname} button ${r.button ?: 1}"
+    else parts << dname
+    if (r.cameraId) parts << "camera"
+    def tone = r.toneId?.toString()
+    if (tone && tone != "none") parts << "tone:${tone}"
+    if (r.text) parts << "text"
+    if (r.enabled == false) parts << "disabled"
+    return parts.join(" · ")
+}
+
+def triggerContactDeviceList() {
+    return asDeviceList(triggerContactDevices)
+}
+
+def triggerMotionDeviceList() {
+    return asDeviceList(triggerMotionDevices)
+}
+
+def triggerButtonDeviceList() {
+    return asDeviceList(triggerButtonDevices)
+}
+
+def triggerDeviceById(id) {
+    def key = id?.toString()
+    if (!key) return null
+    for (list in [triggerContactDeviceList(), triggerMotionDeviceList(), triggerButtonDeviceList()]) {
+        for (d in list) {
+            try {
+                if (d?.id?.toString() == key) return d
+            } catch (e) {}
+        }
+    }
+    return null
+}
+
+def triggerDeviceEnumOptions(kind) {
+    def list = []
+    if (kind == "motion") list = triggerMotionDeviceList()
+    else if (kind == "button") list = triggerButtonDeviceList()
+    else list = triggerContactDeviceList()
+    def opts = []
+    for (d in list) {
+        try {
+            opts << ["${d.id}": d.displayName?.toString() ?: d.id.toString()]
+        } catch (e) {}
+    }
+    return opts
+}
+
+def triggerCameraEnumOptions() {
+    def opts = [["": "No camera"]]
+    for (d in allCameraDevices()) {
+        try {
+            opts << ["${d.id}": d.displayName?.toString() ?: d.id.toString()]
+        } catch (e) {}
+    }
+    return opts
+}
+
+def triggerNewRuleId() {
+    def seq = (state.triggerRuleSeq instanceof Number) ? state.triggerRuleSeq.longValue() : 0L
+    seq++
+    state.triggerRuleSeq = seq
+    return "tr_${now()}_${seq}"
+}
+
+def triggerNormalizeRule(Map raw, String existingId) {
+    def kind = raw?.kind?.toString()?.trim()?.toLowerCase()
+    if (kind != "contact" && kind != "motion" && kind != "button") {
+        return [error: "Invalid trigger type"]
+    }
+    def deviceId = raw?.deviceId?.toString()?.trim()
+    if (!deviceId) return [error: "Select a device"]
+    def dev = triggerDeviceById(deviceId)
+    if (!dev) return [error: "Device is not in the trigger source pickers"]
+    // Ensure device matches kind pickers.
+    def okKind = false
+    if (kind == "contact") okKind = (triggerContactDeviceList().find { it?.id?.toString() == deviceId } != null)
+    else if (kind == "motion") okKind = (triggerMotionDeviceList().find { it?.id?.toString() == deviceId } != null)
+    else if (kind == "button") okKind = (triggerButtonDeviceList().find { it?.id?.toString() == deviceId } != null)
+    if (!okKind) return [error: "Device does not match trigger type"]
+
+    def cameraId = raw?.cameraId?.toString()?.trim()
+    if (cameraId == "") cameraId = null
+    if (cameraId && !validCameraIdSet().contains(cameraId)) {
+        return [error: "Camera is not configured in this app"]
+    }
+
+    def toneId = raw?.toneId?.toString()?.trim()?.toLowerCase()
+    if (!toneId || toneId == "none") toneId = null
+    else if (toneId != "chime" && toneId != "alert") {
+        return [error: "Invalid tone"]
+    }
+
+    def text = raw?.text?.toString()?.trim() ?: ""
+    if (text.length() > maxTriggerTextLen()) text = text.substring(0, maxTriggerTextLen())
+    if (!cameraId && !toneId && !text) {
+        return [error: "Choose a camera, tone, or notification text"]
+    }
+
+    def button = 1
+    if (kind == "button") {
+        try { button = (raw?.button != null) ? raw.button.toString().toInteger() : 1 } catch (e) { button = 1 }
+        if (button < 1 || button > 20) return [error: "Button number must be 1–20"]
+    }
+
+    def cooldownSec = 10
+    try {
+        if (raw?.cooldownSec != null) cooldownSec = raw.cooldownSec.toString().toInteger()
+    } catch (e) { cooldownSec = 10 }
+    if (cooldownSec < 1) cooldownSec = 1
+    if (cooldownSec > 600) cooldownSec = 600
+
+    def durationSec = null
+    if (raw?.durationSec != null && raw.durationSec.toString().trim()) {
+        try { durationSec = raw.durationSec.toString().toInteger() } catch (e) { durationSec = null }
+        if (durationSec != null && durationSec != 15 && durationSec != 30 && durationSec != 60 && durationSec != 120 && durationSec != 300) {
+            return [error: "Invalid overlay duration"]
+        }
+    }
+
+    def id = existingId?.toString()?.trim()
+    if (!id) id = triggerNewRuleId()
+    def rule = [
+        id: id,
+        enabled: raw?.enabled != false,
+        kind: kind,
+        deviceId: deviceId,
+        deviceName: dev.displayName?.toString() ?: "",
+        button: (kind == "button") ? button : null,
+        cameraId: cameraId,
+        toneId: toneId,
+        text: text,
+        durationSec: durationSec,
+        cooldownSec: cooldownSec
+    ]
+    return [rule: rule]
+}
+
+def triggerSaveRuleFromUi() {
+    state.remove("triggerEditError")
+    def existingId = state.triggerEditRuleId?.toString()?.trim() ?: ""
+    def raw = [
+        enabled: trigEditEnabled != false,
+        kind: trigEditKind,
+        deviceId: trigEditDevice,
+        button: trigEditButton,
+        cameraId: trigEditCamera,
+        toneId: trigEditTone,
+        text: trigEditText,
+        durationSec: trigEditDuration,
+        cooldownSec: trigEditCooldown
+    ]
+    def result = triggerNormalizeRule(raw, existingId)
+    if (result.error) {
+        state.triggerEditError = result.error
+        return
+    }
+    def map = parseTriggerRulesMap()
+    if (!existingId && map.size() >= maxTriggerRules()) {
+        state.triggerEditError = "Rule limit reached (${maxTriggerRules()})"
+        return
+    }
+    def rule = result.rule
+    map[rule.id] = rule
+    saveTriggerRulesMap(map)
+    state.triggerEditLoadedId = rule.id
+    state.triggerEditRuleId = rule.id
+    state.remove("triggerEditError")
+    try { initializeTriggers() } catch (e) {}
+}
+
+def triggerDeleteRule(rid) {
+    def id = rid?.toString()?.trim()
+    if (!id) return
+    def map = parseTriggerRulesMap()
+    map.remove(id)
+    saveTriggerRulesMap(map)
+    def cool = parseTriggerCooldownMap()
+    cool.remove(id)
+    saveTriggerCooldownMap(cool)
+    try { initializeTriggers() } catch (e) {}
+}
+
+def readAlertsArmed() {
+    def sw = alertsArmSwitch
+    if (!sw) return false
+    try {
+        return safeCurrent(sw, "switch") == "on"
+    } catch (e) {
+        return false
+    }
+}
+
+def triggerSourceIdsJsonArray() {
+    def ids = new LinkedHashSet()
+    for (list in [triggerContactDeviceList(), triggerMotionDeviceList(), triggerButtonDeviceList()]) {
+        for (d in list) {
+            try { if (d?.id != null) ids.add(d.id.toString()) } catch (e) {}
+        }
+    }
+    def out = new StringBuilder()
+    out << "["
+    boolean first = true
+    for (id in ids) {
+        if (!first) out << ","
+        first = false
+        out << jsonStr(id)
+    }
+    out << "]"
+    return out.toString()
+}
+
+def initializeTriggers() {
+    try { unsubscribe("triggerDeviceEvent") } catch (e) {}
+    try { unsubscribe("alertsArmSwitchEvent") } catch (e) {}
+    state.alertsArmed = readAlertsArmed()
+    if (!triggersIsEnabled()) return
+    def sw = alertsArmSwitch
+    if (sw) {
+        try { subscribe(sw, "switch", alertsArmSwitchEvent) } catch (e) {}
+    }
+    // Collect required attributes per device so combo sensors (contact+motion)
+    // can subscribe to every attribute used by enabled rules.
+    def attrsByDevice = [:]
+    def deviceById = [:]
+    parseTriggerRulesMap().each { rid, r ->
+        if (!(r instanceof Map) || r.enabled == false) return
+        def d = triggerDeviceById(r.deviceId)
+        if (!d) return
+        def key = null
+        try { key = d.id?.toString() } catch (e) {}
+        if (!key) return
+        deviceById[key] = d
+        def kind = r.kind?.toString()
+        def attrs = attrsByDevice[key]
+        if (!(attrs instanceof Set)) {
+            attrs = new HashSet()
+            attrsByDevice[key] = attrs
+        }
+        if (kind == "contact") attrs.add("contact")
+        else if (kind == "motion") attrs.add("motion")
+        else if (kind == "button") {
+            attrs.add("pushed")
+            attrs.add("button")
+        }
+    }
+    attrsByDevice.each { key, attrs ->
+        def d = deviceById[key]
+        if (!d || !(attrs instanceof Set)) return
+        for (attrName in attrs) {
+            try { subscribe(d, attrName.toString(), triggerDeviceEvent) } catch (e) {}
+        }
+    }
+}
+
+def alertsArmSwitchEvent(evt) {
+    state.alertsArmed = (evt?.value?.toString() == "on")
+}
+
+def triggerDeviceEvent(evt) {
+    if (!triggersIsEnabled()) return
+    def deviceId = null
+    try { deviceId = evt?.deviceId?.toString() } catch (e) {}
+    if (!deviceId) {
+        try { deviceId = evt?.device?.id?.toString() } catch (e2) {}
+    }
+    if (!deviceId) return
+    def attr = evt?.name?.toString()
+    def value = evt?.value?.toString()
+    if (!attr || value == null) return
+    def nowMs = now()
+    def cool = parseTriggerCooldownMap()
+    def rules = parseTriggerRulesMap()
+    rules.each { ridKey, r ->
+        if (!(r instanceof Map) || r.enabled == false) return
+        if (r.deviceId?.toString() != deviceId) return
+        def kind = r.kind?.toString()
+        def match = false
+        if (kind == "contact" && attr == "contact" && value == "open") match = true
+        else if (kind == "motion" && attr == "motion" && value == "active") match = true
+        else if (kind == "button" && (attr == "pushed" || attr == "button")) {
+            def want = 1
+            try { if (r.button != null) want = r.button.toString().toInteger() } catch (e) { want = 1 }
+            def got = 1
+            try { got = value.toString().toInteger() } catch (e) {
+                got = -1
+            }
+            if (got == want) match = true
+        }
+        if (!match) return
+        def rid = (r.id ?: ridKey)?.toString()
+        if (!rid) return
+        def last = 0L
+        try {
+            if (cool[rid] != null) last = cool[rid].toString().toLong()
+        } catch (e) { last = 0L }
+        def cooldownMs = 10000L
+        try {
+            if (r.cooldownSec != null) cooldownMs = r.cooldownSec.toString().toInteger() * 1000L
+        } catch (e) { cooldownMs = 10000L }
+        if (cooldownMs < 1000L) cooldownMs = 1000L
+        if ((nowMs - last) < cooldownMs) return
+        cool[rid] = nowMs
+        saveTriggerCooldownMap(cool)
+        enqueueTriggerActionFromRule(r)
+    }
+}
+
+def parseTriggerActionsState() {
+    if (!state.triggerActionsJson) return []
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(state.triggerActionsJson.toString())
+        if (!(parsed instanceof List)) return []
+        def nowMs = now()
+        def out = []
+        for (item in parsed) {
+            if (!(item instanceof Map)) continue
+            def id = item.id?.toString()?.trim()
+            if (!id) continue
+            def camExp = null
+            def toneExp = null
+            try { if (item.cameraExpiresAt != null) camExp = item.cameraExpiresAt.toString().toLong() } catch (e) {}
+            try { if (item.toneExpiresAt != null) toneExp = item.toneExpiresAt.toString().toLong() } catch (e) {}
+            // Drop fully expired entries.
+            def camLive = (item.cameraId && camExp != null && camExp > nowMs)
+            def toneLive = (item.toneId && toneExp != null && toneExp > nowMs)
+            def textOnly = (!item.cameraId && !item.toneId && item.notificationId)
+            if (!camLive && !toneLive && !textOnly) continue
+            out << [
+                id: id,
+                ts: (item.ts instanceof Number) ? item.ts.longValue() : nowMs,
+                ruleId: item.ruleId?.toString() ?: "",
+                cameraId: item.cameraId?.toString(),
+                toneId: item.toneId?.toString(),
+                caption: item.caption?.toString() ?: "",
+                notificationId: item.notificationId?.toString(),
+                cameraExpiresAt: camExp,
+                toneExpiresAt: toneExp
+            ]
+            if (out.size() >= maxTriggerQueue()) break
+        }
+        return out
+    } catch (e) {
+        return []
+    }
+}
+
+def persistTriggerActionsState(list) {
+    def capped = (list instanceof List) ? list.take(maxTriggerQueue()) : []
+    state.triggerActionsJson = groovy.json.JsonOutput.toJson(capped)
+}
+
+def triggerActionListJson(list) {
+    def out = new StringBuilder()
+    out << "["
+    boolean first = true
+    def nowMs = now()
+    for (item in list) {
+        def camExp = item.cameraExpiresAt
+        def toneExp = item.toneExpiresAt
+        def camLive = (item.cameraId && camExp != null && camExp > nowMs)
+        def toneLive = (item.toneId && toneExp != null && toneExp > nowMs)
+        def textOnly = (!item.cameraId && !item.toneId && item.notificationId)
+        if (!camLive && !toneLive && !textOnly) continue
+        if (!first) out << ","
+        first = false
+        out << "{\"id\":" << jsonStr(item.id)
+        out << ",\"ts\":" << (item.ts ?: 0)
+        out << ",\"ruleId\":" << jsonStr(item.ruleId ?: "")
+        if (item.cameraId && camLive) {
+            out << ",\"cameraId\":" << jsonStr(item.cameraId)
+            out << ",\"cameraExpiresAt\":" << camExp
+        }
+        if (item.toneId && toneLive) {
+            out << ",\"toneId\":" << jsonStr(item.toneId)
+            out << ",\"toneExpiresAt\":" << toneExp
+        }
+        out << ",\"caption\":" << jsonStr(item.caption ?: "")
+        if (item.notificationId) out << ",\"notificationId\":" << jsonStr(item.notificationId)
+        out << "}"
+    }
+    out << "]"
+    return out.toString()
+}
+
+def enqueueTriggerActionFromRule(r) {
+    if (!(r instanceof Map)) return
+    def nowMs = now()
+    def durationSec = triggerDefaultDurationSec()
+    try {
+        if (r.durationSec != null) durationSec = r.durationSec.toString().toInteger()
+    } catch (e) {}
+    if (durationSec != 15 && durationSec != 30 && durationSec != 60 && durationSec != 120 && durationSec != 300) {
+        durationSec = triggerDefaultDurationSec()
+    }
+    def cameraId = r.cameraId?.toString()?.trim()
+    if (cameraId == "") cameraId = null
+    if (cameraId && !validCameraIdSet().contains(cameraId)) cameraId = null
+    def toneId = r.toneId?.toString()?.trim()
+    if (!toneId || toneId == "none") toneId = null
+    // Shunt silences tones only.
+    if (toneId && !readAlertsArmed()) toneId = null
+    def text = r.text?.toString()?.trim() ?: ""
+    if (text.length() > maxTriggerTextLen()) text = text.substring(0, maxTriggerTextLen())
+    if (!cameraId && !toneId && !text) return
+
+    def notificationId = null
+    if (text) {
+        appendNotification(text, r.deviceId, r.deviceName ?: "")
+        def list = parseNotificationsState()
+        if (list) {
+            def last = list[list.size() - 1]
+            notificationId = last?.id?.toString()
+        }
+    }
+
+    def list = parseTriggerActionsState()
+    // Newest camera supersedes prior unacked camera actions.
+    if (cameraId) {
+        list = list.findAll { !(it.cameraId) }
+    }
+    def seq = (state.triggerActionSeq instanceof Number) ? state.triggerActionSeq.longValue() : 0L
+    seq++
+    state.triggerActionSeq = seq
+    def id = "ta_${nowMs}_${seq}"
+    def entry = [
+        id: id,
+        ts: nowMs,
+        ruleId: r.id?.toString() ?: "",
+        cameraId: cameraId,
+        toneId: toneId,
+        caption: text,
+        notificationId: notificationId,
+        cameraExpiresAt: cameraId ? (nowMs + (durationSec * 1000L)) : null,
+        toneExpiresAt: toneId ? (nowMs + defaultToneExpireMs()) : null
+    ]
+    list << entry
+    while (list.size() > maxTriggerQueue()) {
+        list.remove(0)
+    }
+    persistTriggerActionsState(list)
+}
+
+def triggerSendTestAction() {
+    state.remove("triggerTestOk")
+    state.remove("triggerTestError")
+    if (!triggersIsEnabled()) {
+        state.triggerTestError = "Enable dashboard triggers first"
+        return
+    }
+    def cams = allCameraDevices()
+    def cameraId = cams ? cams[0]?.id?.toString() : null
+    def text = "mDash trigger test"
+    def toneId = readAlertsArmed() ? "chime" : null
+    def fake = [
+        id: "test",
+        cameraId: cameraId,
+        toneId: toneId,
+        text: text,
+        durationSec: triggerDefaultDurationSec(),
+        deviceId: null,
+        deviceName: "Test"
+    ]
+    enqueueTriggerActionFromRule(fake)
+    state.triggerTestOk = cameraId ?
+        "Queued test action (camera ${cameraId}${toneId ? ", tone" : ", no tone (shunted)"}, notification)." :
+        "Queued test action (no camera configured; notification${toneId ? " + tone" : ""})."
+}
+
+def triggerActionsGet() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def list = parseTriggerActionsState()
+    // Persist pruned list so expiry sticks.
+    persistTriggerActionsState(list)
+    def out = new StringBuilder()
+    out << '{"ok":true,"alertsArmed":' << (readAlertsArmed() ? "true" : "false")
+    out << ',"triggersEnabled":' << (triggersIsEnabled() ? "true" : "false")
+    out << ',"triggerActions":' << triggerActionListJson(list)
+    out << "}"
+    return renderJsonNoStore(withAuthJson(out.toString()), 200)
+}
+
+def triggerActionsAckGet() {
+    def id = params?.id
+    if (!id?.toString()?.trim()) {
+        return renderJsonNoStore('{"ok":false,"error":"missing id"}', 400)
+    }
+    return triggerActionsAckFromId(id.toString().trim())
+}
+
+def triggerActionsAck() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def id = body?.id ?: params?.id
+    if (!id?.toString()?.trim()) {
+        return renderJsonNoStore('{"ok":false,"error":"missing id"}', 400)
+    }
+    return triggerActionsAckFromId(id.toString().trim())
+}
+
+def triggerActionsAckFromId(id) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def list = parseTriggerActionsState()
+    def next = list.findAll { it.id?.toString() != id }
+    persistTriggerActionsState(next)
+    def out = new StringBuilder()
+    out << '{"ok":true,"id":' << jsonStr(id)
+    out << ',"alertsArmed":' << (readAlertsArmed() ? "true" : "false")
+    out << ',"triggerActions":' << triggerActionListJson(next)
+    out << "}"
+    return renderJsonNoStore(withAuthJson(out.toString()), 200)
+}
+
+def alertsArmGet() {
+    def armed = params?.armed
+    return alertsArmFromValue(armed)
+}
+
+def alertsArm() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    def armed = body?.armed
+    if (armed == null) armed = params?.armed
+    return alertsArmFromValue(armed)
+}
+
+def alertsArmFromValue(armed) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def sw = alertsArmSwitch
+    if (!sw) {
+        return renderJsonNoStore('{"ok":false,"error":"no arm switch configured"}', 400)
+    }
+    def wantOn = false
+    if (armed == true || armed?.toString() == "true" || armed?.toString() == "1" || armed?.toString()?.toLowerCase() == "on") {
+        wantOn = true
+    } else if (armed == false || armed?.toString() == "false" || armed?.toString() == "0" || armed?.toString()?.toLowerCase() == "off") {
+        wantOn = false
+    } else {
+        return renderJsonNoStore('{"ok":false,"error":"missing armed"}', 400)
+    }
+    try {
+        if (wantOn) sw.on()
+        else sw.off()
+        state.alertsArmed = wantOn
+        def out = new StringBuilder()
+        out << '{"ok":true,"alertsArmed":' << (wantOn ? "true" : "false")
+        out << ',"alertsArmSwitchId":' << (sw.id != null ? sw.id.toString() : "null")
+        out << "}"
+        return renderJsonNoStore(withAuthJson(out.toString()), 200)
+    } catch (e) {
+        return renderJsonNoStore('{"ok":false,"error":"arm switch command failed"}', 500)
+    }
 }
 
 // ---------------------------------------------------------------------------
