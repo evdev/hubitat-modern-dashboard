@@ -1655,7 +1655,8 @@ def renderManifest() {
     // Separate any + maskable entries: Chrome installability requires purpose "any",
     // and Android launchers prefer an explicit maskable icon.
     def icons = []
-    for (def size : ["192", "512"]) {
+    // 1024: Pixel / hi-DPI splash upscales 512; public PNG only (not a hub File Manager asset).
+    for (def size : ["192", "512", "1024"]) {
         def src = "__PWA_ICON_BASE_URL__/mld-icon-${size}.png?v=__APP_VERSION__"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'

@@ -37,10 +37,22 @@ const urlMatch = groovy.match(
 );
 if (!urlMatch) throw new Error("public icon URL template missing from generated Groovy");
 
-const urls = ["192", "512"].map((size) => urlMatch[1].replace("${size}", size));
+const urls = ["192", "512", "1024"].map((size) => urlMatch[1].replace("${size}", size));
 for (const url of urls) {
   if (!url.includes(`?v=${pkg.version}`)) {
     throw new Error(`icon URL version mismatch: ${url}`);
+  }
+  // 1024 is required in the built tree; after publish, GitHub raw must serve it too.
+  // Local verify still checks remote 192/512 (install contract); 1024 is checked on disk
+  // until the release lands on the branch.
+  if (url.includes("mld-icon-1024.png")) {
+    const local = readFileSync(join(root, "dist", "upload", "mld-icon-1024.png"));
+    const isPng = [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => local[i] === v);
+    if (!isPng || local.readUInt32BE(16) !== 1024) {
+      throw new Error("local mld-icon-1024.png missing or invalid");
+    }
+    console.log(`ok local 1024 ${local.length}B`);
+    continue;
   }
   const res = await fetch(url);
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -68,7 +80,7 @@ const simulated = {
   background_color: "#0b0d12",
   theme_color: "#0b0d12",
   icons: urls.flatMap((src, idx) => {
-    const size = idx === 0 ? "192" : "512";
+    const size = ["192", "512", "1024"][idx];
     return ["any", "maskable"].map((purpose) => ({
       src,
       sizes: `${size}x${size}`,

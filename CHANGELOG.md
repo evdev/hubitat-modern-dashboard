@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.83
+
+- **PWA:** Sharper E1 Marque icon — 4× supersampled edges, analytical arches, a
+  slightly larger glyph, plus a public **1024px** icon so Pixel splash / launcher
+  does not upscale a soft 512 (same public release-PNG install contract).
+
 ## 0.3.82
 
 - **PWA:** Switch app icon to E1 Marque — silver geometric **m** with a gold dash

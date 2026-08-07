@@ -598,6 +598,8 @@ writeFileSync(join(upload, "mld-icon-192.b64"), iconBase64(192) + "\n");
 writeFileSync(join(upload, "mld-icon-512.b64"), iconBase64(512) + "\n");
 writeFileSync(join(upload, "mld-icon-192.png"), createIconPng(192));
 writeFileSync(join(upload, "mld-icon-512.png"), createIconPng(512));
+// Public release asset for hi-DPI Android splash (not a hub File Manager upload).
+writeFileSync(join(upload, "mld-icon-1024.png"), createIconPng(1024));
 
 const { part1Out, partCoreOut, part2Out, part3Out, part4Out } = splitAppJs(join(root, "src", "app.js"));
 const appPre = readFileSync(join(root, "src", "app-pre.js"), "utf8").trimEnd();
@@ -633,9 +635,9 @@ const expectedIconUrlTemplate =
   `${HPM_BASE_URL}/upload/mld-icon-\${size}.png?v=${pkg.version}`;
 if (
   !groovy.includes(expectedIconUrlTemplate) ||
-  !groovy.includes('for (def size : ["192", "512"])')
+  !groovy.includes('for (def size : ["192", "512", "1024"])')
 ) {
-  throw new Error("Generated Groovy manifest is missing public 192/512px PWA icon URLs");
+  throw new Error("Generated Groovy manifest is missing public 192/512/1024px PWA icon URLs");
 }
 // Keep the 0.3.77 install contract: small manifest + public PNGs only.
 const manifestBody = groovy.slice(

@@ -903,6 +903,10 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "image/png" });
     return res.end(readB64Icon("mld-icon-512.png", 512));
   }
+  if (p === "/icons/icon-1024.png") {
+    res.writeHead(200, { "Content-Type": "image/png" });
+    return res.end(readB64Icon("mld-icon-1024.png", 1024));
+  }
   if (/^\/hub2\/videoStream\/\d+\.mjpg$/.test(p)) {
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "no-store" });
     return res.end(MOCK_MJPEG_JPEG);
