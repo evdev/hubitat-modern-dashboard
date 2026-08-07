@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.90
+
+- **Fix:** Public PWA icon URLs must not be fetched before publish — GitHub’s
+  `raw.githubusercontent.com` CDN can cache a pre-push **404** for that exact path
+  (even after the file lands on `master`). Bumped versioned icon filenames and made
+  `verify:pwa` local-only unless `--remote` is passed after publish.
+
 ## 0.3.89
 
 - **UX:** Tablet trigger setup is rewritten around plain language — inviting empty

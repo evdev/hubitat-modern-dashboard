@@ -50,6 +50,10 @@ const isPngSignature = (buf) =>
 
 const sizes = ["192", "512", "1024"];
 const urls = sizes.map((size) => urlMatch[1].replace("${size}", size));
+// Never fetch the exact publish URL before the file is on GitHub — raw CDN can
+// cache a 404 for that path and keep serving it after push. Pass --remote after
+// publish to byte-compare against the live CDN.
+const checkRemote = process.argv.includes("--remote");
 
 for (const [idx, url] of urls.entries()) {
   const size = sizes[idx];
@@ -63,16 +67,15 @@ for (const [idx, url] of urls.entries()) {
     throw new Error(`local ${localPath} missing or invalid`);
   }
 
-  const res = await fetch(url, { cache: "no-store" });
-  if (res.status === 404) {
-    // Expected before this release is committed/pushed: the filename is brand new and
-    // has never been fetched, so there is nothing stale to worry about once published.
-    console.log(`pending publish (404 until pushed) ${url} — local ok ${local.length}B ${sha256(local)}`);
+  if (!checkRemote) {
+    console.log(`local ok ${local.length}B ${sha256(local)} ${url}`);
     continue;
   }
+
+  const res = await fetch(url, { cache: "no-store" });
   const bytes = Buffer.from(await res.arrayBuffer());
   if (!res.ok || res.headers.get("content-type") !== "image/png" || !isPngSignature(bytes)) {
-    throw new Error(`invalid public PWA icon: ${url}`);
+    throw new Error(`invalid public PWA icon: ${url} (HTTP ${res.status})`);
   }
   if (!bytes.equals(local)) {
     throw new Error(
