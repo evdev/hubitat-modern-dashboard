@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.78
+
+- **Fix:** Trigger tones play when no arm/shunt switch is configured. Previously
+  `readAlertsArmed()` treated a missing switch as shunted, so rule and test tones
+  were dropped and labeled “shunted” even with nothing to shunt.
+
 ## 0.3.77
 
 - **Fix:** Restore Android / Pixel PWA installability after the 0.3.76 regression.

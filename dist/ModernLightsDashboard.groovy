@@ -1,4 +1,4 @@
-// Modern Dashboard v0.3.77
+// Modern Dashboard v0.3.78
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.3.77"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.3.78"
 
 definition(
     name: "Modern Dashboard",
@@ -52,7 +52,7 @@ def mainPage() {
             } else {
                 paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
             }
-            paragraph "<small>Version 0.3.77 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.3.78 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -205,7 +205,7 @@ def mainPage() {
             paragraph "<small>Each <b>Create</b> button adds an mDash Notifications child and selects it in the matching picker. Assign existing devices to either list. A device in both lists is treated as popup-only.</small>"
         }
         section("Dashboard triggers", hideable: true, hidden: triggersSectionCollapsed()) {
-            paragraph "<small>Hub-evaluated rules can show a near full-screen camera overlay, play a browser tone, and queue notification text on open dashboards. Expand <b>Edit trigger rules…</b> to configure. Sound is gated by the arm/shunt switch (ON = tones armed) and each tablet’s local sound preference.</small>"
+            paragraph "<small>Hub-evaluated rules can show a near full-screen camera overlay, play a browser tone, and queue notification text on open dashboards. Expand <b>Edit trigger rules…</b> to configure. An optional arm/shunt switch gates sound (ON = tones armed; leave unset to always allow tones). Each tablet’s local sound preference still applies.</small>"
             input "triggersEnabled", "bool", title: "Enable dashboard triggers", defaultValue: false, submitOnChange: true
             if (triggersEnabled == true) {
                 input "alertsArmSwitch", "capability.switch", title: "Sound arm / shunt switch (ON = tones armed)",
@@ -215,7 +215,7 @@ def mainPage() {
                     def armOn = safeCurrent(armSw, "switch")
                     paragraph "<small><b>Current:</b> ${htmlEsc(armSw.displayName)} is <b>${armOn == "on" ? "armed (tones on)" : "shunted (tones off)"}</b>. Use Rule Machine or the dashboard to flip this switch for quiet hours.</small>"
                 } else {
-                    paragraph "<small>Pick any Hubitat switch (virtual or physical). When it is <b>off</b>, trigger tones are silenced on every tablet; camera overlays and notification text still run.</small>"
+                    paragraph "<small>Optional. Until you pick a switch, trigger tones play on every tablet. When a switch is selected and <b>off</b>, tones are silenced; camera overlays and notification text still run.</small>"
                 }
                 input "triggerOverlaySec", "enum", title: "Default camera overlay duration",
                     options: [["15": "15 seconds"], ["30": "30 seconds"], ["60": "60 seconds"], ["120": "2 minutes"], ["300": "5 minutes"]],
@@ -1669,7 +1669,7 @@ def renderManifest() {
     // and Android launchers prefer an explicit maskable icon.
     def icons = []
     for (def size : ["192", "512"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}.png?v=0.3.77"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}.png?v=0.3.78"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -5909,7 +5909,8 @@ def triggerDeleteRule(rid) {
 
 def readAlertsArmed() {
     def sw = alertsArmSwitch
-    if (!sw) return false
+    // Optional switch: when unset, tones are always armed. When set, OFF shunts tones.
+    if (!sw) return true
     try {
         return safeCurrent(sw, "switch") == "on"
     } catch (e) {
