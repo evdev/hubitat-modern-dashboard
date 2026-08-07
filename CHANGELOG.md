@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.87
+
+- **PWA:** Icon art reverted to the sharpened 0.3.83 E1 Marque (metallic gradient
+  m, soft contact shadow, subtle background vignette) after feedback that the
+  0.3.86 flat redesign wasn't wanted. Ships under a new versioned filename
+  (`mld-icon-512-0.3.87.png`) so there's no collision with the already-published
+  0.3.86 flat asset.
+
 ## 0.3.86
 
 - **Fix:** Root-caused the recurring "icon still looks soft after reinstall" reports.
@@ -12,9 +20,7 @@
   comparison against the published asset instead of trusting a 200 response.
 - **PWA:** Also redrew the E1 Marque icon completely flat — solid background (no
   vignette), solid silver/gold glyph tones with a hard-edged highlight facet
-  instead of a smooth gradient, and no blurred contact shadow. Gradients/shadow
-  read as "hazy" once Android's splash screen and adaptive-icon shim scale the
-  icon up; flat, high-contrast art stays crisp through that scaling.
+  instead of a smooth gradient, and no blurred contact shadow.
 
 ## 0.3.84
 
