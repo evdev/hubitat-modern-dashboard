@@ -9527,7 +9527,7 @@
       let url = "";
       if (streamType === "mjpg") url = cam.u || "";
       else {
-        const play = postCall("cameraTileStreamUrl", cam, false) || cam.u || "";
+        const play = postCall("cameraTileStreamUrl", cam, true) || cam.u || "";
         url = cameraOverlayEmbedUrl(play);
       }
       if (!url) {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.92
+
+- **Cameras:** Trigger notification overlays load the high/main go2rtc stream by
+  default (falls back to the sub stream when HD is unavailable).
+
 ## 0.3.91
 
 - **Fix:** Camera HD/SD toggle button now syncs its label after the button is

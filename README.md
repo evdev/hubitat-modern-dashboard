@@ -387,7 +387,8 @@ tablet. Rules are evaluated on the hub; open dashboards fetch a slim action queu
 **Behavior**
 
 - Camera overlays are **local URL only**, near full-screen, muted by default, with a
-  visible **Dismiss** control, Escape, and hub auto-dismiss.
+  visible **Dismiss** control, Escape, and hub auto-dismiss. go2rtc overlays prefer
+  the high/main stream when available.
 - While a camera overlay is up, related notification text shows as a caption; after
   the overlay ends, unread notifications still appear as the normal popup.
 - Shunting silences **tones only**; overlays and notification text still fire.
