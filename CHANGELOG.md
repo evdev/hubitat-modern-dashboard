@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.81
+
+- **Fix:** Android PWA install — manifest link uses `crossorigin="use-credentials"` so
+  Chrome fetches the OAuth manifest correctly; service worker registers from the first
+  JS chunk with a stable OAuth-only URL (no `dash_session`); SW uses `skipWaiting` /
+  `clients.claim()` for faster control; manifest adds stable `id`; SW response includes
+  `Service-Worker-Allowed`.
+
 ## 0.3.80
 
 - **Fix:** Keep Android / Pixel PWA install on the 0.3.77 contract after the soft

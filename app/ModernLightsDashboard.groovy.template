@@ -1645,6 +1645,7 @@ def renderManifest() {
     def out = new StringBuilder()
     def pwaName = (dashboardName?.trim()) ?: "mDash"
     out << '{"name":' << jsonStr(pwaName) << ',"short_name":' << jsonStr(pwaName)
+    out << ',"id":"/mDash"'
     out << ',"start_url":"./dashboard' << q << '"'
     out << ',"scope":"./"'
     out << ',"display":"standalone"'
@@ -1668,7 +1669,9 @@ def renderManifest() {
 def renderSw() {
     def js = readLocalAsset(assetSwFile())
     if (!js) { js = "self.addEventListener('fetch',e=>e.respondWith(fetch(e.request)));" }
-    renderNoStore("application/javascript", js, 200)
+    def headers = noStoreHeaders()
+    headers["Service-Worker-Allowed"] = "/"
+    render contentType: "application/javascript", data: js, status: 200, headers: headers
 }
 
 def renderIcon192() {

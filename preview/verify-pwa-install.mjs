@@ -12,6 +12,14 @@ const groovy = readFileSync(join(root, "dist", "ModernLightsDashboard.groovy"), 
 const staticManifest = JSON.parse(
   readFileSync(join(root, "dist", "upload", "mld-manifest.webmanifest"), "utf8"),
 );
+const builtIndex = readFileSync(join(root, "dist", "upload", "mld-index.html"), "utf8");
+
+if (!builtIndex.includes("crossorigin=\"use-credentials\"")) {
+  throw new Error("index.html manifest link missing crossorigin=use-credentials");
+}
+if (!groovy.includes(',"id":"/mDash"')) {
+  throw new Error("generated manifest missing stable id");
+}
 
 const manifestBody = groovy.slice(
   groovy.indexOf("def renderManifest()"),

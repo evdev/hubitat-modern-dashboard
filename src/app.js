@@ -1881,6 +1881,22 @@
     return path + sep + parts.join("&");
   }
 
+  // Service worker script URL must stay stable (OAuth token only — never dash_session).
+  function withOAuthToken(path) {
+    if (!ACCESS_TOKEN) return path;
+    const sep = path.indexOf("?") >= 0 ? "&" : "?";
+    return path + sep + "access_token=" + encodeURIComponent(ACCESS_TOKEN);
+  }
+
+  function registerServiceWorkerForPwa() {
+    if (location.protocol !== "https:" || !("serviceWorker" in navigator)) return;
+    // Register from the first JS chunk so Chrome sees a controlling SW before install checks.
+    navigator.serviceWorker.register(withOAuthToken("sw.js"), { scope: "./" }).catch((err) => {
+      console.warn("mDash: service worker registration failed (PWA install may not work)", err);
+    });
+  }
+  registerServiceWorkerForPwa();
+
   async function fetchWithTimeout(url, opts = {}, ms = 15000) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), ms);
@@ -12873,13 +12889,6 @@
   if (tabMode) { ensureTabView(); updateTabActiveStates(); }
   if (cfg.enableDrawer) setDrawerMode(true);
   updateCurrentCategoryTitle();
-  if (location.protocol === "https:" && "serviceWorker" in navigator) {
-    // Android Chrome WebAPK install needs a controlling SW; log failures instead of
-    // swallowing them (a failed register looks like a silent Install-app no-op).
-    navigator.serviceWorker.register(withToken("sw.js"), { scope: "./" }).catch((err) => {
-      console.warn("mDash: service worker registration failed (PWA install may not work)", err);
-    });
-  }
 
   // Password gate UI lives here (post2) so mld-app.js stays under Hubitat's 128 KB
   // File Manager limit — putting it in part1 previously left only ~3 KB headroom.

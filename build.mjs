@@ -651,6 +651,13 @@ if (/icons\/icon-\$\{size\}\.png|icons\/icon-192\.png|icons\/icon-512\.png/.test
 if (!groovy.includes(`${HPM_BASE_URL}/upload/mld-icon-192.png?v=${pkg.version}`)) {
   throw new Error("Generated Groovy index is missing public 192px apple-touch / favicon URL");
 }
+const builtIndex = readFileSync(join(upload, "mld-index.html"), "utf8");
+if (!builtIndex.includes("rel=\"manifest\"") || !builtIndex.includes("crossorigin=\"use-credentials\"")) {
+  throw new Error("Built index is missing crossorigin=use-credentials on manifest link");
+}
+if (!groovy.includes(',"id":"/mDash"')) {
+  throw new Error("Generated Groovy manifest is missing stable PWA id");
+}
 writeFileSync(join(dist, "ModernLightsDashboard.groovy"), groovy);
 
 const driverSrc = join(root, "drivers", DRIVER_FILE);
