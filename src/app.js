@@ -15579,10 +15579,10 @@
     return onHi ? (tile.dataset.streamUrlHi || tile.dataset.streamUrl) : tile.dataset.streamUrl;
   }
 
-  function syncCameraHdBtn(tile) {
-    const hdBtn = tile?.querySelector(".camera-hd-btn");
+  function syncCameraHdBtn(tile, btn) {
+    const hdBtn = btn || tile?.querySelector(".camera-hd-btn");
     if (!hdBtn) return;
-    const onHi = tile.dataset.hdActive === "1";
+    const onHi = tile?.dataset.hdActive === "1";
     hdBtn.textContent = onHi ? "SD" : "HD";
     hdBtn.setAttribute("aria-pressed", onHi ? "true" : "false");
     hdBtn.classList.toggle("camera-hd-active", onHi);
@@ -15710,7 +15710,7 @@
           toggleCameraHd(tile);
         });
         media.appendChild(hdBtn);
-        syncCameraHdBtn(tile);
+        syncCameraHdBtn(tile, hdBtn);
       }
       const reorderOverlay = ce("div", "camera-reorder-overlay");
       const dragHandle = ce("button", "camera-drag-handle");

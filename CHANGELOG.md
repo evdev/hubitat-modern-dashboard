@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.93
+
+- **Fix:** Camera HD/SD label now sets on the button element directly during tile
+  create (media is not under the tile yet, so querySelector found nothing).
+
 ## 0.3.92
 
 - **Cameras:** Trigger notification overlays load the high/main go2rtc stream by
