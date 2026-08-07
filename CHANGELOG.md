@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.95
+
+- **Fix:** Hub mode and HSM tiles update from live hub events instead of staying
+  stuck on optimistic UI until a timed refresh. Hub mode changes apply over
+  WebSocket; HSM status/alert events clear the lock immediately.
+- **Fix:** HSM **Arm all** no longer overwrites an armed intrusion state with
+  disarmed when the hub only reports the all-disarmed → disarmed transition.
+
 ## 0.3.94
 
 - **Fix:** Garage door tiles on Favorites refresh after open/close commands and

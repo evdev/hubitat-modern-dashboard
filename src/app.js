@@ -728,9 +728,11 @@
   let snapshots = {};
   let roomGestureLockCount = 0;
   let hubModeLockUntil = 0;
+  let hubModeLockTimer = null;
   let hsmStatus = "";
   let hsmAlert = "";
   let hsmAlertDesc = "";
+  let hsmLockTimer = null;
   let hubNotifications = [];
   let hubTileNotifications = [];
   let notificationDeviceIds = new Set();
@@ -5645,20 +5647,23 @@
     }
     padApi?.close();
     const modeDef = [...HSM_INTRUSION_MODES, ...HSM_MONITORING_MODES].find((m) => m.cmd === mode);
-    if (modeDef?.status) {
-      hsmStatus = modeDef.status;
-      hsmLockUntil = Date.now() + 4000;
-    }
     if (mode === "cancelAlerts") {
       hsmAlert = "";
       hsmAlertDesc = "";
-      hsmLockUntil = Date.now() + 4000;
+      setHsmLock();
+    } else if (modeDef?.status) {
+      // armAll only changes allDisarmed → disarmed; don't clobber armed* intrusion state.
+      if (mode === "armAll") {
+        if (String(hsmStatus || "").toLowerCase() === "alldisarmed") hsmStatus = modeDef.status;
+      } else {
+        hsmStatus = modeDef.status;
+      }
+      setHsmLock();
     }
     if (result.data?.status) hsmStatus = result.data.status;
     if (result.data?.alert !== undefined) hsmAlert = result.data.alert || "";
     if (result.data?.alertDesc !== undefined) hsmAlertDesc = result.data.alertDesc || "";
     if (currentCategory() === "security") renderSecurityPopup();
-    setTimeout(() => { refresh().catch(() => {}); }, 3000);
     return true;
   }
 
@@ -5810,8 +5815,48 @@
     return hubModeLockUntil > Date.now();
   }
 
+  function clearHubModeLock() {
+    if (hubModeLockTimer) {
+      clearTimeout(hubModeLockTimer);
+      hubModeLockTimer = null;
+    }
+    hubModeLockUntil = 0;
+  }
+
+  function setHubModeLock() {
+    clearHubModeLock();
+    hubModeLockUntil = Date.now() + LEVEL_OPTIMISTIC_MS;
+    hubModeLockTimer = setTimeout(() => {
+      hubModeLockTimer = null;
+      hubModeLockUntil = 0;
+      if (currentCategory() === "hub-mode") renderHubModePopup();
+    }, LEVEL_OPTIMISTIC_MS);
+  }
+
   function hsmLocked() {
     return hsmLockUntil > Date.now();
+  }
+
+  function clearHsmLock() {
+    if (hsmLockTimer) {
+      clearTimeout(hsmLockTimer);
+      hsmLockTimer = null;
+    }
+    hsmLockUntil = 0;
+  }
+
+  function setHsmLock() {
+    clearHsmLock();
+    hsmLockUntil = Date.now() + LEVEL_OPTIMISTIC_MS;
+    hsmLockTimer = setTimeout(() => {
+      hsmLockTimer = null;
+      hsmLockUntil = 0;
+      refresh().then(() => {
+        if (currentCategory() === "security") renderSecurityPopup();
+      }).catch(() => {
+        if (currentCategory() === "security") renderSecurityPopup();
+      });
+    }, LEVEL_OPTIMISTIC_MS);
   }
 
   function roomLabel(rid) {
@@ -12641,13 +12686,19 @@
         const m = JSON.parse(ev.data);
         if (!m) return;
         if (m.source === "LOCATION") {
-          if (m.name === "hsmStatus" && !hsmLocked()) {
+          if (m.name === "hsmStatus") {
             hsmStatus = String(m.value || "");
+            clearHsmLock();
             if (currentCategory() === "security") renderSecurityPopup();
-          } else if (m.name === "hsmAlert" && !hsmLocked()) {
+          } else if (m.name === "hsmAlert") {
             hsmAlert = String(m.value || "");
             if (m.descriptionText) hsmAlertDesc = String(m.descriptionText);
+            clearHsmLock();
             if (currentCategory() === "security") renderSecurityPopup();
+          } else if (m.name === "mode") {
+            currentHubMode = String(m.value || "");
+            clearHubModeLock();
+            if (currentCategory() === "hub-mode") renderHubModePopup();
           }
           return;
         }
@@ -14408,9 +14459,13 @@
         if (mode === currentHubMode) return;
         hapticTap();
         currentHubMode = mode;
-        hubModeLockUntil = Date.now() + 4000;
+        setHubModeLock();
         renderHubModePopup();
-        await setHubModeApi(mode);
+        const ok = await setHubModeApi(mode);
+        if (!ok) {
+          clearHubModeLock();
+          refresh().catch(() => {});
+        }
       });
       grid.appendChild(b);
     }
