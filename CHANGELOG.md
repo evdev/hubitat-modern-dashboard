@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.91
+
+- **Fix:** Camera HD/SD toggle button now syncs its label after the button is
+  added to the tile, so the initial state displays correctly on load.
+
 ## 0.3.90
 
 - **Fix:** Public PWA icon URLs must not be fetched before publish — GitHub’s

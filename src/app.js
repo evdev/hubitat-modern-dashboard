@@ -15709,8 +15709,8 @@
           e.stopPropagation();
           toggleCameraHd(tile);
         });
-        syncCameraHdBtn(tile);
         media.appendChild(hdBtn);
+        syncCameraHdBtn(tile);
       }
       const reorderOverlay = ce("div", "camera-reorder-overlay");
       const dragHandle = ce("button", "camera-drag-handle");
