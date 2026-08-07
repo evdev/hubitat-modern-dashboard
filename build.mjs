@@ -637,6 +637,20 @@ if (
 ) {
   throw new Error("Generated Groovy manifest is missing public 192/512px PWA icon URLs");
 }
+// Keep the 0.3.77 install contract: small manifest + public PNGs only.
+const manifestBody = groovy.slice(
+  groovy.indexOf("def renderManifest()"),
+  groovy.indexOf("def renderSw()"),
+);
+if (manifestBody.includes("data:image")) {
+  throw new Error("renderManifest must not embed data: URI icons (breaks Android PWA install)");
+}
+if (/icons\/icon-\$\{size\}\.png|icons\/icon-192\.png|icons\/icon-512\.png/.test(manifestBody)) {
+  throw new Error("renderManifest must not use hub-proxied icons/icon-*.png URLs (corrupt over cloud)");
+}
+if (!groovy.includes(`${HPM_BASE_URL}/upload/mld-icon-192.png?v=${pkg.version}`)) {
+  throw new Error("Generated Groovy index is missing public 192px apple-touch / favicon URL");
+}
 writeFileSync(join(dist, "ModernLightsDashboard.groovy"), groovy);
 
 const driverSrc = join(root, "drivers", DRIVER_FILE);

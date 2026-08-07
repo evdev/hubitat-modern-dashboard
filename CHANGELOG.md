@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.80
+
+- **Fix:** Keep Android / Pixel PWA install on the 0.3.77 contract after the soft
+  plaque icon change — hub manifest and apple-touch / favicon use public release
+  PNGs only (no data-URI inlining, no Hubitat Cloud PNG proxy). Added
+  `npm run verify:pwa` regression guard.
+
 ## 0.3.79
 
 - **PWA:** New soft plaque app icon — circular enamel ring, luminous M, rose-gold
