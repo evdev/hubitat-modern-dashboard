@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.94
+
+- **Fix:** Garage door tiles on Favorites refresh after open/close commands and
+  clear optimistic state when the hub reports the settled position (opening→open,
+  closing→closed).
+- **Fix:** Lock tiles on Favorites refresh after lock/unlock; optimistic state clears
+  when the hub confirms the new lock value instead of blocking updates until timeout.
+
 ## 0.3.93
 
 - **Fix:** Camera HD/SD label now sets on the button element directly during tile

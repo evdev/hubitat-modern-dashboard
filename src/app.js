@@ -897,6 +897,7 @@
     const timer = setTimeout(() => {
       lockOptimistic.delete(id);
       if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
+      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
     }, LOCK_OPTIMISTIC_MS);
     lockOptimistic.set(id, { lk, st, until: Date.now() + LOCK_OPTIMISTIC_MS, timer });
   }
@@ -954,6 +955,7 @@
     entry.timer = setTimeout(() => {
       garageOptimistic.delete(id);
       if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
+      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
     }, LEVEL_OPTIMISTIC_MS);
     garageOptimistic.set(id, entry);
   }
@@ -962,6 +964,15 @@
     const prev = garageOptimistic.get(id);
     if (prev?.timer) clearTimeout(prev.timer);
     garageOptimistic.delete(id);
+  }
+
+  function garageOptimisticSatisfied(opt, door) {
+    if (!opt || !door || opt.st == null) return false;
+    const want = String(opt.st);
+    const got = String(door.st || "");
+    if (want === got) return true;
+    // Hub often reports the settled state while we still hold opening/closing.
+    return (want === "opening" && got === "open") || (want === "closing" && got === "closed");
   }
 
   function reapplyGarageOptimistic() {
@@ -973,7 +984,7 @@
       }
       const door = garageDoors.find((g) => g.i === id);
       if (!door) continue;
-      if (opt.st != null && door.st === opt.st) {
+      if (garageOptimisticSatisfied(opt, door)) {
         if (opt.timer) clearTimeout(opt.timer);
         garageOptimistic.delete(id);
         continue;
@@ -7751,7 +7762,7 @@
       if (garage) {
         if (d.st != null) garage.st = d.st;
         const opt = garageOptimistic.get(Number(d.i));
-        if (opt?.st != null && garage.st === opt.st) clearGarageOptimistic(Number(d.i));
+        if (opt && garageOptimisticSatisfied(opt, garage)) clearGarageOptimistic(Number(d.i));
         if (currentCategory() === "locks") renderLocksPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
@@ -12724,19 +12735,19 @@
         const lock = locks.find(x => x.i === Number(m.deviceId));
         if (lock && String(m.name || "") === "lock") {
           const val = String(m.value || "");
-          const opt = lockOptimistic.get(lock.i);
-          if (opt && opt.until > Date.now()) return;
           lock.st = val;
           lock.lk = val === "locked" ? 1 : 0;
+          const opt = lockOptimistic.get(lock.i);
+          if (opt && !!lock.lk === !!opt.lk) clearLockOptimistic(lock.i);
           if (currentCategory() === "locks") renderLocksPopup();
           else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
           return;
         }
         const garage = garageDoors.find(x => x.i === Number(m.deviceId));
         if (garage && String(m.name || "") === "door") {
-          const opt = garageOptimistic.get(garage.i);
-          if (opt && opt.until > Date.now()) return;
           garage.st = String(m.value || "");
+          const opt = garageOptimistic.get(garage.i);
+          if (opt && garageOptimisticSatisfied(opt, garage)) clearGarageOptimistic(garage.i);
           if (currentCategory() === "locks") renderLocksPopup();
           else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
           return;
