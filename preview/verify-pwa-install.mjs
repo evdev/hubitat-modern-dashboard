@@ -38,6 +38,11 @@ const urlMatch = groovy.match(
 if (!urlMatch) throw new Error("public icon URL template missing from generated Groovy");
 
 const urls = ["192", "512", "1024"].map((size) => urlMatch[1].replace("${size}", size));
+// Never request the exact next release URL before that release is published. GitHub's
+// raw CDN can cache the previous branch asset at that query string, defeating the
+// manifest's version-based icon cache busting. This unique probe validates the public
+// response without priming the URL Chrome will install.
+const probe = `verify=${Date.now().toString(36)}`;
 for (const url of urls) {
   if (!url.includes(`?v=${pkg.version}`)) {
     throw new Error(`icon URL version mismatch: ${url}`);
@@ -54,7 +59,7 @@ for (const url of urls) {
     console.log(`ok local 1024 ${local.length}B`);
     continue;
   }
-  const res = await fetch(url);
+  const res = await fetch(`${url}&${probe}`, { cache: "no-store" });
   const bytes = new Uint8Array(await res.arrayBuffer());
   const isPng = [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => bytes[i] === v);
   if (!res.ok || res.headers.get("content-type") !== "image/png" || !isPng) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.84
+
+- **Fix:** Give the sharpened E1 Marque icon a new cache-busting release URL. The
+  prior `0.3.83` 512px URL was cached by GitHub before its replacement asset was
+  published, so Pixel continued receiving the old, softer image.
+
 ## 0.3.83
 
 - **PWA:** Sharper E1 Marque icon — 4× supersampled edges, analytical arches, a
