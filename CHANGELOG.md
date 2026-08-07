@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.79
+
+- **PWA:** New soft plaque app icon — circular enamel ring, luminous M, rose-gold
+  accent (replaces the organic live-wire “M”).
+
 ## 0.3.78
 
 - **Fix:** Trigger tones play when no arm/shunt switch is configured. Previously
