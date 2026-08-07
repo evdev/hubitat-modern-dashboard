@@ -600,6 +600,12 @@ writeFileSync(join(upload, "mld-icon-192.png"), createIconPng(192));
 writeFileSync(join(upload, "mld-icon-512.png"), createIconPng(512));
 // Public release asset for hi-DPI Android splash (not a hub File Manager upload).
 writeFileSync(join(upload, "mld-icon-1024.png"), createIconPng(1024));
+// Version-in-FILENAME copies for the public manifest/index URLs (raw.githubusercontent.com
+// caches by path only and ignores query strings, so a bare "?v=" never busts its edge
+// cache — a distinct path per release is the only reliable way to guarantee fresh bytes).
+for (const size of [192, 512, 1024]) {
+  writeFileSync(join(upload, `mld-icon-${size}-${pkg.version}.png`), createIconPng(size));
+}
 
 const { part1Out, partCoreOut, part2Out, part3Out, part4Out } = splitAppJs(join(root, "src", "app.js"));
 const appPre = readFileSync(join(root, "src", "app-pre.js"), "utf8").trimEnd();
@@ -631,8 +637,10 @@ const groovy = substituteGroovyTemplate(groovyRaw);
 if (groovy.includes("__PWA_ICON_BASE_URL__")) {
   throw new Error("PWA icon base URL placeholder was not replaced");
 }
+// Version-in-filename (not query string): raw.githubusercontent.com ignores query
+// strings for cache-key purposes, so "?v=" alone never busts its edge cache.
 const expectedIconUrlTemplate =
-  `${HPM_BASE_URL}/upload/mld-icon-\${size}.png?v=${pkg.version}`;
+  `${HPM_BASE_URL}/upload/mld-icon-\${size}-${pkg.version}.png`;
 if (
   !groovy.includes(expectedIconUrlTemplate) ||
   !groovy.includes('for (def size : ["192", "512", "1024"])')
@@ -650,7 +658,7 @@ if (manifestBody.includes("data:image")) {
 if (/icons\/icon-\$\{size\}\.png|icons\/icon-192\.png|icons\/icon-512\.png/.test(manifestBody)) {
   throw new Error("renderManifest must not use hub-proxied icons/icon-*.png URLs (corrupt over cloud)");
 }
-if (!groovy.includes(`${HPM_BASE_URL}/upload/mld-icon-192.png?v=${pkg.version}`)) {
+if (!groovy.includes(`${HPM_BASE_URL}/upload/mld-icon-192-${pkg.version}.png`)) {
   throw new Error("Generated Groovy index is missing public 192px apple-touch / favicon URL");
 }
 const builtIndex = readFileSync(join(upload, "mld-index.html"), "utf8");

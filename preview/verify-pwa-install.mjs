@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 // Regression guard for the 0.3.77 Android / Pixel PWA install contract:
 // small hub manifest + public release PNGs (never data: URIs or hub-proxied PNGs).
+//
+// 0.3.86: icon URLs are version-in-FILENAME, not "?v=" query string.
+// raw.githubusercontent.com caches by path only and ignores query strings for its
+// cache key, so bumping only a query string never busts its edge cache — the CDN can
+// (and did) keep serving a stale icon under a "new" versioned URL for its full TTL.
+// A distinct filename per release has no prior cached entry to collide with.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -33,39 +40,47 @@ if (/icons\/icon-/.test(manifestBody)) {
 }
 
 const urlMatch = groovy.match(
-  /def src = "(https:\/\/[^"]+\/mld-icon-\$\{size\}\.png\?v=[^"]+)"/,
+  /def src = "(https:\/\/[^"]+\/mld-icon-\$\{size\}-[^"]+\.png)"/,
 );
 if (!urlMatch) throw new Error("public icon URL template missing from generated Groovy");
 
-const urls = ["192", "512", "1024"].map((size) => urlMatch[1].replace("${size}", size));
-// Never request the exact next release URL before that release is published. GitHub's
-// raw CDN can cache the previous branch asset at that query string, defeating the
-// manifest's version-based icon cache busting. This unique probe validates the public
-// response without priming the URL Chrome will install.
-const probe = `verify=${Date.now().toString(36)}`;
-for (const url of urls) {
-  if (!url.includes(`?v=${pkg.version}`)) {
+const sha256 = (buf) => createHash("sha256").update(buf).digest("hex").slice(0, 16);
+const isPngSignature = (buf) =>
+  [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => buf[i] === v);
+
+const sizes = ["192", "512", "1024"];
+const urls = sizes.map((size) => urlMatch[1].replace("${size}", size));
+
+for (const [idx, url] of urls.entries()) {
+  const size = sizes[idx];
+  if (!url.endsWith(`-${pkg.version}.png`)) {
     throw new Error(`icon URL version mismatch: ${url}`);
   }
-  // 1024 is required in the built tree; after publish, GitHub raw must serve it too.
-  // Local verify still checks remote 192/512 (install contract); 1024 is checked on disk
-  // until the release lands on the branch.
-  if (url.includes("mld-icon-1024.png")) {
-    const local = readFileSync(join(root, "dist", "upload", "mld-icon-1024.png"));
-    const isPng = [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => local[i] === v);
-    if (!isPng || local.readUInt32BE(16) !== 1024) {
-      throw new Error("local mld-icon-1024.png missing or invalid");
-    }
-    console.log(`ok local 1024 ${local.length}B`);
+
+  const localPath = join(root, "dist", "upload", `mld-icon-${size}-${pkg.version}.png`);
+  const local = readFileSync(localPath);
+  if (!isPngSignature(local) || local.readUInt32BE(16) !== Number(size)) {
+    throw new Error(`local ${localPath} missing or invalid`);
+  }
+
+  const res = await fetch(url, { cache: "no-store" });
+  if (res.status === 404) {
+    // Expected before this release is committed/pushed: the filename is brand new and
+    // has never been fetched, so there is nothing stale to worry about once published.
+    console.log(`pending publish (404 until pushed) ${url} — local ok ${local.length}B ${sha256(local)}`);
     continue;
   }
-  const res = await fetch(`${url}&${probe}`, { cache: "no-store" });
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  const isPng = [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => bytes[i] === v);
-  if (!res.ok || res.headers.get("content-type") !== "image/png" || !isPng) {
+  const bytes = Buffer.from(await res.arrayBuffer());
+  if (!res.ok || res.headers.get("content-type") !== "image/png" || !isPngSignature(bytes)) {
     throw new Error(`invalid public PWA icon: ${url}`);
   }
-  console.log(`ok ${res.status} ${bytes.length}B ${url}`);
+  if (!bytes.equals(local)) {
+    throw new Error(
+      `published icon does not match local build (possible CDN staleness): ${url} ` +
+        `(remote ${bytes.length}B ${sha256(bytes)} vs local ${local.length}B ${sha256(local)})`,
+    );
+  }
+  console.log(`ok ${res.status} ${bytes.length}B ${sha256(bytes)} ${url}`);
 }
 
 const purposes = staticManifest.icons.map((i) => i.purpose);
@@ -85,7 +100,7 @@ const simulated = {
   background_color: "#0b0d12",
   theme_color: "#0b0d12",
   icons: urls.flatMap((src, idx) => {
-    const size = ["192", "512", "1024"][idx];
+    const size = sizes[idx];
     return ["any", "maskable"].map((purpose) => ({
       src,
       sizes: `${size}x${size}`,

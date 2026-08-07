@@ -1574,7 +1574,9 @@ def renderIndex() {
     def token = params?.access_token
     // Same public release PNGs as renderManifest (0.3.77). Do not inline data: URIs
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
-    def iconHref = "__PWA_ICON_BASE_URL__/mld-icon-192.png?v=__APP_VERSION__"
+    // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
+    // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
+    def iconHref = "__PWA_ICON_BASE_URL__/mld-icon-192-__APP_VERSION__.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1656,8 +1658,10 @@ def renderManifest() {
     // and Android launchers prefer an explicit maskable icon.
     def icons = []
     // 1024: Pixel / hi-DPI splash upscales 512; public PNG only (not a hub File Manager asset).
+    // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
+    // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "__PWA_ICON_BASE_URL__/mld-icon-${size}.png?v=__APP_VERSION__"
+        def src = "__PWA_ICON_BASE_URL__/mld-icon-${size}-__APP_VERSION__.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'

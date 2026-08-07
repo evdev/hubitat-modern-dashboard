@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.86
+
+- **Fix:** Root-caused the recurring "icon still looks soft after reinstall" reports.
+  `raw.githubusercontent.com` caches by **path only** and ignores query strings for
+  its cache key — every `?v=<version>` bump on `mld-icon-512.png` was cosmetic; the
+  CDN kept serving whichever bytes it had cached at that exact path until its own
+  TTL happened to expire, regardless of version. Icon URLs now put the version in
+  the **filename** (`mld-icon-512-0.3.86.png`) so each release is a brand-new path
+  with nothing stale to collide with. `verify:pwa` now does a byte-for-byte
+  comparison against the published asset instead of trusting a 200 response.
+- **PWA:** Also redrew the E1 Marque icon completely flat — solid background (no
+  vignette), solid silver/gold glyph tones with a hard-edged highlight facet
+  instead of a smooth gradient, and no blurred contact shadow. Gradients/shadow
+  read as "hazy" once Android's splash screen and adaptive-icon shim scale the
+  icon up; flat, high-contrast art stays crisp through that scaling.
+
 ## 0.3.84
 
 - **Fix:** Give the sharpened E1 Marque icon a new cache-busting release URL. The
