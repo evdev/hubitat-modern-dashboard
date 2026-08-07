@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.82
+
+- **PWA:** Switch app icon to E1 Marque — silver geometric **m** with a gold dash
+  beneath (no ring). Keeps the public release-PNG install contract.
+
 ## 0.3.81
 
 - **Fix:** Android PWA install — manifest link uses `crossorigin="use-credentials"` so
