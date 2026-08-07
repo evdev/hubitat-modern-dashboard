@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.89
+
+- **UX:** Tablet trigger setup is rewritten around plain language — inviting empty
+  state, story-style rule list (“When Front Door opens → show Porch Cam…”), live
+  preview while editing, optional short names, friendlier field labels, camera
+  duration only when a camera is chosen, and cooldown tucked under **Quiet between
+  repeats**. Camera “none” uses a real enum sentinel (same class of Hubitat footgun
+  as the old empty duration key).
+
+## 0.3.88
+
+- **Fix:** Camera overlay auto-dismiss duration (default and per-rule override) could
+  stay stuck at 60s. Hubitat mishandles an empty-string enum key for “Use default”,
+  and sometimes stores labels like `15 seconds` instead of `15` — both made parsing
+  fall back to one minute. Override now uses a `default` sentinel; duration parsing
+  accepts keys and labels; the test action message reports the duration it queued.
+
 ## 0.3.87
 
 - **PWA:** Icon art reverted to the sharpened 0.3.83 E1 Marque (metallic gradient

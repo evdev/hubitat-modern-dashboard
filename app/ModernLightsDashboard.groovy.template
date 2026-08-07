@@ -33,7 +33,7 @@ definition(
 preferences {
     page(name: "mainPage", uninstall: true, install: true)
     page(name: "schedImportPage", title: "Import Simple Automation Rules", install: false, uninstall: false)
-    page(name: "triggersPage", title: "Dashboard trigger rules", install: false, uninstall: false)
+    page(name: "triggersPage", title: "Tablet triggers", install: false, uninstall: false)
 }
 
 def mainPage() {
@@ -205,31 +205,33 @@ def mainPage() {
             paragraph "<small>Each <b>Create</b> button adds an mDash Notifications child and selects it in the matching picker. Assign existing devices to either list. A device in both lists is treated as popup-only.</small>"
         }
         section("Dashboard triggers", hideable: true, hidden: triggersSectionCollapsed()) {
-            paragraph "<small>Hub-evaluated rules can show a near full-screen camera overlay, play a browser tone, and queue notification text on open dashboards. Expand <b>Edit trigger rules…</b> to configure. An optional arm/shunt switch gates sound (ON = tones armed; leave unset to always allow tones). Each tablet’s local sound preference still applies.</small>"
-            input "triggersEnabled", "bool", title: "Enable dashboard triggers", defaultValue: false, submitOnChange: true
+            paragraph "<small>Make open tablets react when something happens at home — show a camera, play a sound, leave a short message. Turn triggers on, pick the devices you want to use, then <b>Set up tablet triggers…</b>. An optional switch can silence sounds for quiet hours (camera and text still run). Each tablet’s own sound preference still applies.</small>"
+            input "triggersEnabled", "bool", title: "Enable tablet triggers", defaultValue: false, submitOnChange: true
             if (triggersEnabled == true) {
-                input "alertsArmSwitch", "capability.switch", title: "Sound arm / shunt switch (ON = tones armed)",
+                input "alertsArmSwitch", "capability.switch", title: "Quiet-hours switch (ON = sounds allowed)",
                     multiple: false, required: false
                 def armSw = alertsArmSwitch
                 if (armSw) {
                     def armOn = safeCurrent(armSw, "switch")
-                    paragraph "<small><b>Current:</b> ${htmlEsc(armSw.displayName)} is <b>${armOn == "on" ? "armed (tones on)" : "shunted (tones off)"}</b>. Use Rule Machine or the dashboard to flip this switch for quiet hours.</small>"
+                    paragraph "<small><b>Right now:</b> ${htmlEsc(armSw.displayName)} is <b>${armOn == "on" ? "allowing sounds" : "silencing sounds"}</b>. Flip it from Rule Machine, Mode Manager, or the dashboard overflow menu.</small>"
                 } else {
-                    paragraph "<small>Optional. Until you pick a switch, trigger tones play on every tablet. When a switch is selected and <b>off</b>, tones are silenced; camera overlays and notification text still run.</small>"
+                    paragraph "<small>Optional. Without a switch, trigger sounds play on every tablet. When a switch is selected and <b>off</b>, sounds are silenced; cameras and messages still run.</small>"
                 }
-                input "triggerOverlaySec", "enum", title: "Default camera overlay duration",
-                    options: [["15": "15 seconds"], ["30": "30 seconds"], ["60": "60 seconds"], ["120": "2 minutes"], ["300": "5 minutes"]],
+                def overlayDurOpts = overlayDurationChoices()
+                input "triggerOverlaySec", "enum", title: "Default how long cameras stay up",
+                    options: overlayDurOpts,
                     defaultValue: "60", required: false
-                input "triggerContactDevices", "capability.contactSensor", title: "Contact sensors available to trigger rules",
+                input "triggerContactDevices", "capability.contactSensor", title: "Doors & windows you might use",
                     multiple: true, required: false, showFilter: true
-                input "triggerMotionDevices", "capability.motionSensor", title: "Motion sensors available to trigger rules",
+                input "triggerMotionDevices", "capability.motionSensor", title: "Motion sensors you might use",
                     multiple: true, required: false, showFilter: true
-                input "triggerButtonDevices", "capability.pushableButton", title: "Buttons / doorbells available to trigger rules",
+                input "triggerButtonDevices", "capability.pushableButton", title: "Buttons & doorbells you might use",
                     multiple: true, required: false, showFilter: true
-                href "toTriggers", title: "Edit trigger rules…",
+                href "toTriggers", title: "Set up tablet triggers…",
                     description: triggerRulesSummary(),
                     page: "triggersPage"
-                input name: "btnTriggerTest", type: "button", title: "Send test trigger action"
+                input name: "btnTriggerTest", type: "button", title: "Send a test to open dashboards"
+                paragraph "<small>Test uses the default camera duration above (press <b>Done</b> first if you changed it). It does not use a trigger’s own duration.</small>"
                 if (state.triggerTestOk) {
                     paragraph "<small><b>Test:</b> ${htmlEsc(state.triggerTestOk.toString())}</small>"
                 }
@@ -392,41 +394,45 @@ def triggersPage() {
     if (state.triggerUiMode == "edit") {
         return triggerEditUi()
     }
-    dynamicPage(name: "triggersPage", title: "Dashboard trigger rules", install: false, uninstall: false) {
-        section("About") {
-            paragraph "<small>Each rule watches one device event and can show a camera overlay, play a browser tone, and/or queue notification text. Max ${maxTriggerRules()} rules. Select eligible devices under <b>Dashboard triggers</b> on the main page first.</small>"
+    dynamicPage(name: "triggersPage", title: "Tablet triggers", install: false, uninstall: false) {
+        section("") {
+            paragraph "Tell open dashboards what to do when something happens at home — a door opens, motion starts, or a doorbell rings. Each trigger can show a camera, play a sound, and leave a short message."
+            href name: "backMainTrig", page: "mainPage", title: "← Back to settings"
         }
         def rules = parseTriggerRulesMap()
         def ids = rules.keySet().collect { it.toString() }.sort()
+        def atLimit = ids.size() >= maxTriggerRules()
+
         if (!ids) {
-            section("Rules") {
-                paragraph "<small>No rules yet.</small>"
+            section("Get started") {
+                paragraph "You don't have any triggers yet. Pick a device event, then choose what tablets should show or say."
+                if (!atLimit) {
+                    input name: "btnTrigAdd", type: "button", title: "Create your first trigger"
+                }
+                paragraph "<small>Tip: choose contact, motion, and button devices under <b>Dashboard triggers</b> on the main settings page first.</small>"
             }
         } else {
-            section("Rules (${ids.size()})") {
+            section(ids.size() == 1 ? "Your trigger" : "Your triggers (${ids.size()})") {
+                if (!atLimit) {
+                    input name: "btnTrigAdd", type: "button", title: "Add another trigger"
+                } else {
+                    paragraph "<small>You've reached the limit of ${maxTriggerRules()} triggers.</small>"
+                }
                 for (rid in ids) {
                     def r = rules[rid]
                     if (!(r instanceof Map)) continue
                     def broken = !triggerDeviceById(r.deviceId)
                     def camMissing = r.cameraId && !validCameraIdSet().contains(r.cameraId?.toString())
+                    def status = (r.enabled == false) ? "Paused" : "On"
                     def warn = ""
-                    if (broken) warn = " — source device missing"
-                    else if (camMissing) warn = " — camera no longer configured"
-                    paragraph "<b>${htmlEsc(triggerRuleLabel(r))}</b><br><small>${htmlEsc(triggerRuleSummary(r))}${htmlEsc(warn)}</small>"
-                    input name: "btnTrigEdit_${rid}", type: "button", title: "Edit ${triggerRuleLabel(r)}"
-                    input name: "btnTrigDel_${rid}", type: "button", title: "Delete ${triggerRuleLabel(r)}"
+                    if (broken) warn = "<br><small><b>Needs attention:</b> the source device is no longer available.</small>"
+                    else if (camMissing) warn = "<br><small><b>Needs attention:</b> that camera is no longer configured.</small>"
+                    paragraph "<b>${htmlEsc(triggerRuleLabel(r))}</b> · ${htmlEsc(status)}<br>" +
+                        "<small>${htmlEsc(triggerRuleStory(r))}</small>${warn}"
+                    input name: "btnTrigEdit_${rid}", type: "button", title: "Edit: ${triggerRuleLabel(r)}"
+                    input name: "btnTrigDel_${rid}", type: "button", title: "Remove: ${triggerRuleLabel(r)}"
                 }
             }
-        }
-        section("Add") {
-            if (ids.size() >= maxTriggerRules()) {
-                paragraph "<small>Rule limit reached (${maxTriggerRules()}).</small>"
-            } else {
-                input name: "btnTrigAdd", type: "button", title: "Add trigger rule"
-            }
-        }
-        section("") {
-            href name: "backMainTrig", page: "mainPage", title: "Back to Modern Dashboard settings"
         }
     }
 }
@@ -461,13 +467,14 @@ def triggerEditUi() {
         try {
             if (state.triggerEditLoadedId?.toString() != ruleId) {
                 app.updateSetting("trigEditEnabled", [type: "bool", value: existing.enabled != false])
+                app.updateSetting("trigEditName", [type: "text", value: existing.name?.toString() ?: ""])
                 app.updateSetting("trigEditKind", [type: "enum", value: existing.kind?.toString() ?: "contact"])
                 app.updateSetting("trigEditDevice", [type: "enum", value: existing.deviceId?.toString() ?: ""])
                 app.updateSetting("trigEditButton", [type: "number", value: existing.button ?: 1])
-                app.updateSetting("trigEditCamera", [type: "enum", value: existing.cameraId?.toString() ?: ""])
+                app.updateSetting("trigEditCamera", [type: "enum", value: existing.cameraId?.toString() ?: "none"])
                 app.updateSetting("trigEditTone", [type: "enum", value: existing.toneId?.toString() ?: "none"])
                 app.updateSetting("trigEditText", [type: "text", value: existing.text?.toString() ?: ""])
-                app.updateSetting("trigEditDuration", [type: "enum", value: existing.durationSec != null ? existing.durationSec.toString() : ""])
+                app.updateSetting("trigEditDuration", [type: "enum", value: existing.durationSec != null ? existing.durationSec.toString() : "default"])
                 app.updateSetting("trigEditCooldown", [type: "number", value: existing.cooldownSec ?: 10])
                 state.triggerEditLoadedId = ruleId
             }
@@ -477,20 +484,23 @@ def triggerEditUi() {
         try {
             if (state.triggerEditLoadedId?.toString() != "__new__") {
                 app.updateSetting("trigEditEnabled", [type: "bool", value: true])
+                try { app.clearSetting("trigEditName") } catch (e1) {
+                    try { app.updateSetting("trigEditName", [type: "text", value: ""]) } catch (e2) {}
+                }
                 app.updateSetting("trigEditKind", [type: "enum", value: "contact"])
                 try { app.clearSetting("trigEditDevice") } catch (e1) {
                     try { app.updateSetting("trigEditDevice", [type: "enum", value: ""]) } catch (e2) {}
                 }
                 app.updateSetting("trigEditButton", [type: "number", value: 1])
-                try { app.clearSetting("trigEditCamera") } catch (e1) {
-                    try { app.updateSetting("trigEditCamera", [type: "enum", value: ""]) } catch (e2) {}
+                try { app.updateSetting("trigEditCamera", [type: "enum", value: "none"]) } catch (e1) {
+                    try { app.clearSetting("trigEditCamera") } catch (e2) {}
                 }
                 app.updateSetting("trigEditTone", [type: "enum", value: "none"])
                 try { app.clearSetting("trigEditText") } catch (e1) {
                     try { app.updateSetting("trigEditText", [type: "text", value: ""]) } catch (e2) {}
                 }
-                try { app.clearSetting("trigEditDuration") } catch (e1) {
-                    try { app.updateSetting("trigEditDuration", [type: "enum", value: ""]) } catch (e2) {}
+                try { app.updateSetting("trigEditDuration", [type: "enum", value: "default"]) } catch (e1) {
+                    try { app.clearSetting("trigEditDuration") } catch (e2) {}
                 }
                 app.updateSetting("trigEditCooldown", [type: "number", value: 10])
                 state.triggerEditLoadedId = "__new__"
@@ -498,48 +508,84 @@ def triggerEditUi() {
         } catch (e) {}
     }
 
-    dynamicPage(name: "triggersPage", title: ruleId ? "Edit trigger rule" : "Add trigger rule", install: false, uninstall: false) {
-        section("Navigation") {
-            input name: "btnTrigCancel", type: "button", title: "Back to trigger rules"
+    def isNew = !(existing instanceof Map)
+    dynamicPage(name: "triggersPage", title: isNew ? "New trigger" : "Edit trigger", install: false, uninstall: false) {
+        section("") {
+            input name: "btnTrigCancel", type: "button", title: "← All triggers"
+            paragraph isNew ?
+                "Describe what happens, then what your tablets should do. You’ll see a plain-English preview as you go." :
+                "Update when this runs and what tablets should do. The preview below follows your choices."
         }
-        def kindOpts = [["contact": "Contact opens"], ["motion": "Motion active"], ["button": "Button pushed"]]
+
+        def kindOpts = [
+            ["contact": "A door or window opens"],
+            ["motion": "Motion is detected"],
+            ["button": "A button is pressed"]
+        ]
         def curKind = trigEditKind?.toString() ?: (existing instanceof Map ? existing.kind?.toString() : null) ?: "contact"
         def deviceOpts = triggerDeviceEnumOptions(curKind)
         def cameraOpts = triggerCameraEnumOptions()
-        def toneOpts = [["none": "No tone"], ["chime": "Door chime"], ["alert": "Alert"]]
-        def durOpts = [["": "Use default"], ["15": "15 seconds"], ["30": "30 seconds"], ["60": "60 seconds"], ["120": "2 minutes"], ["300": "5 minutes"]]
+        def toneOpts = [
+            ["none": "No sound"],
+            ["chime": "Gentle chime"],
+            ["alert": "Alert tone"]
+        ]
+        def durOpts = overlayDurationOverrideChoices()
+        def camSel = trigEditCamera?.toString()?.trim()
+        def showCameraExtras = camSel && camSel != "none" && camSel != ""
+        def coolVal = 10
+        try { if (trigEditCooldown != null) coolVal = trigEditCooldown.toString().toInteger() } catch (e) { coolVal = 10 }
+        def advancedOpen = (coolVal != 10)
 
-        section("When") {
-            input "trigEditEnabled", "bool", title: "Rule enabled", defaultValue: true, submitOnChange: true
-            input "trigEditKind", "enum", title: "Trigger type", options: kindOpts,
-                defaultValue: "contact", required: true, submitOnChange: true
-            if (!deviceOpts) {
-                paragraph "<small>No devices available for this type. Select contact, motion, or button devices under <b>Dashboard triggers</b> on the main page.</small>"
-            } else {
-                input "trigEditDevice", "enum", title: "Device", options: deviceOpts, required: true, submitOnChange: true
-            }
-            if (curKind == "button") {
-                input "trigEditButton", "number", title: "Button number", defaultValue: 1, required: false, range: "1..20"
-            }
+        section("Preview") {
+            paragraph triggerEditPreviewHtml()
         }
-        section("Then") {
-            input "trigEditCamera", "enum", title: "Camera overlay", options: cameraOpts, required: false, submitOnChange: true
-            input "trigEditTone", "enum", title: "Browser tone", options: toneOpts, defaultValue: "none", required: false
-            input "trigEditText", "text", title: "Notification / caption text (optional)", required: false
-            input "trigEditDuration", "enum", title: "Overlay duration override", options: durOpts, required: false
-            input "trigEditCooldown", "number", title: "Cooldown (seconds)", defaultValue: 10, required: false, range: "1..600"
-            paragraph "<small>At least one of camera, tone (not none), or notification text is required.</small>"
-        }
+
         if (state.triggerEditError) {
-            section("Error") {
+            section("Almost there") {
                 paragraph "<b>${htmlEsc(state.triggerEditError.toString())}</b>"
             }
         }
-        section("Save") {
-            input name: "btnTrigSave", type: "button", title: ruleId ? "Save rule" : "Add rule"
-            if (ruleId) {
-                paragraph "<small>Editing rule id <code>${htmlEsc(ruleId)}</code></small>"
+
+        section("When this happens") {
+            input "trigEditEnabled", "bool", title: "This trigger is on", defaultValue: true, submitOnChange: true
+            input "trigEditName", "text", title: "Short name (optional)", description: "e.g. Front door, Doorbell", required: false
+            input "trigEditKind", "enum", title: "What kind of event?", options: kindOpts,
+                defaultValue: "contact", required: true, submitOnChange: true
+            if (!deviceOpts) {
+                paragraph "No devices of this type are available yet. On the main settings page, open <b>Dashboard triggers</b> and pick the contact, motion, or button devices you want to use — then come back here."
+            } else {
+                input "trigEditDevice", "enum", title: "Which device?", options: deviceOpts, required: true, submitOnChange: true
             }
+            if (curKind == "button") {
+                input "trigEditButton", "number", title: "Which button number?", defaultValue: 1, required: false, range: "1..20",
+                    submitOnChange: true
+            }
+        }
+
+        section("What tablets should do") {
+            paragraph "<small>Pick at least one: a camera, a sound, or a message.</small>"
+            input "trigEditCamera", "enum", title: "Show a camera?", options: cameraOpts, required: false, submitOnChange: true
+            if (showCameraExtras) {
+                input "trigEditDuration", "enum", title: "How long should it stay up?", options: durOpts,
+                    defaultValue: "default", required: false, submitOnChange: true
+            }
+            input "trigEditTone", "enum", title: "Play a sound?", options: toneOpts, defaultValue: "none", required: false,
+                submitOnChange: true
+            input "trigEditText", "text", title: "Message to show (optional)",
+                description: "Appears as a caption while the camera is up, then as a notification", required: false,
+                submitOnChange: true
+        }
+
+        section("Quiet between repeats", hideable: true, hidden: !advancedOpen) {
+            input "trigEditCooldown", "number", title: "Wait this many seconds before firing again",
+                defaultValue: 10, required: false, range: "1..600"
+            paragraph "<small>Helps when a sensor chatters (door bounce, brief motion). Default is 10 seconds.</small>"
+        }
+
+        section("") {
+            input name: "btnTrigSave", type: "button", title: isNew ? "Create trigger" : "Save trigger"
+            paragraph "<small>Or use <b>← All triggers</b> above to leave without saving.</small>"
         }
     }
 }
@@ -5661,13 +5707,55 @@ def triggersIsEnabled() {
     return triggersEnabled == true
 }
 
-def triggerDefaultDurationSec() {
-    def v = 60
+def overlayDurationChoices() {
+    return [
+        ["15": "15 seconds"],
+        ["30": "30 seconds"],
+        ["60": "60 seconds"],
+        ["120": "2 minutes"],
+        ["300": "5 minutes"]
+    ]
+}
+
+def overlayDurationOverrideChoices() {
+    return [["default": "Use the app default"]] + overlayDurationChoices()
+}
+
+/** Accept enum keys, ints, or Hubitat labels like "15 seconds" / "2 minutes". */
+def parseOverlayDurationSec(raw) {
+    if (raw == null) return null
+    def s = raw.toString().trim()
+    if (!s) return null
+    def lower = s.toLowerCase()
+    if (lower == "default" || lower == "use default" || lower == "none") return null
     try {
-        if (triggerOverlaySec != null) v = triggerOverlaySec.toString().toInteger()
-    } catch (e) { v = 60 }
-    if (v != 15 && v != 30 && v != 60 && v != 120 && v != 300) v = 60
-    return v
+        if (s.isInteger()) {
+            def n = s.toInteger()
+            if (n == 15 || n == 30 || n == 60 || n == 120 || n == 300) return n
+        }
+    } catch (e) {}
+    // Hubitat sometimes stores the display label instead of the option key.
+    if (lower == "15 seconds" || lower.startsWith("15 sec")) return 15
+    if (lower == "30 seconds" || lower.startsWith("30 sec")) return 30
+    if (lower == "60 seconds" || lower.startsWith("60 sec") || lower == "1 minute" || lower == "1 min") return 60
+    if (lower == "2 minutes" || lower == "2 minute" || lower == "120 seconds" || lower.startsWith("2 min")) return 120
+    if (lower == "5 minutes" || lower == "5 minute" || lower == "300 seconds" || lower.startsWith("5 min")) return 300
+    // Leading digits only when the remainder is clearly a unit suffix.
+    try {
+        def m = (lower =~ /^(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes)?$/)
+        if (m.matches()) {
+            def n = m.group(1).toInteger()
+            def unit = m.group(2) ?: "s"
+            if (unit.startsWith("m")) n = n * 60
+            if (n == 15 || n == 30 || n == 60 || n == 120 || n == 300) return n
+        }
+    } catch (e) {}
+    return null
+}
+
+def triggerDefaultDurationSec() {
+    def v = parseOverlayDurationSec(triggerOverlaySec)
+    return (v != null) ? v : 60
 }
 
 def parseTriggerRulesMap() {
@@ -5700,33 +5788,112 @@ def saveTriggerCooldownMap(map) {
 
 def triggerRulesSummary() {
     def n = parseTriggerRulesMap().size()
-    if (!triggersIsEnabled()) return "Disabled"
-    return n == 1 ? "1 rule" : "${n} rules"
+    if (!triggersIsEnabled()) return "Off"
+    if (n == 0) return "None yet"
+    return n == 1 ? "1 trigger" : "${n} triggers"
+}
+
+def triggerHumanDuration(sec) {
+    def n = null
+    try { if (sec != null) n = sec.toString().toInteger() } catch (e) { n = null }
+    if (n == 15) return "15 seconds"
+    if (n == 30) return "30 seconds"
+    if (n == 60) return "1 minute"
+    if (n == 120) return "2 minutes"
+    if (n == 300) return "5 minutes"
+    if (n != null && n > 0) return "${n} seconds"
+    return "the default time"
+}
+
+def triggerCameraDisplayName(cameraId) {
+    def key = cameraId?.toString()?.trim()
+    if (!key || key == "none") return null
+    for (d in allCameraDevices()) {
+        try {
+            if (d?.id?.toString() == key) return d.displayName?.toString() ?: key
+        } catch (e) {}
+    }
+    return "camera ${key}"
 }
 
 def triggerRuleLabel(r) {
-    if (!(r instanceof Map)) return "Rule"
+    if (!(r instanceof Map)) return "Trigger"
     def name = r.name?.toString()?.trim()
     if (name) return name
+    def dname = r.deviceName?.toString()?.trim()
+    if (dname) return dname
     def kind = r.kind?.toString() ?: "trigger"
-    return kind.substring(0, 1).toUpperCase() + kind.substring(1) + " rule"
+    return kind.substring(0, 1).toUpperCase() + kind.substring(1) + " trigger"
 }
 
 def triggerRuleSummary(r) {
+    return triggerRuleStory(r)
+}
+
+def triggerWhenPhrase(kind, deviceName, button) {
+    def dname = (deviceName ?: "that device").toString()
+    def k = kind?.toString() ?: ""
+    if (k == "contact") return "${dname} opens"
+    if (k == "motion") return "motion on ${dname}"
+    if (k == "button") return "${dname} button ${button ?: 1} is pressed"
+    return dname
+}
+
+def triggerActionPhrases(cameraId, toneId, text, durationSec) {
+    def actions = []
+    def camName = triggerCameraDisplayName(cameraId)
+    if (camName) {
+        actions << "show ${camName} for ${triggerHumanDuration(durationSec)}"
+    }
+    def tone = toneId?.toString()
+    if (tone && tone != "none") {
+        if (tone == "chime") actions << "play a gentle chime"
+        else if (tone == "alert") actions << "play an alert tone"
+        else actions << "play a sound"
+    }
+    def msg = text?.toString()?.trim()
+    if (msg) {
+        def shortMsg = msg.length() > 48 ? (msg.substring(0, 45) + "…") : msg
+        actions << "say \"${shortMsg}\""
+    }
+    return actions
+}
+
+def triggerJoinEnglish(parts) {
+    if (!parts) return ""
+    if (parts.size() == 1) return parts[0]
+    if (parts.size() == 2) return parts[0] + " and " + parts[1]
+    return parts[0..-2].join(", ") + ", and " + parts[-1]
+}
+
+def triggerRuleStory(r) {
     if (!(r instanceof Map)) return ""
-    def parts = []
-    def kind = r.kind?.toString() ?: ""
-    def dname = r.deviceName?.toString() ?: ("device " + (r.deviceId ?: "?"))
-    if (kind == "contact") parts << "${dname} opens"
-    else if (kind == "motion") parts << "${dname} active"
-    else if (kind == "button") parts << "${dname} button ${r.button ?: 1}"
-    else parts << dname
-    if (r.cameraId) parts << "camera"
-    def tone = r.toneId?.toString()
-    if (tone && tone != "none") parts << "tone:${tone}"
-    if (r.text) parts << "text"
-    if (r.enabled == false) parts << "disabled"
-    return parts.join(" · ")
+    def whenBit = triggerWhenPhrase(r.kind, r.deviceName, r.button)
+    def actions = triggerActionPhrases(r.cameraId, r.toneId, r.text, r.durationSec)
+    if (!actions) return "When ${whenBit} — no actions configured yet"
+    return "When ${whenBit} → ${triggerJoinEnglish(actions)}"
+}
+
+def triggerEditPreviewHtml() {
+    def kind = trigEditKind?.toString() ?: "contact"
+    def dev = triggerDeviceById(trigEditDevice)
+    def dname = dev?.displayName?.toString()
+    if (!dname) dname = trigEditDevice ? "the selected device" : "a device you choose"
+    def button = 1
+    try { if (trigEditButton != null) button = trigEditButton.toString().toInteger() } catch (e) { button = 1 }
+    def whenBit = triggerWhenPhrase(kind, dname, button)
+    def cam = trigEditCamera?.toString()?.trim()
+    if (cam == "" || cam == "none") cam = null
+    def tone = trigEditTone?.toString()?.trim()
+    def text = trigEditText?.toString()?.trim() ?: ""
+    def dur = parseOverlayDurationSec(trigEditDuration)
+    def actions = triggerActionPhrases(cam, tone, text, dur)
+    def enabled = (trigEditEnabled != false)
+    def pauseNote = enabled ? "" : " <i>(currently paused)</i>"
+    if (!actions) {
+        return "When <b>${htmlEsc(whenBit)}</b>, your tablets will… <i>pick a camera, sound, or message below</i>.${pauseNote}"
+    }
+    return "When <b>${htmlEsc(whenBit)}</b>, your tablets will <b>${htmlEsc(triggerJoinEnglish(actions))}</b>.${pauseNote}"
 }
 
 def triggerContactDeviceList() {
@@ -5769,7 +5936,7 @@ def triggerDeviceEnumOptions(kind) {
 }
 
 def triggerCameraEnumOptions() {
-    def opts = [["": "No camera"]]
+    def opts = [["none": "Don't show a camera"]]
     for (d in allCameraDevices()) {
         try {
             opts << ["${d.id}": d.displayName?.toString() ?: d.id.toString()]
@@ -5791,38 +5958,38 @@ def triggerNormalizeRule(Map raw, String existingId) {
         return [error: "Invalid trigger type"]
     }
     def deviceId = raw?.deviceId?.toString()?.trim()
-    if (!deviceId) return [error: "Select a device"]
+    if (!deviceId) return [error: "Choose which device should start this trigger"]
     def dev = triggerDeviceById(deviceId)
-    if (!dev) return [error: "Device is not in the trigger source pickers"]
+    if (!dev) return [error: "That device isn't in your Dashboard triggers pickers — add it on the main settings page"]
     // Ensure device matches kind pickers.
     def okKind = false
     if (kind == "contact") okKind = (triggerContactDeviceList().find { it?.id?.toString() == deviceId } != null)
     else if (kind == "motion") okKind = (triggerMotionDeviceList().find { it?.id?.toString() == deviceId } != null)
     else if (kind == "button") okKind = (triggerButtonDeviceList().find { it?.id?.toString() == deviceId } != null)
-    if (!okKind) return [error: "Device does not match trigger type"]
+    if (!okKind) return [error: "That device doesn't match the event type you picked"]
 
     def cameraId = raw?.cameraId?.toString()?.trim()
-    if (cameraId == "") cameraId = null
+    if (cameraId == "" || cameraId == "none") cameraId = null
     if (cameraId && !validCameraIdSet().contains(cameraId)) {
-        return [error: "Camera is not configured in this app"]
+        return [error: "That camera isn't configured in this app anymore — pick another or choose Don't show a camera"]
     }
 
     def toneId = raw?.toneId?.toString()?.trim()?.toLowerCase()
     if (!toneId || toneId == "none") toneId = null
     else if (toneId != "chime" && toneId != "alert") {
-        return [error: "Invalid tone"]
+        return [error: "Pick a sound option from the list"]
     }
 
     def text = raw?.text?.toString()?.trim() ?: ""
     if (text.length() > maxTriggerTextLen()) text = text.substring(0, maxTriggerTextLen())
     if (!cameraId && !toneId && !text) {
-        return [error: "Choose a camera, tone, or notification text"]
+        return [error: "Choose at least one action — a camera, a sound, or a message"]
     }
 
     def button = 1
     if (kind == "button") {
         try { button = (raw?.button != null) ? raw.button.toString().toInteger() : 1 } catch (e) { button = 1 }
-        if (button < 1 || button > 20) return [error: "Button number must be 1–20"]
+        if (button < 1 || button > 20) return [error: "Button number should be between 1 and 20"]
     }
 
     def cooldownSec = 10
@@ -5833,17 +6000,23 @@ def triggerNormalizeRule(Map raw, String existingId) {
     if (cooldownSec > 600) cooldownSec = 600
 
     def durationSec = null
-    if (raw?.durationSec != null && raw.durationSec.toString().trim()) {
-        try { durationSec = raw.durationSec.toString().toInteger() } catch (e) { durationSec = null }
-        if (durationSec != null && durationSec != 15 && durationSec != 30 && durationSec != 60 && durationSec != 120 && durationSec != 300) {
-            return [error: "Invalid overlay duration"]
+    def rawDur = raw?.durationSec
+    if (rawDur != null && rawDur.toString().trim()) {
+        def lower = rawDur.toString().trim().toLowerCase()
+        if (lower != "default" && lower != "use default" && lower != "use the app default" && lower != "none") {
+            durationSec = parseOverlayDurationSec(rawDur)
+            if (durationSec == null) return [error: "Pick a camera duration from the list"]
         }
     }
+
+    def name = raw?.name?.toString()?.trim() ?: ""
+    if (name.length() > 40) name = name.substring(0, 40)
 
     def id = existingId?.toString()?.trim()
     if (!id) id = triggerNewRuleId()
     def rule = [
         id: id,
+        name: name,
         enabled: raw?.enabled != false,
         kind: kind,
         deviceId: deviceId,
@@ -5863,6 +6036,7 @@ def triggerSaveRuleFromUi() {
     def existingId = state.triggerEditRuleId?.toString()?.trim() ?: ""
     def raw = [
         enabled: trigEditEnabled != false,
+        name: trigEditName,
         kind: trigEditKind,
         deviceId: trigEditDevice,
         button: trigEditButton,
@@ -6153,14 +6327,10 @@ def enqueueTriggerActionFromRule(r) {
     if (!(r instanceof Map)) return
     def nowMs = now()
     def durationSec = triggerDefaultDurationSec()
-    try {
-        if (r.durationSec != null) durationSec = r.durationSec.toString().toInteger()
-    } catch (e) {}
-    if (durationSec != 15 && durationSec != 30 && durationSec != 60 && durationSec != 120 && durationSec != 300) {
-        durationSec = triggerDefaultDurationSec()
-    }
+    def overrideSec = parseOverlayDurationSec(r?.durationSec)
+    if (overrideSec != null) durationSec = overrideSec
     def cameraId = r.cameraId?.toString()?.trim()
-    if (cameraId == "") cameraId = null
+    if (cameraId == "" || cameraId == "none") cameraId = null
     if (cameraId && !validCameraIdSet().contains(cameraId)) cameraId = null
     def toneId = r.toneId?.toString()?.trim()
     if (!toneId || toneId == "none") toneId = null
@@ -6189,6 +6359,7 @@ def enqueueTriggerActionFromRule(r) {
     seq++
     state.triggerActionSeq = seq
     def id = "ta_${nowMs}_${seq}"
+    def expireAt = cameraId ? (nowMs + ((durationSec as Long) * 1000L)) : null
     def entry = [
         id: id,
         ts: nowMs,
@@ -6197,7 +6368,7 @@ def enqueueTriggerActionFromRule(r) {
         toneId: toneId,
         caption: text,
         notificationId: notificationId,
-        cameraExpiresAt: cameraId ? (nowMs + (durationSec * 1000L)) : null,
+        cameraExpiresAt: expireAt,
         toneExpiresAt: toneId ? (nowMs + defaultToneExpireMs()) : null
     ]
     list << entry
@@ -6228,9 +6399,10 @@ def triggerSendTestAction() {
         deviceName: "Test"
     ]
     enqueueTriggerActionFromRule(fake)
+    def dur = triggerDefaultDurationSec()
     state.triggerTestOk = cameraId ?
-        "Queued test action (camera ${cameraId}${toneId ? ", tone" : ", no tone (shunted)"}, notification)." :
-        "Queued test action (no camera configured; notification${toneId ? " + tone" : ""})."
+        "Queued test action (camera ${cameraId}, ${dur}s overlay${toneId ? ", tone" : ", no tone (shunted)"}, notification)." :
+        "Queued test action (no camera configured; notification${toneId ? " + tone" : ""}; default overlay ${dur}s)."
 }
 
 def triggerActionsGet() {

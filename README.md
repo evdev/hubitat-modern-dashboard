@@ -373,15 +373,16 @@ tablet. Rules are evaluated on the hub; open dashboards fetch a slim action queu
 **Setup**
 
 1. In **Apps → Modern Dashboard**, expand **Dashboard triggers** (closed by default).
-2. Enable triggers, pick a **Sound arm / shunt** switch (ON = tones armed), set the
-   default camera overlay duration (default 60 seconds), and select contact / motion /
-   button devices that rules may use.
-3. Open **Edit trigger rules…** and add rules (max 6): when contact opens / motion is
-   active / button is pushed → optional camera overlay, tone (chime or alert), and
-   notification/caption text.
-4. Optionally use **Send test trigger action** to enqueue a sample action.
+2. Enable tablet triggers, optionally pick a quiet-hours switch (ON = sounds allowed),
+   set how long cameras stay up by default (60 seconds), and choose the doors, motion
+   sensors, and buttons/doorbells you might use.
+3. Open **Set up tablet triggers…** and create triggers (max 6). Each one is a plain
+   story: when a door opens / motion is detected / a button is pressed → optional
+   camera, sound (chime or alert), and message. A live preview updates as you choose.
+4. Optionally use **Send a test to open dashboards** to enqueue a sample action.
 5. On each tablet, enable **Notification & trigger sounds** if you want tones. Use
-   overflow **Trigger tones armed** (or Rule Machine on the shunt switch) for quiet hours.
+   overflow **Trigger tones armed** (or Rule Machine on the quiet-hours switch) when
+   you want silence.
 
 **Behavior**
 

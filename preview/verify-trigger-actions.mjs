@@ -114,6 +114,20 @@ async function main() {
     const cams = pushArmed.json.triggerActions.filter((a) => a.cameraId != null);
     assert(cams.length === 1, "only one camera action after supersede");
 
+    const pushShort = await postJson("/trigger-actions/push", {
+      cameraId: data.cameras[0].i,
+      toneId: "none",
+      text: "Short overlay",
+      durationSec: 15,
+    });
+    const shortAction = pushShort.json.triggerActions.at(-1);
+    const shortLeft = Number(shortAction.cameraExpiresAt) - Date.now();
+    assert(shortLeft > 10_000 && shortLeft < 20_000, `15s camera expiry, got ${shortLeft}ms left`);
+    assert(
+      !(pushShort.json.triggerActions || []).some((a) => a.id === armedAction.id && a.cameraId != null),
+      "prior camera action should be superseded"
+    );
+
     const list = await getJson("/trigger-actions");
     assert(list.ok && Array.isArray(list.triggerActions), "GET trigger-actions failed");
 
