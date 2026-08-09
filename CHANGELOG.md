@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.98
+
+- **Companion app:** Redesigned preferences — **Get started** steps, styled local/cloud
+  link cards, color callouts for warnings and setup status, device counts in section
+  titles, and optional sections auto-collapse when empty. **Dashboard options** tucked
+  under an advanced section.
+
 ## 0.3.97
 
 - **Fix:** Lock, garage, HSM, and hub-mode optimistic UI now refreshes the visible

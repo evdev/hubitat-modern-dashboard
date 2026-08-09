@@ -41,52 +41,77 @@ def mainPage() {
     def assetsOk = assetsPresent()
     def localUrl = dashboardUrl(true)
     def cloudUrl = dashboardUrl(false)
+    def lightsCount = devicePickerCount(lights) + devicePickerCount(outletSwitches)
+    def climateCount = devicePickerCount(thermostats) + devicePickerCount(tempSensors)
+    def shadesMediaCount = devicePickerCount(windowShades) + devicePickerCount(windowBlinds) +
+        devicePickerCount(windowShadesLevel) + devicePickerCount(ceilingFans) +
+        devicePickerCount(musicPlayers) + devicePickerCount(audioSpeakers)
+    def locksCount = devicePickerCount(locks) + devicePickerCount(garageDoors)
+    def sensorsCount = devicePickerCount(motionSensors) + devicePickerCount(shockSensors) +
+        devicePickerCount(contactSensors) + devicePickerCount(waterSensors) +
+        devicePickerCount(presenceSensors) + devicePickerCount(humiditySensors) +
+        devicePickerCount(illuminanceSensors) + devicePickerCount(smokeSensors) +
+        devicePickerCount(genericSensors) + devicePickerCount(valves)
+    def camerasCount = devicePickerCount(cameras) + devicePickerCount(rtspCameras)
+    def htmlTilesCount = devicePickerCount(htmlTileDevices)
+    def notifCount = notificationsConfiguredCount()
     dynamicPage(name: "mainPage", uninstall: true, install: true) {
-        section("About Modern Dashboard", hideable: true, hidden: true) {
-            paragraph "<small><b>Control-first:</b> optimized for acting on devices — bulk room/house lights, multi-thermostat control — not just viewing status.</small>"
-            paragraph "<small><b>Minimal effort:</b> select your devices below — the dashboard groups them by Hubitat room and lays them out automatically. Customization is optional.</small>"
-            paragraph "<small><b>PWA:</b> use the cloud link below to install on your phone's home screen (standalone app icon).</small>"
-            if (schedulerDisabled != true) {
-                paragraph "<small><b>Scheduler:</b> create and manage schedules from the dashboard — including remotely — without logging into the Hubitat admin UI.</small>"
-                paragraph "<small><b>Hub-only:</b> UI, API, and scheduler run entirely on your hub — no Maker API or third-party cloud.</small>"
-            } else {
-                paragraph "<small><b>Hub-only:</b> UI and API run entirely on your hub — no Maker API or third-party cloud.</small>"
-            }
+        section("Get started", hideable: true, hidden: introSectionCollapsed()) {
+            paragraph mldStepList([
+                "Select your <b>lights</b> below — that's enough to start. Rooms and layout come from Hubitat automatically.",
+                "Open the <b>Cloud</b> link and install on your phone (Android: Install app · iOS: Add to Home Screen).",
+                "Everything else — sensors, locks, cameras, scheduler — is optional. Expand a section when you need it."
+            ])
+            paragraph mldTipCallout(
+                "<b>Control-first:</b> bulk room/house lights and multi-thermostat control. " +
+                "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
+                (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
+            )
             paragraph "<small>Version __APP_VERSION__ · __APP_AUTHOR__ · __LICENSE_NAME__ · <a href='__GITHUB_URL__' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
-                paragraph "<div style='margin-bottom:12px'><b>Local</b> (on your home network):<br><a href='${localUrl}' target='_blank' style='word-break:break-all'>${localUrl}</a></div>"
-                paragraph "<div style='margin-bottom:8px'><b>Cloud</b> (works anywhere via Hubitat proxy):<br><a href='${cloudUrl}' target='_blank' style='word-break:break-all'>${cloudUrl}</a></div>"
-                paragraph "<small>Open the <b>cloud</b> link on your phone to install as a PWA (Android Chrome: Install app) or use <b>Add to Home Screen</b> on iOS. Cloud URL must include <code>/dashboard</code> in the path.</small>"
+                paragraph mldLinkCard("Local", "On your home network — fastest at home", localUrl, "info")
+                paragraph mldLinkCard("Cloud", "Works anywhere — install the phone app from this link", cloudUrl, "warm")
+                paragraph mldTipCallout(
+                    "Open the <b>cloud</b> link on your phone to install as a PWA " +
+                    "(Android Chrome: Install app · iOS Safari: Add to Home Screen). " +
+                    "Cloud URL must include <code>/dashboard</code> in the path."
+                )
             }
         } else {
             section("Required: upload dashboard files") {
                 def names = listLocalFileNames()
                 def need = requiredAssetFiles()
                 def missing = need.findAll { n -> !fileNamePresent(names, n) }
-                paragraph "Upload these files via <b>Settings → File Manager</b> (root folder, exact names):"
+                paragraph mldCallout("warning", "Dashboard files missing",
+                    "Upload these files via <b>Settings → File Manager</b> (root folder, exact names). " +
+                    "Easiest: install/update via <b>Hubitat Package Manager</b>.")
                 paragraph "<ul><li><code>mld-index.html</code></li><li><code>mld-app.css</code></li><li><code>mld-app-post.css</code></li><li><code>mld-app.js</code></li><li><code>mld-app-core.js</code></li><li><code>mld-app-post.js</code></li><li><code>mld-app-post2.js</code></li><li><code>mld-app-post3.js</code></li><li><code>mld-manifest.webmanifest</code></li><li><code>mld-sw.js</code></li><li><code>mld-icon-192.b64</code></li><li><code>mld-icon-512.b64</code></li></ul>"
                 if (names) {
                     def mld = names.findAll { it?.contains("mld-") }
                     paragraph "<small>Files seen on hub: ${mld ? mld.join(', ') : '(none matching mld-*)'}</small>"
                 }
                 if (missing) {
-                    paragraph "<small><b>Still missing:</b> ${missing.join(', ')}</small>"
+                    paragraph mldCallout("danger", "Still missing", htmlEsc(missing.join(', ')))
                 }
                 if (!hubSecurity) {
-                    paragraph "<small><b>Hub Login Security enabled?</b> Expand <b>Hub file access</b> below, turn on the toggle, and enter your hub admin username/password (not the dashboard password above).</small>"
+                    paragraph mldCallout("warning", "Hub Login Security?",
+                        "If enabled on your hub, expand <b>Hub file access</b> below, turn on the toggle, and enter your hub admin username/password (not the optional dashboard password).")
                 } else if (!hubCredentials().user || !hubCredentials().pass) {
-                    paragraph "<small><b>Hub file access:</b> enter your hub admin username and password below, then press <b>Done</b> again.</small>"
+                    paragraph mldCallout("warning", "Hub file access",
+                        "Enter your hub admin username and password below, then press <b>Done</b> again.")
                 } else if (state.hubLoginLastOutcome == "rejected") {
-                    paragraph "<small><b>Hub file access:</b> hub rejected the login — re-check admin username/password under <b>Hub file access</b> (from <b>Settings → Hub Login Security</b>), re-enter the password, and press <b>Done</b>.</small>"
+                    paragraph mldCallout("danger", "Hub login rejected",
+                        "Re-check admin username/password under <b>Hub file access</b> (from <b>Settings → Hub Login Security</b>), re-enter the password, and press <b>Done</b>.")
                 } else if (!names) {
-                    paragraph "<small><b>Hub file access:</b> could not list File Manager files. Upload the <code>mld-*</code> files above. If Hubitat Logs show <code>hub login rejected</code>, re-check credentials; otherwise re-enter the password and press <b>Done</b>.</small>"
+                    paragraph mldCallout("warning", "Could not list File Manager",
+                        "Upload the <code>mld-*</code> files above. If Hubitat Logs show <code>hub login rejected</code>, re-check credentials; otherwise re-enter the password and press <b>Done</b>.")
                 }
             }
         }
-        section("Lights & outlets") {
-            paragraph "<small>Rooms and layout are automatic based on your Hubitat room assignments.</small>"
+        section(sectionTitleWithCount("Lights & outlets", lightsCount)) {
+            paragraph mldTipCallout("Rooms and layout are automatic based on your Hubitat room assignments.")
             input "lights", "capability.switch", title: "Select your light devices (switches and dimmers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "outletSwitches", "capability.switch", title: "Outlets",
@@ -94,7 +119,7 @@ def mainPage() {
             input "outletsSeparateTab", "bool", title: "Show outlets in separate Outlets tab", defaultValue: false, submitOnChange: true
             paragraph "<small>Outlets may also appear in the lights list. With <b>separate Outlets tab</b> off, outlets show in room cards; when on, they move to the Outlets quick-nav tab. Room On/Off never controls outlets.</small>"
         }
-        section("Climate") {
+        section(sectionTitleWithCount("Climate", climateCount), hideable: true, hidden: climateSectionCollapsed()) {
             input "thermostats", "capability.thermostat", title: "Select your thermostats",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "thermostatsPopupEnabled", "bool", title: "Show thermostats in dashboard quick menu", defaultValue: true, submitOnChange: true
@@ -104,14 +129,15 @@ def mainPage() {
                 defaultValue: true, submitOnChange: true
             paragraph "<small>When <b>quick menu</b> or <b>room cards</b> is off, thermostats and temperature sensors remain available in their other views.</small>"
         }
-        section("Shades, fans & media") {
+        section(sectionTitleWithCount("Shades, fans & media", shadesMediaCount), hideable: true, hidden: shadesMediaSectionCollapsed()) {
             input "windowShades", "capability.windowShade", title: "Shades & blinds (Window Shade drivers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "windowBlinds", "capability.windowBlind", title: "Blinds (Window Blind drivers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "windowShadesLevel", "capability.switchLevel", title: "Shades & blinds (dimmer / Switch Level drivers)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            paragraph "<small>Use the first two lists for <b>Window Shade</b> / <b>Window Blind</b> drivers. Many motors only advertise <b>Switch Level</b> — pick those in the third list. That list also includes ordinary lights; select shades only and put real lights under Lights.</small>"
+            paragraph mldCallout("warning", "Switch Level list includes lights",
+                "Use the first two lists for <b>Window Shade</b> / <b>Window Blind</b> drivers. Many motors only advertise <b>Switch Level</b> — pick those in the third list. That list also includes ordinary lights; select <b>shades only</b> and put real lights under Lights.")
             input "ceilingFans", "capability.fanControl", title: "Ceiling fans",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "musicPlayers", "capability.musicPlayer", title: "Music / media players (Sonos, Echo Speaks, AirPlay, …)",
@@ -119,7 +145,7 @@ def mainPage() {
             input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, …)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
-        section("Locks & garage") {
+        section(sectionTitleWithCount("Locks & garage", locksCount), hideable: true, hidden: locksSectionCollapsed()) {
             paragraph "<small>Locks and garage doors appear in the Locks dashboard popup.</small>"
             input "locks", "capability.lock", title: "Locks",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
@@ -131,7 +157,7 @@ def mainPage() {
                 paragraph "<small>PIN is validated before unlock and garage-open commands. Locking and closing do not require a PIN.</small>"
             }
         }
-        section("Sensors") {
+        section(sectionTitleWithCount("Sensors", sensorsCount), hideable: true, hidden: sensorsSectionCollapsed()) {
             paragraph "<small>Sensors appear in the Sensors popup. Multi-sensors may overlap with other pickers; temperature + humidity or illuminance merge into one tile. Alert types (motion, contact, etc.) stay primary with other readings in the footer.</small>"
             input "motionSensors", "capability.motionSensor", title: "Motion sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
@@ -154,50 +180,56 @@ def mainPage() {
             input "valves", "capability.valve", title: "Valves (water shutoff, irrigation)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
-        section("Cameras") {
+        section(sectionTitleWithCount("Cameras", camerasCount), hideable: true, hidden: camerasSectionCollapsed()) {
             paragraph "<small>Select <b>go2rtc Camera</b> and/or <b>native RTSP Camera Stream</b> devices. Requires <b>Enable tabs</b> and the <b>local hub dashboard URL</b>. go2rtc tiles use the sub stream with an <b>HD</b> toggle; native RTSP uses the hub MJPEG proxy (C-8 Pro).</small>"
             input "cameras", "capability.imageCapture", title: "Cameras (go2rtc)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "rtspCameras", "device.RTSPCameraStream", title: "Cameras (native RTSP)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
-        section("HTML tiles") {
+        section(sectionTitleWithCount("HTML tiles", htmlTilesCount), hideable: true, hidden: htmlTilesSectionCollapsed()) {
             paragraph "<small>Select devices that publish dashboard HTML (for example <b>Tile Builder Storage Driver</b>, vehicle status drivers, or weather tiles). On the Favorites tab, use <b>Add tile → HTML</b> to choose which attributes appear. Attribute names are detected automatically.</small>"
             input "htmlTileDevices", "capability.*", title: "HTML source devices",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
         }
-        section("Notifications") {
+        section(sectionTitleWithCount("Notifications", notifCount), hideable: true, hidden: notificationsSectionCollapsed()) {
             paragraph "<small>Rule Machine and other apps can send notifications to <b>mDash Notifications</b> devices. <b>Popup</b> devices show full-screen banners; <b>tile</b> devices appear in Favorites notification tiles.</small>"
             def notifChild = getNotificationChildDevice()
             if (notifChild) {
-                paragraph "<small><b>Popup notification device:</b> ${htmlEsc(notifChild.displayName)} (created by this app).</small>"
+                paragraph mldCallout("success", "Popup notification device",
+                    "${htmlEsc(notifChild.displayName)} (created by this app).")
             } else {
                 input "notifDeviceLabel", "string", title: "Name for new popup mDash Notifications device",
                     defaultValue: "Dashboard Notifications", required: false
                 input name: "btnCreateNotifDevice", type: "button", title: "Create popup mDash Notifications device"
                 paragraph "<small>Requires the <b>mDash Notifications</b> driver from this package (installed automatically via HPM). The device can be renamed under <b>Devices</b>; deleting it only removes it from the hub — use <b>Create</b> again to add a new one.</small>"
                 if (state.notifDeviceCreateError) {
-                    paragraph "<small><b>Could not create popup device:</b> ${htmlEsc(state.notifDeviceCreateError.toString())}</small>"
+                    paragraph mldCallout("danger", "Could not create popup device",
+                        htmlEsc(state.notifDeviceCreateError.toString()))
                 }
                 if (state.notifDeviceCreateOk) {
-                    paragraph "<small><b>Created popup device:</b> ${htmlEsc(state.notifDeviceCreateOk.toString())}</small>"
+                    paragraph mldCallout("success", "Created popup device",
+                        htmlEsc(state.notifDeviceCreateOk.toString()))
                 }
             }
             input "notificationDevices", "capability.notification", title: "Popup notification devices",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             def tileNotifChild = getTileNotificationChildDevice()
             if (tileNotifChild) {
-                paragraph "<small><b>Tile notification device:</b> ${htmlEsc(tileNotifChild.displayName)} (created by this app).</small>"
+                paragraph mldCallout("success", "Tile notification device",
+                    "${htmlEsc(tileNotifChild.displayName)} (created by this app).")
             } else {
                 input "tileNotifDeviceLabel", "string", title: "Name for new tile mDash Notifications device",
                     defaultValue: "Dashboard Notifications (Tile)", required: false
                 input name: "btnCreateTileNotifDevice", type: "button", title: "Create tile mDash Notifications device"
                 paragraph "<small>Same driver as popup; this device is selected for <b>tile</b> messages only. Rename or delete it under <b>Devices</b> like any other device.</small>"
                 if (state.tileNotifDeviceCreateError) {
-                    paragraph "<small><b>Could not create tile device:</b> ${htmlEsc(state.tileNotifDeviceCreateError.toString())}</small>"
+                    paragraph mldCallout("danger", "Could not create tile device",
+                        htmlEsc(state.tileNotifDeviceCreateError.toString()))
                 }
                 if (state.tileNotifDeviceCreateOk) {
-                    paragraph "<small><b>Created tile device:</b> ${htmlEsc(state.tileNotifDeviceCreateOk.toString())}</small>"
+                    paragraph mldCallout("success", "Created tile device",
+                        htmlEsc(state.tileNotifDeviceCreateOk.toString()))
                 }
             }
             input "tileNotificationDevices", "capability.notification", title: "Tile notification devices",
@@ -233,17 +265,15 @@ def mainPage() {
                 input name: "btnTriggerTest", type: "button", title: "Send a test to open dashboards"
                 paragraph "<small>Test uses the default camera duration above (press <b>Done</b> first if you changed it). It does not use a trigger’s own duration.</small>"
                 if (state.triggerTestOk) {
-                    paragraph "<small><b>Test:</b> ${htmlEsc(state.triggerTestOk.toString())}</small>"
+                    paragraph mldCallout("success", "Test", htmlEsc(state.triggerTestOk.toString()))
                 }
                 if (state.triggerTestError) {
-                    paragraph "<small><b>Test failed:</b> ${htmlEsc(state.triggerTestError.toString())}</small>"
+                    paragraph mldCallout("danger", "Test failed", htmlEsc(state.triggerTestError.toString()))
                 }
             }
         }
         section("Dashboard options") {
             input "dashboardName", "string", title: "Dashboard name", defaultValue: "mDash", required: false
-            input "pollSec", "number", title: "Refresh interval (seconds)", defaultValue: 5, required: false, range: "2..60"
-            input "enableWs", "bool", title: "Enable real-time updates on local network (eventsocket)", defaultValue: true, required: false
             input "defaultTab", "enum", title: "Default tab when dashboard loads",
                 options: [
                     ["lights": "Lights"],
@@ -259,6 +289,10 @@ def mainPage() {
                 ],
                 defaultValue: "lights", required: false
             paragraph "<small>Applies when Category tabs is enabled on the dashboard. Falls back to Lights if the chosen tab has no content (or Cameras when not on the local URL).</small>"
+        }
+        section("Dashboard options — advanced", hideable: true, hidden: true) {
+            input "pollSec", "number", title: "Refresh interval (seconds)", defaultValue: 5, required: false, range: "2..60"
+            input "enableWs", "bool", title: "Enable real-time updates on local network (eventsocket)", defaultValue: true, required: false
             input "hubModePopupEnabled", "bool", title: "Show hub mode in dashboard quick menu", defaultValue: true, submitOnChange: true
             input "scenesPopupEnabled", "bool", title: "Show scenes in dashboard quick menu", defaultValue: true, submitOnChange: true
             paragraph "<small>Hub mode and scene toggles only hide quick-nav buttons; scheduler and other features still use them.</small>"
@@ -291,7 +325,7 @@ def mainPage() {
                 title: "Enable activation optimization", defaultValue: false
             paragraph "<small>Snapshot restore only: skip level, color, and color temperature when the device already matches.</small>"
         }
-        section("Security & access") {
+        section(securitySectionTitle(), hideable: true, hidden: securitySectionCollapsed()) {
             input "dashboardPasswordEnabled", "bool", title: "Require password to open dashboard", defaultValue: false, submitOnChange: true
             if (dashboardPasswordEnabled) {
                 input "dashboardPassword", "password", title: "Dashboard password", required: false
@@ -2085,7 +2119,7 @@ def renderData() {
     out << ",\"hsmAlertDesc\":" << jsonStr(hsmAlertDescVal)
     out << ",\"hsmEnabled\":" << (hsmEnabled == true ? "true" : "false")
     out << ",\"hsmPinRequired\":" << (hsmEnabled == true && hsmPinEnabled == true && hsmPin?.toString()?.trim() ? "true" : "false")
-    out << ",\"thermostatsPopupEnabled\":" << (thermostatsPopupEnabled == true ? "true" : "false")
+    out << ",\"thermostatsPopupEnabled\":" << (thermostatsPopupEnabled == null ? "true" : (thermostatsPopupEnabled == true ? "true" : "false"))
     out << ",\"outletsSeparateTab\":" << (outletsSeparateTab == true ? "true" : "false")
     out << ",\"hubModePopupEnabled\":" << (hubModePopupEnabled == null ? "true" : (hubModePopupEnabled == true ? "true" : "false"))
     out << ",\"scenesPopupEnabled\":" << (scenesPopupEnabled == null ? "true" : (scenesPopupEnabled == true ? "true" : "false"))
@@ -2329,6 +2363,139 @@ def htmlEsc(s) {
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace("\"", "&quot;")
+}
+
+// Companion-app callout styles (mDash palette; Hubitat paragraph HTML only).
+def mldCalloutColors(type) {
+    switch ((type ?: "info").toString()) {
+        case "success":
+            return [border: "#3dba6a", bg: "rgba(61,186,106,0.10)", title: "#1f7a45"]
+        case "warning":
+            return [border: "#d97706", bg: "rgba(217,119,6,0.10)", title: "#9a5b04"]
+        case "danger":
+            return [border: "#ff5c7a", bg: "rgba(255,92,122,0.10)", title: "#b8324a"]
+        case "warm":
+            return [border: "#ffb86b", bg: "rgba(255,184,107,0.12)", title: "#b36b1a"]
+        case "tip":
+            return [border: "#9aa4b8", bg: "rgba(154,164,184,0.12)", title: "#475569"]
+        default: // info
+            return [border: "#5b8cff", bg: "rgba(91,140,255,0.10)", title: "#3b6bff"]
+    }
+}
+
+def mldCallout(type, title, bodyHtml) {
+    def c = mldCalloutColors(type)
+    def t = ""
+    if (title) {
+        t = "<div style='font-weight:700;margin-bottom:4px;color:${c.title}'>${htmlEsc(title)}</div>"
+    }
+    return "<div style='border-radius:10px;padding:12px 14px;margin:8px 0;line-height:1.45;" +
+        "border-left:4px solid ${c.border};background:${c.bg}'>${t}<div>${bodyHtml ?: ''}</div></div>"
+}
+
+def mldTipCallout(bodyHtml) {
+    return mldCallout("tip", null, bodyHtml)
+}
+
+def mldStepList(steps) {
+    def list = (steps instanceof Collection) ? (steps as List) : []
+    if (!list) return ""
+    def items = []
+    for (int i = 0; i < list.size(); i++) {
+        items << "<li style='margin:0 0 8px 0'><b>Step ${i + 1}.</b> ${list[i]}</li>"
+    }
+    return mldCallout("info", "Get started in three steps",
+        "<ol style='margin:0;padding-left:18px'>${items.join('')}</ol>")
+}
+
+def mldLinkCard(label, subtitle, url, type) {
+    def c = mldCalloutColors(type)
+    def safeUrl = htmlEsc(url)
+    return "<div style='border-radius:10px;padding:12px 14px;margin:8px 0;line-height:1.45;" +
+        "border-left:4px solid ${c.border};background:${c.bg}'>" +
+        "<div style='font-weight:700;color:${c.title}'>${htmlEsc(label)}</div>" +
+        "<div style='font-size:12px;opacity:0.85;margin:2px 0 8px'>${htmlEsc(subtitle)}</div>" +
+        "<a href='${safeUrl}' target='_blank' style='word-break:break-all;color:${c.title}'>${safeUrl}</a>" +
+        "</div>"
+}
+
+def devicePickerCount(val) {
+    return asDeviceList(val).size()
+}
+
+def sectionTitleWithCount(label, count) {
+    int n = 0
+    try { n = (count ?: 0) as int } catch (e) { n = 0 }
+    if (n > 0) return "${label} (${n} selected)"
+    return label?.toString() ?: ""
+}
+
+def introSectionCollapsed() {
+    // Collapse once the user has picked lights or outlets (setup underway).
+    return devicePickerCount(lights) > 0 || devicePickerCount(outletSwitches) > 0
+}
+
+def climateSectionCollapsed() {
+    return devicePickerCount(thermostats) == 0 && devicePickerCount(tempSensors) == 0
+}
+
+def shadesMediaSectionCollapsed() {
+    return devicePickerCount(windowShades) == 0 &&
+        devicePickerCount(windowBlinds) == 0 &&
+        devicePickerCount(windowShadesLevel) == 0 &&
+        devicePickerCount(ceilingFans) == 0 &&
+        devicePickerCount(musicPlayers) == 0 &&
+        devicePickerCount(audioSpeakers) == 0
+}
+
+def locksSectionCollapsed() {
+    return devicePickerCount(locks) == 0 && devicePickerCount(garageDoors) == 0
+}
+
+def sensorsSectionCollapsed() {
+    return devicePickerCount(motionSensors) == 0 &&
+        devicePickerCount(shockSensors) == 0 &&
+        devicePickerCount(contactSensors) == 0 &&
+        devicePickerCount(waterSensors) == 0 &&
+        devicePickerCount(presenceSensors) == 0 &&
+        devicePickerCount(humiditySensors) == 0 &&
+        devicePickerCount(illuminanceSensors) == 0 &&
+        devicePickerCount(smokeSensors) == 0 &&
+        devicePickerCount(genericSensors) == 0 &&
+        devicePickerCount(valves) == 0
+}
+
+def camerasSectionCollapsed() {
+    return devicePickerCount(cameras) == 0 && devicePickerCount(rtspCameras) == 0
+}
+
+def htmlTilesSectionCollapsed() {
+    return devicePickerCount(htmlTileDevices) == 0
+}
+
+def notificationsConfiguredCount() {
+    // Prefer picker selections; child devices are usually already selected in those pickers.
+    def n = devicePickerCount(notificationDevices) + devicePickerCount(tileNotificationDevices)
+    if (n > 0) return n
+    if (getNotificationChildDevice()) n++
+    if (getTileNotificationChildDevice()) n++
+    return n
+}
+
+def notificationsSectionCollapsed() {
+    if (getNotificationChildDevice()) return false
+    if (getTileNotificationChildDevice()) return false
+    return devicePickerCount(notificationDevices) == 0 &&
+        devicePickerCount(tileNotificationDevices) == 0
+}
+
+def securitySectionCollapsed() {
+    return dashboardPasswordEnabled != true && hsmEnabled != true
+}
+
+def securitySectionTitle() {
+    if (dashboardPasswordEnabled == true || hsmEnabled == true) return "Security & access (on)"
+    return "Security & access"
 }
 
 def jsonStr(s) {
