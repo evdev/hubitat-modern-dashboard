@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.99
+
+- **UX:** Custom tips on icon-only controls and slide-to-save/restore buttons (room
+  On/Off, whole-house All on/off, quick-nav icons) — hold on touch or focus to see
+  what tap vs slide does.
+- **UX:** Quick-nav scroll fade hints when tabs overflow on narrow screens; tighter
+  topbar layout on small phones.
+- **Scheduler:** Hub mode trigger/condition/action pickers hide when no hub modes are
+  configured instead of showing an empty placeholder.
+- **Companion app:** Drop outdated note that the cloud URL must include
+  `/dashboard` in the path.
+
 ## 0.3.98
 
 - **Companion app:** Redesigned preferences — **Get started** steps, styled local/cloud

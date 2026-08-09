@@ -5960,6 +5960,24 @@
   const SLIDE_FALLBACK_COMMIT_PX = 86;
   const SLIDE_MIN_COMMIT_PX = 52;
   const SLIDE_TAP_MOVE = 10;
+  const TIP_ROOM_OFF = "Tap to turn off · Hold & slide to save";
+  const TIP_ROOM_ON = "Tap to turn on · Hold & slide to restore";
+
+  function applyTip(btn, text) {
+    if (!btn) return;
+    const tip = text || btn.getAttribute("title") || btn.getAttribute("aria-label") || "";
+    if (!tip) return;
+    btn.setAttribute("data-tip", tip);
+    // Avoid native + custom tip stacking; keep aria-label for a11y.
+    btn.removeAttribute("title");
+  }
+
+  // Clears floating tips when a slide-to-save/restore reveal starts.
+  // setupIconTipAffordances installs the real hide fn on __MLD._tipHide.
+  function tipCtlHide() {
+    const hide = globalThis.__MLD && globalThis.__MLD._tipHide;
+    if (typeof hide === "function") hide();
+  }
 
   function attachRoomSlideAction(track, primaryBtn, actionBtn, opts) {
     const { direction, onTap, onCommit, canCommit, clickFallback } = opts;
@@ -6151,6 +6169,7 @@
         }
         holdActive = true;
         suppressClick = true;
+        tipCtlHide();
         track.classList.add("slide-confirm-active", "slide-confirm-revealed", "room-slide-active", "room-slide-revealed");
         setupSlideMetrics();
         setRoomGestureLock(true);
@@ -7042,6 +7061,7 @@
         const offBtn = ce("button", "btn-off");
         offBtn.type = "button";
         offBtn.textContent = "Off";
+        applyTip(offBtn, TIP_ROOM_OFF);
         offTrack.appendChild(saveBtn);
         offTrack.appendChild(offBtn);
         offTrack.appendChild(ce("span", "slide-confirm-thumb"));
@@ -7050,6 +7070,7 @@
         const onBtn = ce("button", "btn-on");
         onBtn.type = "button";
         onBtn.textContent = "On";
+        applyTip(onBtn, TIP_ROOM_ON);
         restoreBtn = ce("button", "slide-confirm-action room-snap-action room-snap-restore");
         restoreBtn.type = "button";
         restoreBtn.textContent = "Restore Saved State";
@@ -11700,6 +11721,149 @@
     if (nav) nav.hidden = !anyVisible;
     if (quickPopupOpenType && !quickNavPopupHasContent(quickPopupOpenType)) closeQuickPopup();
     if (tabMode && inTabView() && !quickNavPopupHasContent(activeTab)) showTab("lights");
+    updateQuickNavScrollFade();
+  }
+
+  function updateQuickNavScrollFade() {
+    const nav = document.querySelector(".quick-nav");
+    if (!nav || nav.hidden || cfg.enableDrawer) {
+      if (nav) {
+        nav.classList.remove("has-overflow-start", "has-overflow-end");
+      }
+      return;
+    }
+    const max = nav.scrollWidth - nav.clientWidth;
+    const hasOverflow = max > 4;
+    const atStart = nav.scrollLeft <= 2;
+    const atEnd = nav.scrollLeft >= max - 2;
+    nav.classList.toggle("has-overflow-start", hasOverflow && !atStart);
+    nav.classList.toggle("has-overflow-end", hasOverflow && !atEnd);
+  }
+
+  function setupQuickNavScrollFade() {
+    const nav = document.querySelector(".quick-nav");
+    if (!nav || nav.dataset.scrollFadeBound) return;
+    nav.dataset.scrollFadeBound = "1";
+    nav.addEventListener("scroll", updateQuickNavScrollFade, { passive: true });
+    window.addEventListener("resize", updateQuickNavScrollFade);
+    updateQuickNavScrollFade();
+  }
+
+  function setupIconTipAffordances() {
+    const roots = [
+      document.querySelector(".quick-nav"),
+      document.querySelector(".topbar-actions"),
+    ].filter(Boolean);
+    for (const root of roots) {
+      for (const btn of root.querySelectorAll(".ghost-btn.icon-btn")) applyTip(btn);
+    }
+    applyTip(document.getElementById("drawer-toggle"));
+    applyTip(ALL_OFF_BTN, "Tap to turn off · Hold & slide to save home state");
+    applyTip(ALL_ON_BTN, "Tap to turn on · Hold & slide to restore home state");
+
+    const tipRoot = APP_EL || document;
+    if (tipRoot.dataset?.tipBound || tipRoot === document && document.documentElement.dataset.tipBound) return;
+    if (tipRoot.dataset) tipRoot.dataset.tipBound = "1";
+    else document.documentElement.dataset.tipBound = "1";
+
+    let tipEl = null;
+    let tipTimer = null;
+    let tipBtn = null;
+    let hideTimer = null;
+
+    function ensureTipEl() {
+      if (tipEl) return tipEl;
+      tipEl = document.createElement("div");
+      tipEl.className = "mld-tip";
+      tipEl.setAttribute("role", "tooltip");
+      tipEl.hidden = true;
+      document.body.appendChild(tipEl);
+      return tipEl;
+    }
+
+    function placeTip(btn) {
+      const tip = btn.getAttribute("data-tip");
+      if (!tip) return;
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      const el = ensureTipEl();
+      el.textContent = tip;
+      el.hidden = false;
+      const r = btn.getBoundingClientRect();
+      const pad = 8;
+      const tw = el.offsetWidth || 0;
+      const th = el.offsetHeight || 0;
+      let left = r.left + r.width / 2 - tw / 2;
+      left = Math.max(pad, Math.min(left, window.innerWidth - tw - pad));
+      let top = r.top - th - 6;
+      if (top < pad) top = r.bottom + 6;
+      el.style.left = Math.round(left) + "px";
+      el.style.top = Math.round(top) + "px";
+      requestAnimationFrame(() => el.classList.add("is-visible"));
+    }
+
+    function hideTip() {
+      if (tipTimer) { clearTimeout(tipTimer); tipTimer = null; }
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      tipBtn = null;
+      if (!tipEl) return;
+      tipEl.classList.remove("is-visible");
+      hideTimer = setTimeout(() => {
+        if (tipEl && !tipEl.classList.contains("is-visible")) tipEl.hidden = true;
+      }, 160);
+    }
+
+    if (globalThis.__MLD) globalThis.__MLD._tipHide = hideTip;
+
+    function showTipFor(btn, delay) {
+      hideTip();
+      tipBtn = btn;
+      const run = () => { if (tipBtn === btn) placeTip(btn); };
+      if (delay) tipTimer = setTimeout(run, delay);
+      else run();
+    }
+
+    const tipSelector = "button[data-tip]";
+    const isSlideTipBtn = (btn) => btn.matches(".topbar-off-btn, .topbar-on-btn, .btn-off, .btn-on");
+
+    tipRoot.addEventListener("pointerover", (e) => {
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn || e.pointerType === "touch") return;
+      if (btn.closest("#app-drawer")) return;
+      if (tipBtn === btn && tipEl && !tipEl.hidden) return;
+      showTipFor(btn, 0);
+    }, true);
+    tipRoot.addEventListener("pointerout", (e) => {
+      if (e.pointerType === "touch") return;
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn || tipBtn !== btn) return;
+      const related = e.relatedTarget?.closest?.(tipSelector);
+      if (related === btn) return;
+      hideTip();
+    }, true);
+    tipRoot.addEventListener("focusin", (e) => {
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn || btn.closest("#app-drawer")) return;
+      showTipFor(btn, 0);
+    });
+    tipRoot.addEventListener("focusout", (e) => {
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn || tipBtn !== btn) return;
+      const related = e.relatedTarget?.closest?.(tipSelector);
+      if (related === btn) return;
+      hideTip();
+    });
+    tipRoot.addEventListener("pointerdown", (e) => {
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn) return;
+      if (btn.closest("#app-drawer")) return;
+      // Mouse: clear tip so it doesn't sit over a slide gesture.
+      if (e.pointerType === "mouse") { hideTip(); return; }
+      // Touch: show slide tips immediately; icon tips after a short hold.
+      showTipFor(btn, isSlideTipBtn(btn) ? 0 : 420);
+    }, true);
+    tipRoot.addEventListener("pointerup", hideTip, true);
+    tipRoot.addEventListener("pointercancel", hideTip, true);
+    tipRoot.addEventListener("scroll", hideTip, true);
   }
 
   function refreshQuickPopupIfOpen() {
@@ -12995,6 +13159,8 @@
     });
     QUICK_LIGHTS_BTN.hidden = !tabMode;
   }
+  setupIconTipAffordances();
+  setupQuickNavScrollFade();
   setupNavReorderItems();
   postCall("applyNavOrder", postCall("getDisplayNavOrder"));
   if (CENTRAL_TSTAT_BTN) {
@@ -16812,10 +16978,12 @@
       wrap.appendChild(renderSchedOncePicker(tr));
     }
     if (tr.kind === "mode") {
-      wrap.appendChild(renderSchedModeTriggerPicker(tr));
+      const modePick = renderSchedModeTriggerPicker(tr);
+      if (modePick) wrap.appendChild(modePick);
     }
     if (tr.kind !== "mode" && (tr.kind === "daily" || tr.kind === "weekly" || tr.kind === "once")) {
-      wrap.appendChild(renderSchedModeCondition());
+      const modeCond = renderSchedModeCondition();
+      if (modeCond) wrap.appendChild(modeCond);
     }
 
     const nameField = ce("div", "sched-field");
@@ -16861,16 +17029,11 @@
   }
 
   function renderSchedModeTriggerPicker(tr) {
+    if (!hubModes.length) return null;
     const wrap = ce("div", "sched-field");
     const lbl = ce("label", "sched-field-label");
     lbl.textContent = "When hub mode becomes";
     wrap.appendChild(lbl);
-    if (!hubModes.length) {
-      const empty = ce("p", "sched-empty");
-      empty.textContent = "No hub modes available.";
-      wrap.appendChild(empty);
-      return wrap;
-    }
     const grid = ce("div", "sched-mode-grid");
     for (const m of hubModes) {
       const b = ce("button", "sched-type-card " + (tr.mode === m ? "is-active" : ""));
@@ -16884,6 +17047,7 @@
   }
 
   function renderSchedModeCondition() {
+    if (!hubModes.length) return null;
     const wrap = ce("div", "sched-field");
     const lbl = ce("label", "sched-field-label");
     lbl.textContent = "Restrict to modes (optional)";
@@ -16891,12 +17055,6 @@
     const hint = ce("p", "sched-hint");
     hint.textContent = "Only run when the hub is in one of these modes. Leave all unselected to always run.";
     wrap.appendChild(hint);
-    if (!hubModes.length) {
-      const empty = ce("p", "sched-empty");
-      empty.textContent = "No hub modes available.";
-      wrap.appendChild(empty);
-      return wrap;
-    }
     const selected = new Set(schedDraft.onlyInModes || []);
     const grid = ce("div", "sched-mode-grid");
     for (const m of hubModes) {
@@ -17132,7 +17290,10 @@
     if (t === "lights") wrap.appendChild(renderSchedLightAction());
     else if (t === "outlets") wrap.appendChild(renderSchedOnOffDeviceAction(outlets, "Select outlets", "No outlets configured. Add outlets in the companion app device settings."));
     else if (t === "thermostats") wrap.appendChild(renderSchedThermostatAction());
-    else if (t === "hubMode") wrap.appendChild(renderSchedHubModeAction());
+    else if (t === "hubMode") {
+      const hubModeAction = renderSchedHubModeAction();
+      if (hubModeAction) wrap.appendChild(hubModeAction);
+    }
     wrap.appendChild(schedNavRow("Back", () => { schedStep = 2; renderSchedulerActive(); }, schedEditingId ? "Save" : "Create", saveSchedule));
     return wrap;
   }
@@ -17622,16 +17783,11 @@
   }
 
   function renderSchedHubModeAction() {
+    if (!hubModes.length) return null;
     const wrap = ce("div", "sched-action");
     const q = ce("p", "sched-question");
     q.textContent = "Which hub mode should be set?";
     wrap.appendChild(q);
-    if (!hubModes.length) {
-      const empty = ce("p", "sched-empty");
-      empty.textContent = "No hub modes available.";
-      wrap.appendChild(empty);
-      return wrap;
-    }
     const grid = ce("div", "sched-mode-grid");
     for (const m of hubModes) {
       const b = ce("button", "sched-type-card " + (schedDraft.action.mode === m ? "is-active" : ""));

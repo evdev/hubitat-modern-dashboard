@@ -75,8 +75,7 @@ def mainPage() {
                 paragraph mldLinkCard("Cloud", "Works anywhere — install the phone app from this link", cloudUrl, "warm")
                 paragraph mldTipCallout(
                     "Open the <b>cloud</b> link on your phone to install as a PWA " +
-                    "(Android Chrome: Install app · iOS Safari: Add to Home Screen). " +
-                    "Cloud URL must include <code>/dashboard</code> in the path."
+                    "(Android Chrome: Install app · iOS Safari: Add to Home Screen)."
                 )
             }
         } else {
