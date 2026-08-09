@@ -898,6 +898,10 @@
     }
     const timer = setTimeout(() => {
       lockOptimistic.delete(id);
+      const cur = locks.find((l) => l.i === id);
+      if (cur && (cur.st === "locking" || cur.st === "unlocking")) {
+        cur.st = cur.lk ? "locked" : "unlocked";
+      }
       if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
       else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
     }, LOCK_OPTIMISTIC_MS);
@@ -910,6 +914,16 @@
     lockOptimistic.delete(id);
   }
 
+  function lockOptimisticSatisfied(opt, lock) {
+    if (!opt || !lock) return false;
+    if (!!lock.lk !== !!opt.lk) return false;
+    const want = String(opt.st || "").toLowerCase();
+    const got = String(lock.st || "").toLowerCase();
+    if (want === "locking") return got === "locked";
+    if (want === "unlocking") return got === "unlocked";
+    return want === got;
+  }
+
   function reapplyLockOptimistic() {
     for (const [id, opt] of lockOptimistic) {
       if (Date.now() >= opt.until) {
@@ -919,7 +933,7 @@
       }
       const lock = locks.find((l) => l.i === id);
       if (!lock) continue;
-      if (!!lock.lk === !!opt.lk) {
+      if (lockOptimisticSatisfied(opt, lock)) {
         if (opt.timer) clearTimeout(opt.timer);
         lockOptimistic.delete(id);
         continue;
@@ -929,15 +943,30 @@
     }
   }
 
+  function effectiveLockState(lock) {
+    const opt = lockOptimistic.get(lock.i);
+    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    return lock.st || "";
+  }
+
   function effectiveLock(lock) {
+    const st = String(effectiveLockState(lock) || "").toLowerCase();
+    if (st === "locking" || st === "locked") return true;
+    if (st === "unlocking" || st === "unlocked") return false;
     const opt = lockOptimistic.get(lock.i);
     if (opt && Date.now() < opt.until) return !!opt.lk;
     return !!lock.lk;
   }
 
+  function lockIsMoving(lock) {
+    const st = String(effectiveLockState(lock) || "").toLowerCase();
+    return st === "locking" || st === "unlocking";
+  }
+
   function lockStatusLabel(lock) {
-    const opt = lockOptimistic.get(lock.i);
-    const st = (opt && Date.now() < opt.until) ? opt.st : lock.st;
+    const st = String(effectiveLockState(lock) || "").toLowerCase();
+    if (st === "locking") return "Locking…";
+    if (st === "unlocking") return "Unlocking…";
     if (st === "jammed") return "Jammed";
     if (st === "unknown") return "Unknown";
     if (st === "unavailable") return "Unavailable";
@@ -951,14 +980,19 @@
     if (door && patch.st != null) door.st = patch.st;
     const entry = {
       st: patch.st != null ? patch.st : prev?.st,
-      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      until: Date.now() + GARAGE_OPTIMISTIC_MS,
       timer: null,
     };
     entry.timer = setTimeout(() => {
       garageOptimistic.delete(id);
+      const cur = garageDoors.find((g) => g.i === id);
+      if (cur && (cur.st === "opening" || cur.st === "closing")) {
+        // Fall back to last known direction if hub never settled in time.
+        cur.st = cur.st === "opening" ? "open" : "closed";
+      }
       if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
       else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, LEVEL_OPTIMISTIC_MS);
+    }, GARAGE_OPTIMISTIC_MS);
     garageOptimistic.set(id, entry);
   }
 
@@ -5634,8 +5668,35 @@
   }
 
   async function setHsmApi(mode, pin, padApi) {
+    const modeDef = [...HSM_INTRUSION_MODES, ...HSM_MONITORING_MODES].find((m) => m.cmd === mode);
+    const prevStatus = hsmStatus;
+    const prevAlert = hsmAlert;
+    const prevAlertDesc = hsmAlertDesc;
+
+    // Optimistic UI before the hub round-trip (cloud especially).
+    if (mode === "cancelAlerts") {
+      hsmAlert = "";
+      hsmAlertDesc = "";
+      setHsmLock();
+      if (currentCategory() === "security") renderSecurityPopup();
+    } else if (modeDef?.status) {
+      // armAll only changes allDisarmed → disarmed; don't clobber armed* intrusion state.
+      if (mode === "armAll") {
+        if (String(hsmStatus || "").toLowerCase() === "alldisarmed") hsmStatus = modeDef.status;
+      } else {
+        hsmStatus = modeDef.status;
+      }
+      setHsmLock();
+      if (currentCategory() === "security") renderSecurityPopup();
+    }
+
     let result = await postJsonSilent("hsm", { mode, pin });
     if (!result.ok) {
+      hsmStatus = prevStatus;
+      hsmAlert = prevAlert;
+      hsmAlertDesc = prevAlertDesc;
+      clearHsmLock();
+      if (currentCategory() === "security") renderSecurityPopup();
       if (result.status === 403 || result.error === "wrong pin") {
         padApi?.shake();
         return false;
@@ -5646,21 +5707,11 @@
       return false;
     }
     padApi?.close();
-    const modeDef = [...HSM_INTRUSION_MODES, ...HSM_MONITORING_MODES].find((m) => m.cmd === mode);
-    if (mode === "cancelAlerts") {
-      hsmAlert = "";
-      hsmAlertDesc = "";
-      setHsmLock();
-    } else if (modeDef?.status) {
-      // armAll only changes allDisarmed → disarmed; don't clobber armed* intrusion state.
-      if (mode === "armAll") {
-        if (String(hsmStatus || "").toLowerCase() === "alldisarmed") hsmStatus = modeDef.status;
-      } else {
-        hsmStatus = modeDef.status;
-      }
-      setHsmLock();
+    // Hub often still reports the previous arm state in the command response.
+    // Keep optimistic target unless the returned status already reflects this command.
+    if (result.data?.status && hsmStatusSatisfiesCommand(mode, result.data.status)) {
+      hsmStatus = result.data.status;
     }
-    if (result.data?.status) hsmStatus = result.data.status;
     if (result.data?.alert !== undefined) hsmAlert = result.data.alert || "";
     if (result.data?.alertDesc !== undefined) hsmAlertDesc = result.data.alertDesc || "";
     if (currentCategory() === "security") renderSecurityPopup();
@@ -5835,6 +5886,19 @@
 
   function hsmLocked() {
     return hsmLockUntil > Date.now();
+  }
+
+  function hsmStatusSatisfiesCommand(mode, status) {
+    const s = String(status || "").toLowerCase();
+    switch (mode) {
+      case "disarm": return s === "disarmed";
+      case "disarmAll": return s === "alldisarmed";
+      case "armAway": return s === "armedaway" || s === "armingaway";
+      case "armHome": return s === "armedhome" || s === "arminghome";
+      case "armNight": return s === "armednight" || s === "armingnight";
+      case "armAll": return s !== "alldisarmed";
+      default: return false;
+    }
   }
 
   function clearHsmLock() {
@@ -7799,7 +7863,7 @@
         if (d.lk != null) lock.lk = d.lk ? 1 : 0;
         if (d.st != null) lock.st = d.st;
         const opt = lockOptimistic.get(Number(d.i));
-        if (opt && !!lock.lk === !!opt.lk) clearLockOptimistic(Number(d.i));
+        if (opt && lockOptimisticSatisfied(opt, lock)) clearLockOptimistic(Number(d.i));
         if (currentCategory() === "locks") renderLocksPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
         return;
@@ -7937,6 +8001,8 @@
   function reconcileGarage(id) {
     setTimeout(() => refreshDevice(id), 700);
     setTimeout(() => refreshDevice(id), 2200);
+    setTimeout(() => refreshDevice(id), 8000);
+    setTimeout(() => refreshDevice(id), 14000);
   }
 
   async function sendGarageCmd(id, cmd, pin) {
@@ -7965,7 +8031,7 @@
     const lock = locks.find(l => l.i === id);
     if (!lock) return { ok: false };
     const lk = cmd === "lock" ? 1 : 0;
-    const st = cmd === "lock" ? "locked" : "unlocked";
+    const st = cmd === "lock" ? "locking" : "unlocking";
     hapticTap();
     setLockOptimistic(id, lk, st);
     if (currentCategory() === "locks") renderLocksPopup();
@@ -8240,10 +8306,15 @@
     if (!isOpen) closeBtn.classList.add("active");
     else openBtn.classList.add("active");
     closeBtn.addEventListener("click", () => {
-      if (!garageIsMoving(door) && garageIsOpen(door)) sendGarageCmd(door.i, "close");
+      const st = effectiveGarageState(door);
+      // Allow reverse while opening; only skip if already closed/closing.
+      if (st === "closed" || st === "closing") return;
+      sendGarageCmd(door.i, "close");
     });
     openBtn.addEventListener("click", () => {
-      if (garageIsMoving(door) || garageIsOpen(door)) return;
+      const st = effectiveGarageState(door);
+      // Allow reverse while closing; only skip if already open/opening.
+      if (st === "open" || st === "opening") return;
       if (unlockPinRequired) promptGarageOpenPin(door.i, door.n);
       else sendGarageCmd(door.i, "open");
     });
@@ -8265,6 +8336,7 @@
   }
 
   function toggleLockFavorite(lock) {
+    if (lockIsMoving(lock)) return;
     if (effectiveLock(lock)) {
       if (unlockPinRequired) promptUnlockPin(lock.i, lock.n);
       else sendLockCmd(lock.i, "unlock");
@@ -8344,10 +8416,11 @@
     if (isLocked) lockBtn.classList.add("active");
     else unlockBtn.classList.add("active");
     lockBtn.addEventListener("click", () => {
-      if (!effectiveLock(lock)) sendLockCmd(lock.i, "lock");
+      if (lockIsMoving(lock) || effectiveLock(lock)) return;
+      sendLockCmd(lock.i, "lock");
     });
     unlockBtn.addEventListener("click", () => {
-      if (!effectiveLock(lock)) return;
+      if (lockIsMoving(lock) || !effectiveLock(lock)) return;
       if (unlockPinRequired) promptUnlockPin(lock.i, lock.n);
       else sendLockCmd(lock.i, "unlock");
     });
@@ -12789,7 +12862,7 @@
           lock.st = val;
           lock.lk = val === "locked" ? 1 : 0;
           const opt = lockOptimistic.get(lock.i);
-          if (opt && !!lock.lk === !!opt.lk) clearLockOptimistic(lock.i);
+          if (opt && lockOptimisticSatisfied(opt, lock)) clearLockOptimistic(lock.i);
           if (currentCategory() === "locks") renderLocksPopup();
           else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
           return;

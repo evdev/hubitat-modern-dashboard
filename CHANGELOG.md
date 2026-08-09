@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.96
+
+- **Locks:** Show **Locking…** / **Unlocking…** while a command is in flight; tiles
+  stay responsive and clear when the hub confirms the settled state.
+- **Garage doors:** Longer optimistic window (15s) for opener travel; show
+  **Opening…** / **Closing…**; allow reversing mid-travel (close while opening,
+  open while closing).
+- **HSM:** Security panel updates optimistically on arm/disarm/cancel, rolls back
+  on failure, and ignores stale status in the command response when it does not
+  match the requested mode.
+
 ## 0.3.95
 
 - **Fix:** Hub mode and HSM tiles update from live hub events instead of staying

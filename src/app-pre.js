@@ -534,6 +534,8 @@ const CT_PRESETS = [2700, 3000, 3500, 4000, 4500, 5000, 5500, 6000];
 const LEVEL_PRESETS = [25, 50, 75, 100, 1, 5];
 const LEVEL_OPTIMISTIC_MS = 4000;
 const LOCK_OPTIMISTIC_MS = 7000;
+// Residential openers are typically ~8–20s travel; hold Opening…/Closing… through that.
+const GARAGE_OPTIMISTIC_MS = 15000;
 
 const RGB_PRESETS = [
   { label: "Red", h: 0, s: 100 },
