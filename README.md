@@ -733,9 +733,9 @@ reliably serve binary PNGs from File Manager.
 | Asset type | Max size | Why |
 | ---------- | -------- | --- |
 | All File Manager JS/CSS | 124 KB | Hubitat File Manager per-file ceiling |
-| Cloud-critical JS: `mld-app.js`, `mld-app-post3.js` | **118 KB** | Hubitat Cloud OAuth/MQTT; oversized → blank cloud dashboard / missing icons |
+| Cloud-critical JS: `mld-app.js`, `mld-app-post2.js`, `mld-app-post3.js` | **118 KB** | Hubitat Cloud OAuth/MQTT; oversized → blank cloud dashboard / missing icons |
 
-Other JS chunks (`mld-app-core.js`, `mld-app-post.js`, `mld-app-post2.js`, `mld-sw.js`)
+Other JS chunks (`mld-app-core.js`, `mld-app-post.js`, `mld-sw.js`)
 may use the full 124 KB. When a cloud-critical chunk approaches 118 KB, move code
 across the `__MLD_SPLIT*` markers in `src/app.js` into a non-critical chunk. Do not
 raise the 118 KB cloud-critical limit.
@@ -921,7 +921,7 @@ Nothing to edit.
 - UI assets live in Hubitat **File Manager** (`mld-*` files). The Groovy SmartApp
   serves them and implements a slim JSON API — no Maker API.
 - JS is split into five app chunks (+ service worker) under the **124 KB** File Manager
-  limit. Cloud-critical chunks (`mld-app.js`, `mld-app-post3.js`) must stay ≤ **118 KB**
+  limit. Cloud-critical chunks (`mld-app.js`, `mld-app-post2.js`, `mld-app-post3.js`) must stay ≤ **118 KB**
   (cloud OAuth/MQTT).
 - PWA manifest and pass-through service worker enable home-screen install from the
   cloud URL.

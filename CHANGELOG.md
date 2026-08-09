@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- **Fix:** Rebalance JS chunks so `mld-app-post2.js` stays under Hubitat Cloud's
+  118 KB OAuth/MQTT limit — quick-nav **More** menu, scroll-fade hints, and icon
+  tips moved into `mld-app-core.js`. Restores a working cloud dashboard after
+  0.3.100 pushed post2 over the limit.
+
 ## 0.3.100
 
 - **UX:** Quick-nav **More** menu tucks Scenes, Hub mode, and Security behind a ⋯

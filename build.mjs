@@ -25,10 +25,10 @@ const MLD_SPLIT2 = "// __MLD_SPLIT2__";
 const MLD_SPLIT3 = "// __MLD_SPLIT3__";
 const HUB_MAX_BLOB = 124 * 1024;
 // Hubitat Cloud MQTT drops OAuth responses near ~122 KB in practice (see 0.3.20 /
-// post2 split). Keep cloud-critical chunks (boot mld-app.js + deferred post3) under
-// 118 KB so the cloud URL loads.
+// post2 split). Keep cloud-critical chunks (boot mld-app.js, post2/init, deferred
+// post3) under 118 KB so the cloud URL loads.
 const CLOUD_SAFE_JS_BLOB = 118 * 1024;
-const CLOUD_CRITICAL_JS = new Set(["mld-app.js", "mld-app-post3.js"]);
+const CLOUD_CRITICAL_JS = new Set(["mld-app.js", "mld-app-post2.js", "mld-app-post3.js"]);
 
 // Must match definition(namespace:, name:) in the Groovy template
 const NS = "mDash";

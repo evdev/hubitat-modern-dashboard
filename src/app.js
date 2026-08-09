@@ -5467,6 +5467,264 @@
     if (QUICK_NAV_MORE_BTN) nav.appendChild(QUICK_NAV_MORE_BTN);
   }
 
+
+  // Quick-nav More + tip affordances (in core so post/post2 stay under cloud MQTT limit)
+  let quickNavMoreDismiss = null;
+  let quickNavMorePanelEl = null;
+
+  function ensureQuickNavMorePanel() {
+    if (quickNavMorePanelEl) return quickNavMorePanelEl;
+    const panel = ce("div", "quick-nav-more-panel");
+    panel.id = "quick-nav-more-panel";
+    panel.setAttribute("role", "menu");
+    panel.hidden = true;
+    for (const { id, popup, title, svg } of QUICK_NAV) {
+      if (!QUICK_NAV_MORE_SET.has(popup)) continue;
+      const item = ce("button", "quick-nav-more-item");
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.dataset.morePopup = popup;
+      item.dataset.moreBtnId = id;
+      item.innerHTML = svg + "<span></span>";
+      item.querySelector("span").textContent = title;
+      item.addEventListener("click", () => {
+        hapticTap();
+        closeQuickNavMorePanel();
+        const src = document.getElementById(id);
+        if (src) src.click();
+      });
+      panel.appendChild(item);
+    }
+    document.body.appendChild(panel);
+    quickNavMorePanelEl = panel;
+    return panel;
+  }
+
+  function closeQuickNavMorePanel() {
+    const panel = quickNavMorePanelEl || document.getElementById("quick-nav-more-panel");
+    if (panel) panel.hidden = true;
+    if (QUICK_NAV_MORE_BTN) QUICK_NAV_MORE_BTN.setAttribute("aria-expanded", "false");
+    if (quickNavMoreDismiss) {
+      document.removeEventListener("click", quickNavMoreDismiss.onClick);
+      document.removeEventListener("keydown", quickNavMoreDismiss.onKey);
+      quickNavMoreDismiss = null;
+    }
+  }
+
+  function openQuickNavMorePanel() {
+    if (!QUICK_NAV_MORE_BTN || QUICK_NAV_MORE_BTN.hidden) return;
+    postCall("closeTopbarOverflowMenu");
+    const panel = ensureQuickNavMorePanel();
+    let any = false;
+    for (const item of panel.querySelectorAll(".quick-nav-more-item")) {
+      const show = postCall("quickNavPopupHasContent", item.dataset.morePopup);
+      item.hidden = !show;
+      if (show) any = true;
+    }
+    if (!any) { closeQuickNavMorePanel(); return; }
+    panel.hidden = false;
+    QUICK_NAV_MORE_BTN.setAttribute("aria-expanded", "true");
+    const r = QUICK_NAV_MORE_BTN.getBoundingClientRect();
+    const pad = 8;
+    panel.style.left = "0px";
+    panel.style.top = "0px";
+    const pw = panel.offsetWidth || 168;
+    const ph = panel.offsetHeight || 0;
+    let left = r.left;
+    left = Math.max(pad, Math.min(left, window.innerWidth - pw - pad));
+    let top = r.bottom + 6;
+    if (top + ph > window.innerHeight - pad && r.top - ph - 6 > pad) {
+      top = r.top - ph - 6;
+    }
+    panel.style.left = Math.round(left) + "px";
+    panel.style.top = Math.round(top) + "px";
+    const onClick = (e) => {
+      if (panel.contains(e.target) || QUICK_NAV_MORE_BTN.contains(e.target)) return;
+      closeQuickNavMorePanel();
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") closeQuickNavMorePanel();
+    };
+    quickNavMoreDismiss = { onClick, onKey };
+    setTimeout(() => {
+      document.addEventListener("click", onClick);
+      document.addEventListener("keydown", onKey);
+    }, 0);
+  }
+
+  function updateQuickNavMore() {
+    if (!QUICK_NAV_MORE_BTN || !APP_EL) return;
+    const useMore = !cfg.enableDrawer && !reorderMode;
+    let visibleMore = 0;
+    if (useMore) {
+      for (const popup of QUICK_NAV_MORE_SET) {
+        if (postCall("quickNavPopupHasContent", popup)) visibleMore += 1;
+      }
+    }
+    const active = useMore && visibleMore > 0;
+    APP_EL.classList.toggle("quick-nav-more-active", active);
+    QUICK_NAV_MORE_BTN.hidden = !active;
+    if (!active) closeQuickNavMorePanel();
+    const nav = document.querySelector(".quick-nav");
+    if (nav && QUICK_NAV_MORE_BTN) nav.appendChild(QUICK_NAV_MORE_BTN);
+  }
+
+  function setupQuickNavMore() {
+    if (!QUICK_NAV_MORE_BTN || QUICK_NAV_MORE_BTN.dataset.moreBound) return;
+    QUICK_NAV_MORE_BTN.dataset.moreBound = "1";
+    QUICK_NAV_MORE_BTN.innerHTML = MORE_NAV_SVG;
+    postCall("applyTip", QUICK_NAV_MORE_BTN, "More");
+    QUICK_NAV_MORE_BTN.addEventListener("click", () => {
+      if (reorderMode) return;
+      hapticTap();
+      const panel = quickNavMorePanelEl || document.getElementById("quick-nav-more-panel");
+      if (panel && !panel.hidden) closeQuickNavMorePanel();
+      else openQuickNavMorePanel();
+    });
+  }
+
+  function updateQuickNavScrollFade() {
+    const nav = document.querySelector(".quick-nav");
+    if (!nav || nav.hidden || cfg.enableDrawer) {
+      if (nav) {
+        nav.classList.remove("has-overflow-start", "has-overflow-end");
+      }
+      return;
+    }
+    const max = nav.scrollWidth - nav.clientWidth;
+    const hasOverflow = max > 4;
+    const atStart = nav.scrollLeft <= 2;
+    const atEnd = nav.scrollLeft >= max - 2;
+    nav.classList.toggle("has-overflow-start", hasOverflow && !atStart);
+    nav.classList.toggle("has-overflow-end", hasOverflow && !atEnd);
+  }
+
+  function setupQuickNavScrollFade() {
+    const nav = document.querySelector(".quick-nav");
+    if (!nav || nav.dataset.scrollFadeBound) return;
+    nav.dataset.scrollFadeBound = "1";
+    nav.addEventListener("scroll", updateQuickNavScrollFade, { passive: true });
+    window.addEventListener("resize", updateQuickNavScrollFade);
+    updateQuickNavScrollFade();
+  }
+
+  function setupIconTipAffordances() {
+    const roots = [
+      document.querySelector(".quick-nav"),
+      document.querySelector(".topbar-actions"),
+    ].filter(Boolean);
+    for (const root of roots) {
+      for (const btn of root.querySelectorAll(".ghost-btn.icon-btn")) postCall("applyTip", btn);
+    }
+    postCall("applyTip", document.getElementById("drawer-toggle"));
+    postCall("applyTip", ALL_OFF_BTN, "Tap to turn off · Hold & slide to save home state");
+    postCall("applyTip", ALL_ON_BTN, "Tap to turn on · Hold & slide to restore home state");
+
+    const tipRoot = APP_EL || document;
+    if (tipRoot.dataset?.tipBound || tipRoot === document && document.documentElement.dataset.tipBound) return;
+    if (tipRoot.dataset) tipRoot.dataset.tipBound = "1";
+    else document.documentElement.dataset.tipBound = "1";
+
+    let tipEl = null;
+    let tipTimer = null;
+    let tipBtn = null;
+    let hideTimer = null;
+
+    function ensureTipEl() {
+      if (tipEl) return tipEl;
+      tipEl = document.createElement("div");
+      tipEl.className = "mld-tip";
+      tipEl.setAttribute("role", "tooltip");
+      tipEl.hidden = true;
+      document.body.appendChild(tipEl);
+      return tipEl;
+    }
+
+    function placeTip(btn) {
+      const tip = btn.getAttribute("data-tip");
+      if (!tip) return;
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      const el = ensureTipEl();
+      el.textContent = tip;
+      el.hidden = false;
+      const r = btn.getBoundingClientRect();
+      const pad = 8;
+      const tw = el.offsetWidth || 0;
+      const th = el.offsetHeight || 0;
+      let left = r.left + r.width / 2 - tw / 2;
+      left = Math.max(pad, Math.min(left, window.innerWidth - tw - pad));
+      let top = r.top - th - 6;
+      if (top < pad) top = r.bottom + 6;
+      el.style.left = Math.round(left) + "px";
+      el.style.top = Math.round(top) + "px";
+      requestAnimationFrame(() => el.classList.add("is-visible"));
+    }
+
+    function hideTip() {
+      if (tipTimer) { clearTimeout(tipTimer); tipTimer = null; }
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      tipBtn = null;
+      if (!tipEl) return;
+      tipEl.classList.remove("is-visible");
+      hideTimer = setTimeout(() => {
+        if (tipEl && !tipEl.classList.contains("is-visible")) tipEl.hidden = true;
+      }, 160);
+    }
+
+    if (globalThis.__MLD) globalThis.__MLD._tipHide = hideTip;
+
+    function showTipFor(btn, delay) {
+      hideTip();
+      tipBtn = btn;
+      const run = () => { if (tipBtn === btn) placeTip(btn); };
+      if (delay) tipTimer = setTimeout(run, delay);
+      else run();
+    }
+
+    const tipSelector = "button[data-tip]";
+    const isSlideTipBtn = (btn) => btn.matches(".topbar-off-btn, .topbar-on-btn, .btn-off, .btn-on");
+
+    tipRoot.addEventListener("pointerover", (e) => {
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn || e.pointerType === "touch") return;
+      if (btn.closest("#app-drawer")) return;
+      if (tipBtn === btn && tipEl && !tipEl.hidden) return;
+      showTipFor(btn, 0);
+    }, true);
+    tipRoot.addEventListener("pointerout", (e) => {
+      if (e.pointerType === "touch") return;
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn || tipBtn !== btn) return;
+      const related = e.relatedTarget?.closest?.(tipSelector);
+      if (related === btn) return;
+      hideTip();
+    }, true);
+    tipRoot.addEventListener("focusin", (e) => {
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn || btn.closest("#app-drawer")) return;
+      showTipFor(btn, 0);
+    });
+    tipRoot.addEventListener("focusout", (e) => {
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn || tipBtn !== btn) return;
+      const related = e.relatedTarget?.closest?.(tipSelector);
+      if (related === btn) return;
+      hideTip();
+    });
+    tipRoot.addEventListener("pointerdown", (e) => {
+      const btn = e.target.closest?.(tipSelector);
+      if (!btn) return;
+      if (btn.closest("#app-drawer")) return;
+      // Mouse: clear tip so it doesn't sit over a slide gesture.
+      if (e.pointerType === "mouse") { hideTip(); return; }
+      // Touch: show slide tips immediately; icon tips after a short hold.
+      showTipFor(btn, isSlideTipBtn(btn) ? 0 : 420);
+    }, true);
+    tipRoot.addEventListener("pointerup", hideTip, true);
+    tipRoot.addEventListener("pointercancel", hideTip, true);
+    tipRoot.addEventListener("scroll", hideTip, true);
+  }
+
   // __MLD_SPLIT__
 
   async function saveRoomOrder(order) {
@@ -6522,7 +6780,7 @@
 
   function openTopbarOverflowMenu() {
     if (!OVERFLOW_MENU || !OVERFLOW_BTN || reorderMode) return;
-    postCall("closeQuickNavMorePanel");
+    closeQuickNavMorePanel();
     updateLocalModeMenuUI();
     updateCamerasLayoutMenuVisibility();
     updateSensorsOrgMenuVisibility();
@@ -9731,6 +9989,7 @@
     if (id) await acknowledgeTriggerAction(id);
   }
 
+
   // __MLD_SPLIT2__
 
   function favoritesPopupSignature() {
@@ -11740,265 +11999,10 @@
     if (nav) nav.hidden = !anyVisible;
     if (quickPopupOpenType && !quickNavPopupHasContent(quickPopupOpenType)) closeQuickPopup();
     if (tabMode && inTabView() && !quickNavPopupHasContent(activeTab)) showTab("lights");
-    updateQuickNavMore();
-    updateQuickNavScrollFade();
+    postCall("updateQuickNavMore");
+    postCall("updateQuickNavScrollFade");
   }
 
-  let quickNavMoreDismiss = null;
-  let quickNavMorePanelEl = null;
-
-  function ensureQuickNavMorePanel() {
-    if (quickNavMorePanelEl) return quickNavMorePanelEl;
-    const panel = ce("div", "quick-nav-more-panel");
-    panel.id = "quick-nav-more-panel";
-    panel.setAttribute("role", "menu");
-    panel.hidden = true;
-    for (const { id, popup, title, svg } of QUICK_NAV) {
-      if (!QUICK_NAV_MORE_SET.has(popup)) continue;
-      const item = ce("button", "quick-nav-more-item");
-      item.type = "button";
-      item.setAttribute("role", "menuitem");
-      item.dataset.morePopup = popup;
-      item.dataset.moreBtnId = id;
-      item.innerHTML = svg + "<span></span>";
-      item.querySelector("span").textContent = title;
-      item.addEventListener("click", () => {
-        hapticTap();
-        closeQuickNavMorePanel();
-        const src = document.getElementById(id);
-        if (src) src.click();
-      });
-      panel.appendChild(item);
-    }
-    document.body.appendChild(panel);
-    quickNavMorePanelEl = panel;
-    return panel;
-  }
-
-  function closeQuickNavMorePanel() {
-    const panel = quickNavMorePanelEl || document.getElementById("quick-nav-more-panel");
-    if (panel) panel.hidden = true;
-    if (QUICK_NAV_MORE_BTN) QUICK_NAV_MORE_BTN.setAttribute("aria-expanded", "false");
-    if (quickNavMoreDismiss) {
-      document.removeEventListener("click", quickNavMoreDismiss.onClick);
-      document.removeEventListener("keydown", quickNavMoreDismiss.onKey);
-      quickNavMoreDismiss = null;
-    }
-  }
-
-  function openQuickNavMorePanel() {
-    if (!QUICK_NAV_MORE_BTN || QUICK_NAV_MORE_BTN.hidden) return;
-    closeTopbarOverflowMenu();
-    const panel = ensureQuickNavMorePanel();
-    let any = false;
-    for (const item of panel.querySelectorAll(".quick-nav-more-item")) {
-      const show = quickNavPopupHasContent(item.dataset.morePopup);
-      item.hidden = !show;
-      if (show) any = true;
-    }
-    if (!any) { closeQuickNavMorePanel(); return; }
-    panel.hidden = false;
-    QUICK_NAV_MORE_BTN.setAttribute("aria-expanded", "true");
-    const r = QUICK_NAV_MORE_BTN.getBoundingClientRect();
-    const pad = 8;
-    panel.style.left = "0px";
-    panel.style.top = "0px";
-    const pw = panel.offsetWidth || 168;
-    const ph = panel.offsetHeight || 0;
-    let left = r.left;
-    left = Math.max(pad, Math.min(left, window.innerWidth - pw - pad));
-    let top = r.bottom + 6;
-    if (top + ph > window.innerHeight - pad && r.top - ph - 6 > pad) {
-      top = r.top - ph - 6;
-    }
-    panel.style.left = Math.round(left) + "px";
-    panel.style.top = Math.round(top) + "px";
-    const onClick = (e) => {
-      if (panel.contains(e.target) || QUICK_NAV_MORE_BTN.contains(e.target)) return;
-      closeQuickNavMorePanel();
-    };
-    const onKey = (e) => {
-      if (e.key === "Escape") closeQuickNavMorePanel();
-    };
-    quickNavMoreDismiss = { onClick, onKey };
-    setTimeout(() => {
-      document.addEventListener("click", onClick);
-      document.addEventListener("keydown", onKey);
-    }, 0);
-  }
-
-  function updateQuickNavMore() {
-    if (!QUICK_NAV_MORE_BTN || !APP_EL) return;
-    const useMore = !cfg.enableDrawer && !reorderMode;
-    let visibleMore = 0;
-    if (useMore) {
-      for (const popup of QUICK_NAV_MORE_SET) {
-        if (quickNavPopupHasContent(popup)) visibleMore += 1;
-      }
-    }
-    const active = useMore && visibleMore > 0;
-    APP_EL.classList.toggle("quick-nav-more-active", active);
-    QUICK_NAV_MORE_BTN.hidden = !active;
-    if (!active) closeQuickNavMorePanel();
-    const nav = document.querySelector(".quick-nav");
-    if (nav && QUICK_NAV_MORE_BTN) nav.appendChild(QUICK_NAV_MORE_BTN);
-  }
-
-  function setupQuickNavMore() {
-    if (!QUICK_NAV_MORE_BTN || QUICK_NAV_MORE_BTN.dataset.moreBound) return;
-    QUICK_NAV_MORE_BTN.dataset.moreBound = "1";
-    QUICK_NAV_MORE_BTN.innerHTML = MORE_NAV_SVG;
-    applyTip(QUICK_NAV_MORE_BTN, "More");
-    QUICK_NAV_MORE_BTN.addEventListener("click", () => {
-      if (reorderMode) return;
-      hapticTap();
-      const panel = quickNavMorePanelEl || document.getElementById("quick-nav-more-panel");
-      if (panel && !panel.hidden) closeQuickNavMorePanel();
-      else openQuickNavMorePanel();
-    });
-  }
-
-  function updateQuickNavScrollFade() {
-    const nav = document.querySelector(".quick-nav");
-    if (!nav || nav.hidden || cfg.enableDrawer) {
-      if (nav) {
-        nav.classList.remove("has-overflow-start", "has-overflow-end");
-      }
-      return;
-    }
-    const max = nav.scrollWidth - nav.clientWidth;
-    const hasOverflow = max > 4;
-    const atStart = nav.scrollLeft <= 2;
-    const atEnd = nav.scrollLeft >= max - 2;
-    nav.classList.toggle("has-overflow-start", hasOverflow && !atStart);
-    nav.classList.toggle("has-overflow-end", hasOverflow && !atEnd);
-  }
-
-  function setupQuickNavScrollFade() {
-    const nav = document.querySelector(".quick-nav");
-    if (!nav || nav.dataset.scrollFadeBound) return;
-    nav.dataset.scrollFadeBound = "1";
-    nav.addEventListener("scroll", updateQuickNavScrollFade, { passive: true });
-    window.addEventListener("resize", updateQuickNavScrollFade);
-    updateQuickNavScrollFade();
-  }
-
-  function setupIconTipAffordances() {
-    const roots = [
-      document.querySelector(".quick-nav"),
-      document.querySelector(".topbar-actions"),
-    ].filter(Boolean);
-    for (const root of roots) {
-      for (const btn of root.querySelectorAll(".ghost-btn.icon-btn")) applyTip(btn);
-    }
-    applyTip(document.getElementById("drawer-toggle"));
-    applyTip(ALL_OFF_BTN, "Tap to turn off · Hold & slide to save home state");
-    applyTip(ALL_ON_BTN, "Tap to turn on · Hold & slide to restore home state");
-
-    const tipRoot = APP_EL || document;
-    if (tipRoot.dataset?.tipBound || tipRoot === document && document.documentElement.dataset.tipBound) return;
-    if (tipRoot.dataset) tipRoot.dataset.tipBound = "1";
-    else document.documentElement.dataset.tipBound = "1";
-
-    let tipEl = null;
-    let tipTimer = null;
-    let tipBtn = null;
-    let hideTimer = null;
-
-    function ensureTipEl() {
-      if (tipEl) return tipEl;
-      tipEl = document.createElement("div");
-      tipEl.className = "mld-tip";
-      tipEl.setAttribute("role", "tooltip");
-      tipEl.hidden = true;
-      document.body.appendChild(tipEl);
-      return tipEl;
-    }
-
-    function placeTip(btn) {
-      const tip = btn.getAttribute("data-tip");
-      if (!tip) return;
-      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-      const el = ensureTipEl();
-      el.textContent = tip;
-      el.hidden = false;
-      const r = btn.getBoundingClientRect();
-      const pad = 8;
-      const tw = el.offsetWidth || 0;
-      const th = el.offsetHeight || 0;
-      let left = r.left + r.width / 2 - tw / 2;
-      left = Math.max(pad, Math.min(left, window.innerWidth - tw - pad));
-      let top = r.top - th - 6;
-      if (top < pad) top = r.bottom + 6;
-      el.style.left = Math.round(left) + "px";
-      el.style.top = Math.round(top) + "px";
-      requestAnimationFrame(() => el.classList.add("is-visible"));
-    }
-
-    function hideTip() {
-      if (tipTimer) { clearTimeout(tipTimer); tipTimer = null; }
-      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-      tipBtn = null;
-      if (!tipEl) return;
-      tipEl.classList.remove("is-visible");
-      hideTimer = setTimeout(() => {
-        if (tipEl && !tipEl.classList.contains("is-visible")) tipEl.hidden = true;
-      }, 160);
-    }
-
-    if (globalThis.__MLD) globalThis.__MLD._tipHide = hideTip;
-
-    function showTipFor(btn, delay) {
-      hideTip();
-      tipBtn = btn;
-      const run = () => { if (tipBtn === btn) placeTip(btn); };
-      if (delay) tipTimer = setTimeout(run, delay);
-      else run();
-    }
-
-    const tipSelector = "button[data-tip]";
-    const isSlideTipBtn = (btn) => btn.matches(".topbar-off-btn, .topbar-on-btn, .btn-off, .btn-on");
-
-    tipRoot.addEventListener("pointerover", (e) => {
-      const btn = e.target.closest?.(tipSelector);
-      if (!btn || e.pointerType === "touch") return;
-      if (btn.closest("#app-drawer")) return;
-      if (tipBtn === btn && tipEl && !tipEl.hidden) return;
-      showTipFor(btn, 0);
-    }, true);
-    tipRoot.addEventListener("pointerout", (e) => {
-      if (e.pointerType === "touch") return;
-      const btn = e.target.closest?.(tipSelector);
-      if (!btn || tipBtn !== btn) return;
-      const related = e.relatedTarget?.closest?.(tipSelector);
-      if (related === btn) return;
-      hideTip();
-    }, true);
-    tipRoot.addEventListener("focusin", (e) => {
-      const btn = e.target.closest?.(tipSelector);
-      if (!btn || btn.closest("#app-drawer")) return;
-      showTipFor(btn, 0);
-    });
-    tipRoot.addEventListener("focusout", (e) => {
-      const btn = e.target.closest?.(tipSelector);
-      if (!btn || tipBtn !== btn) return;
-      const related = e.relatedTarget?.closest?.(tipSelector);
-      if (related === btn) return;
-      hideTip();
-    });
-    tipRoot.addEventListener("pointerdown", (e) => {
-      const btn = e.target.closest?.(tipSelector);
-      if (!btn) return;
-      if (btn.closest("#app-drawer")) return;
-      // Mouse: clear tip so it doesn't sit over a slide gesture.
-      if (e.pointerType === "mouse") { hideTip(); return; }
-      // Touch: show slide tips immediately; icon tips after a short hold.
-      showTipFor(btn, isSlideTipBtn(btn) ? 0 : 420);
-    }, true);
-    tipRoot.addEventListener("pointerup", hideTip, true);
-    tipRoot.addEventListener("pointercancel", hideTip, true);
-    tipRoot.addEventListener("scroll", hideTip, true);
-  }
 
   function refreshQuickPopupIfOpen() {
     if (inTabView()) {
@@ -13293,9 +13297,9 @@
     });
     QUICK_LIGHTS_BTN.hidden = !tabMode;
   }
-  setupIconTipAffordances();
-  setupQuickNavScrollFade();
-  setupQuickNavMore();
+  postCall("setupIconTipAffordances");
+  postCall("setupQuickNavScrollFade");
+  postCall("setupQuickNavMore");
   setupNavReorderItems();
   postCall("applyNavOrder", postCall("getDisplayNavOrder"));
   if (CENTRAL_TSTAT_BTN) {
