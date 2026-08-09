@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- **UX:** Remove quick-nav **More** menu — Scenes, Hub mode, and Security are back
+  on the main icon row. Keeps the 0.4.0 cloud chunk layout (icon tips and scroll-fade
+  hints in core).
+
 ## 0.4.0
 
 - **Fix:** Rebalance JS chunks so `mld-app-post2.js` stays under Hubitat Cloud's

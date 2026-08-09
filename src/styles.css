@@ -303,34 +303,6 @@ body {
   .mld-tip { transition: none; }
 }
 
-/* Tuck Scenes / Hub mode / Security behind More (not in drawer or reorder) */
-#app.quick-nav-more-active:not(.drawer-mode):not(.reorder-mode) .nav-reorder-item.nav-more-source {
-  display: none !important;
-}
-.quick-nav-more-panel {
-  position: fixed; z-index: 45;
-  display: flex; flex-direction: column; gap: 2px;
-  min-width: 168px; max-width: min(240px, calc(100vw - 16px));
-  padding: var(--space-sm);
-  background: var(--panel-solid); border: 1px solid var(--stroke-2);
-  border-radius: var(--radius-sm); box-shadow: var(--shadow);
-}
-.quick-nav-more-panel[hidden] { display: none; }
-.quick-nav-more-item {
-  appearance: none; display: flex; align-items: center; gap: 10px;
-  width: 100%; min-height: 44px; padding: 8px 10px;
-  border: none; border-radius: var(--radius-sm); background: transparent;
-  color: var(--text); font-size: 14px; font-weight: 600; text-align: left;
-  cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none;
-}
-.quick-nav-more-item:hover { background: var(--panel-2); }
-.quick-nav-more-item:active { transform: scale(.98); }
-.quick-nav-more-item svg {
-  width: 22px; height: 22px; flex-shrink: 0;
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.25));
-}
-.quick-nav-more-item[hidden] { display: none; }
-
 /* Tab mode (Lights + favorites/sensors/thermostats/music as inline tabs) */
 .quick-nav .tab-btn {
   padding: 8px 14px; font-size: 13px; font-weight: 700; letter-spacing: -0.01em;
