@@ -527,6 +527,11 @@ const QUICK_NAV = [
   { id: "quick-favorites", popup: "favorites", title: "Favorites", svg: FAV_NAV_SVG },
 ];
 
+/** Categories tucked behind the More button (icon row only; still full items in drawer/reorder). */
+const QUICK_NAV_MORE_POPUPS = ["scenes", "hub-mode", "security"];
+
+const MORE_NAV_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.85" fill="currentColor"/><circle cx="12" cy="12" r="1.85" fill="currentColor"/><circle cx="19" cy="12" r="1.85" fill="currentColor"/></svg>';
+
 const CT_K_MIN = 2500;
 const CT_K_MAX = 6000;
 const CT_K_DEFAULT = 3000;

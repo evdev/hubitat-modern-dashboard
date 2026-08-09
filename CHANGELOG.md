@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.100
+
+- **UX:** Quick-nav **More** menu tucks Scenes, Hub mode, and Security behind a ⋯
+  button on the icon row (still available in the drawer and nav reorder).
+- **UX:** Overflow **Preferences** menu reorganized into Layout, Navigation,
+  Appearance, Sound & feedback, and Connection sections with clearer labels.
+- **Fix:** Lock and garage door tiles on Favorites resolve live device state by ID
+  so controls stay accurate after list refreshes.
+
 ## 0.3.99
 
 - **UX:** Custom tips on icon-only controls and slide-to-save/restore buttons (room

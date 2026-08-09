@@ -804,6 +804,8 @@
   let defaultTabApplied = false;
   let tabViewEl = null;
   const QUICK_LIGHTS_BTN = document.getElementById("quick-lights");
+  const QUICK_NAV_MORE_BTN = document.getElementById("quick-nav-more");
+  const QUICK_NAV_MORE_SET = new Set(QUICK_NAV_MORE_POPUPS);
   let favTstatModeMenu = null;
   let favTstatModeMenuCleanup = null;
   let favTstatModeMenuId = null;
@@ -5462,6 +5464,7 @@
       const rec = navEls.get(key);
       if (rec?.wrap) nav.appendChild(rec.wrap);
     }
+    if (QUICK_NAV_MORE_BTN) nav.appendChild(QUICK_NAV_MORE_BTN);
   }
 
   // __MLD_SPLIT__
@@ -5567,6 +5570,13 @@
       if (rec.btn) rec.btn.hidden = !show;
       if (show) anyVisible = true;
     }
+    if (QUICK_NAV_MORE_BTN) {
+      QUICK_NAV_MORE_BTN.hidden = true;
+      QUICK_NAV_MORE_BTN.setAttribute("aria-expanded", "false");
+    }
+    APP_EL?.classList.remove("quick-nav-more-active");
+    const panel = document.getElementById("quick-nav-more-panel");
+    if (panel) panel.hidden = true;
     if (nav) nav.hidden = !anyVisible;
   }
 
@@ -6512,6 +6522,7 @@
 
   function openTopbarOverflowMenu() {
     if (!OVERFLOW_MENU || !OVERFLOW_BTN || reorderMode) return;
+    postCall("closeQuickNavMorePanel");
     updateLocalModeMenuUI();
     updateCamerasLayoutMenuVisibility();
     updateSensorsOrgMenuVisibility();
@@ -6784,6 +6795,7 @@
       btn.dataset.navKey = key;
       const wrap = ce("div", "nav-reorder-item");
       wrap.dataset.navKey = key;
+      if (QUICK_NAV_MORE_SET.has(key)) wrap.classList.add("nav-more-source");
       nav.insertBefore(wrap, btn);
       wrap.appendChild(btn);
       const handle = ce("button", "nav-drag-handle");
@@ -6794,6 +6806,7 @@
       attachNavReorder(wrap, handle);
       navEls.set(key, { wrap, btn, handle });
     }
+    if (QUICK_NAV_MORE_BTN) nav.appendChild(QUICK_NAV_MORE_BTN);
   }
 
   function relocateNavForReorder() {
@@ -8327,13 +8340,16 @@
     if (!isOpen) closeBtn.classList.add("active");
     else openBtn.classList.add("active");
     closeBtn.addEventListener("click", () => {
-      const st = effectiveGarageState(door);
+      // Resolve current door — favorites rows outlive replaceList()/poll object identity.
+      const cur = garageDoors.find((g) => g.i === door.i) || door;
+      const st = effectiveGarageState(cur);
       // Allow reverse while opening; only skip if already closed/closing.
       if (st === "closed" || st === "closing") return;
       sendGarageCmd(door.i, "close");
     });
     openBtn.addEventListener("click", () => {
-      const st = effectiveGarageState(door);
+      const cur = garageDoors.find((g) => g.i === door.i) || door;
+      const st = effectiveGarageState(cur);
       // Allow reverse while closing; only skip if already open/opening.
       if (st === "open" || st === "opening") return;
       if (unlockPinRequired) promptGarageOpenPin(door.i, door.n);
@@ -8357,12 +8373,13 @@
   }
 
   function toggleLockFavorite(lock) {
-    if (lockIsMoving(lock)) return;
-    if (effectiveLock(lock)) {
-      if (unlockPinRequired) promptUnlockPin(lock.i, lock.n);
-      else sendLockCmd(lock.i, "unlock");
+    const cur = locks.find((l) => l.i === lock.i) || lock;
+    if (lockIsMoving(cur)) return;
+    if (effectiveLock(cur)) {
+      if (unlockPinRequired) promptUnlockPin(cur.i, cur.n);
+      else sendLockCmd(cur.i, "unlock");
     } else {
-      sendLockCmd(lock.i, "lock");
+      sendLockCmd(cur.i, "lock");
     }
   }
 
@@ -8437,13 +8454,15 @@
     if (isLocked) lockBtn.classList.add("active");
     else unlockBtn.classList.add("active");
     lockBtn.addEventListener("click", () => {
-      if (lockIsMoving(lock) || effectiveLock(lock)) return;
-      sendLockCmd(lock.i, "lock");
+      const cur = locks.find((l) => l.i === lock.i) || lock;
+      if (lockIsMoving(cur) || effectiveLock(cur)) return;
+      sendLockCmd(cur.i, "lock");
     });
     unlockBtn.addEventListener("click", () => {
-      if (lockIsMoving(lock) || !effectiveLock(lock)) return;
-      if (unlockPinRequired) promptUnlockPin(lock.i, lock.n);
-      else sendLockCmd(lock.i, "unlock");
+      const cur = locks.find((l) => l.i === lock.i) || lock;
+      if (lockIsMoving(cur) || !effectiveLock(cur)) return;
+      if (unlockPinRequired) promptUnlockPin(cur.i, cur.n);
+      else sendLockCmd(cur.i, "unlock");
     });
     actions.appendChild(lockBtn);
     actions.appendChild(unlockBtn);
@@ -11721,7 +11740,122 @@
     if (nav) nav.hidden = !anyVisible;
     if (quickPopupOpenType && !quickNavPopupHasContent(quickPopupOpenType)) closeQuickPopup();
     if (tabMode && inTabView() && !quickNavPopupHasContent(activeTab)) showTab("lights");
+    updateQuickNavMore();
     updateQuickNavScrollFade();
+  }
+
+  let quickNavMoreDismiss = null;
+  let quickNavMorePanelEl = null;
+
+  function ensureQuickNavMorePanel() {
+    if (quickNavMorePanelEl) return quickNavMorePanelEl;
+    const panel = ce("div", "quick-nav-more-panel");
+    panel.id = "quick-nav-more-panel";
+    panel.setAttribute("role", "menu");
+    panel.hidden = true;
+    for (const { id, popup, title, svg } of QUICK_NAV) {
+      if (!QUICK_NAV_MORE_SET.has(popup)) continue;
+      const item = ce("button", "quick-nav-more-item");
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.dataset.morePopup = popup;
+      item.dataset.moreBtnId = id;
+      item.innerHTML = svg + "<span></span>";
+      item.querySelector("span").textContent = title;
+      item.addEventListener("click", () => {
+        hapticTap();
+        closeQuickNavMorePanel();
+        const src = document.getElementById(id);
+        if (src) src.click();
+      });
+      panel.appendChild(item);
+    }
+    document.body.appendChild(panel);
+    quickNavMorePanelEl = panel;
+    return panel;
+  }
+
+  function closeQuickNavMorePanel() {
+    const panel = quickNavMorePanelEl || document.getElementById("quick-nav-more-panel");
+    if (panel) panel.hidden = true;
+    if (QUICK_NAV_MORE_BTN) QUICK_NAV_MORE_BTN.setAttribute("aria-expanded", "false");
+    if (quickNavMoreDismiss) {
+      document.removeEventListener("click", quickNavMoreDismiss.onClick);
+      document.removeEventListener("keydown", quickNavMoreDismiss.onKey);
+      quickNavMoreDismiss = null;
+    }
+  }
+
+  function openQuickNavMorePanel() {
+    if (!QUICK_NAV_MORE_BTN || QUICK_NAV_MORE_BTN.hidden) return;
+    closeTopbarOverflowMenu();
+    const panel = ensureQuickNavMorePanel();
+    let any = false;
+    for (const item of panel.querySelectorAll(".quick-nav-more-item")) {
+      const show = quickNavPopupHasContent(item.dataset.morePopup);
+      item.hidden = !show;
+      if (show) any = true;
+    }
+    if (!any) { closeQuickNavMorePanel(); return; }
+    panel.hidden = false;
+    QUICK_NAV_MORE_BTN.setAttribute("aria-expanded", "true");
+    const r = QUICK_NAV_MORE_BTN.getBoundingClientRect();
+    const pad = 8;
+    panel.style.left = "0px";
+    panel.style.top = "0px";
+    const pw = panel.offsetWidth || 168;
+    const ph = panel.offsetHeight || 0;
+    let left = r.left;
+    left = Math.max(pad, Math.min(left, window.innerWidth - pw - pad));
+    let top = r.bottom + 6;
+    if (top + ph > window.innerHeight - pad && r.top - ph - 6 > pad) {
+      top = r.top - ph - 6;
+    }
+    panel.style.left = Math.round(left) + "px";
+    panel.style.top = Math.round(top) + "px";
+    const onClick = (e) => {
+      if (panel.contains(e.target) || QUICK_NAV_MORE_BTN.contains(e.target)) return;
+      closeQuickNavMorePanel();
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") closeQuickNavMorePanel();
+    };
+    quickNavMoreDismiss = { onClick, onKey };
+    setTimeout(() => {
+      document.addEventListener("click", onClick);
+      document.addEventListener("keydown", onKey);
+    }, 0);
+  }
+
+  function updateQuickNavMore() {
+    if (!QUICK_NAV_MORE_BTN || !APP_EL) return;
+    const useMore = !cfg.enableDrawer && !reorderMode;
+    let visibleMore = 0;
+    if (useMore) {
+      for (const popup of QUICK_NAV_MORE_SET) {
+        if (quickNavPopupHasContent(popup)) visibleMore += 1;
+      }
+    }
+    const active = useMore && visibleMore > 0;
+    APP_EL.classList.toggle("quick-nav-more-active", active);
+    QUICK_NAV_MORE_BTN.hidden = !active;
+    if (!active) closeQuickNavMorePanel();
+    const nav = document.querySelector(".quick-nav");
+    if (nav && QUICK_NAV_MORE_BTN) nav.appendChild(QUICK_NAV_MORE_BTN);
+  }
+
+  function setupQuickNavMore() {
+    if (!QUICK_NAV_MORE_BTN || QUICK_NAV_MORE_BTN.dataset.moreBound) return;
+    QUICK_NAV_MORE_BTN.dataset.moreBound = "1";
+    QUICK_NAV_MORE_BTN.innerHTML = MORE_NAV_SVG;
+    applyTip(QUICK_NAV_MORE_BTN, "More");
+    QUICK_NAV_MORE_BTN.addEventListener("click", () => {
+      if (reorderMode) return;
+      hapticTap();
+      const panel = quickNavMorePanelEl || document.getElementById("quick-nav-more-panel");
+      if (panel && !panel.hidden) closeQuickNavMorePanel();
+      else openQuickNavMorePanel();
+    });
   }
 
   function updateQuickNavScrollFade() {
@@ -13161,6 +13295,7 @@
   }
   setupIconTipAffordances();
   setupQuickNavScrollFade();
+  setupQuickNavMore();
   setupNavReorderItems();
   postCall("applyNavOrder", postCall("getDisplayNavOrder"));
   if (CENTRAL_TSTAT_BTN) {

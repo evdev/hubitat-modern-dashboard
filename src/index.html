@@ -54,6 +54,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.75"/><circle cx="12" cy="12" r="1.75"/><circle cx="12" cy="19" r="1.75"/></svg>
           </button>
           <div id="topbar-overflow-menu" class="topbar-overflow-menu" role="menu" hidden>
+            <div class="topbar-overflow-label">Layout</div>
             <button id="menu-reorder" class="topbar-overflow-item" type="button" role="menuitem">Reorder</button>
             <div id="menu-add-tile" hidden>
               <div class="topbar-overflow-label">Add tile</div>
@@ -65,7 +66,6 @@
               </div>
             </div>
             <div id="menu-cameras-layout" hidden>
-              <div class="topbar-overflow-sep" role="separator"></div>
               <div class="topbar-overflow-label">Cameras layout</div>
               <div id="menu-cameras-cols" class="topbar-overflow-segment" role="group" aria-label="Cameras layout">
                 <button type="button" class="topbar-overflow-seg" data-cols="1" role="menuitemradio" aria-checked="true">1</button>
@@ -74,21 +74,39 @@
               </div>
             </div>
             <div id="menu-sensors-org" hidden>
-              <div class="topbar-overflow-sep" role="separator"></div>
               <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="false">
                 <input type="checkbox" id="menu-sensors-flat" />
                 <span>Do not use rooms for organization</span>
               </label>
             </div>
+
             <div class="topbar-overflow-sep" role="separator"></div>
-            <button id="menu-open-local" class="topbar-overflow-item" type="button" role="menuitem" hidden>Open local mode</button>
-            <button id="menu-open-cloud" class="topbar-overflow-item" type="button" role="menuitem" hidden>Open cloud mode</button>
-            <div class="topbar-overflow-sep" role="separator"></div>
-            <div class="topbar-overflow-label">Preferences</div>
-            <label class="topbar-overflow-field" for="menu-local-url">
-              <span class="topbar-overflow-label">Local hub URL</span>
-              <input id="menu-local-url" class="topbar-overflow-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.x.x/..." />
+            <div class="topbar-overflow-label">Navigation</div>
+            <label class="topbar-overflow-check topbar-overflow-check-stack" role="menuitemcheckbox" aria-checked="true">
+              <span class="topbar-overflow-check-row">
+                <input type="checkbox" id="menu-tabs" checked />
+                <span>Category tabs</span>
+              </span>
+              <span class="topbar-overflow-hint">Show categories as tabs instead of popups</span>
             </label>
+            <label class="topbar-overflow-check topbar-overflow-check-stack" role="menuitemcheckbox" aria-checked="false">
+              <span class="topbar-overflow-check-row">
+                <input type="checkbox" id="menu-drawer" />
+                <span>Navigation drawer</span>
+              </span>
+              <span class="topbar-overflow-hint">Move search and category icons into a side menu</span>
+            </label>
+
+            <div class="topbar-overflow-sep" role="separator"></div>
+            <div class="topbar-overflow-label">Appearance</div>
+            <div id="menu-theme-segment" class="topbar-overflow-segment" role="group" aria-label="Theme">
+              <button type="button" class="topbar-overflow-seg" data-theme="dark" role="menuitemradio" aria-checked="false">Dark</button>
+              <button type="button" class="topbar-overflow-seg" data-theme="light" role="menuitemradio" aria-checked="false">Light</button>
+              <button type="button" class="topbar-overflow-seg" data-theme="auto" role="menuitemradio" aria-checked="true">Auto</button>
+            </div>
+
+            <div class="topbar-overflow-sep" role="separator"></div>
+            <div class="topbar-overflow-label">Sound &amp; feedback</div>
             <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="true">
               <input type="checkbox" id="menu-haptics" />
               <span>Haptic feedback</span>
@@ -101,20 +119,15 @@
               <input type="checkbox" id="menu-alerts-arm" />
               <span>Trigger tones armed</span>
             </label>
-            <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="true">
-              <input type="checkbox" id="menu-tabs" checked />
-              <span>Category tabs</span>
+
+            <div class="topbar-overflow-sep" role="separator"></div>
+            <div class="topbar-overflow-label">Connection</div>
+            <label class="topbar-overflow-field" for="menu-local-url">
+              <span class="topbar-overflow-label">Local hub URL</span>
+              <input id="menu-local-url" class="topbar-overflow-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.x.x/..." />
             </label>
-            <label class="topbar-overflow-check" role="menuitemcheckbox" aria-checked="false">
-              <input type="checkbox" id="menu-drawer" />
-              <span>Use navigation drawer (hides icons &amp; search in a side menu)</span>
-            </label>
-            <div class="topbar-overflow-label">Theme</div>
-            <div id="menu-theme-segment" class="topbar-overflow-segment" role="group" aria-label="Theme">
-              <button type="button" class="topbar-overflow-seg" data-theme="dark" role="menuitemradio" aria-checked="false">Dark</button>
-              <button type="button" class="topbar-overflow-seg" data-theme="light" role="menuitemradio" aria-checked="false">Light</button>
-              <button type="button" class="topbar-overflow-seg" data-theme="auto" role="menuitemradio" aria-checked="true">Auto</button>
-            </div>
+            <button id="menu-open-local" class="topbar-overflow-item" type="button" role="menuitem" hidden>Open local mode</button>
+            <button id="menu-open-cloud" class="topbar-overflow-item" type="button" role="menuitem" hidden>Open cloud mode</button>
           </div>
         </div>
       </div>
@@ -134,6 +147,7 @@
       <button id="quick-music" class="ghost-btn icon-btn" type="button" aria-label="Music" title="Music"></button>
       <button id="quick-cameras" class="ghost-btn icon-btn" type="button" aria-label="Cameras" title="Cameras"></button>
       <button id="quick-favorites" class="ghost-btn icon-btn" type="button" aria-label="Favorites" title="Favorites"></button>
+      <button id="quick-nav-more" class="ghost-btn icon-btn" type="button" aria-label="More" title="More" aria-haspopup="menu" aria-expanded="false" hidden></button>
     </nav>
     <div class="search-wrap">
       <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
