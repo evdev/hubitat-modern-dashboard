@@ -11856,6 +11856,10 @@
   }
 
   function currentCategory() {
+    // Locks / security / hub-mode / scenes are overlay popups, not tabs. When one is
+    // open, prefer it over the underlying tab (e.g. Favorites) so optimistic UI
+    // refreshes the visible popup instead of only the hidden tab.
+    if (quickPopupOpenType && !TAB_CATEGORIES.has(quickPopupOpenType)) return quickPopupOpenType;
     if (tabMode && activeTab !== "lights") return activeTab;
     return quickPopupOpenType;
   }

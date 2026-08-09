@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.97
+
+- **Fix:** Lock, garage, HSM, and hub-mode optimistic UI now refreshes the visible
+  popup when opened over another tab (e.g. Locks opened from Favorites) instead of
+  only updating the hidden tab underneath.
+
 ## 0.3.96
 
 - **Locks:** Show **Locking…** / **Unlocking…** while a command is in flight; tiles
