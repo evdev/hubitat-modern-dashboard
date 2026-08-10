@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.1
+// Modern Dashboard v0.4.2
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.1"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.2"
 
 definition(
     name: "Modern Dashboard",
@@ -67,7 +67,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.1 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.2 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -700,6 +700,7 @@ def installed() {
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
     try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
+    ensureSystemStartSubscription()
 }
 
 def updated() {
@@ -711,7 +712,29 @@ def updated() {
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
     try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
+    ensureSystemStartSubscription()
     syncDebugLoggingAutoOff()
+}
+
+// Hubitat apps do not auto-call initialize() on reboot. Subscribe to location
+// systemStart so schedules (especially runOnce sun/once jobs), mode/sun
+// subscriptions, HSM, notifications, and triggers are re-armed after boot.
+def ensureSystemStartSubscription() {
+    try { unsubscribe("hubSystemStart") } catch (e) {}
+    try {
+        subscribe(location, "systemStart", "hubSystemStart")
+    } catch (e) {
+        log.warn "Modern Dashboard: systemStart subscribe failed: ${e}"
+    }
+}
+
+def hubSystemStart(evt) {
+    log.info "Modern Dashboard: hub started — re-arming scheduler and subscriptions"
+    try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed after reboot: ${e}" }
+    try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed after reboot: ${e}" }
+    try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed after reboot: ${e}" }
+    try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed after reboot: ${e}" }
+    try { syncDebugLoggingAutoOff() } catch (e) { log.warn "Modern Dashboard: debug-log re-arm failed after reboot: ${e}" }
 }
 
 def appButtonHandler(btn) {
@@ -1655,7 +1678,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.1.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.2.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1740,7 +1763,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.1.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.2.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -5841,6 +5864,8 @@ def authRenew() {
 }
 
 def initializeHsm() {
+    try { unsubscribe("hsmStatusChanged") } catch (e) {}
+    try { unsubscribe("hsmAlertChanged") } catch (e) {}
     if (hsmEnabled != true) return
     try { subscribe(location, "hsmStatus", hsmStatusChanged) } catch (e) {}
     try { subscribe(location, "hsmAlert", hsmAlertChanged) } catch (e) {}
@@ -8178,6 +8203,8 @@ def shutdownScheduler() {
     try { unschedule("cleanupSchedules") } catch (e) {}
     try { unschedule("schedulerMidnightRearm") } catch (e) {}
     // Drop location subscriptions so updated()/installed() do not stack duplicates.
+    // Do not unsubscribe hubSystemStart — reboot re-init must stay armed even when
+    // the scheduler UI is hidden (other features still need systemStart).
     try { unsubscribe("schedulerSunTimeChanged") } catch (e) {}
     try { unsubscribe("schedulerModeChanged") } catch (e) {}
 }

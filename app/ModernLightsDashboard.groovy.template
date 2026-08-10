@@ -700,6 +700,7 @@ def installed() {
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
     try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
+    ensureSystemStartSubscription()
 }
 
 def updated() {
@@ -711,7 +712,29 @@ def updated() {
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
     try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
+    ensureSystemStartSubscription()
     syncDebugLoggingAutoOff()
+}
+
+// Hubitat apps do not auto-call initialize() on reboot. Subscribe to location
+// systemStart so schedules (especially runOnce sun/once jobs), mode/sun
+// subscriptions, HSM, notifications, and triggers are re-armed after boot.
+def ensureSystemStartSubscription() {
+    try { unsubscribe("hubSystemStart") } catch (e) {}
+    try {
+        subscribe(location, "systemStart", "hubSystemStart")
+    } catch (e) {
+        log.warn "Modern Dashboard: systemStart subscribe failed: ${e}"
+    }
+}
+
+def hubSystemStart(evt) {
+    log.info "Modern Dashboard: hub started — re-arming scheduler and subscriptions"
+    try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed after reboot: ${e}" }
+    try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed after reboot: ${e}" }
+    try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed after reboot: ${e}" }
+    try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed after reboot: ${e}" }
+    try { syncDebugLoggingAutoOff() } catch (e) { log.warn "Modern Dashboard: debug-log re-arm failed after reboot: ${e}" }
 }
 
 def appButtonHandler(btn) {
@@ -5841,6 +5864,8 @@ def authRenew() {
 }
 
 def initializeHsm() {
+    try { unsubscribe("hsmStatusChanged") } catch (e) {}
+    try { unsubscribe("hsmAlertChanged") } catch (e) {}
     if (hsmEnabled != true) return
     try { subscribe(location, "hsmStatus", hsmStatusChanged) } catch (e) {}
     try { subscribe(location, "hsmAlert", hsmAlertChanged) } catch (e) {}
@@ -8178,6 +8203,8 @@ def shutdownScheduler() {
     try { unschedule("cleanupSchedules") } catch (e) {}
     try { unschedule("schedulerMidnightRearm") } catch (e) {}
     // Drop location subscriptions so updated()/installed() do not stack duplicates.
+    // Do not unsubscribe hubSystemStart — reboot re-init must stay armed even when
+    // the scheduler UI is hidden (other features still need systemStart).
     try { unsubscribe("schedulerSunTimeChanged") } catch (e) {}
     try { unsubscribe("schedulerModeChanged") } catch (e) {}
 }

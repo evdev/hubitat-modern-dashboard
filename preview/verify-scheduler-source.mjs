@@ -26,6 +26,18 @@ assert(!/location\.sunset\s*\(/.test(src), "must not call location.sunset(...)")
 assert(src.includes('unsubscribe("schedulerSunTimeChanged")'), "must unsubscribe sun handler");
 assert(src.includes('unsubscribe("schedulerModeChanged")'), "must unsubscribe mode handler");
 
+// Post-reboot re-init (Hubitat apps do not auto-call initialize())
+assert(src.includes('subscribe(location, "systemStart", "hubSystemStart")'), "must subscribe to systemStart for reboot re-arm");
+assert(src.includes("def hubSystemStart("), "must define hubSystemStart handler");
+assert(src.includes("ensureSystemStartSubscription"), "must ensure systemStart subscription from installed/updated");
+assert(/hubSystemStart[\s\S]*initializeScheduler\(\)/.test(src), "hubSystemStart must re-arm scheduler");
+{
+  const m = src.match(/def shutdownScheduler\(\)[\s\S]*?\ndef [a-zA-Z]/);
+  const block = m ? m[0] : "";
+  assert(block.includes("shutdownScheduler"), "shutdownScheduler block parseable");
+  assert(!block.includes('unsubscribe("hubSystemStart")'), "shutdownScheduler must not unsubscribe hubSystemStart");
+}
+
 // Mode-skip still advances
 assert(src.includes("scheduleAdvanceAfterTrigger"), "must advance after mode-skip / fire");
 

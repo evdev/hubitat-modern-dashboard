@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2
+
+- **Scheduler fix:** subscribe to hub `systemStart` and re-arm schedules, sun/mode
+  subscriptions, HSM, notifications, and triggers after a hub reboot. Quartz cron
+  often survives reboot, but `runOnce` (sunrise/sunset/one-time) and location
+  subscriptions do not without this. Open the app and hit **Done** once after
+  upgrading so the new subscription is registered.
+
 ## 0.4.1
 
 - **UX:** Remove quick-nav **More** menu — Scenes, Hub mode, and Security are back
