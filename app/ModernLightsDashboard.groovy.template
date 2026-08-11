@@ -5640,7 +5640,12 @@ def setHubModeFromName(modeName) {
     if (!guardDashboardAccess()) return renderAuthRequired()
     def modes = []
     try { modes = location.modes ?: [] } catch (e) {}
-    if (!modes.contains(modeName)) {
+    // location.modes is List<Mode>; compare by name (contains(String) is unreliable).
+    def match = modes.find { m ->
+        def n = (m?.name != null) ? m.name.toString() : m?.toString()
+        return n == modeName
+    }
+    if (!match) {
         return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr("unknown mode")}}", 400)
     }
     try {

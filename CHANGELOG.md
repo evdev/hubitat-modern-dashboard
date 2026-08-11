@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3
+
+- **Fix:** Hub mode changes validate against `location.modes` by mode **name** (Hubitat
+  returns `Mode` objects, so `contains(String)` falsely rejected valid modes).
+- **Fix:** Hub mode POST uses silent error handling so a failed JSON POST no longer
+  flashes a false error before the GET fallback succeeds; failed changes roll back
+  the optimistic UI immediately.
+
 ## 0.4.2
 
 - **Scheduler fix:** subscribe to hub `systemStart` and re-arm schedules, sun/mode

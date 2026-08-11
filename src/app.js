@@ -5862,7 +5862,9 @@
   }
 
   async function setHubModeApi(mode) {
-    let result = await postJson("hub-mode", { mode });
+    // Silent POST first — Hubitat often rejects JSON POST while GET still works;
+    // postJson would flash a false error before the fallback succeeds.
+    let result = await postJsonSilent("hub-mode", { mode });
     if (result.ok) return true;
     try {
       const r = await fetch(withToken("hub-mode?mode=" + encodeURIComponent(mode)), {
@@ -14710,13 +14712,15 @@
       b.addEventListener("click", async () => {
         if (mode === currentHubMode) return;
         hapticTap();
+        const prev = currentHubMode;
         currentHubMode = mode;
         setHubModeLock();
         renderHubModePopup();
         const ok = await setHubModeApi(mode);
         if (!ok) {
+          currentHubMode = prev;
           clearHubModeLock();
-          refresh().catch(() => {});
+          renderHubModePopup();
         }
       });
       grid.appendChild(b);
