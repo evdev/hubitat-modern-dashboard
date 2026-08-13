@@ -10150,12 +10150,37 @@
     let floatOffsetY = 0;
     let placeholder = null;
     let lastClientY = 0;
+    let lastOccupied = null;
     const grid = () => currentBody()?.querySelector(".quick-fav-grid");
+
+    // tiles = other items in DOM order; phIdx = placeholder index among tiles+placeholder.
+    // Pointer over a tile occupies that cell; pointer past the last tile appends.
+    function favoriteReorderPlaceholderIndex(tiles, phIdx, x, y) {
+      const n = tiles.length;
+      if (!n) return 0;
+      if (phIdx < 0) phIdx = n;
+      for (let i = 0; i < n; i++) {
+        const r = tiles[i];
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+          return i < phIdx ? i : i + 1;
+        }
+      }
+      const last = tiles[n - 1];
+      if (y > last.bottom || (y >= last.top && x > last.right)) return n;
+      return phIdx;
+    }
 
     function visibleItems() {
       const el = grid();
       if (!el) return [];
-      return Array.from(el.querySelectorAll(".fav-reorder-item:not(.fav-dragging):not(.search-hidden)"));
+      return Array.from(el.querySelectorAll(":scope > .fav-reorder-item:not(.fav-dragging):not(.search-hidden)"));
+    }
+
+    function reorderInsertRef(el, node) {
+      if (!node) return null;
+      if (node.parentNode === el) return node;
+      const stack = node.closest(".fav-reorder-compact-stack");
+      return stack?.parentNode === el ? stack : null;
     }
 
     function movePlaceholderForPoint(x, y) {
@@ -10163,18 +10188,21 @@
       const el = grid();
       if (!el) return;
       const items = visibleItems();
-      let insertBefore = null;
-      for (const item of items) {
-        const rect = item.getBoundingClientRect();
-        const midY = rect.top + rect.height / 2;
-        const midX = rect.left + rect.width / 2;
-        if (y < midY || (y >= rect.top && y <= rect.bottom && x < midX)) {
-          insertBefore = item;
-          break;
-        }
-      }
-      if (insertBefore) el.insertBefore(placeholder, insertBefore);
+      let hit = null;
+      const rects = items.map((item) => {
+        const r = item.getBoundingClientRect();
+        if (!hit && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) hit = item;
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+      });
+      if (hit && hit === lastOccupied) return;
+      const ordered = Array.from(el.children).filter((c) => c === placeholder || items.includes(c));
+      const phIdx = ordered.indexOf(placeholder);
+      const nextIdx = favoriteReorderPlaceholderIndex(rects, phIdx, x, y);
+      if (phIdx >= 0 && nextIdx === phIdx) return;
+      const target = reorderInsertRef(el, items[nextIdx] || null);
+      if (target) el.insertBefore(placeholder, target);
       else el.appendChild(placeholder);
+      lastOccupied = hit || null;
     }
 
     function positionFloat(clientX, clientY) {
@@ -10183,20 +10211,28 @@
     }
 
     function beginDrag(e) {
+      const el = grid();
+      if (!el) return;
       dragging = true;
       reorderBusy = true;
+      lastOccupied = null;
       const rect = wrapper.getBoundingClientRect();
       floatOffsetX = e.clientX - rect.left;
       floatOffsetY = e.clientY - rect.top;
       const size = wrapper.dataset.favSize || "standard";
-      placeholder = ce("div", "fav-drag-placeholder fav-size-" + size);
-      placeholder.style.height = rect.height + "px";
-      wrapper.parentNode.insertBefore(placeholder, wrapper);
+      const full = isFullFavoriteSize(size);
       wrapper.classList.add("fav-dragging");
       wrapper.style.width = rect.width + "px";
       wrapper.style.left = rect.left + "px";
       wrapper.style.top = rect.top + "px";
       positionFloat(e.clientX, e.clientY);
+      flattenFavoriteReorderStacks(el);
+      placeholder = ce("div", "fav-drag-placeholder fav-size-" + size);
+      if (full) placeholder.classList.add("fav-drag-placeholder-full", "fav-reorder-full");
+      placeholder.dataset.favSpan = full ? "full" : "cell";
+      placeholder.dataset.favSize = size;
+      placeholder.style.height = rect.height + "px";
+      wrapper.parentNode.insertBefore(placeholder, wrapper);
       movePlaceholderForPoint(e.clientX, e.clientY);
       wrapper.setAttribute("aria-grabbed", "true");
       startFavAutoScroll(() => lastClientY);
@@ -10214,6 +10250,7 @@
       wrapper.style.top = "";
       wrapper.removeAttribute("aria-grabbed");
       placeholder = null;
+      lastOccupied = null;
       stopFavAutoScroll();
       if (el) packFavoriteReorderStacks(el);
       updateFavoritesDraftOrderFromDom();
@@ -10221,7 +10258,7 @@
     }
 
     function onResize() {
-      if (typeof favDragCleanup === "function") favDragCleanup();
+      if (!grid() && typeof favDragCleanup === "function") favDragCleanup();
     }
 
     function onMove(e) {
@@ -10232,6 +10269,7 @@
         const dy = e.clientY - startY;
         if (Math.hypot(dx, dy) < REORDER_DRAG_THRESHOLD) return;
         beginDrag(e);
+        if (!dragging) return;
       }
       positionFloat(e.clientX, e.clientY);
       movePlaceholderForPoint(e.clientX, e.clientY);

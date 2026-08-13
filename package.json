@@ -1,6 +1,6 @@
 {
   "name": "hubitat-dashboard",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "private": true,
   "type": "module",
   "description": "Minimal-setup Hubitat dashboard: select your devices and you're done. Room-grouped layout with clean names, installable PWA, fully hosted on your hub.",
@@ -16,6 +16,7 @@
     "preview": "node preview/server.mjs",
     "verify:sensors": "node preview/verify-sensors.mjs",
     "verify:favorites": "node preview/verify-favorites-order.mjs",
+    "verify:fav-reorder": "node preview/verify-fav-reorder-dnd.mjs",
     "verify:embeds": "node preview/verify-embed-cards.mjs",
     "verify:times": "node preview/verify-time-cards.mjs",
     "verify:html": "node preview/verify-html-tiles.mjs",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.6
+
+- **Fix:** Favorites reorder drag moves the gap into the tile you hover, including
+  Compact pairs and mixed-size grids. Hovering a neighbor occupies that cell
+  instead of requiring a midpoint/quadrant cross.
+
 ## 0.4.5
 
 - **Scheduler:** Simple Automation import names the second (opposite on/off) schedule

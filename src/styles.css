@@ -560,6 +560,7 @@ body {
   z-index: 10001;
   opacity: 0.92;
   box-shadow: 0 12px 40px rgba(0,0,0,.45);
+  pointer-events: none;
 }
 .fav-drag-placeholder {
   background: rgba(255,255,255,.06);
@@ -2520,6 +2521,9 @@ body.reorder-dragging {
   align-self: start;
   justify-self: stretch;
   transition: grid-column 0.18s var(--ease), min-height 0.18s var(--ease);
+}
+body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-grid > .fav-reorder-item {
+  transition: none;
 }
 .favorites-reorder-mode .quick-body-favorites .quick-fav-grid > .fav-reorder-item.fav-size-compact {
   /* Beat WebKit height+min-height on grid items so the 2×2 overlay is not clipped. */
