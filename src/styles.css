@@ -391,6 +391,7 @@ body {
   color: #fff; padding: 16px; border-radius: 18px;
   cursor: grab; touch-action: none; min-width: 80px; min-height: 80px;
   align-items: center; justify-content: center; pointer-events: auto;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .camera-drag-handle svg { width: 30px; height: 30px; fill: currentColor; }
 .camera-drag-handle:active { cursor: grabbing; }
@@ -451,6 +452,9 @@ body {
   justify-content: center;
   pointer-events: auto;
   flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .fav-drag-handle svg { width: 22px; height: 22px; fill: currentColor; }
 .fav-drag-handle:active { cursor: grabbing; }
@@ -605,6 +609,7 @@ body {
   color: var(--text-faint); padding: 8px 4px; margin: -8px 0; border-radius: 10px;
   cursor: grab; touch-action: none; min-width: 32px; min-height: 44px;
   align-items: center; justify-content: center;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .room-drag-handle svg { width: 18px; height: 18px; fill: currentColor; }
 .room-drag-handle:active { cursor: grabbing; color: var(--text-dim); }
@@ -635,8 +640,9 @@ body {
 .nav-drag-handle {
   display: none;
   appearance: none; border: none; background: transparent; color: var(--text-faint);
-  padding: 2px 4px; cursor: grab; touch-action: none; flex-shrink: 0;
-  line-height: 0;
+  padding: 10px 8px; margin: -8px 0 0; cursor: grab; touch-action: none; flex-shrink: 0;
+  line-height: 0; min-width: 44px; min-height: 44px;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .nav-drag-handle svg { width: 12px; height: 12px; fill: currentColor; opacity: 0.85; }
 .reorder-mode .search-wrap { display: none !important; }
@@ -671,6 +677,10 @@ body {
   position: fixed; z-index: 200; margin: 0; pointer-events: none;
   opacity: 0.96; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
   transform: scale(1.02);
+}
+body.reorder-dragging {
+  overflow: hidden;
+  touch-action: none;
 }
 .reorder-done-btn {
   color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--stroke));

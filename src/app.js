@@ -6684,10 +6684,52 @@
     else closeTopbarOverflowMenu();
   }
 
+  // iOS Safari: skip setPointerCapture (it fires pointercancel) and lock touchmove.
+  function bindReorderPointer(handle, enabled, onDown, onMove, onUp) {
+    handle.addEventListener("pointerdown", (e) => {
+      if (!enabled()) return;
+      if (e.button != null && e.button !== 0) return;
+      e.stopPropagation();
+      if (e.pointerType !== "touch") e.preventDefault();
+      const pointerId = e.pointerId;
+      const ua = navigator.userAgent || "";
+      const ios = /iP(ad|hone|od)/.test(ua)
+        || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      if (!ios) {
+        try { handle.setPointerCapture(pointerId); } catch {}
+      }
+      document.body.classList.add("reorder-dragging");
+      const pass = { passive: false };
+      function preventTouch(ev) { ev.preventDefault(); }
+      function move(ev) {
+        if (ev.pointerId !== pointerId) return;
+        ev.preventDefault();
+        onMove(ev);
+      }
+      let ended = false;
+      function stop(ev) {
+        if (ended) return;
+        if (ev && ev.pointerId != null && ev.pointerId !== pointerId) return;
+        ended = true;
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+        window.removeEventListener("touchmove", preventTouch);
+        document.body.classList.remove("reorder-dragging");
+        try { handle.releasePointerCapture(pointerId); } catch {}
+        onUp(ev);
+      }
+      window.addEventListener("pointermove", move, pass);
+      window.addEventListener("pointerup", stop, pass);
+      window.addEventListener("pointercancel", stop, pass);
+      window.addEventListener("touchmove", preventTouch, pass);
+      onDown(e, stop);
+    });
+  }
+
   function attachRoomReorder(card, handle) {
     let active = false;
     let dragging = false;
-    let pointerId = null;
     let startX = 0;
     let startY = 0;
     let floatOffsetY = 0;
@@ -6746,12 +6788,6 @@
       updateMoveButtons();
     }
 
-    function cleanupListeners() {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
-    }
-
     function onMove(e) {
       if (!active) return;
       if (!dragging) {
@@ -6760,7 +6796,6 @@
         if (Math.hypot(dx, dy) < REORDER_DRAG_THRESHOLD) return;
         beginDrag(e);
       }
-      e.preventDefault();
       positionFloat(e.clientY);
       movePlaceholderForY(e.clientY);
     }
@@ -6771,29 +6806,18 @@
       active = false;
       dragging = false;
       reorderBusy = false;
-      cleanupListeners();
-      try { handle.releasePointerCapture(pointerId); } catch {}
     }
 
-    handle.addEventListener("pointerdown", (e) => {
-      if (!reorderMode) return;
-      e.preventDefault();
-      e.stopPropagation();
+    bindReorderPointer(handle, () => reorderMode, (e) => {
       active = true;
-      pointerId = e.pointerId;
       startX = e.clientX;
       startY = e.clientY;
-      handle.setPointerCapture(pointerId);
-      document.addEventListener("pointermove", onMove);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onUp);
-    });
+    }, onMove, onUp);
   }
 
   function attachNavReorder(wrap, handle) {
     let active = false;
     let dragging = false;
-    let pointerId = null;
     let startX = 0;
     let startY = 0;
     let floatOffsetX = 0;
@@ -6861,12 +6885,6 @@
       updateNavDraftOrderFromDom();
     }
 
-    function cleanupListeners() {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
-    }
-
     function onMove(e) {
       if (!active) return;
       if (!dragging) {
@@ -6875,7 +6893,6 @@
         if (Math.hypot(dx, dy) < REORDER_DRAG_THRESHOLD) return;
         beginDrag(e);
       }
-      e.preventDefault();
       positionFloat(e.clientX);
       movePlaceholderForX(e.clientX);
     }
@@ -6898,24 +6915,14 @@
         active = false;
         dragging = false;
         reorderBusy = false;
-        cleanupListeners();
-        try { handle.releasePointerCapture(pointerId); } catch {}
       }
     }
 
-    handle.addEventListener("pointerdown", (e) => {
-      if (!reorderMode) return;
-      e.preventDefault();
-      e.stopPropagation();
+    bindReorderPointer(handle, () => reorderMode, (e) => {
       active = true;
-      pointerId = e.pointerId;
       startX = e.clientX;
       startY = e.clientY;
-      handle.setPointerCapture(pointerId);
-      document.addEventListener("pointermove", onMove);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onUp);
-    });
+    }, onMove, onUp);
   }
 
   function setupNavReorderItems() {
@@ -10137,13 +10144,11 @@
   function attachFavoriteReorder(wrapper, handle) {
     let active = false;
     let dragging = false;
-    let pointerId = null;
     let startX = 0;
     let startY = 0;
     let floatOffsetX = 0;
     let floatOffsetY = 0;
     let placeholder = null;
-    let lastClientX = 0;
     let lastClientY = 0;
     const grid = () => currentBody()?.querySelector(".quick-fav-grid");
 
@@ -10215,26 +10220,12 @@
       updateFavoritesMoveButtons();
     }
 
-    function cleanupListeners() {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
-      window.removeEventListener("resize", onResize);
-      stopFavAutoScroll();
-    }
-
     function onResize() {
-      if (!dragging) return;
-      commitDrag();
-      active = false;
-      dragging = false;
-      reorderBusy = false;
-      cleanupListeners();
+      if (typeof favDragCleanup === "function") favDragCleanup();
     }
 
     function onMove(e) {
       if (!active) return;
-      lastClientX = e.clientX;
       lastClientY = e.clientY;
       if (!dragging) {
         const dx = e.clientX - startX;
@@ -10242,7 +10233,6 @@
         if (Math.hypot(dx, dy) < REORDER_DRAG_THRESHOLD) return;
         beginDrag(e);
       }
-      e.preventDefault();
       positionFloat(e.clientX, e.clientY);
       movePlaceholderForPoint(e.clientX, e.clientY);
     }
@@ -10253,34 +10243,19 @@
       active = false;
       dragging = false;
       reorderBusy = false;
-      cleanupListeners();
+      window.removeEventListener("resize", onResize);
+      stopFavAutoScroll();
       favDragCleanup = null;
-      try { handle.releasePointerCapture(pointerId); } catch {}
     }
 
-    handle.addEventListener("pointerdown", (e) => {
-      if (!favoritesReorderActive) return;
-      e.preventDefault();
-      e.stopPropagation();
+    bindReorderPointer(handle, () => favoritesReorderActive, (e, stop) => {
       active = true;
-      pointerId = e.pointerId;
       startX = e.clientX;
       startY = e.clientY;
-      lastClientX = e.clientX;
       lastClientY = e.clientY;
-      handle.setPointerCapture(pointerId);
-      document.addEventListener("pointermove", onMove);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onUp);
       window.addEventListener("resize", onResize);
-      favDragCleanup = () => {
-        cleanupListeners();
-        if (dragging) commitDrag();
-        active = false;
-        dragging = false;
-        reorderBusy = false;
-      };
-    });
+      favDragCleanup = stop;
+    }, onMove, onUp);
   }
 
   function wrapFavoriteForReorder(grid, entry) {
@@ -15659,7 +15634,6 @@
   function attachCameraReorder(tile, handle) {
     let active = false;
     let dragging = false;
-    let pointerId = null;
     let startX = 0;
     let startY = 0;
     let floatOffsetY = 0;
@@ -15724,12 +15698,6 @@
       updateCameraMoveButtons();
     }
 
-    function cleanupListeners() {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
-    }
-
     function onMove(e) {
       if (!active) return;
       if (!dragging) {
@@ -15738,7 +15706,6 @@
         if (Math.hypot(dx, dy) < REORDER_DRAG_THRESHOLD) return;
         beginDrag(e);
       }
-      e.preventDefault();
       positionFloat(e.clientY);
       movePlaceholderForY(e.clientY);
     }
@@ -15749,23 +15716,13 @@
       active = false;
       dragging = false;
       reorderBusy = false;
-      cleanupListeners();
-      try { handle.releasePointerCapture(pointerId); } catch {}
     }
 
-    handle.addEventListener("pointerdown", (e) => {
-      if (!cameraReorderActive) return;
-      e.preventDefault();
-      e.stopPropagation();
+    bindReorderPointer(handle, () => cameraReorderActive, (e) => {
       active = true;
-      pointerId = e.pointerId;
       startX = e.clientX;
       startY = e.clientY;
-      handle.setPointerCapture(pointerId);
-      document.addEventListener("pointermove", onMove);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onUp);
-    });
+    }, onMove, onUp);
   }
 
   function enterCameraReorderMode() {
@@ -16647,6 +16604,31 @@
     return { primary: rel || fmtSchedTime(s.lastFired), secondary: rel ? fmtSchedTime(s.lastFired) : "", muted: false };
   }
 
+  function schedSearchText(s) {
+    const parts = [s?.name || "Untitled schedule"];
+    if (s?.summary) parts.push(s.summary);
+    const tr = s?.trigger || {};
+    if (tr.time) {
+      parts.push(tr.time);
+      const t12 = schedTime24To12(tr.time);
+      if (t12 && t12 !== tr.time) parts.push(t12);
+    }
+    if (schedTriggerWhen(tr) !== "clock") {
+      parts.push(schedSunLabel(schedTriggerWhen(tr), tr.offsetMin));
+    }
+    if (tr.at) {
+      parts.push(tr.at);
+      const atFmt = schedFmtDateTimeLocal(tr.at);
+      if (atFmt && atFmt !== tr.at) parts.push(atFmt);
+    }
+    if (s?.nextFire != null) {
+      parts.push(fmtSchedTime(s.nextFire));
+      parts.push(fmtSchedRelativeFuture(s.nextFire));
+    }
+    if (s?.lastFired != null) parts.push(fmtSchedTime(s.lastFired));
+    return parts.join(" ").trim().toLowerCase();
+  }
+
   function schedAppendRuleLine(parent, key, value) {
     const line = ce("div", "sched-rule-line");
     const keyEl = ce("span", "sched-rule-key");
@@ -16729,6 +16711,7 @@
     } else {
       body.appendChild(renderSchedList());
     }
+    applySearch();
   }
 
   // ---------- saved schedules list ----------
@@ -16773,6 +16756,7 @@
 
   function renderSchedRow(s) {
     const row = ce("div", "sched-row" + (s.enabled ? "" : " is-off"));
+    row.dataset.name = schedSearchText(s);
 
     const head = ce("div", "sched-row-head");
     const nameEl = ce("div", "sched-row-name");

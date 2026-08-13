@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4
+
+- **Fix:** Reorder drag works in iOS Safari (and iOS Chrome/PWA). Pointer capture was
+  cancelling the gesture; reorder now matches the dimmer/thermostat touch path.
+
 ## 0.4.3
 
 - **Fix:** Hub mode changes validate against `location.modes` by mode **name** (Hubitat
