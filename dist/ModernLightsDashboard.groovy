@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.6
+// Modern Dashboard v0.4.7
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.6"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.7"
 
 definition(
     name: "Modern Dashboard",
@@ -67,7 +67,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.6 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.7 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -1678,7 +1678,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.6.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.7.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1763,7 +1763,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.6.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.7.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -1926,6 +1926,7 @@ def renderData() {
             out << ",\"supM\":" << jsonListAttr(supModes)
             out << ",\"supFM\":" << jsonListAttr(supFanModes)
             out << ",\"fsLev\":" << jsonListAttr(fsLevels)
+            appendTstatComfortJson(out, d)
             out << "}"
         }
     }
@@ -2629,6 +2630,33 @@ def jsonListAttr(v) {
     return jsonStr(tokens.join(","))
 }
 
+def tstatHasComfortMode(d) {
+    return d.hasCommand("setComfortMode") || d.hasAttribute("comfortMode")
+}
+
+def tstatHasComfortFanSpeed(d) {
+    return d.hasCommand("setComfortFanSpeed") || d.hasAttribute("comfortFanSpeed")
+}
+
+def tstatHasVane(d) {
+    return d.hasCommand("setVanePosition") || d.hasAttribute("vanePosition")
+}
+
+def appendTstatComfortJson(out, d) {
+    def hasCm = tstatHasComfortMode(d)
+    def hasCfs = tstatHasComfortFanSpeed(d)
+    def hasVp = tstatHasVane(d)
+    def cfs = hasCfs ? (safeCurrent(d, "comfortFanSpeed") ?: safeCurrent(d, "thermostatFanMode")) : null
+    def vp = hasVp ? safeCurrent(d, "vanePosition") : null
+    def vpLev = hasVp ? safeCurrent(d, "supportedVanePositions") : null
+    out << ",\"hasCm\":" << (hasCm ? 1 : 0)
+    out << ",\"hasCfs\":" << (hasCfs ? 1 : 0)
+    out << ",\"hasVp\":" << (hasVp ? 1 : 0)
+    out << ",\"cfs\":" << jsonStr(cfs)
+    out << ",\"vp\":" << jsonStr(vp)
+    out << ",\"vpLev\":" << jsonListAttr(vpLev)
+}
+
 // ---------------------------------------------------------------------------
 // /device?id=.. - single-device state (reconcile dimmer level after "on")
 // ---------------------------------------------------------------------------
@@ -2686,6 +2714,7 @@ def renderDevice() {
         out << ",\"fm\":" << jsonStr(hasFanMode ? safeCurrent(t, "thermostatFanMode") : null)
         out << ",\"hasFs\":" << (hasFanSpeed ? 1 : 0)
         out << ",\"fs\":" << jsonStr(hasFanSpeed ? safeCurrent(t, "fanSpeed") : null)
+        appendTstatComfortJson(out, t)
         out << "}"
         return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
@@ -2838,20 +2867,46 @@ def runThermostatCmd(t, c, v) {
         case "setFanSpeed":
             if (v != null && (t.hasAttribute("fanSpeed") || t.hasCommand("setFanSpeed"))) t.setFanSpeed(v.toString())
             break
+        case "setComfortMode":
+            setComfortModeCmd(t, v)
+            break
+        case "setComfortFanSpeed":
+            setComfortFanSpeedCmd(t, v)
+            break
+        case "setVanePosition":
+            if (v != null && t.hasCommand("setVanePosition")) t.setVanePosition(v.toString())
+            break
         default:
             throw new IllegalArgumentException("unknown command")
     }
 }
 
+def setComfortModeCmd(t, modeStr) {
+    if (modeStr == null) return
+    def mode = modeStr.toString()
+    if (t.hasCommand("setComfortMode")) t.setComfortMode(mode)
+    else t.setThermostatMode(mode)
+}
+
+def setComfortFanSpeedCmd(t, speedStr) {
+    if (speedStr == null) return
+    def speed = speedStr.toString()
+    if (t.hasCommand("setComfortFanSpeed")) t.setComfortFanSpeed(speed)
+    else if (t.hasCommand("setThermostatFanMode")) t.setThermostatFanMode(speed)
+    else if (t.hasCommand("setFanMode")) t.setFanMode(speed)
+}
+
 def setThermostatFanModeCmd(t, modeStr) {
     def mode = modeStr?.toString()?.toLowerCase()
     if (!mode) return
-    if (!(t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode"))) return
+    if (!(t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode") || tstatHasComfortFanSpeed(t))) return
     try {
         if (mode == "auto" && t.hasCommand("fanAuto")) t.fanAuto()
         else if (mode == "on" && t.hasCommand("fanOn")) t.fanOn()
         else if (mode == "circulate" && t.hasCommand("fanCirculate")) t.fanCirculate()
-        else t.setFanMode(modeStr.toString())
+        else if (t.hasCommand("setComfortFanSpeed")) t.setComfortFanSpeed(modeStr.toString())
+        else if (t.hasCommand("setThermostatFanMode")) t.setThermostatFanMode(modeStr.toString())
+        else if (t.hasCommand("setFanMode")) t.setFanMode(modeStr.toString())
     } catch (e) {
         log.warn "Modern Dashboard: setFanMode ${mode} failed for ${t.id}: ${e}"
         throw e

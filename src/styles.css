@@ -4234,9 +4234,9 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
   font-size: 11px; font-weight: 800; color: var(--text-dim);
   text-transform: uppercase; letter-spacing: 0.06em;
 }
-.tstat-modes { display: flex; gap: 8px; }
+.tstat-modes { display: flex; flex-wrap: wrap; gap: 8px; }
 .tstat-mode {
-  flex: 1; appearance: none; border: 1px solid var(--stroke-2); background: var(--panel-2);
+  flex: 1 1 4.5em; min-width: 4.5em; appearance: none; border: 1px solid var(--stroke-2); background: var(--panel-2);
   color: var(--text-dim); font-size: 14px; font-weight: 700; padding: 12px 6px;
   border-radius: 14px; cursor: pointer; min-height: 48px;
   display: grid; place-items: center;

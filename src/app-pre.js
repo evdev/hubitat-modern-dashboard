@@ -566,6 +566,24 @@ const FAN_SPEED_OPTS = [
   { key: "medium", label: "Med", aria: "Fan speed medium" },
   { key: "high", label: "High", aria: "Fan speed high" },
 ];
+const STANDARD_FAN_MODE_KEYS = ["auto", "on", "circulate"];
+const COMFORT_FAN_SPEED_OPTS = [
+  { key: "auto", label: "Auto", aria: "Fan speed auto" },
+  { key: "quiet", label: "Quiet", aria: "Fan speed quiet" },
+  { key: "low", label: "Low", aria: "Fan speed low" },
+  { key: "medium", label: "Medium", aria: "Fan speed medium" },
+  { key: "high", label: "High", aria: "Fan speed high" },
+  { key: "powerful", label: "Powerful", aria: "Fan speed powerful" },
+];
+const VANE_POSITION_OPTS = [
+  { key: "auto", label: "Auto", aria: "Vane auto" },
+  { key: "swing", label: "Swing", aria: "Vane swing" },
+  { key: "lowest", label: "Lowest", aria: "Vane lowest" },
+  { key: "low", label: "Low", aria: "Vane low" },
+  { key: "middle", label: "Middle", aria: "Vane middle" },
+  { key: "high", label: "High", aria: "Vane high" },
+  { key: "highest", label: "Highest", aria: "Vane highest" },
+];
 const CEILING_FAN_SPEED_ORDER = ["low", "medium-low", "medium", "medium-high", "high"];
 const CEILING_FAN_SPEED_LABELS = {
   off: "Off",

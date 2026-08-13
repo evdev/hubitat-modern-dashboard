@@ -195,6 +195,7 @@ function buildMockData(count) {
     { i: 1002, n: "Master Bedroom Thermostat", r: 3, tm: "cool", os: "cooling", hsp: 68, csp: 72, temp: 74, u: "F", hasFm: 1, fm: "on", hasFs: 1, fs: "low", supM: ["cool", "off"], supFM: ["auto", "on"], fsLev: "low,medium,high" },
     { i: 1003, n: "Office Thermostat", r: 4, tm: "off", os: "idle", hsp: 65, csp: 75, temp: 70, u: "F", hasFm: 1, fm: "circulate", hasFs: 0, fs: null, supM: "heat,off", supFM: "", fsLev: null },
     { i: 1004, n: "Basement Thermostat", r: 9, tm: "heat", os: "idle", hsp: 68, csp: 72, temp: 67, u: "F", hasFm: 1, fm: "auto", hasFs: 0, fs: null, supM: "heat,off", fsLev: null },
+    { i: 1005, n: "Dining Mini-Split", r: 10, tm: "cool", os: "cooling", hsp: 68, csp: 72, temp: 73, u: "F", hasFm: 1, fm: "auto", hasFs: 0, fs: null, supM: "off,heat,cool,dry,fan,auto", supFM: "auto,quiet,low,medium,high,powerful", fsLev: null, hasCm: 1, hasCfs: 1, cfs: "auto", hasVp: 1, vp: "auto", vpLev: "auto,swing,lowest,low,middle,high,highest" },
   ];
   const tempSensors = [
     { i: 2001, n: "Kitchen Sensor", r: 2, temp: 71, u: "F", bat: 85, ex: [{ k: "battery", v: 85, u: "%" }, { k: "humidity", v: 48, u: null }] },
@@ -263,7 +264,8 @@ function buildMockData(count) {
 
 function tstatOstateForMode(tm) {
   if (tm === "heat") return "heating";
-  if (tm === "cool") return "cooling";
+  if (tm === "cool" || tm === "dry") return "cooling";
+  if (tm === "fan") return "fan";
   if (tm === "off") return "idle";
   return "idle";
 }
@@ -623,21 +625,27 @@ function applyCmd(id, c, v, pin) {
   }
   const t = state.thermostats?.find(d => d.i === id);
   if (t) {
-    if (c === "setMode" || c === "modeAuto" || c === "modeHeat" || c === "modeCool" || c === "off") {
-      if (c === "setMode") t.tm = v;
+    if (c === "setMode" || c === "setComfortMode" || c === "modeAuto" || c === "modeHeat" || c === "modeCool" || c === "off") {
+      if (c === "setMode" || c === "setComfortMode") t.tm = v;
       else if (c === "modeAuto") t.tm = "auto";
       else if (c === "modeHeat") t.tm = "heat";
       else if (c === "modeCool") t.tm = "cool";
       else if (c === "off") t.tm = "off";
       t.os = tstatOstateForMode(t.tm);
     } else if (c === "setHeat") { t.hsp = Math.round(Number(v)); if (t.tm === "heat") t.os = t.temp < t.hsp ? "heating" : "idle"; }
-    else if (c === "setCool") { t.csp = Math.round(Number(v)); if (t.tm === "cool") t.os = t.temp > t.csp ? "cooling" : "idle"; }
+    else if (c === "setCool") { t.csp = Math.round(Number(v)); if (t.tm === "cool" || t.tm === "dry") t.os = t.temp > t.csp ? "cooling" : "idle"; }
     else if (c === "setFanMode" && t.hasFm) {
       t.fm = v;
+      if (t.hasCfs) t.cfs = v;
       if (t.tm === "off" && (v === "on" || v === "circulate")) t.os = "fan";
       else if (t.tm === "off") t.os = "idle";
     }
     else if (c === "setFanSpeed" && t.hasFs) { t.fs = v; }
+    else if (c === "setComfortFanSpeed" && (t.hasCfs || t.hasFm)) {
+      t.cfs = v;
+      t.fm = v;
+    }
+    else if (c === "setVanePosition" && t.hasVp) { t.vp = v; }
     return { ok: true };
   }
   const lock = state.locks?.find(d => d.i === id);
@@ -1029,7 +1037,12 @@ const server = createServer(async (req, res) => {
     const t = state.thermostats?.find(d => d.i === id);
     if (t) {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      return res.end(JSON.stringify({ i: t.i, tm: t.tm, os: t.os, hsp: t.hsp, csp: t.csp, temp: t.temp, hasFm: t.hasFm, fm: t.fm, hasFs: t.hasFs, fs: t.fs }));
+      return res.end(JSON.stringify({
+        i: t.i, tm: t.tm, os: t.os, hsp: t.hsp, csp: t.csp, temp: t.temp,
+        hasFm: t.hasFm, fm: t.fm, hasFs: t.hasFs, fs: t.fs,
+        hasCm: t.hasCm || 0, hasCfs: t.hasCfs || 0, cfs: t.cfs ?? null,
+        hasVp: t.hasVp || 0, vp: t.vp ?? null, vpLev: t.vpLev ?? null,
+      }));
     }
     const s = state.tempSensors?.find(d => d.i === id);
     if (s) {

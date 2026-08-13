@@ -1926,6 +1926,7 @@ def renderData() {
             out << ",\"supM\":" << jsonListAttr(supModes)
             out << ",\"supFM\":" << jsonListAttr(supFanModes)
             out << ",\"fsLev\":" << jsonListAttr(fsLevels)
+            appendTstatComfortJson(out, d)
             out << "}"
         }
     }
@@ -2629,6 +2630,33 @@ def jsonListAttr(v) {
     return jsonStr(tokens.join(","))
 }
 
+def tstatHasComfortMode(d) {
+    return d.hasCommand("setComfortMode") || d.hasAttribute("comfortMode")
+}
+
+def tstatHasComfortFanSpeed(d) {
+    return d.hasCommand("setComfortFanSpeed") || d.hasAttribute("comfortFanSpeed")
+}
+
+def tstatHasVane(d) {
+    return d.hasCommand("setVanePosition") || d.hasAttribute("vanePosition")
+}
+
+def appendTstatComfortJson(out, d) {
+    def hasCm = tstatHasComfortMode(d)
+    def hasCfs = tstatHasComfortFanSpeed(d)
+    def hasVp = tstatHasVane(d)
+    def cfs = hasCfs ? (safeCurrent(d, "comfortFanSpeed") ?: safeCurrent(d, "thermostatFanMode")) : null
+    def vp = hasVp ? safeCurrent(d, "vanePosition") : null
+    def vpLev = hasVp ? safeCurrent(d, "supportedVanePositions") : null
+    out << ",\"hasCm\":" << (hasCm ? 1 : 0)
+    out << ",\"hasCfs\":" << (hasCfs ? 1 : 0)
+    out << ",\"hasVp\":" << (hasVp ? 1 : 0)
+    out << ",\"cfs\":" << jsonStr(cfs)
+    out << ",\"vp\":" << jsonStr(vp)
+    out << ",\"vpLev\":" << jsonListAttr(vpLev)
+}
+
 // ---------------------------------------------------------------------------
 // /device?id=.. - single-device state (reconcile dimmer level after "on")
 // ---------------------------------------------------------------------------
@@ -2686,6 +2714,7 @@ def renderDevice() {
         out << ",\"fm\":" << jsonStr(hasFanMode ? safeCurrent(t, "thermostatFanMode") : null)
         out << ",\"hasFs\":" << (hasFanSpeed ? 1 : 0)
         out << ",\"fs\":" << jsonStr(hasFanSpeed ? safeCurrent(t, "fanSpeed") : null)
+        appendTstatComfortJson(out, t)
         out << "}"
         return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
@@ -2838,20 +2867,46 @@ def runThermostatCmd(t, c, v) {
         case "setFanSpeed":
             if (v != null && (t.hasAttribute("fanSpeed") || t.hasCommand("setFanSpeed"))) t.setFanSpeed(v.toString())
             break
+        case "setComfortMode":
+            setComfortModeCmd(t, v)
+            break
+        case "setComfortFanSpeed":
+            setComfortFanSpeedCmd(t, v)
+            break
+        case "setVanePosition":
+            if (v != null && t.hasCommand("setVanePosition")) t.setVanePosition(v.toString())
+            break
         default:
             throw new IllegalArgumentException("unknown command")
     }
 }
 
+def setComfortModeCmd(t, modeStr) {
+    if (modeStr == null) return
+    def mode = modeStr.toString()
+    if (t.hasCommand("setComfortMode")) t.setComfortMode(mode)
+    else t.setThermostatMode(mode)
+}
+
+def setComfortFanSpeedCmd(t, speedStr) {
+    if (speedStr == null) return
+    def speed = speedStr.toString()
+    if (t.hasCommand("setComfortFanSpeed")) t.setComfortFanSpeed(speed)
+    else if (t.hasCommand("setThermostatFanMode")) t.setThermostatFanMode(speed)
+    else if (t.hasCommand("setFanMode")) t.setFanMode(speed)
+}
+
 def setThermostatFanModeCmd(t, modeStr) {
     def mode = modeStr?.toString()?.toLowerCase()
     if (!mode) return
-    if (!(t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode"))) return
+    if (!(t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode") || tstatHasComfortFanSpeed(t))) return
     try {
         if (mode == "auto" && t.hasCommand("fanAuto")) t.fanAuto()
         else if (mode == "on" && t.hasCommand("fanOn")) t.fanOn()
         else if (mode == "circulate" && t.hasCommand("fanCirculate")) t.fanCirculate()
-        else t.setFanMode(modeStr.toString())
+        else if (t.hasCommand("setComfortFanSpeed")) t.setComfortFanSpeed(modeStr.toString())
+        else if (t.hasCommand("setThermostatFanMode")) t.setThermostatFanMode(modeStr.toString())
+        else if (t.hasCommand("setFanMode")) t.setFanMode(modeStr.toString())
     } catch (e) {
         log.warn "Modern Dashboard: setFanMode ${mode} failed for ${t.id}: ${e}"
         throw e

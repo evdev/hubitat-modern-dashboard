@@ -665,7 +665,7 @@
   let rgbWheelCache = null;
 
   // ---- thermostat ----
-  let thermostats = [];          // [{i,n,r,tm,os,hsp,csp,temp,u,hasFm,fm,hasFs,fs,supM,supFM,fsLev}]
+  let thermostats = [];          // [{i,n,r,tm,os,hsp,csp,temp,u,hasFm,fm,hasFs,fs,supM,supFM,fsLev,hasCm,hasCfs,cfs,hasVp,vp,vpLev}]
   let tempSensors = [];          // [{i,n,r,temp,u}]
   let thermoByRoom = new Map();  // roomId -> [thermostat]
   let sensorByRoom = new Map();  // roomId -> [temp sensor]
@@ -674,6 +674,7 @@
   let tstatSession = null;       // { rid, anchor, ids:[], unit, edit:"heat"|"cool" }
   const tstatDeviceModeLock = new Map(); // id -> { until, mode }
   const tstatFanModeLock = new Map(); // id -> { until, mode }
+  const tstatVaneLock = new Map(); // id -> { until, position }
 
   let musicMasterPopup = null;
   let fanMasterPopup = null;
@@ -1681,6 +1682,40 @@
     return String(t?.fm || "").toLowerCase() === "on" && deviceHasFanSpeed(t);
   }
 
+  function deviceHasComfortFan(t) {
+    if (t?.hasCfs) return true;
+    const list = supportedFanModes(t);
+    return list.some((k) => !STANDARD_FAN_MODE_KEYS.includes(String(k).toLowerCase()));
+  }
+
+  function deviceHasVane(t) {
+    return !!(t?.hasVp || parseList(t?.vpLev).length);
+  }
+
+  function comfortFanSpeeds(t) {
+    const list = supportedFanModes(t);
+    if (list.length) return list;
+    return deviceHasComfortFan(t) ? COMFORT_FAN_SPEED_OPTS.map((o) => o.key) : [];
+  }
+
+  function supportedVanePositions(t) {
+    const list = parseList(t?.vpLev);
+    if (list.length) return list;
+    return deviceHasVane(t) ? VANE_POSITION_OPTS.map((o) => o.key) : [];
+  }
+
+  function tstatChoiceLabel(opts, key) {
+    const k = String(key || "").toLowerCase();
+    const hit = opts.find((o) => o.key === k);
+    if (hit) return hit.label;
+    if (!k) return "—";
+    return k.charAt(0).toUpperCase() + k.slice(1);
+  }
+
+  function comfortFanValue(t) {
+    return String(t?.cfs || t?.fm || "").toLowerCase();
+  }
+
   function fanModeActive(fm) {
     const m = String(fm || "").toLowerCase();
     return m === "on" || m === "circulate";
@@ -1699,7 +1734,8 @@
     const tm = String(t?.tm || "").toLowerCase();
     const fmOn = !!(t?.hasFm && fanModeActive(t.fm));
     if (tm === "heat" || tm === "emergency heat") return "state-heat";
-    if (tm === "cool") return "state-cool";
+    if (tm === "cool" || tm === "dry") return "state-cool";
+    if (tm === "fan") return "state-fan";
     if (tm === "auto") {
       if (os === "heating" || os === "pending heat") return "state-heat";
       if (os === "cooling" || os === "pending cool") return "state-cool";
@@ -1790,6 +1826,10 @@
       fsLev: union(selectedThermostats.map(supportedFanSpeeds)).join(","),
       supM: union(selectedThermostats.map(supportedModes)).join(","),
       supFM: union(selectedThermostats.map(supportedFanModes)).join(","),
+      hasCm: selectedThermostats.some((t) => t.hasCm),
+      hasCfs: selectedThermostats.some(deviceHasComfortFan), cfs: "",
+      hasVp: selectedThermostats.some(deviceHasVane), vp: "",
+      vpLev: union(selectedThermostats.map(supportedVanePositions)).join(","),
       _central: true,
     };
   }
@@ -3157,12 +3197,26 @@
     }
     fanSpeedSection.appendChild(fanSpeeds);
 
+    const comfortFanSection = ce("div", "tstat-section");
+    comfortFanSection.style.display = "none";
+    comfortFanSection.appendChild(tstatSectionLabel("Fan speed"));
+    const comfortFans = ce("div", "tstat-modes");
+    comfortFanSection.appendChild(comfortFans);
+
+    const vaneSection = ce("div", "tstat-section");
+    vaneSection.style.display = "none";
+    vaneSection.appendChild(tstatSectionLabel("Vane position"));
+    const vanes = ce("div", "tstat-modes");
+    vaneSection.appendChild(vanes);
+
     panel.appendChild(head);
     panel.appendChild(dialWrap);
     panel.appendChild(chips);
     panel.appendChild(modeSection);
     panel.appendChild(fanModeSection);
     panel.appendChild(fanSpeedSection);
+    panel.appendChild(comfortFanSection);
+    panel.appendChild(vaneSection);
     tstatPopup.appendChild(panel);
     appendPopup(tstatPopup);
 
@@ -3198,6 +3252,10 @@
     tstatPopup._fanSpeedSection = fanSpeedSection;
     tstatPopup._fanSpeeds = fanSpeeds;
     tstatPopup._fanSpeedBtns = fanSpeedBtns;
+    tstatPopup._comfortFanSection = comfortFanSection;
+    tstatPopup._comfortFans = comfortFans;
+    tstatPopup._vaneSection = vaneSection;
+    tstatPopup._vanes = vanes;
     publishMld({ tstatPopup: tstatPopup });
     return tstatPopup;
   }
@@ -3217,8 +3275,8 @@
     if (!t || !tstatSession) return null;
     const tm = String(t.tm || "").toLowerCase();
     if (tstatSession?.central && !tm) return null;
-    if (tm === "off") return null;
-    return (tstatSession.edit === "cool" && tm === "auto") || tm === "cool" ? "cool" : "heat";
+    if (tm === "off" || tm === "fan") return null;
+    return (tstatSession.edit === "cool" && tm === "auto") || tm === "cool" || tm === "dry" ? "cool" : "heat";
   }
 
   async function commitTstatSetpoint(ids, target, val, { haptic = true } = {}) {
@@ -3276,8 +3334,9 @@
     }
 
     const showHeat = (tm === "heat" || tm === "auto" || tm === "emergency heat");
-    const showCool = (tm === "cool" || tm === "auto");
-    const editHeat = tstatSession.edit === "heat" || tm === "heat" || tm === "emergency heat";
+    const showCool = (tm === "cool" || tm === "auto" || tm === "dry");
+    const editHeat = tm === "heat" || tm === "emergency heat"
+      || (tm === "auto" && tstatSession.edit !== "cool");
 
     const hsp = t.hsp != null ? Number(t.hsp) : null;
     const csp = t.csp != null ? Number(t.csp) : null;
@@ -3308,8 +3367,9 @@
     // setpoint readout
     let spText;
     if (tm === "off") spText = "Off";
+    else if (tm === "fan") spText = "Fan";
     else if (tm === "heat" || tm === "emergency heat") spText = hsp != null ? hsp + deg : "—";
-    else if (tm === "cool") spText = csp != null ? csp + deg : "—";
+    else if (tm === "cool" || tm === "dry") spText = csp != null ? csp + deg : "—";
     else if (tm === "auto") spText = (editHeat ? hsp : csp) != null ? (editHeat ? hsp : csp) + deg : "—";
     else spText = "—";
     popup._spEl.textContent = spText;
@@ -3321,10 +3381,10 @@
 
     // disabled look when off or none selected for bulk
     const noneSelected = !!(tstatTargetPickerEnabled() && !tstatSession.ids?.length);
-    popup._svg.classList.toggle("disabled", tm === "off" || noneSelected);
+    popup._svg.classList.toggle("disabled", tm === "off" || tm === "fan" || noneSelected);
     const noMode = !!(tstatSession?.roomGroup && tstatSession.ids?.length !== 1)
       || !!(tstatSession?.central && !tm);
-    const canAdjust = tm !== "off" && !noMode && !noneSelected;
+    const canAdjust = tm !== "off" && tm !== "fan" && !noMode && !noneSelected;
     if (popup._minusBtn) popup._minusBtn.disabled = !canAdjust;
     if (popup._plusBtn) popup._plusBtn.disabled = !canAdjust;
   }
@@ -3358,6 +3418,27 @@
     }
   }
 
+  function renderTstatChoiceRow(container, keys, lookupOpts, active, noneSelected, onPick) {
+    container.replaceChildren();
+    const btns = {};
+    for (const key of keys) {
+      const k = String(key).toLowerCase();
+      const def = lookupOpts.find((o) => o.key === k);
+      const label = def ? def.label : tstatChoiceLabel(lookupOpts, k);
+      const b = ce("button", "tstat-mode");
+      b.type = "button";
+      b.textContent = label;
+      b.dataset.choiceKey = k;
+      b.setAttribute("aria-label", def ? def.aria : ("Set " + label));
+      b.classList.toggle("active", active === k);
+      b.disabled = noneSelected;
+      b.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); onPick(k); });
+      container.appendChild(b);
+      btns[k] = b;
+    }
+    return btns;
+  }
+
   function renderTstatControls() {
     if (!tstatSession) return;
     const popup = ensureTstatPopup();
@@ -3371,6 +3452,8 @@
       popup._modeSection.style.display = "none";
       popup._fanModeSection.style.display = "none";
       popup._fanSpeedSection.style.display = "none";
+      popup._comfortFanSection.style.display = "none";
+      popup._vaneSection.style.display = "none";
       return;
     }
     const supM = tstatControlModes(t);
@@ -3378,36 +3461,54 @@
     renderTstatModeButtons(popup, supM, tm, noneSelected);
     popup._modeSection.style.display = supM.length ? "" : "none";
 
-    if (t.hasFm) {
-      const supported = supportedFanModes(t);
-      const fmVal = String(t.fm || "").toLowerCase();
-      let fanCount = 0;
-      for (const [key, btn] of Object.entries(popup._fanModeBtns)) {
-        const show = supported.includes(key);
-        btn.hidden = !show;
-        if (show) fanCount++;
-        btn.classList.toggle("active", fmVal === key);
-        btn.disabled = noneSelected;
-      }
-      popup._fanModeSection.style.display = fanCount ? "" : "none";
-    } else {
+    const useComfortFan = deviceHasComfortFan(t);
+    if (useComfortFan) {
       popup._fanModeSection.style.display = "none";
+      popup._fanSpeedSection.style.display = "none";
+      const speeds = comfortFanSpeeds(t);
+      renderTstatChoiceRow(popup._comfortFans, speeds, COMFORT_FAN_SPEED_OPTS, comfortFanValue(t), noneSelected, setComfortFanSpeed);
+      popup._comfortFanSection.style.display = speeds.length ? "" : "none";
+    } else {
+      popup._comfortFanSection.style.display = "none";
+      if (t.hasFm) {
+        const supported = supportedFanModes(t);
+        const fmVal = String(t.fm || "").toLowerCase();
+        let fanCount = 0;
+        for (const [key, btn] of Object.entries(popup._fanModeBtns)) {
+          const show = supported.includes(key);
+          btn.hidden = !show;
+          if (show) fanCount++;
+          btn.classList.toggle("active", fmVal === key);
+          btn.disabled = noneSelected;
+        }
+        popup._fanModeSection.style.display = fanCount ? "" : "none";
+      } else {
+        popup._fanModeSection.style.display = "none";
+      }
+
+      if (showFanSpeedControls(t)) {
+        const levels = supportedFanSpeeds(t);
+        const fsVal = String(t.fs || "").toLowerCase();
+        let speedCount = 0;
+        for (const [key, btn] of Object.entries(popup._fanSpeedBtns)) {
+          const show = levels.includes(key);
+          btn.hidden = !show;
+          if (show) speedCount++;
+          btn.classList.toggle("active", fsVal === key);
+          btn.disabled = noneSelected;
+        }
+        popup._fanSpeedSection.style.display = speedCount ? "" : "none";
+      } else {
+        popup._fanSpeedSection.style.display = "none";
+      }
     }
 
-    if (showFanSpeedControls(t)) {
-      const levels = supportedFanSpeeds(t);
-      const fsVal = String(t.fs || "").toLowerCase();
-      let speedCount = 0;
-      for (const [key, btn] of Object.entries(popup._fanSpeedBtns)) {
-        const show = levels.includes(key);
-        btn.hidden = !show;
-        if (show) speedCount++;
-        btn.classList.toggle("active", fsVal === key);
-        btn.disabled = noneSelected;
-      }
-      popup._fanSpeedSection.style.display = speedCount ? "" : "none";
+    if (deviceHasVane(t)) {
+      const positions = supportedVanePositions(t);
+      renderTstatChoiceRow(popup._vanes, positions, VANE_POSITION_OPTS, String(t.vp || "").toLowerCase(), noneSelected, setVanePosition);
+      popup._vaneSection.style.display = positions.length ? "" : "none";
     } else {
-      popup._fanSpeedSection.style.display = "none";
+      popup._vaneSection.style.display = "none";
     }
   }
 
@@ -3517,7 +3618,27 @@
         continue;
       }
       const t = thermostats.find(x => x.i === id);
-      if (t) t.fm = lock.mode;
+      if (t) {
+        t.fm = lock.mode;
+        if (t.hasCfs) t.cfs = lock.mode;
+      }
+    }
+  }
+
+  function tstatVaneLocked(id) {
+    const devLock = tstatVaneLock.get(Number(id));
+    return !!(devLock?.until > Date.now());
+  }
+
+  function reapplyTstatVaneLocks() {
+    const now = Date.now();
+    for (const [id, lock] of tstatVaneLock) {
+      if (lock.until <= now) {
+        tstatVaneLock.delete(id);
+        continue;
+      }
+      const t = thermostats.find(x => x.i === id);
+      if (t) t.vp = lock.position;
     }
   }
 
@@ -3527,6 +3648,8 @@
     if (m === "cool") return "Cool";
     if (m === "auto") return "Auto";
     if (m === "off") return "Off";
+    if (m === "dry") return "Dry";
+    if (m === "fan") return "Fan";
     return tm || "—";
   }
 
@@ -3534,6 +3657,8 @@
   function favoriteTstatCompactStateClass(t) {
     const tm = String(t?.tm || "").toLowerCase();
     if (tm === "off") return "state-off";
+    if (tm === "fan") return "state-fan";
+    if (tm === "dry") return "state-cool";
     const os = String(t?.os || "").toLowerCase();
     if (os === "heating" || os === "pending heat") return "state-heat";
     if (os === "cooling" || os === "pending cool") return "state-cool";
@@ -3607,7 +3732,8 @@
   function favoriteTstatTarget(t) {
     const tm = String(t?.tm || "").toLowerCase();
     if (tm === "off") return null;
-    if (tm === "cool") return "cool";
+    if (tm === "fan") return null;
+    if (tm === "cool" || tm === "dry") return "cool";
     if (tm === "heat" || tm === "emergency heat") return "heat";
     if (tm === "auto") {
       const os = String(t?.os || "").toLowerCase();
@@ -3637,6 +3763,8 @@
     const os = String(t?.os || "").toLowerCase();
     const current = t.temp != null ? Math.round(t.temp) + deg : "—";
     if (tm === "off") return { label: "Off · now " + current, active: false };
+    if (tm === "fan") return { label: "Fan · now " + current, active: true };
+    if (tm === "dry") return { label: "Dry · now " + current, active: os === "cooling" || os === "pending cool" };
     if (os === "heating" || os === "pending heat") return { label: "Heating · now " + current, active: true };
     if (os === "cooling" || os === "pending cool") return { label: "Cooling · now " + current, active: true };
     if (os === "fan" || os === "fan only") return { label: "Fan · now " + current, active: true };
@@ -3657,9 +3785,10 @@
       if (!t) continue;
       t.tm = key;
       if (key === "heat") t.os = "heating";
-      else if (key === "cool") t.os = "cooling";
+      else if (key === "cool" || key === "dry") t.os = "cooling";
       else if (key === "off") t.os = "idle";
       else if (key === "auto") t.os = "idle";
+      else if (key === "fan") t.os = "fan";
       tstatDeviceModeLock.set(id, { until: Date.now() + 4000, mode: key });
     }
     refreshOpenTstatQuickPopups();
@@ -3669,8 +3798,9 @@
     const key = String(fm || "").toLowerCase();
     for (const id of ids) {
       const t = thermostats.find(x => x.i === id);
-      if (!t || !t.hasFm) continue;
+      if (!t || !(t.hasFm || deviceHasComfortFan(t))) continue;
       t.fm = key;
+      if (t.hasCfs) t.cfs = key;
       const tm = String(t.tm || "").toLowerCase();
       if (tm === "off") {
         if (key === "on" || key === "circulate") t.os = "fan";
@@ -3682,6 +3812,10 @@
   }
 
   function sendTstatModeCmd(id, cmd, key) {
+    const t = thermostats.find((x) => x.i === id);
+    if (t?.hasCm && (cmd === "setMode" || cmd === "setComfortMode")) {
+      return sendCmd(id, "setComfortMode", key);
+    }
     if (cmd === "setMode") return sendCmd(id, cmd, key);
     return sendCmd(id, cmd);
   }
@@ -3981,7 +4115,7 @@
         const ref = thermostats.find(x => x.csp != null);
         ct.csp = ref ? Number(ref.csp) : 74;
       }
-      tstatSession.edit = key === "cool" ? "cool" : "heat";
+      tstatSession.edit = (key === "cool" || key === "dry") ? "cool" : "heat";
     }
     tstatSession.modeLockUntil = Date.now() + 4000;
     tstatSession.lockedMode = key;
@@ -4023,6 +4157,45 @@
     renderTstatControls();
     if (tstatSession.central) tstatSession.centralTstat.fs = lv;
     for (const id of ids) sendCmd(id, "setFanSpeed", lv);
+  }
+
+  function setComfortFanSpeed(lv) {
+    if (!tstatSession || !tstatSession.ids?.length) return;
+    const ids = tstatSession.ids.filter((id) => {
+      const t = thermostats.find((x) => x.i === id);
+      return t && deviceHasComfortFan(t);
+    });
+    if (!ids.length) return;
+    applyTstatFanModeOptimistic(ids, lv);
+    renderTstatControls();
+    if (tstatSession.central) {
+      tstatSession.centralTstat.cfs = lv;
+      tstatSession.centralTstat.fm = lv;
+    }
+    for (const id of ids) {
+      const t = thermostats.find((x) => x.i === id);
+      sendCmd(id, t?.hasCfs ? "setComfortFanSpeed" : "setFanMode", lv);
+    }
+    for (const id of ids) reconcileTstat(id);
+  }
+
+  function setVanePosition(pos) {
+    if (!tstatSession || !tstatSession.ids?.length) return;
+    const ids = tstatSession.ids.filter((id) => {
+      const t = thermostats.find((x) => x.i === id);
+      return t && deviceHasVane(t);
+    });
+    if (!ids.length) return;
+    for (const id of ids) {
+      const t = thermostats.find((x) => x.i === id);
+      if (!t) continue;
+      t.vp = pos;
+      tstatVaneLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, position: pos });
+    }
+    renderTstatControls();
+    if (tstatSession.central) tstatSession.centralTstat.vp = pos;
+    for (const id of ids) sendCmd(id, "setVanePosition", pos);
+    for (const id of ids) reconcileTstat(id);
   }
 
   function positionTstatPopup(anchorEl) {
@@ -7066,6 +7239,7 @@
     reapplySwitchOptimistic();
     reapplyTstatDeviceModeLocks();
     reapplyTstatFanModeLocks();
+    reapplyTstatVaneLocks();
     applyTstatSessionModeLock();
 
     repopulateThermoByRoom();
@@ -7997,9 +8171,21 @@
         applyTstatSetpoints(t, { hsp: d.hsp, csp: d.csp });
         if (d.temp != null) t.temp = Number(d.temp);
         if (d.hasFm != null) t.hasFm = d.hasFm;
-        if (d.fm != null && !tstatFanModeLocked(t.i)) t.fm = d.fm;
+        if (d.fm != null && !tstatFanModeLocked(t.i)) {
+          t.fm = d.fm;
+          if (t.hasCfs) t.cfs = d.fm;
+        }
         if (d.hasFs != null) t.hasFs = d.hasFs;
         if (d.fs != null) t.fs = d.fs;
+        if (d.hasCm != null) t.hasCm = d.hasCm;
+        if (d.hasCfs != null) t.hasCfs = d.hasCfs;
+        if (d.cfs != null && !tstatFanModeLocked(t.i)) {
+          t.cfs = d.cfs;
+          t.fm = d.cfs;
+        }
+        if (d.hasVp != null) t.hasVp = d.hasVp;
+        if (d.vp != null && !tstatVaneLocked(t.i)) t.vp = d.vp;
+        if (d.vpLev != null) t.vpLev = d.vpLev;
         updateClimateWidgets();
         updateRoomMeta();
         refreshOpenTstatQuickPopups();
@@ -13092,12 +13278,21 @@
           const name = String(m.name || "");
           const val = m.value;
           if (name === "thermostatMode" && !tstatModeLocked(t.i)) t.tm = val;
+          else if (name === "comfortMode" && !tstatModeLocked(t.i)) t.tm = val;
           else if (name === "thermostatOperatingState" && !tstatModeLocked(t.i)) t.os = val;
           else if (name === "heatingSetpoint") applyTstatSetpoints(t, { hsp: val });
           else if (name === "coolingSetpoint") applyTstatSetpoints(t, { csp: val });
           else if (name === "temperature") { const n = Number(val); if (!isNaN(n)) t.temp = Math.round(n); }
-          else if (name === "thermostatFanMode" && !tstatFanModeLocked(t.i)) t.fm = val;
+          else if (name === "thermostatFanMode" && !tstatFanModeLocked(t.i)) {
+            t.fm = val;
+            if (t.hasCfs) t.cfs = val;
+          }
+          else if (name === "comfortFanSpeed" && !tstatFanModeLocked(t.i)) {
+            t.cfs = val;
+            t.fm = val;
+          }
           else if (name === "fanSpeed") t.fs = val;
+          else if (name === "vanePosition" && !tstatVaneLocked(t.i)) t.vp = val;
           else return;
           updateClimateWidgets();
           updateRoomMeta();

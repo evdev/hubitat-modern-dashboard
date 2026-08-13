@@ -161,8 +161,14 @@ The top-bar **All off** / **All on** buttons work the same way:
 Select thermostats in the app preferences. They appear in the **Thermostats**
 quick-nav popup (when enabled) and in room headers when assigned to a room.
 
-- **Per-thermostat dial:** heat/cool setpoints, mode, fan mode/speed (uses
-  `fanAuto` / `fanOn` / `fanCirculate` when the driver supports them)
+- **Per-thermostat dial:** heat/cool setpoints, mode, and fan mode/speed (uses
+  `fanAuto` / `fanOn` / `fanCirculate` when the driver supports them). Extra
+  Comfort controls appear only when the device exposes them:
+  - **Dry / Fan** modes from `supportedThermostatModes` (sends `setComfortMode`
+    when that command exists)
+  - **Fan speed** (`auto` / `quiet` / `low` / `medium` / `high` / `powerful`)
+    when the driver has `setComfortFanSpeed` or `comfortFanSpeed`
+  - **Vane position** when the driver has `setVanePosition` or `vanePosition`
 - **All thermostats:** top-bar button (when multiple thermostats are configured)
   opens a central control with a multi-select target menu — choose which units to
   adjust, then apply mode or setpoints to the selection
@@ -851,7 +857,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | ---------- | ---------------- | --------- | ----------- |
 | Lights (switches & dimmers) | Tiles by room | On/off, dim, CT | — |
 | Outlets | Socket tiles by room, or separate Outlets tab (preference) | On/off only | Favorites |
-| Thermostats | Room header + Thermostats popup (when quick menu on) | Mode, setpoints, fan | All thermostats bulk |
+| Thermostats | Room header + Thermostats popup (when quick menu on) | Mode, setpoints, fan; Comfort fan speed / vane when supported | All thermostats bulk |
 | Temperature sensors | Room header (read-only, when room cards on) | — | Sensors popup |
 | Locks | — | — | Locks popup (locks + garage doors) |
 | Shades (Window Shade) | — | — | Blinds popup; All blinds bulk |

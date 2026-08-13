@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.7
+
+- **Thermostats:** Comfort extras on the dial popup when the driver supports them —
+  Dry/Fan modes, Comfort fan speeds (quiet through powerful), and vane position.
+  Ordinary thermostats keep the existing mode / fan mode / fan speed rows.
+
 ## 0.4.6
 
 - **Fix:** Favorites reorder drag moves the gap into the tile you hover, including
