@@ -1,6 +1,6 @@
 {
 	"author": "Ephrayim (evdev)",
-	"gitHubUrl": "https://github.com/evdev/hubitat-modern-dashboard",
+	"gitHubUrl": "https://github.com/evdev",
 	"packages": [
 		{
 			"id": "e8f4a1c2-3b5d-4e9f-a7c6-1d2e3f4a5b6c",
@@ -15,6 +15,17 @@
 				"Climate Control",
 				"Temperature & Humidity",
 				"Multimedia"
+			]
+		},
+		{
+			"id": "c8d158db-ad11-437c-a533-f90fa2cfc696",
+			"name": "Auto Room Sorter",
+			"category": "Convenience",
+			"location": "https://raw.githubusercontent.com/evdev/Hubitat_auto_device-room_sorter/main/packageManifest.json",
+			"description": "Detect room names in device labels, create missing rooms, and sort unassigned devices into them.",
+			"tags": [
+				"Tools & Utilities",
+				"Automations & Groups"
 			]
 		}
 	]
