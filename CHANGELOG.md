@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.5
+
+- **Scheduler:** Simple Automation import names the second (opposite on/off) schedule
+  `(on)` / `(off)` instead of `(2nd time)`, and only splits when `at2T` is time,
+  sunrise, or sunset (leftover midnight `at2Time` is ignored).
+- **Fix:** Favorites reorder on iOS Safari no longer clips Compact tile up/down buttons.
+  Compact tiles kept a short display height (`overflow: hidden`); WebKit ignored
+  `min-height`, so the 2×2 overlay was cut off.
+
 ## 0.4.4
 
 - **Fix:** Reorder drag works in iOS Safari (and iOS Chrome/PWA). Pointer capture was

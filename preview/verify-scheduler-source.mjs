@@ -66,5 +66,6 @@ assert(src.includes("not in Lights/Outlets") || src.includes("No devices remain 
 assert(src.includes("schedImportHidePaste"), "must hide paste textarea after import (Hubitat form overwrite)");
 assert(src.includes('app.clearSetting("schedImportPaste")') || src.includes('app.updateSetting("schedImportPaste"'), "must clear paste setting");
 assert(!src.includes("id.isInteger()"), "must not use String.isInteger for device ids");
+assert(src.includes("slotOn ? 'on' : 'off'"), "SAR secondary schedule name must be (on)/(off)");
 
 console.log("ok source: scheduler Groovy invariants");

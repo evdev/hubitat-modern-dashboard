@@ -355,7 +355,7 @@ def schedImportPage() {
     dynamicPage(name: "schedImportPage", title: "Import Simple Automation Rules", install: false, uninstall: false) {
         section("How to export") {
             paragraph "In Hubitat: <b>Apps</b> → gear icon next to <b>Simple Automation Rules</b> (or individual rules) → <b>Export/Import/Clone</b> → export and download the file. Paste the file contents below."
-            paragraph "<small>Imports time / sunrise / sunset and <b>Mode Changes</b> (enter mode) rules, including Turn On/Off / Set Level / Set Temperature (CT) on devices in the Lights or Outlets pickers. A Simple Automation “second time” imports as the opposite on/off. Unsupported items are skipped with a reason.</small>"
+            paragraph "<small>Imports time / sunrise / sunset and <b>Mode Changes</b> (enter mode) rules, including Turn On/Off / Set Level / Set Temperature (CT) on devices in the Lights or Outlets pickers. A Simple Automation “second time” imports as a second schedule named <b>(on)</b> or <b>(off)</b>. Unsupported items are skipped with a reason.</small>"
             paragraph "<small><b>Not imported:</b> device/motion/contact triggers, Mode Transition (from→to), leave-mode offMode pairs, and Toggle — create those manually in the Scheduler if needed.</small>"
         }
         section("Paste export") {
@@ -7878,10 +7878,12 @@ def schedImportConvertApp(appId, appData, appMeta, deviceMeta, lightIds, outletI
     }
 
     def onlyInModes = schedImportParseModes(schedImportSettingValue(settings, "modes"))
-    def at2T = schedImportSettingValue(settings, "at2T")?.toString()?.trim()
+    def at2T = schedImportSettingValue(settings, "at2T")?.toString()?.trim()?.toLowerCase() ?: ""
     def slots = ["primary"]
-    // at2T uses doAntiAction in SAR (opposite on/off) — import as a second schedule.
-    if (at2T) slots << "secondary"
+    // Non-empty at2T (time/sunrise/sunset) is the on/off cycle flag. Clock second
+    // times are scheduled jobs, not doAntiAction subscriptions in App Export.
+    // Leftover at2Time="00:00" / *2Offset with empty at2T is not a cycle.
+    if (at2T == "time" || at2T == "sunrise" || at2T == "sunset") slots << "secondary"
 
     slots.each { slot ->
         def built = schedImportBuildTrigger(settings, slot)
@@ -7895,7 +7897,7 @@ def schedImportConvertApp(appId, appData, appMeta, deviceMeta, lightIds, outletI
         def slotOn = (slot == "secondary") ? (!onVal) : onVal
         def slotLevel = (slot == "secondary") ? null : level
         def slotCt = (slot == "secondary") ? null : ct
-        def slotName = (slot == "secondary") ? "${name} (2nd time)".toString() : name.toString()
+        def slotName = (slot == "secondary") ? "${name} (${slotOn ? 'on' : 'off'})".toString() : name.toString()
         def keyMid = (slot == "secondary") ? "-2-" : "-"
         targets.each { t ->
             def states = t.ids.collect { id ->

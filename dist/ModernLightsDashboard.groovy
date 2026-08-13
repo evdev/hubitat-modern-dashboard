@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.4
+// Modern Dashboard v0.4.5
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.4"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.5"
 
 definition(
     name: "Modern Dashboard",
@@ -67,7 +67,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.4 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.5 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -355,7 +355,7 @@ def schedImportPage() {
     dynamicPage(name: "schedImportPage", title: "Import Simple Automation Rules", install: false, uninstall: false) {
         section("How to export") {
             paragraph "In Hubitat: <b>Apps</b> → gear icon next to <b>Simple Automation Rules</b> (or individual rules) → <b>Export/Import/Clone</b> → export and download the file. Paste the file contents below."
-            paragraph "<small>Imports time / sunrise / sunset and <b>Mode Changes</b> (enter mode) rules, including Turn On/Off / Set Level / Set Temperature (CT) on devices in the Lights or Outlets pickers. A Simple Automation “second time” imports as the opposite on/off. Unsupported items are skipped with a reason.</small>"
+            paragraph "<small>Imports time / sunrise / sunset and <b>Mode Changes</b> (enter mode) rules, including Turn On/Off / Set Level / Set Temperature (CT) on devices in the Lights or Outlets pickers. A Simple Automation “second time” imports as a second schedule named <b>(on)</b> or <b>(off)</b>. Unsupported items are skipped with a reason.</small>"
             paragraph "<small><b>Not imported:</b> device/motion/contact triggers, Mode Transition (from→to), leave-mode offMode pairs, and Toggle — create those manually in the Scheduler if needed.</small>"
         }
         section("Paste export") {
@@ -1678,7 +1678,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.4.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.5.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1763,7 +1763,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.4.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.5.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -7878,10 +7878,12 @@ def schedImportConvertApp(appId, appData, appMeta, deviceMeta, lightIds, outletI
     }
 
     def onlyInModes = schedImportParseModes(schedImportSettingValue(settings, "modes"))
-    def at2T = schedImportSettingValue(settings, "at2T")?.toString()?.trim()
+    def at2T = schedImportSettingValue(settings, "at2T")?.toString()?.trim()?.toLowerCase() ?: ""
     def slots = ["primary"]
-    // at2T uses doAntiAction in SAR (opposite on/off) — import as a second schedule.
-    if (at2T) slots << "secondary"
+    // Non-empty at2T (time/sunrise/sunset) is the on/off cycle flag. Clock second
+    // times are scheduled jobs, not doAntiAction subscriptions in App Export.
+    // Leftover at2Time="00:00" / *2Offset with empty at2T is not a cycle.
+    if (at2T == "time" || at2T == "sunrise" || at2T == "sunset") slots << "secondary"
 
     slots.each { slot ->
         def built = schedImportBuildTrigger(settings, slot)
@@ -7895,7 +7897,7 @@ def schedImportConvertApp(appId, appData, appMeta, deviceMeta, lightIds, outletI
         def slotOn = (slot == "secondary") ? (!onVal) : onVal
         def slotLevel = (slot == "secondary") ? null : level
         def slotCt = (slot == "secondary") ? null : ct
-        def slotName = (slot == "secondary") ? "${name} (2nd time)".toString() : name.toString()
+        def slotName = (slot == "secondary") ? "${name} (${slotOn ? 'on' : 'off'})".toString() : name.toString()
         def keyMid = (slot == "secondary") ? "-2-" : "-"
         targets.each { t ->
             def states = t.ids.collect { id ->

@@ -140,6 +140,7 @@ function byKey(ok, key) {
   const sec = r.ok.find((x) => String(x.importKey).includes("-2-"));
   assert(sec.schedule.trigger.time === "23:00", "secondary 23:00");
   assert(sec.schedule.action.states[0].on === false, "anti off");
+  assert(/ \(off\)$/.test(sec.name), "synthetic secondary named off");
 }
 
 // Unsupported trigger fixture
@@ -213,6 +214,61 @@ function byKey(ok, key) {
   assert(s.trigger.offsetMin === -40, "offset -40");
   assert(s.onlyInModes.length === 0, "no mode restriction in this export");
   assert(s.action.states[0].on === true, "turn on");
+}
+
+// Leftover at2Time=00:00 with empty at2T is NOT a cycle (app 148)
+{
+  const r = convertSarExport(fixture, ["176", "238", "230", "56"], []);
+  const rows148 = r.ok.filter((x) => String(x.importKey).includes("sar-148"));
+  assert(rows148.length === 1, "148 one schedule, not leftover midnight off: " + rows148.length);
+  assert(!r.ok.some((x) => String(x.importKey).includes("sar-148-2")), "148 must not split");
+}
+
+// Live cycle: sunset +20 on, sunrise −20 off (Bug Zapper 290)
+{
+  const zap = readFileSync(join(root, "preview/fixtures/simple-automation-bug-zapper-cycle.txt"), "utf8");
+  const r = convertSarExport(zap, ["59"], []);
+  assert(!r.error, "zapper fixture: " + r.error);
+  assert(r.ok.length === 2, "zapper primary+secondary: " + r.ok.length + " " + JSON.stringify(r.skipped));
+  const primary = r.ok.find((x) => x.importKey === "sar-290-lights");
+  const secondary = r.ok.find((x) => x.importKey === "sar-290-2-lights");
+  assert(primary, "zapper primary");
+  assert(secondary, "zapper secondary");
+  assert(primary.schedule.trigger.when === "sunset", "zapper sunset");
+  assert(primary.schedule.trigger.offsetMin === 20, "zapper +20");
+  assert(primary.schedule.action.states[0].on === true, "zapper on");
+  assert(secondary.schedule.trigger.when === "sunrise", "zapper sunrise anti");
+  assert(secondary.schedule.trigger.offsetMin === -20, "zapper sunrise -20");
+  assert(secondary.schedule.action.states[0].on === false, "zapper off");
+  assert(/ \(off\)$/.test(secondary.name), "zapper secondary named off: " + secondary.name);
+}
+
+// Live cycle: sunset on, clock 00:00 off (floodlights 415). at2T=time; no doAntiAction in export.
+{
+  const flood = readFileSync(join(root, "preview/fixtures/simple-automation-floodlight-sunset-clock.txt"), "utf8");
+  const ids = ["356", "54", "55", "359"];
+  const r = convertSarExport(flood, ids, []);
+  assert(!r.error, "flood fixture: " + r.error);
+  assert(r.ok.length === 2, "flood primary+secondary: " + r.ok.length + " " + JSON.stringify(r.skipped));
+  const primary = r.ok.find((x) => x.importKey === "sar-415-lights");
+  const secondary = r.ok.find((x) => x.importKey === "sar-415-2-lights");
+  assert(primary, "flood primary");
+  assert(secondary, "flood secondary");
+  assert(primary.schedule.trigger.when === "sunset", "flood sunset");
+  assert(primary.schedule.action.states[0].on === true, "flood on");
+  assert(primary.schedule.action.states.length === 4, "flood four devices");
+  assert(secondary.schedule.trigger.when === "clock", "flood clock anti");
+  assert(secondary.schedule.trigger.time === "00:00", "flood 00:00");
+  assert(secondary.schedule.action.states[0].on === false, "flood off");
+  assert(/ \(off\)$/.test(secondary.name), "flood secondary named off: " + secondary.name);
+}
+
+// CT sunrise cycle secondary is named (off)
+{
+  const ctFixture = readFileSync(join(root, "preview/fixtures/simple-automation-sunrise-ct.txt"), "utf8");
+  const r = convertSarExport(ctFixture, ["244"], []);
+  const secondary = r.ok.find((x) => x.importKey === "sar-396-2-lights");
+  assert(/ \(off\)$/.test(secondary.name), "ct secondary named off: " + secondary.name);
 }
 
 console.log("ok sar-import:", {

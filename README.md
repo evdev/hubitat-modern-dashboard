@@ -445,7 +445,7 @@ Only schedules the mDash scheduler can run are imported (specific time / sunrise
 sunset, hub **mode change**, optional mode restrictions, Turn On / Off / Set Level /
 Set Temperature on devices already in the **Lights** or **Outlets** pickers). A
 Simple Automation “second time” imports as a second schedule with the opposite
-on/off (matching SAR’s anti-action). Unsupported rules are listed with a reason
+on/off (matching SAR’s anti-action), named with `(on)` or `(off)`. Unsupported rules are listed with a reason
 and are not created. Re-importing the same export replaces prior imports from
 those rule ids. Disable the original Simple Automation Rules after you verify
 the new schedules.
