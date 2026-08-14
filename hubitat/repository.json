@@ -1,6 +1,6 @@
 {
 	"author": "Ephrayim (evdev)",
-	"gitHubUrl": "https://github.com/evdev/hubitat-modern-dashboard",
+	"gitHubUrl": "https://github.com/evdev",
 	"packages": [
 		{
 			"id": "e8f4a1c2-3b5d-4e9f-a7c6-1d2e3f4a5b6c",
@@ -15,6 +15,17 @@
 				"Climate Control",
 				"Temperature & Humidity",
 				"Multimedia"
+			]
+		},
+		{
+			"id": "4182ea59-5bb0-4145-b1b5-aa21de765a76",
+			"name": "Commercial Lock",
+			"category": "Convenience",
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-commercial-lock/main/packageManifest.json",
+			"description": "Expose a switch-controlled maglock or electric strike as a Hubitat lock.",
+			"tags": [
+				"Locks",
+				"Doors & Windows"
 			]
 		}
 	]
