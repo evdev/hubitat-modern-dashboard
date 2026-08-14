@@ -27,6 +27,29 @@
 				"Locks",
 				"Doors & Windows"
 			]
+		},
+		{
+			"id": "c8d158db-ad11-437c-a533-f90fa2cfc696",
+			"name": "Auto Room Sorter",
+			"category": "Convenience",
+			"location": "https://raw.githubusercontent.com/evdev/Hubitat_auto_device-room_sorter/main/packageManifest.json",
+			"description": "Detect room names in device labels, create missing rooms, and sort unassigned devices into them.",
+			"tags": [
+				"Tools & Utilities",
+				"Automations & Groups"
+			]
+		},
+		{
+			"id": "bae8a9d3-407c-41b0-9749-3ad0a1aca6af",
+			"name": "Mitsubishi Comfort Cloud",
+			"category": "Integrations",
+			"location": "https://raw.githubusercontent.com/evdev/mitsubishi-comfort-hubitat/main/packageManifest.json",
+			"description": "Cloud integration for Mitsubishi Comfort / Kumo Cloud V3 HVAC zones, thermostats, sensors, and profile-based setpoint limits.",
+			"tags": [
+				"Climate Control",
+				"Temperature & Humidity",
+				"Cloud"
+			]
 		}
 	]
 }
