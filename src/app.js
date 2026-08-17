@@ -668,7 +668,7 @@
   let thermostats = [];          // [{i,n,r,tm,os,hsp,csp,temp,u,hasFm,fm,hasFs,fs,supM,supFM,fsLev,hasCm,hasCfs,cfs,hasVp,vp,vpLev}]
   let tempSensors = [];          // [{i,n,r,temp,u}]
   let thermoByRoom = new Map();  // roomId -> [thermostat]
-  let sensorByRoom = new Map();  // roomId -> [temp sensor]
+  let sensorByRoom = new Map();  // roomId -> [temp sensor or multi-sensor with temperature]
   let climateEls = new Map();    // roomId -> { el, iconEl, tempEl, controllable }
   let tstatPopup = null;
   let tstatSession = null;       // { rid, anchor, ids:[], unit, edit:"heat"|"cool" }
@@ -1747,8 +1747,9 @@
   }
 
   function formatRoomTemp(device) {
-    if (device?.temp == null) return "—";
-    return Math.round(Number(device.temp)) + tstatTempSuffix(device.u);
+    const reading = sensorTemperatureReading(device);
+    if (!reading) return "—";
+    return Math.round(reading.temp) + tstatTempSuffix(reading.u);
   }
 
   function roomClimateInfo(rid) {
@@ -2179,10 +2180,8 @@
 
   function repopulateSensorByRoom() {
     sensorByRoom.clear();
-    for (const s of tempSensors) {
-      const rid = normalizeRoomId(s.r);
-      if (!sensorByRoom.has(rid)) sensorByRoom.set(rid, []);
-      sensorByRoom.get(rid).push(s);
+    for (const [rid, list] of climateSensorsByRoom(tempSensors, sensors)) {
+      sensorByRoom.set(rid, list);
     }
   }
 
@@ -5554,6 +5553,7 @@
     for (const out of outlets) addRef(out);
     for (const t of thermostats) addRef(t);
     for (const s of tempSensors) addRef(s);
+    for (const s of sensors) addRef(s);
     for (const lk of locks) addRef(lk);
     if (!byId.size) return;
     replaceList(rooms, [...byId.values()].sort((a, b) => a.id - b.id));
@@ -8215,6 +8215,8 @@
       }
       if (sen && !hasControlRole) {
         applySensorPayload(sen, d);
+        updateClimateWidgets();
+        updateRoomMeta();
         refreshSensorViews();
         return;
       }
@@ -14692,7 +14694,10 @@
         changed = true;
       }
     }
-    if (sen && applySensorWsAttr(sen, nm, value, unit)) changed = true;
+    if (sen && applySensorWsAttr(sen, nm, value, unit)) {
+      changed = true;
+      if (nm === "temperature") climate = true;
+    }
     if (s && sen && nm !== "temperature") syncTempSensorFromSensorEntry(s, sen);
     if (changed && climate) {
       updateClimateWidgets();

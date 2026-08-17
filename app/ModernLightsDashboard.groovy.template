@@ -126,7 +126,7 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "roomClimateEnabled", "bool", title: "Show temperature and thermostat on room cards",
                 defaultValue: true, submitOnChange: true
-            paragraph "<small>When <b>quick menu</b> or <b>room cards</b> is off, thermostats and temperature sensors remain available in their other views.</small>"
+            paragraph "<small>When <b>quick menu</b> or <b>room cards</b> is off, thermostats and temperature sensors remain available in their other views. Multi-sensors selected under Sensors that report temperature also show on Lights room cards.</small>"
         }
         section(sectionTitleWithCount("Shades, fans & media", shadesMediaCount), hideable: true, hidden: shadesMediaSectionCollapsed()) {
             input "windowShades", "capability.windowShade", title: "Shades & blinds (Window Shade drivers)",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.8
+
+- **Lights:** Room cards show temperature from multi-sensors (motion + temperature,
+  etc.) even when the device is only in a Sensors picker, not Temperature sensors.
+  Dedicated temp sensors and thermostats still take priority.
+
 ## 0.4.7
 
 - **Thermostats:** Comfort extras on the dial popup when the driver supports them —

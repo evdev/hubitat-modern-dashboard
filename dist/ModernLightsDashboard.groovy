@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.7
+// Modern Dashboard v0.4.8
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.7"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.8"
 
 definition(
     name: "Modern Dashboard",
@@ -67,7 +67,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.7 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.8 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -126,7 +126,7 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "roomClimateEnabled", "bool", title: "Show temperature and thermostat on room cards",
                 defaultValue: true, submitOnChange: true
-            paragraph "<small>When <b>quick menu</b> or <b>room cards</b> is off, thermostats and temperature sensors remain available in their other views.</small>"
+            paragraph "<small>When <b>quick menu</b> or <b>room cards</b> is off, thermostats and temperature sensors remain available in their other views. Multi-sensors selected under Sensors that report temperature also show on Lights room cards.</small>"
         }
         section(sectionTitleWithCount("Shades, fans & media", shadesMediaCount), hideable: true, hidden: shadesMediaSectionCollapsed()) {
             input "windowShades", "capability.windowShade", title: "Shades & blinds (Window Shade drivers)",
@@ -1678,7 +1678,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-192-0.4.7.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.8.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1763,7 +1763,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-${size}-0.4.7.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.8.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'

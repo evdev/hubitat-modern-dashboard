@@ -90,6 +90,47 @@ function sensorCardFilterTypes(dev) {
   return types;
 }
 
+function normalizeRoomId(rid) {
+  if (rid == null || rid === "null" || rid === "") return -1;
+  if (rid === -1 || rid === "-1") return -1;
+  const n = Number(rid);
+  return Number.isFinite(n) ? n : -1;
+}
+
+export function sensorTemperatureReading(dev) {
+  if (dev?.temp != null && dev.temp !== "") {
+    const n = Number(dev.temp);
+    if (!isNaN(n)) return { temp: n, u: dev.u ?? null };
+  }
+  const ex = (dev?.ex || []).find((e) => String(e.k || "").toLowerCase() === "temperature");
+  if (ex?.v == null || ex.v === "") return null;
+  const n = Number(ex.v);
+  if (isNaN(n)) return null;
+  return { temp: n, u: ex.u ?? dev.u ?? null };
+}
+
+export function climateSensorsByRoom(tempSensors, sensors) {
+  const map = new Map();
+  const dedicatedRooms = new Set();
+  const seenIds = new Set();
+  for (const s of tempSensors || []) {
+    const rid = normalizeRoomId(s.r);
+    if (!map.has(rid)) map.set(rid, []);
+    map.get(rid).push(s);
+    dedicatedRooms.add(rid);
+    seenIds.add(Number(s.i));
+  }
+  for (const s of sensors || []) {
+    if (seenIds.has(Number(s.i))) continue;
+    if (!sensorTemperatureReading(s)) continue;
+    const rid = normalizeRoomId(s.r);
+    if (dedicatedRooms.has(rid)) continue;
+    if (!map.has(rid)) map.set(rid, []);
+    map.get(rid).push(s);
+  }
+  return map;
+}
+
 export function buildMergedSensorCard(tempRec, sensorRec) {
   if (tempRec && sensorRec && SENSOR_TEMP_PROMOTE_TYPES.has(sensorRec.t)) {
     return environmentalTempPrimaryCard(tempRec, sensorRec);
