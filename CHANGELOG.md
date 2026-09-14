@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.9
+
+- **Scheduler:** Blank schedule names now save as a readable default — device or
+  room, on/off (or thermostat mode/setpoint), and time — instead of
+  “Daily 7:30 PM lights”. The name field placeholder is “unfinished automation”
+  until save.
+
 ## 0.4.8
 
 - **Lights:** Room cards show temperature from multi-sensors (motion + temperature,

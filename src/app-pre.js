@@ -916,6 +916,126 @@ function clampSetpoint(v, unit) {
   return Math.max(min, Math.min(max, Math.round(v)));
 }
 
+/** Default dashboard schedule name: "{Scope} {State} at {Time}". */
+function autoScheduleName(draft, catalogs, formatters) {
+  function findById(list, id) {
+    const sid = String(id);
+    return (list || []).find((d) => String(d.i) === sid) || null;
+  }
+  function roomIdOf(dev) {
+    if (dev == null || dev.r == null || dev.r === "") return "";
+    return String(dev.r);
+  }
+  function uniqueIds(raw) {
+    const out = [];
+    const seen = new Set();
+    for (const id of raw || []) {
+      if (id == null || id === "") continue;
+      const sid = String(id);
+      if (seen.has(sid)) continue;
+      seen.add(sid);
+      out.push(sid);
+    }
+    return out;
+  }
+  function scopeFrom(ids, catalog, singular, plural) {
+    const uniq = uniqueIds(ids);
+    if (uniq.length === 1) {
+      const d = findById(catalog, uniq[0]);
+      const nm = d && d.n ? String(d.n).trim() : "";
+      return nm || (singular + " " + uniq[0]);
+    }
+    if (uniq.length > 1) {
+      const roomIds = uniq.map((id) => roomIdOf(findById(catalog, id)));
+      const first = roomIds[0];
+      if (first && roomIds.every((r) => r === first)) {
+        const room = (catalogs?.rooms || []).find((r) => String(r.id) === first);
+        const roomName = room && room.name ? String(room.name).trim() : "";
+        if (roomName) return roomName + " " + plural;
+      }
+    }
+    return plural;
+  }
+  function switchState(states) {
+    if (!states || !states.length) return "";
+    const flags = states.map((st) => !!(st && st.on === true));
+    if (flags.every(Boolean)) return "On";
+    if (flags.every((on) => !on)) return "Off";
+    return "Set";
+  }
+  function thermoState(action) {
+    const mode = String(action?.mode || "").trim();
+    const modeKey = mode.toLowerCase();
+    const modeLabel = mode ? (mode.charAt(0).toUpperCase() + mode.slice(1)) : "";
+    const heat = action?.heat;
+    const cool = action?.cool;
+    const bits = [];
+    if (modeLabel) bits.push(modeLabel);
+    let range = "";
+    if (modeKey === "heat" && heat != null && heat !== "") range = heat + "\u00b0";
+    else if (modeKey === "cool" && cool != null && cool !== "") range = cool + "\u00b0";
+    else if (modeKey !== "off") {
+      if (heat != null && heat !== "" && cool != null && cool !== "") range = heat + "\u00b0\u2013" + cool + "\u00b0";
+      else if (heat != null && heat !== "") range = heat + "\u00b0";
+      else if (cool != null && cool !== "") range = cool + "\u00b0";
+    }
+    if (range) bits.push(range);
+    return bits.join(" ");
+  }
+  function sunLabel(which, offsetMin) {
+    const base = which === "sunrise" ? "Sunrise" : "Sunset";
+    const off = Number(offsetMin) || 0;
+    if (off === 0) return base;
+    if (off > 0) return base + " +" + off + "m";
+    return base + " " + off + "m";
+  }
+  function timePhrase(tr) {
+    const kind = String(tr?.kind || "");
+    const when = String(tr?.when || "").trim().toLowerCase();
+    const isSun = when === "sunrise" || when === "sunset";
+    const fmtClock = formatters?.clockTime || ((t) => t || "");
+    const fmtDate = formatters?.dateTimeLocal || ((t) => t || "");
+    if (kind === "mode") {
+      const mode = String(tr.mode || "").trim();
+      return mode ? ("when mode is " + mode) : "";
+    }
+    let time = "";
+    if (kind === "once") time = fmtDate(tr.at || "");
+    else if (isSun) time = sunLabel(when, tr.offsetMin);
+    else time = fmtClock(tr.time || "");
+    const order = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+    const labels = { SUN: "Sun", MON: "Mon", TUE: "Tue", WED: "Wed", THU: "Thu", FRI: "Fri", SAT: "Sat" };
+    const selected = new Set((tr.days || []).map((d) => String(d || "").trim().toUpperCase()));
+    const days = kind === "weekly"
+      ? order.filter((d) => selected.has(d)).map((d) => labels[d]).join(", ")
+      : "";
+    if (time && days) return "at " + time + " on " + days;
+    if (days) return "on " + days;
+    return time ? ("at " + time) : "";
+  }
+
+  const ac = draft?.action || {};
+  const tr = draft?.trigger || {};
+  const target = String(ac.target || "");
+  let scope = "Devices";
+  let state = "";
+  if (target === "lights" || target === "outlets") {
+    const catalog = target === "lights" ? (catalogs?.devices || []) : (catalogs?.outlets || []);
+    const plural = target === "lights" ? "Lights" : "Outlets";
+    const states = (Array.isArray(ac.states) ? ac.states : []).filter((s) => s && s.id != null && s.id !== "");
+    scope = scopeFrom(states.map((s) => s.id), catalog, "Device", plural);
+    state = switchState(states);
+  } else if (target === "thermostats") {
+    const ids = Array.isArray(ac.devices) ? ac.devices : [];
+    scope = scopeFrom(ids, catalogs?.thermostats || [], "Thermostat", "Thermostats");
+    state = thermoState(ac);
+  } else if (target === "hubMode") {
+    scope = "Hub Mode";
+    state = String(ac.mode || "").trim();
+  }
+  return [scope, state, timePhrase(tr)].filter(Boolean).join(" ");
+}
+
 function svgEl(name, attrs) {
   const e = document.createElementNS("http://www.w3.org/2000/svg", name);
   if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);

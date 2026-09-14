@@ -17228,7 +17228,7 @@
     const nin = ce("input", "sched-input");
     nin.type = "text";
     nin.value = schedDraft.name || "";
-    nin.placeholder = autoSchedName();
+    nin.placeholder = "unfinished automation";
     nin.addEventListener("input", () => { schedDraft.name = nin.value; });
     nameField.appendChild(nin);
     wrap.appendChild(nameField);
@@ -18035,24 +18035,10 @@
   }
 
   function autoSchedName() {
-    const tr = schedDraft?.trigger;
-    const ac = schedDraft?.action;
-    let when = "Schedule";
-    if (tr?.kind === "daily") {
-      if (schedTriggerWhen(tr) === "clock") when = "Daily " + schedFmtClockTime(tr.time || "");
-      else when = "Daily " + schedSunLabel(schedTriggerWhen(tr), tr.offsetMin);
-    } else if (tr?.kind === "weekly") {
-      const days = (tr.days || []).join(",");
-      if (schedTriggerWhen(tr) === "clock") when = "Weekly " + days + " " + schedFmtClockTime(tr.time || "");
-      else when = "Weekly " + days + " " + schedSunLabel(schedTriggerWhen(tr), tr.offsetMin);
-    } else if (tr?.kind === "once") when = "Once " + schedFmtDateTimeLocal(tr.at || "");
-    else if (tr?.kind === "mode") when = "When mode is " + (tr.mode || "");
-    let what = "";
-    if (ac?.target === "lights") what = " lights";
-    else if (ac?.target === "outlets") what = " outlets";
-    else if (ac?.target === "thermostats") what = " thermostats";
-    else if (ac?.target === "hubMode") what = " \u2192 " + (ac.mode || "mode");
-    return when + what;
+    return autoScheduleName(schedDraft, { rooms, devices, outlets, thermostats }, {
+      clockTime: schedFmtClockTime,
+      dateTimeLocal: schedFmtDateTimeLocal,
+    });
   }
 
   async function saveSchedule() {
