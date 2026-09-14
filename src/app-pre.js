@@ -916,7 +916,7 @@ function clampSetpoint(v, unit) {
   return Math.max(min, Math.min(max, Math.round(v)));
 }
 
-/** Default dashboard schedule name: "{Scope} {State} at {Time}". */
+/** Default dashboard schedule name: "{Scope} {State} at {Time}[ on Days]". */
 function autoScheduleName(draft, catalogs, formatters) {
   function findById(list, id) {
     const sid = String(id);
@@ -975,7 +975,7 @@ function autoScheduleName(draft, catalogs, formatters) {
     if (modeKey === "heat" && heat != null && heat !== "") range = heat + "\u00b0";
     else if (modeKey === "cool" && cool != null && cool !== "") range = cool + "\u00b0";
     else if (modeKey !== "off") {
-      if (heat != null && heat !== "" && cool != null && cool !== "") range = heat + "\u00b0\u2013" + cool + "\u00b0";
+      if (heat != null && heat !== "" && cool != null && cool !== "") range = heat + "\u00b0-" + cool + "\u00b0";
       else if (heat != null && heat !== "") range = heat + "\u00b0";
       else if (cool != null && cool !== "") range = cool + "\u00b0";
     }
@@ -1035,6 +1035,7 @@ function autoScheduleName(draft, catalogs, formatters) {
   }
   return [scope, state, timePhrase(tr)].filter(Boolean).join(" ");
 }
+globalThis.autoScheduleName = autoScheduleName;
 
 function svgEl(name, attrs) {
   const e = document.createElementNS("http://www.w3.org/2000/svg", name);

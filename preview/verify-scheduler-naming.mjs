@@ -38,16 +38,28 @@ const autoScheduleName = loadAutoScheduleName();
 
 const appJs = readFileSync(join(root, "src/app.js"), "utf8");
 assert(
-  appJs.includes("return autoScheduleName(schedDraft, { rooms, devices, outlets, thermostats }"),
+  appJs.includes("const fn = globalThis.autoScheduleName"),
+  "autoSchedName must call globalThis.autoScheduleName (Hubitat split JS files)"
+);
+assert(
+  appJs.includes("fn(schedDraft, { rooms, devices, outlets, thermostats }"),
   "autoSchedName must delegate to autoScheduleName with live catalogs"
 );
 assert(
-  /name:\s*\(schedDraft\.name \|\| ""\)\.trim\(\) \|\| autoSchedName\(\)/.test(appJs),
-  "blank names must still fall back to autoSchedName at save"
+  appJs.includes("wrap.appendChild(renderSchedNameField())"),
+  "generated name field must appear on every wizard step"
 );
 assert(
-  appJs.includes('nin.placeholder = "unfinished automation"'),
-  "name field placeholder is unfinished automation until save"
+  appJs.includes("nin.value = schedLiveName()"),
+  "name field shows the live generated name before save"
+);
+assert(
+  appJs.includes("function schedSyncNameField()"),
+  "name field must refresh when trigger/action change without a full re-render"
+);
+assert(
+  /name:\s*\(schedNameCustom \? \(schedDraft\.name \|\| ""\)\.trim\(\) : ""\) \|\| autoSchedName\(\)/.test(appJs),
+  "save uses the generated name unless the user edited it"
 );
 
 function clock12(str24) {
@@ -161,7 +173,7 @@ assert(
   nameOf({
     trigger: { kind: "mode", mode: "Home" },
     action: { target: "thermostats", devices: [30], mode: "auto", heat: 68, cool: 72 },
-  }) === "Hall Thermostat Auto 68\u00b0\u201372\u00b0 when mode is Home",
+  }) === "Hall Thermostat Auto 68\u00b0-72\u00b0 when mode is Home",
   "single thermostat auto range on mode trigger"
 );
 

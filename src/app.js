@@ -16309,6 +16309,7 @@
   let schedDraft = null;     // in-progress create/edit draft
   let schedStep = 1;         // 1 | 2 | 3
   let schedEditingId = null;
+  let schedNameCustom = false;
 
   function applySchedulesFromData(data) {
     if (!data) return;
@@ -16317,6 +16318,7 @@
       schedDraft = null;
       schedEditingId = null;
       schedStep = 1;
+      schedNameCustom = false;
       schedulesLoadedFromHub = false;
     }
     if (Array.isArray(data.schedules)) {
@@ -16904,6 +16906,7 @@
     schedDraft.action = schedDraft.action || { target: "lights", states: [] };
     schedEditingId = s.id;
     schedStep = 1;
+    schedNameCustom = !!(schedDraft.name && String(schedDraft.name).trim());
     renderSchedulerActive();
   }
 
@@ -16966,6 +16969,7 @@
       schedDraft = newSchedDraft();
       schedEditingId = null;
       schedStep = 1;
+      schedNameCustom = false;
       renderSchedulerActive();
     });
     header.appendChild(addBtn);
@@ -17109,6 +17113,7 @@
     cancelBtn.addEventListener("click", () => {
       schedDraft = null;
       schedEditingId = null;
+      schedNameCustom = false;
       renderSchedulerActive();
     });
     head.appendChild(cancelBtn);
@@ -17122,6 +17127,7 @@
       if (i < 3) steps.appendChild(ce("div", "sched-step-line"));
     }
     wrap.appendChild(steps);
+    wrap.appendChild(renderSchedNameField());
 
     if (schedStep === 1) wrap.appendChild(renderSchedStep1());
     else if (schedStep === 2) wrap.appendChild(renderSchedStep2());
@@ -17220,18 +17226,6 @@
       const modeCond = renderSchedModeCondition();
       if (modeCond) wrap.appendChild(modeCond);
     }
-
-    const nameField = ce("div", "sched-field");
-    const nlbl = ce("label", "sched-field-label");
-    nlbl.textContent = "Schedule name (optional)";
-    nameField.appendChild(nlbl);
-    const nin = ce("input", "sched-input");
-    nin.type = "text";
-    nin.value = schedDraft.name || "";
-    nin.placeholder = "unfinished automation";
-    nin.addEventListener("input", () => { schedDraft.name = nin.value; });
-    nameField.appendChild(nin);
-    wrap.appendChild(nameField);
 
     wrap.appendChild(schedNavRow(null, null, "Next", () => {
       if (!validateStep1()) return;
@@ -17371,7 +17365,7 @@
     inp.max = "720";
     inp.step = "5";
     inp.value = String(cur);
-    inp.addEventListener("input", () => { tr.offsetMin = Number(inp.value) || 0; });
+    inp.addEventListener("input", () => { tr.offsetMin = Number(inp.value) || 0; schedSyncNameField(); });
     custom.appendChild(inp);
     field.appendChild(custom);
     return field;
@@ -17398,7 +17392,7 @@
     const lbl = ce("label", "sched-field-label");
     lbl.textContent = "Time";
     field.appendChild(lbl);
-    schedAppendClockPicker(field, tr.time || "19:30", (t) => { tr.time = t; });
+    schedAppendClockPicker(field, tr.time || "19:30", (t) => { tr.time = t; schedSyncNameField(); });
     return field;
   }
 
@@ -17445,6 +17439,7 @@
     dateIn.addEventListener("input", () => {
       const timePart = tr.at.length >= 16 ? tr.at.substring(11, 16) : "19:30";
       tr.at = dateIn.value + "T" + timePart;
+      schedSyncNameField();
     });
     dateField.appendChild(dateIn);
     wrap.appendChild(dateField);
@@ -17457,6 +17452,7 @@
     schedAppendClockPicker(timeField, timePart, (t) => {
       const datePart = tr.at.length >= 10 ? tr.at.substring(0, 10) : defaultOnceAt().substring(0, 10);
       tr.at = datePart + "T" + t;
+      schedSyncNameField();
     });
     wrap.appendChild(timeField);
     return wrap;
@@ -17701,6 +17697,7 @@
         for (const d of unroomedSel) selList.appendChild(renderRow(d));
       }
       schedMountDeviceActionsSection(wrap, oldActions, selList, "Choose on or off for every selected device below.");
+      schedSyncNameField();
     }
 
     refreshOnOffAction();
@@ -17912,6 +17909,7 @@
         for (const d of unroomedSel) selList.appendChild(renderSchedLightRow(d));
       }
       schedMountDeviceActionsSection(wrap, oldActions, selList, "Choose on/off and brightness for every selected device below.");
+      schedSyncNameField();
     }
 
     refreshLightAction();
@@ -17982,7 +17980,7 @@
         heatField.appendChild(hlbl);
         const hin = ce("input", "sched-input");
         hin.type = "number"; hin.min = "40"; hin.max = "90"; hin.value = String(schedDraft.action.heat ?? 68);
-        hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); });
+        hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); schedSyncNameField(); });
         heatField.appendChild(hin);
         wrap.appendChild(heatField);
       }
@@ -17994,7 +17992,7 @@
         coolField.appendChild(clbl);
         const cin = ce("input", "sched-input");
         cin.type = "number"; cin.min = "50"; cin.max = "100"; cin.value = String(schedDraft.action.cool ?? 72);
-        cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); });
+        cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); schedSyncNameField(); });
         coolField.appendChild(cin);
         wrap.appendChild(coolField);
       }
@@ -18035,10 +18033,55 @@
   }
 
   function autoSchedName() {
-    return autoScheduleName(schedDraft, { rooms, devices, outlets, thermostats }, {
+    const fn = globalThis.autoScheduleName;
+    if (typeof fn !== "function") return "";
+    return fn(schedDraft, { rooms, devices, outlets, thermostats }, {
       clockTime: schedFmtClockTime,
       dateTimeLocal: schedFmtDateTimeLocal,
     });
+  }
+
+  function schedLiveName() {
+    if (schedNameCustom && (schedDraft?.name || "").trim()) return schedDraft.name;
+    return autoSchedName();
+  }
+
+  function schedSyncNameField() {
+    const nin = document.querySelector(".sched-name-input");
+    if (!nin || !schedDraft) return;
+    const auto = autoSchedName();
+    nin.placeholder = auto;
+    if (schedNameCustom) return;
+    if (document.activeElement === nin) return;
+    nin.value = auto;
+  }
+
+  function renderSchedNameField() {
+    const nameField = ce("div", "sched-field sched-name-field");
+    const nlbl = ce("label", "sched-field-label");
+    nlbl.textContent = "Schedule name";
+    nameField.appendChild(nlbl);
+    const nin = ce("input", "sched-input sched-name-input");
+    nin.type = "text";
+    nin.value = schedLiveName();
+    nin.placeholder = autoSchedName();
+    nin.addEventListener("input", () => {
+      const auto = autoSchedName();
+      const v = nin.value;
+      if (!v.trim() || v === auto) {
+        schedNameCustom = false;
+        schedDraft.name = "";
+        nin.placeholder = auto;
+      } else {
+        schedNameCustom = true;
+        schedDraft.name = v;
+      }
+    });
+    nin.addEventListener("blur", () => {
+      if (!schedNameCustom) nin.value = autoSchedName();
+    });
+    nameField.appendChild(nin);
+    return nameField;
   }
 
   async function saveSchedule() {
@@ -18050,7 +18093,7 @@
     if (ac.target === "hubMode" && !ac.mode) { flash("Pick a hub mode", true); return; }
     const payload = {
       id: schedEditingId || undefined,
-      name: (schedDraft.name || "").trim() || autoSchedName(),
+      name: (schedNameCustom ? (schedDraft.name || "").trim() : "") || autoSchedName(),
       enabled: schedDraft.enabled,
       trigger: schedDraft.trigger,
       onlyInModes: schedDraft.onlyInModes || [],

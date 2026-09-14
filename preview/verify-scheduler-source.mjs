@@ -67,5 +67,8 @@ assert(src.includes("schedImportHidePaste"), "must hide paste textarea after imp
 assert(src.includes('app.clearSetting("schedImportPaste")') || src.includes('app.updateSetting("schedImportPaste"'), "must clear paste setting");
 assert(!src.includes("id.isInteger()"), "must not use String.isInteger for device ids");
 assert(src.includes("slotOn ? 'on' : 'off'"), "SAR secondary schedule name must be (on)/(off)");
+assert(src.includes('s.name = body?.name?.toString()?.trim() ?: ""'), "hub stores the client-sent schedule name as a string");
+assert(src.includes('out << ",\\"name\\":" << jsonStr(s?.name?.toString() ?: "")'), "schedule names are JSON-escaped for Hubitat");
+assert(src.includes("state.schedulesJson = groovy.json.JsonOutput.toJson(map ?: [:])"), "schedules persist via JsonOutput");
 
 console.log("ok source: scheduler Groovy invariants");

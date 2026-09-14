@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.10
+
+- **Scheduler:** The generated name fills the name field on every wizard step and
+  updates as you change devices, on/off, or time. Edit it to keep a custom name.
+
 ## 0.4.9
 
 - **Scheduler:** Blank schedule names now save as a readable default — device or
