@@ -2179,6 +2179,13 @@ const server = createServer(async (req, res) => {
         res.writeHead(404, { "Content-Type": "application/json" });
         return res.end('{"ok":false,"error":"not found"}');
       }
+      if (!s.enabled) {
+        const validationError = validateSchedulePayload({ ...s, enabled: true });
+        if (validationError) {
+          res.writeHead(422, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ ok: false, error: validationError, schedules: mockSchedulesList() }));
+        }
+      }
       const prior = { ...s, trigger: { ...s.trigger }, action: { ...s.action } };
       s.enabled = !s.enabled;
       mockRecomputeNextFire(s);

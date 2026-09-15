@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.11
+
+- **Logging:** device commands write Hubitat info lines tagged `manual` or
+  `automation {name}` so Logs can distinguish a dashboard tap from a scheduler
+  run (per-device schedule traces no longer require Debug logging).
+- **Scheduler fix:** sunrise/sunset/one-time automations no longer overwrite each
+  other. One dispatcher is armed for the earliest clock, sunrise/sunset
+  (including offsets), or one-time schedule and runs every automation due at
+  that instant together. This removes shared-handler overwrites, duplicate
+  `runOnce` entries, same-second state races, and midnight cancellation of
+  00:00 jobs. Hubitat single-threaded app execution protects schedule updates;
+  a five-minute watchdog recovers missed callbacks without deleting due
+  one-time actions first.
+
 ## 0.4.10
 
 - **Scheduler:** The generated name fills the name field on every wizard step and

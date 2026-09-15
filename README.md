@@ -886,7 +886,7 @@ ordinary lights (use **Lights** for those).
 
 ### Diagnosing issues
 
-Open **Logs** in the Hubitat admin UI and filter for **Modern Dashboard**. Failures (command errors, auth/PIN rejections, scheduler problems) are logged automatically with device and error context. Enable **Debug logging** in app preferences for command traces while investigating; it turns off automatically after 30 minutes. Passwords, PINs, and session tokens are never written to the log.
+Open **Logs** in the Hubitat admin UI and filter for **Modern Dashboard** (device log filter only shows driver text, not this app). Successful device commands log at info as `manual` or `automation {name}` so you can tell a dashboard tap from a scheduler run. Failures (command errors, auth/PIN rejections, scheduler problems) are logged automatically with device and error context. Enable **Debug logging** in app preferences for extra traces while investigating; it turns off automatically after 30 minutes. Passwords, PINs, and session tokens are never written to the log.
 
 ## Community and wider distribution
 

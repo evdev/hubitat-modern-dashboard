@@ -5,7 +5,15 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { scheduleCronForTrigger, cronNextFire, cronFieldValues } from "../lib/scheduler-core.mjs";
+import {
+  scheduleCronForTrigger,
+  cronNextFire,
+  cronFieldValues,
+  dueScheduleIds,
+  nextDispatcherAt,
+  scheduleSunNextFire,
+  validateSchedulePayload,
+} from "../lib/scheduler-core.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = String(18000 + Math.floor(Math.random() * 2000));
@@ -99,7 +107,51 @@ function futureOnceAt(hoursAhead = 2) {
   while (onFire.getDay() !== 1) onFire.setDate(onFire.getDate() + 1);
   const nfAfter = cronNextFire("0 0 8 ? * MON *", onFire.getTime());
   assert(nfAfter != null && nfAfter > onFire.getTime(), "nextFire must not return the just-elapsed minute");
-  console.log("ok unit: cron generation / day-name nextFire");
+
+  // One dispatcher processes every job at the same instant, in stable order.
+  const at = Date.now();
+  const schedules = {
+    "sun-b": { enabled: true, nextFire: at },
+    "sun-a": { enabled: true, nextFire: at },
+    early: { enabled: true, nextFire: at + 500 },
+    recovered: { enabled: true, nextFire: at - 5 * 60 * 1000 },
+    stale: { enabled: true, nextFire: at - 11 * 60 * 1000 },
+    paused: { enabled: false, nextFire: at },
+  };
+  const due = dueScheduleIds(schedules, at);
+  assert(due.join(",") === "recovered,sun-a,sun-b", `dispatcher due order: ${due.join(",")}`);
+  assert(!due.includes("early"), "dispatcher must not fire a future job early");
+  assert(!due.includes("stale"), "dispatcher must not replay stale daily jobs");
+  assert(nextDispatcherAt(schedules, at) === at + 1000, "overdue dispatcher uses minimum delay");
+  assert(nextDispatcherAt({}, at) == null, "no schedules means no dispatcher");
+
+  // A sun offset may fall on the day after its solar event. Rebuilding at
+  // midnight must still consider yesterday's sunset.
+  const midnight = new Date(2026, 8, 15, 0, 0, 0, 0);
+  const crossed = scheduleSunNextFire(
+    { kind: "daily", when: "sunset", offsetMin: 420 },
+    "sunset",
+    midnight.getTime(),
+    (_which, offsetMin, day) => {
+      const sunset = new Date(day);
+      sunset.setHours(18, 0, 0, 0);
+      return sunset.getTime() + offsetMin * 60 * 1000;
+    },
+  );
+  const expectedCrossed = new Date(2026, 8, 15, 1, 0, 0, 0).getTime();
+  assert(crossed === expectedCrossed, `cross-midnight sunset offset: ${new Date(crossed)}`);
+
+  const staleOnce = {
+    enabled: true,
+    trigger: { kind: "once", at: "2020-01-01T00:00" },
+    action: { target: "lights", states: [{ id: 1, on: true }] },
+  };
+  assert(
+    validateSchedulePayload(staleOnce, at) === "one-time schedule must be in the future",
+    "enabling a stale one-time schedule must be rejected",
+  );
+
+  console.log("ok unit: cron generation / day-name nextFire / single dispatcher");
 }
 
 const child = spawn("node", ["preview/server.mjs"], {
