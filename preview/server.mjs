@@ -2359,7 +2359,8 @@ function mockUnknownDeviceError(s) {
     }
   } else if (target === "thermostats") {
     const ids = new Set((state.thermostats || []).map((d) => String(d.i)));
-    for (const id of ac.devices || []) {
+    const raw = Array.isArray(ac.devices) ? ac.devices : (ac.devices != null && ac.devices !== "" ? [ac.devices] : []);
+    for (const id of raw) {
       if (id != null && !ids.has(String(id))) return "thermostat " + id + " is not available in the thermostats picker";
     }
   }

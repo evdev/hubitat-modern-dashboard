@@ -1026,7 +1026,8 @@ function autoScheduleName(draft, catalogs, formatters) {
     scope = scopeFrom(states.map((s) => s.id), catalog, "Device", plural);
     state = switchState(states);
   } else if (target === "thermostats") {
-    const ids = Array.isArray(ac.devices) ? ac.devices : [];
+    const raw = ac.devices;
+    const ids = Array.isArray(raw) ? raw : (raw != null && raw !== "" ? [raw] : []);
     scope = scopeFrom(ids, catalogs?.thermostats || [], "Thermostat", "Thermostats");
     state = thermoState(ac);
   } else if (target === "hubMode") {
