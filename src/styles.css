@@ -3454,6 +3454,84 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
     padding: 14px 18px;
   }
 }
+/* Thermostats tab stays short on phones. .quick-fav-grid is a container, so
+   the one-row query (520px) misses typical phone widths and the default column
+   stack (name, setpoint, controls) made each card ~3× taller. Use a compact
+   two-line card on narrow grids; restore the original 3-column row when there
+   is room. Favorites tiles keep their own stacked/preset layout. */
+.quick-body-thermostats .quick-fav-tstat {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "info info"
+    "sp controls";
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 12px;
+}
+.quick-body-thermostats .quick-fav-tstat-info {
+  grid-area: info;
+  flex-direction: row;
+  align-items: center;
+  width: auto;
+  min-width: 0;
+  gap: 8px;
+}
+.quick-body-thermostats .quick-fav-tstat-name {
+  text-align: left;
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.quick-body-thermostats .quick-fav-tstat-state { align-self: center; flex-shrink: 1; min-width: 0; }
+.quick-body-thermostats .quick-fav-tstat-sp {
+  grid-area: sp;
+  text-align: left;
+  font-size: 32px;
+  justify-self: start;
+}
+.quick-body-thermostats .quick-fav-tstat-controls {
+  grid-area: controls;
+  justify-self: end;
+  margin-top: 0;
+  width: auto;
+  min-width: 0;
+  gap: 6px;
+}
+.quick-body-thermostats .quick-fav-ctl-mode {
+  flex: 1 1 auto;
+  min-width: 72px;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: tstat-mode;
+}
+.quick-body-thermostats .quick-fav-ctl-mode-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: clamp(11px, 18cqi, 13px);
+}
+.quick-body-thermostats .quick-fav-ctl-mode-caret { flex-shrink: 0; }
+@container (min-width: 520px) {
+  .quick-body-thermostats .quick-fav-tstat {
+    grid-template-columns: minmax(0, 1fr) auto minmax(min-content, 1fr);
+    grid-template-areas: "info sp controls";
+    gap: 14px;
+    padding: 14px 18px;
+  }
+  .quick-body-thermostats .quick-fav-tstat-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 7px;
+  }
+  .quick-body-thermostats .quick-fav-tstat-name { width: 100%; }
+  .quick-body-thermostats .quick-fav-tstat-state { align-self: flex-start; }
+  .quick-body-thermostats .quick-fav-tstat-sp {
+    text-align: center;
+    font-size: 40px;
+    justify-self: center;
+  }
+}
 .quick-fav-tstat.mode-heat { --tstat-accent: #ff8a5c; }
 .quick-fav-tstat.mode-cool { --tstat-accent: #5b9cff; }
 .quick-fav-tstat.mode-auto { --tstat-accent: #b58cff; }

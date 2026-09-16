@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.13
+
+- **Thermostats tab:** restore compact cards on phones. Name, setpoint, and
+  mode controls were stacking on typical phone widths, so only a few thermostats
+  fit on screen. Phones now use a short two-line card; wider layouts keep the
+  original one-row controls. Mode names still scale to fit the pill instead of
+  clipping.
+
 ## 0.4.12
 
 - **Thermostats:** overflow **Reorder** on the Thermostats tab rearranges thermostat
