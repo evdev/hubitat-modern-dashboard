@@ -5,7 +5,17 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { scheduleCronForTrigger, cronNextFire, cronFieldValues } from "../lib/scheduler-core.mjs";
+import {
+  scheduleCronForTrigger,
+  cronNextFire,
+  cronFieldValues,
+  modeCycleError,
+  parseLocalDateTimeMs,
+  dueScheduleIds,
+  nextDispatcherAt,
+  scheduleSunNextFire,
+  validateSchedulePayload,
+} from "../lib/scheduler-core.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = String(18000 + Math.floor(Math.random() * 2000));
@@ -99,7 +109,65 @@ function futureOnceAt(hoursAhead = 2) {
   while (onFire.getDay() !== 1) onFire.setDate(onFire.getDate() + 1);
   const nfAfter = cronNextFire("0 0 8 ? * MON *", onFire.getTime());
   assert(nfAfter != null && nfAfter > onFire.getTime(), "nextFire must not return the just-elapsed minute");
+  assert(Number.isNaN(parseLocalDateTimeMs("2026-02-31T10:00")), "impossible calendar date should reject");
+  assert(Number.isFinite(parseLocalDateTimeMs("2028-02-29T10:00")), "valid leap date should parse");
+
+  // Dispatcher helpers still order due jobs for tests; Hubitat arms per-job
+  // scheduledJobHandler with overwrite:false.
+  const at = Date.now();
+  const schedules = {
+    "sun-b": { enabled: true, nextFire: at },
+    "sun-a": { enabled: true, nextFire: at },
+    early: { enabled: true, nextFire: at + 500 },
+    recovered: { enabled: true, nextFire: at - 5 * 60 * 1000 },
+    stale: { enabled: true, nextFire: at - 11 * 60 * 1000 },
+    paused: { enabled: false, nextFire: at },
+  };
+  const due = dueScheduleIds(schedules, at);
+  assert(due.join(",") === "recovered,sun-a,sun-b", `due order: ${due.join(",")}`);
+  assert(!due.includes("early"), "must not fire a future job early");
+  assert(!due.includes("stale"), "must not replay stale daily jobs");
+  assert(nextDispatcherAt(schedules, at) === at + 1000, "overdue uses minimum delay");
+  assert(nextDispatcherAt({}, at) == null, "no schedules means no dispatcher");
+
+  const midnight = new Date(2026, 8, 15, 0, 0, 0, 0);
+  const crossed = scheduleSunNextFire(
+    { kind: "daily", when: "sunset", offsetMin: 420 },
+    "sunset",
+    midnight.getTime(),
+    (_which, offsetMin, day) => {
+      const sunset = new Date(day);
+      sunset.setHours(18, 0, 0, 0);
+      return sunset.getTime() + offsetMin * 60 * 1000;
+    },
+  );
+  const expectedCrossed = new Date(2026, 8, 15, 1, 0, 0, 0).getTime();
+  assert(crossed === expectedCrossed, `cross-midnight sunset offset: ${new Date(crossed)}`);
+
+  const staleOnce = {
+    enabled: true,
+    trigger: { kind: "once", at: "2020-01-01T00:00" },
+    action: { target: "lights", states: [{ id: 1, on: true }] },
+  };
+  assert(
+    validateSchedulePayload(staleOnce, at) === "one-time schedule must be in the future",
+    "enabling a stale one-time schedule must be rejected",
+  );
+
   console.log("ok unit: cron generation / day-name nextFire");
+}
+
+{
+  assert(modeCycleError([{ id: "a", enabled: true, trigger: { kind: "mode", mode: "Day" }, action: { target: "hubMode", mode: "Day" } }]) === "mode trigger cannot set the same hub mode", "self-loop rejected");
+  assert(modeCycleError([
+    { id: "a", enabled: true, trigger: { kind: "mode", mode: "Day" }, action: { target: "hubMode", mode: "Evening" } },
+    { id: "b", enabled: true, trigger: { kind: "mode", mode: "Evening" }, action: { target: "hubMode", mode: "Day" } },
+  ]) === "mode schedules form a hub-mode loop", "A→B→A rejected");
+  assert(modeCycleError([
+    { id: "a", enabled: true, trigger: { kind: "mode", mode: "Day" }, action: { target: "hubMode", mode: "Evening" } },
+    { id: "b", enabled: true, trigger: { kind: "mode", mode: "Evening" }, action: { target: "lights", states: [{ id: 1, on: false }] } },
+  ]) == null, "mode→lights cascade allowed");
+  console.log("ok unit: mode-cycle validation");
 }
 
 const child = spawn("node", ["preview/server.mjs"], {
@@ -121,6 +189,8 @@ try {
 
   const data = await getJson("/data");
   assert(data.schedulerEnabled !== false, "scheduler enabled in /data");
+  assert(typeof data.hubTimeZone === "string" && data.hubTimeZone.length > 0, "hubTimeZone present");
+  assert(Number.isFinite(Number(data.hubNow)) && Number(data.hubNow) > 0, "hubNow present");
   assert(data.sunTimes?.sunrise != null && data.sunTimes?.sunset != null, "sunTimes present");
   assert(Array.isArray(data.schedules), "local /data includes schedules");
 
@@ -258,6 +328,76 @@ try {
     const row = json.schedules.find((s) => s.id === "sc-demo-1");
     assert(row.lastFired === seeded.lastFired, "lastFired preserved on update");
     assert(row.name === "Evening lights updated", "name updated");
+  }
+
+  // Cloud /data omits schedules; GET /schedules still works
+  {
+    const cloud = await getJson("/data?omitSchedules=1");
+    assert(cloud.schedules === null, "cloud-style /data omits schedules");
+    const list = await getJson("/schedules");
+    assert(Array.isArray(list.schedules) && list.schedules.length > 0, "GET /schedules still returns list");
+  }
+
+  // Failed GET /schedules
+  {
+    const sep = dashSessionQuery ? "&" : "?";
+    const res = await fetch(`http://127.0.0.1:${PORT}/schedules?fail=1${sep}${dashSessionQuery}`);
+    assert(res.status === 500, "failed schedules GET is 500");
+    const json = await res.json();
+    assert(json.ok === false && /unreadable/.test(json.error || ""), "failed GET explains store error");
+  }
+
+  // Unknown device rejected
+  {
+    const { res, json } = await postJson("/schedules/save", {
+      name: "Missing light",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "11:00" },
+      action: { target: "lights", states: [{ id: 99999, on: true }] },
+    });
+    assert(res.status === 422 && json.ok === false, "unknown light id should 422");
+    assert(/not available/.test(json.error || ""), `unknown device error: ${json.error}`);
+  }
+
+  // Mode self-loop / cycle
+  {
+    const { res, json } = await postJson("/schedules/save", {
+      name: "Self mode",
+      enabled: true,
+      trigger: { kind: "mode", mode: "Day" },
+      action: { target: "hubMode", mode: "Day" },
+    });
+    assert(res.status === 422 && json.ok === false, "mode self-loop should 422");
+  }
+  {
+    const a = await postJson("/schedules/save", {
+      name: "Day to Evening",
+      enabled: true,
+      trigger: { kind: "mode", mode: "Day" },
+      action: { target: "hubMode", mode: "Evening" },
+    });
+    assert(a.res.status === 200 && a.json.ok, "first mode-edge save ok");
+    const b = await postJson("/schedules/save", {
+      name: "Evening to Day",
+      enabled: true,
+      trigger: { kind: "mode", mode: "Evening" },
+      action: { target: "hubMode", mode: "Day" },
+    });
+    assert(b.res.status === 422 && b.json.ok === false, "mode cycle should 422");
+    assert(/loop/.test(b.json.error || ""), `cycle error: ${b.json.error}`);
+  }
+
+  // Test returns lastResult without consuming the schedule
+  {
+    const { res, json } = await postJson("/schedules/test", { id: "sc-demo-1" });
+    assert(res.status === 200 && json.ok, "test ok");
+    assert(json.lastResult && json.lastResult.ok === true, "test lastResult present");
+    const failed = await postJson("/schedules/test", { id: "sc-demo-1", simulateResult: "failed" });
+    assert(failed.res.status === 200 && failed.json.ok === false, "failed action must not report top-level success");
+    assert(failed.json.lastResult?.failed?.length === 1, "failed action result must include failed target");
+    const missing = await postJson("/schedules/test", { id: "sc-demo-1", simulateResult: "missing" });
+    assert(missing.res.status === 200 && missing.json.ok === false, "missing target must not report top-level success");
+    assert(missing.json.lastResult?.missing?.length === 1, "missing action result must include target");
   }
 
   console.log("ok api: scheduler CRUD / nextFire / validation");

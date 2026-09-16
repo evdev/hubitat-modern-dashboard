@@ -1,5 +1,96 @@
 # Changelog
 
+## 0.4.15
+
+- **Thermostats tab:** restore compact three-column cards on phones (name and
+  status, setpoint, mode controls). Names wrap to two lines at a slightly
+  larger size; the “now” temperature stays on the bottom of every card; the
+  setpoint omits °F so on/off rows keep even control spacing; +/- buttons are
+  a bit larger; long HVAC modes wrap to two lines in the pill.
+
+## 0.4.14
+
+- **Thermostats tab:** restore the compact three-column cards on phones (name
+  and status, setpoint, mode controls). Cards are slightly taller so a long
+  HVAC mode can wrap to two lines in the pill, names wrap instead of
+  truncating, and the current “now” temperature is a bit larger.
+
+## 0.4.13
+
+- **Thermostats tab:** restore compact cards on phones. Name, setpoint, and
+  mode controls were stacking on typical phone widths, so only a few thermostats
+  fit on screen. Phones now use a short two-line card; wider layouts keep the
+  original one-row controls. Mode names still scale to fit the pill instead of
+  clipping.
+
+## 0.4.12
+
+- **Thermostats:** overflow **Reorder** on the Thermostats tab rearranges thermostat
+  cards (drag or up/down) and saves the order on the hub. Lights still reorders
+  rooms and quick-nav icons.
+- **Thermostats:** HVAC mode labels on the card pill shrink to fit so long names
+  are not clipped; the pill size stays the same.
+- **Build:** File Manager JS/CSS must stay ≤ **120 KB** (blobs near 124 KB have
+  truncated). Favorites tile CSS moved into `mld-app.css`, and HTML-tile helpers
+  into `mld-app-core.js`, so `mld-app-core.js` / `mld-app-post.js` keep headroom.
+- **Scheduler:** Register sun and one-time jobs with `overwrite: false` so multiple
+  schedules can share `scheduledJobHandler`. After a sunrise/sunset fire, re-arm
+  only that schedule instead of unscheduling every pending job.
+- **Scheduler:** Five-minute cleanup rebuilds jobs only when a past one-time row
+  was pruned. Midnight re-arm moved to 00:01 so it does not compete with midnight
+  clock schedules.
+- **Scheduler:** Corrupt `schedulesJson` no longer looks like an empty list; save/
+  toggle/delete/import fail closed instead of wiping stored schedules.
+- **Scheduler:** Reject hub-mode trigger/action loops (including setting the same
+  mode). Missing or failed devices are recorded on `lastResult` instead of looking
+  like a full success.
+- **Scheduler:** Persist the rapid mode-transition guard across asynchronous hub
+  events, retry failed sun re-arms without rebuilding sibling jobs, and reject
+  impossible one-time calendar dates.
+- **Scheduler UI:** Cloud dashboards refresh the schedule list while Scheduler is
+  open; a failed load shows retry instead of “No schedules yet.” Create/Save
+  ignores double-taps. Times follow hub timezone. **Run actions now** states that
+  it ignores pause and mode rules.
+- **Scheduler UI:** Serialize mutations and reject stale refresh responses. Pending
+  row actions stay disabled across polling renders, and failed manual runs no
+  longer display a success message.
+- **Fix:** move HTML tile card helpers into `mld-app-post.js` so scheduler UI can
+  ship in `mld-app-post3.js` under Hubitat Cloud’s JS size limit.
+- **Build:** Preserve unrelated packages in the shared HPM repository catalog and
+  rebalance order-persistence helpers to restore File Manager size headroom.
+
+## 0.4.11
+
+- **Logging:** device commands write Hubitat info lines tagged `manual` or
+  `automation {name}` so Logs can distinguish a dashboard tap from a scheduler
+  run (per-device schedule traces no longer require Debug logging).
+- **Scheduler fix:** sunrise/sunset/one-time automations no longer overwrite each
+  other. One dispatcher is armed for the earliest clock, sunrise/sunset
+  (including offsets), or one-time schedule and runs every automation due at
+  that instant together. This removes shared-handler overwrites, duplicate
+  `runOnce` entries, same-second state races, and midnight cancellation of
+  00:00 jobs. Hubitat single-threaded app execution protects schedule updates;
+  a five-minute watchdog recovers missed callbacks without deleting due
+  one-time actions first.
+
+## 0.4.10
+
+- **Scheduler:** The generated name fills the name field on every wizard step and
+  updates as you change devices, on/off, or time. Edit it to keep a custom name.
+
+## 0.4.9
+
+- **Scheduler:** Blank schedule names now save as a readable default — device or
+  room, on/off (or thermostat mode/setpoint), and time — instead of
+  “Daily 7:30 PM lights”. The name field placeholder is “unfinished automation”
+  until save.
+
+## 0.4.8
+
+- **Lights:** Room cards show temperature from multi-sensors (motion + temperature,
+  etc.) even when the device is only in a Sensors picker, not Temperature sensors.
+  Dedicated temp sensors and thermostats still take priority.
+
 ## 0.4.7
 
 - **Thermostats:** Comfort extras on the dial popup when the driver supports them —

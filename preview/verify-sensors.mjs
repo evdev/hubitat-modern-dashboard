@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildMergedSensorCard, sensorCardFilterTypes } from "./merge-sensor-card.mjs";
+import { buildMergedSensorCard, sensorCardFilterTypes, sensorTemperatureReading, climateSensorsByRoom } from "./merge-sensor-card.mjs";
 import { filterSensorExForType, sensorLastEventLine, sensorCardFootText, mockSensorExFooter } from "./sensor-ex-display.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -150,6 +150,20 @@ async function main() {
     assert(mergedGeneric.ex.some((e) => e.k === "temperature" && e.v === dualGenericTemp.temp), "merged generic card folds temperature into ex[]");
     const mergedGenericTypes = sensorCardFilterTypes(mergedGeneric);
     assert(mergedGenericTypes.has("generic") && mergedGenericTypes.has("temp"), "temp+generic tile counts in both filter categories");
+
+    const motionClimate = sensorTemperatureReading(motionMulti);
+    assert(motionClimate && Math.round(motionClimate.temp) === 68, "motion multisensor temperature reading for Lights room climate");
+    const climateByRoom = climateSensorsByRoom(data.tempSensors, data.sensors);
+    const garageClimate = climateByRoom.get(6);
+    assert(garageClimate?.some((s) => s.i === 2103), "Garage room climate falls back to motion multisensor 2103");
+    const kitchenClimate = climateByRoom.get(2);
+    assert(kitchenClimate?.some((s) => s.i === 2001), "Kitchen keeps dedicated temp sensor");
+    assert(!kitchenClimate?.some((s) => s.i === 2108), "dedicated temp sensor is not overridden by other kitchen sensors");
+    const dedicatedWins = climateSensorsByRoom(
+      [{ i: 1, n: "Dedicated", r: 42, temp: 70, u: "F" }],
+      [{ i: 2, n: "Motion", r: 42, t: "motion", ex: [{ k: "temperature", v: 68, u: "F" }] }],
+    );
+    assert(dedicatedWins.get(42)?.[0]?.i === 1, "dedicated temp sensor wins over motion extra in the same room");
 
     const motion = data.sensors.find((s) => s.t === "motion");
     const motionDev = await getJson(`/device?id=${motion.i}`);

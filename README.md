@@ -172,6 +172,10 @@ quick-nav popup (when enabled) and in room headers when assigned to a room.
 - **All thermostats:** top-bar button (when multiple thermostats are configured)
   opens a central control with a multi-select target menu — choose which units to
   adjust, then apply mode or setpoints to the selection
+- **Reorder:** on the Thermostats tab, overflow **Reorder** lets you drag or move
+  cards; the order is saved on the hub and syncs across devices
+- **Mode pill:** the round HVAC-mode control keeps a fixed size; long mode names
+  scale down so they stay inside the pill
 - **Compact favorites:** thermostat favorites can use **Compact** size — a mini
   ring shows current temp with setpoint and mode beside it; tap opens the full dial
 
@@ -432,7 +436,8 @@ triggers.
 | Hub mode | Set location mode |
 
 Each schedule row shows last run and next run. Use the per-row toggle to
-enable/disable, or **Test** to fire immediately. Times display in 12h or 24h
+enable/disable, or **Run actions now** to fire immediately (ignores pause and
+mode restrictions). Times follow the hub timezone and display in 12h or 24h
 format per the **Use 24-hour time in scheduler** app preference (stored internally
 as 24h for reliable firing).
 
@@ -529,6 +534,8 @@ top-bar expand/collapse-all button toggles every room.
 - **Favorites tab:** drag handles and move buttons reorder favorite tiles;
   the Size control opens a named size chooser (and Zoom for HTML tiles); order,
   sizes, and special tiles sync across devices.
+- **Thermostats tab:** drag handles and move buttons reorder thermostat cards;
+  order syncs to the hub. Lights still reorder rooms and quick-nav icons.
 
 ### UI preferences
 
@@ -727,9 +734,9 @@ HPM_BASE_URL=https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/ma
 The Groovy app does **not** embed the UI (Hubitat cannot compile huge blobs). The
 app reads **12 files** from File Manager at runtime. JS is split into
 `mld-app.js`, `mld-app-core.js`, `mld-app-post.js`,
-`mld-app-post2.js`, and `mld-app-post3.js` to stay under the hub's **124 KB**
-per-file File Manager limit (constants from `src/app-pre.js` are merged into
-`mld-app.js`). CSS is split into `mld-app.css` and `mld-app-post.css`. PWA assets
+`mld-app-post2.js`, and `mld-app-post3.js` to stay under File Manager size limits
+(constants from `src/app-pre.js` are merged into `mld-app.js`). CSS is split into
+`mld-app.css` and `mld-app-post.css`. PWA assets
 (`mld-manifest.webmanifest`, `mld-sw.js`, icon `.b64` files) enable home-screen
 install on the cloud URL. Icons are stored as base64 text because Hubitat cannot
 reliably serve binary PNGs from File Manager.
@@ -738,13 +745,11 @@ reliably serve binary PNGs from File Manager.
 
 | Asset type | Max size | Why |
 | ---------- | -------- | --- |
-| All File Manager JS/CSS | 124 KB | Hubitat File Manager per-file ceiling |
+| All File Manager JS/CSS | **120 KB** | File Manager’s documented ceiling is ~124 KB, but blobs near that size truncate |
 | Cloud-critical JS: `mld-app.js`, `mld-app-post2.js`, `mld-app-post3.js` | **118 KB** | Hubitat Cloud OAuth/MQTT; oversized → blank cloud dashboard / missing icons |
 
-Other JS chunks (`mld-app-core.js`, `mld-app-post.js`, `mld-sw.js`)
-may use the full 124 KB. When a cloud-critical chunk approaches 118 KB, move code
-across the `__MLD_SPLIT*` markers in `src/app.js` into a non-critical chunk. Do not
-raise the 118 KB cloud-critical limit.
+When a chunk approaches its limit, move code across the `__MLD_SPLIT*` markers in
+`src/app.js` (or CSS into `src/styles.css`). Do not raise these caps.
 
 ### File Manager assets (exact names)
 
@@ -886,7 +891,7 @@ ordinary lights (use **Lights** for those).
 
 ### Diagnosing issues
 
-Open **Logs** in the Hubitat admin UI and filter for **Modern Dashboard**. Failures (command errors, auth/PIN rejections, scheduler problems) are logged automatically with device and error context. Enable **Debug logging** in app preferences for command traces while investigating; it turns off automatically after 30 minutes. Passwords, PINs, and session tokens are never written to the log.
+Open **Logs** in the Hubitat admin UI and filter for **Modern Dashboard** (device log filter only shows driver text, not this app). Successful device commands log at info as `manual` or `automation {name}` so you can tell a dashboard tap from a scheduler run. Failures (command errors, auth/PIN rejections, scheduler problems) are logged automatically with device and error context. Enable **Debug logging** in app preferences for extra traces while investigating; it turns off automatically after 30 minutes. Passwords, PINs, and session tokens are never written to the log.
 
 ## Community and wider distribution
 
@@ -926,8 +931,8 @@ Nothing to edit.
 
 - UI assets live in Hubitat **File Manager** (`mld-*` files). The Groovy SmartApp
   serves them and implements a slim JSON API — no Maker API.
-- JS is split into five app chunks (+ service worker) under the **124 KB** File Manager
-  limit. Cloud-critical chunks (`mld-app.js`, `mld-app-post2.js`, `mld-app-post3.js`) must stay ≤ **118 KB**
+- JS is split into five app chunks (+ service worker) under a **120 KB** File Manager
+  safety cap (truncation has happened near 124 KB). Cloud-critical chunks (`mld-app.js`, `mld-app-post2.js`, `mld-app-post3.js`) must stay ≤ **118 KB**
   (cloud OAuth/MQTT).
 - PWA manifest and pass-through service worker enable home-screen install from the
   cloud URL.

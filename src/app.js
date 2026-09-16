@@ -619,7 +619,7 @@
     }
   }
 
-  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", defaultTab: "lights", roomOrder: null, navOrder: null, cameraOrder: null, enableHaptics: loadHapticsPref(), enableNotifSound: loadNotifSoundPref(), enableTabs: loadTabsPref(), enableDrawer: loadDrawerPref(), camerasCols: loadCamerasColsPref(), sensorsFlat: loadSensorsFlatPref(), localUrl: "", cloudUrl: "" };
+  let cfg = { pollIntervalMs: POLL_DEFAULT, useWebSocket: false, theme: loadThemePref(), dashboardName: "mDash", defaultTab: "lights", roomOrder: null, navOrder: null, cameraOrder: null, thermostatOrder: null, enableHaptics: loadHapticsPref(), enableNotifSound: loadNotifSoundPref(), enableTabs: loadTabsPref(), enableDrawer: loadDrawerPref(), camerasCols: loadCamerasColsPref(), sensorsFlat: loadSensorsFlatPref(), localUrl: "", cloudUrl: "" };
 
   let localModeBannerEl = null;
   let localBannerDismissed = false;
@@ -648,6 +648,10 @@
   let navReorderSnapshot = null;
   let navReorderDraftOrder = null;
   let navReorderDrawerRelocated = false;
+  let tstatReorderActive = false;
+  let tstatReorderSnapshot = null;
+  let tstatReorderDraftOrder = null;
+  const tstatReorderEls = new Map();
   const navEls = new Map(); // navKey -> { wrap, btn, handle }
 
   let colorPopup = null;
@@ -668,7 +672,7 @@
   let thermostats = [];          // [{i,n,r,tm,os,hsp,csp,temp,u,hasFm,fm,hasFs,fs,supM,supFM,fsLev,hasCm,hasCfs,cfs,hasVp,vp,vpLev}]
   let tempSensors = [];          // [{i,n,r,temp,u}]
   let thermoByRoom = new Map();  // roomId -> [thermostat]
-  let sensorByRoom = new Map();  // roomId -> [temp sensor]
+  let sensorByRoom = new Map();  // roomId -> [temp sensor or multi-sensor with temperature]
   let climateEls = new Map();    // roomId -> { el, iconEl, tempEl, controllable }
   let tstatPopup = null;
   let tstatSession = null;       // { rid, anchor, ids:[], unit, edit:"heat"|"cool" }
@@ -1747,8 +1751,9 @@
   }
 
   function formatRoomTemp(device) {
-    if (device?.temp == null) return "—";
-    return Math.round(Number(device.temp)) + tstatTempSuffix(device.u);
+    const reading = sensorTemperatureReading(device);
+    if (!reading) return "—";
+    return Math.round(reading.temp) + tstatTempSuffix(reading.u);
   }
 
   function roomClimateInfo(rid) {
@@ -2064,6 +2069,9 @@
       if (!reorderMode && Array.isArray(d.config.cameraOrder)) {
         cfg.cameraOrder = d.config.cameraOrder.length ? d.config.cameraOrder : null;
       }
+      if (!reorderMode && Array.isArray(d.config.thermostatOrder)) {
+        cfg.thermostatOrder = d.config.thermostatOrder.length ? d.config.thermostatOrder : null;
+      }
       if (d.config.localUrl != null) cfg.localUrl = String(d.config.localUrl || "");
       if (d.config.cloudUrl != null) cfg.cloudUrl = String(d.config.cloudUrl || "");
       if (Array.isArray(d.config.favorites) && d.config.favoriteSizes) {
@@ -2179,10 +2187,8 @@
 
   function repopulateSensorByRoom() {
     sensorByRoom.clear();
-    for (const s of tempSensors) {
-      const rid = normalizeRoomId(s.r);
-      if (!sensorByRoom.has(rid)) sensorByRoom.set(rid, []);
-      sensorByRoom.get(rid).push(s);
+    for (const [rid, list] of climateSensorsByRoom(tempSensors, sensors)) {
+      sensorByRoom.set(rid, list);
     }
   }
 
@@ -2193,139 +2199,6 @@
 
   // ---------- render ----------
   // __MLD_SPLIT_CORE__
-
-  // Embed / time card chrome styles live in JS (not mld-app.css) to stay under Hubitat's 124 KB CSS blob limit.
-  // Kept in mld-app-core.js so mld-app.js (cloud-critical) stays under the 118 KB limit.
-  function ensureFavEmbedStyles() {
-    if (document.getElementById("mld-fav-embed-css")) return;
-    const style = document.createElement("style");
-    style.id = "mld-fav-embed-css";
-    style.textContent =
-      ".fav-embed-card{display:flex;flex-direction:column;min-width:0;min-height:0;border:1px solid var(--stroke);border-radius:16px;background:var(--panel);overflow:hidden;position:relative}" +
-      ".fav-embed-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--stroke)}" +
-      ".fav-embed-title{flex:1;min-width:0;font-size:.92rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
-      ".fav-embed-actions{display:flex;align-items:center;gap:4px;position:relative}" +
-      ".fav-embed-open,.fav-embed-expand,.fav-embed-menu-btn,.fav-embed-close-expand{border:1px solid var(--stroke-2);background:var(--panel-solid);color:var(--text);border-radius:999px;padding:4px 10px;font-size:.78rem;font-weight:700;text-decoration:none;cursor:pointer}" +
-      ".fav-embed-menu{position:absolute;right:0;top:calc(100% + 4px);min-width:120px;z-index:5;padding:4px;background:var(--panel-solid);border:1px solid var(--stroke-2);border-radius:12px;box-shadow:var(--shadow)}" +
-      ".fav-embed-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:8px 10px;border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer}" +
-      ".fav-embed-menu-item.danger{color:#ef4444}" +
-      ".fav-embed-media{position:relative;flex:1;min-height:160px;background:#000}" +
-      ".fav-size-compact.fav-embed-card .fav-embed-media{min-height:120px}" +
-      ".fav-size-standard.fav-embed-card .fav-embed-media{min-height:160px}" +
-      ".fav-size-wide.fav-embed-card .fav-embed-media{min-height:180px}" +
-      ".fav-size-square.fav-embed-card .fav-embed-media{min-height:0}" +
-      ".fav-size-portrait.fav-embed-card .fav-embed-media{min-height:220px}" +
-      ".fav-size-full.fav-embed-card .fav-embed-media{min-height:140px}" +
-      ".fav-size-tall.fav-embed-card .fav-embed-media{min-height:240px}" +
-      ".fav-size-large.fav-embed-card .fav-embed-media{min-height:320px}" +
-      ".fav-size-viewport.fav-embed-card .fav-embed-media{min-height:calc(100dvh - 11rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))}" +
-      ".fav-embed-iframe{position:absolute;inset:0;width:100%;height:100%;border:0}" +
-      ".favorites-reorder-mode .fav-embed-iframe{pointer-events:none}" +
-      ".fav-embed-hint{position:absolute;left:8px;right:8px;bottom:8px;z-index:1;font-size:.72rem;font-weight:600;color:rgba(255,255,255,.78);pointer-events:none}" +
-      ".fav-embed-blocked{display:grid;place-items:center;text-align:center;padding:16px;font-size:.88rem;font-weight:600;min-height:140px}" +
-      ".fav-embed-card.fav-embed-expanded{position:fixed;inset:0;z-index:80;border-radius:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}" +
-      ".fav-embed-card.fav-embed-expanded .fav-embed-media{min-height:0}" +
-      ".fav-embed-close-expand{position:absolute;top:calc(10px + env(safe-area-inset-top));right:12px;z-index:3}" +
-      "body.fav-embed-expanded-open{overflow:hidden}" +
-      ".favorites-persist{padding:6px 14px calc(24px + env(safe-area-inset-bottom))}" +
-      ".favorites-persist[hidden]{display:none!important}" +
-      ".fav-embed-expand-placeholder{border-radius:16px;border:1px dashed var(--stroke)}" +
-      ".fav-html-card{display:flex;flex-direction:column;min-width:0;min-height:0;border:1px solid var(--stroke);border-radius:16px;background:var(--panel);overflow:hidden;position:relative;--html-zoom:1}" +
-      ".fav-html-media{position:relative;flex:1;min-height:160px;background:var(--panel-solid);overflow:hidden}" +
-      ".fav-size-compact.fav-html-card .fav-html-media{min-height:120px}" +
-      ".fav-size-standard.fav-html-card .fav-html-media{min-height:160px}" +
-      ".fav-size-wide.fav-html-card .fav-html-media{min-height:180px}" +
-      ".fav-size-square.fav-html-card .fav-html-media{min-height:0}" +
-      ".fav-size-portrait.fav-html-card .fav-html-media{min-height:220px}" +
-      ".fav-size-full.fav-html-card .fav-html-media{min-height:140px}" +
-      ".fav-size-tall.fav-html-card .fav-html-media{min-height:240px}" +
-      ".fav-size-large.fav-html-card .fav-html-media{min-height:320px}" +
-      ".fav-size-viewport.fav-html-card .fav-html-media{min-height:calc(100dvh - 11rem - env(safe-area-inset-top) - env(safe-area-inset-bottom))}" +
-      ".fav-html-iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent}" +
-      ".fav-html-iframe[data-html-mode=stub]{transform:scale(var(--html-zoom));transform-origin:top left;width:calc(100%/var(--html-zoom));height:calc(100%/var(--html-zoom))}" +
-      ".favorites-reorder-mode .fav-html-iframe{pointer-events:none}" +
-      ".fav-html-unavailable{display:grid;place-items:center;height:100%;min-height:140px;padding:16px;text-align:center;color:var(--muted);font-size:.88rem;font-weight:600;line-height:1.4}" +
-      ".fav-html-card.fav-embed-expanded{position:fixed;inset:0;z-index:80;border-radius:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}" +
-      ".fav-html-card.fav-embed-expanded .fav-html-media{min-height:0}" +
-      ".fav-html-picker-panel{width:min(460px,calc(100svw - 32px))}" +
-      ".fav-html-picker-list{display:flex;flex-direction:column;gap:8px;max-height:min(54dvh,420px);overflow:auto;margin:12px 0}" +
-      ".fav-html-picker-option{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--stroke);border-radius:12px;background:var(--panel-solid);color:var(--text);cursor:pointer}" +
-      ".fav-html-picker-option input{margin-top:2px}" +
-      ".fav-html-picker-copy{display:flex;min-width:0;flex-direction:column;gap:2px}" +
-      ".fav-html-picker-name{font-size:.9rem;font-weight:700;overflow-wrap:anywhere}" +
-      ".fav-html-picker-meta{font-size:.74rem;color:var(--muted);overflow-wrap:anywhere}" +
-      ".fav-empty{display:flex;flex-direction:column;gap:12px;padding:8px 2px 20px;color:var(--muted)}" +
-      ".fav-empty-actions{display:flex;flex-wrap:wrap;gap:8px}" +
-      ".fav-embed-editor-panel{width:min(440px,calc(100svw - 32px))}" +
-      ".fav-embed-editor-heading{margin:0 0 6px;font-size:1.1rem}" +
-      ".fav-embed-editor-help{margin:0 0 12px;color:var(--muted);font-size:.88rem;line-height:1.4}" +
-      ".fav-embed-field{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;font-size:.82rem;font-weight:700;color:var(--muted)}" +
-      ".fav-embed-url-input{width:100%;min-height:88px;resize:vertical;border-radius:12px;border:1px solid var(--stroke-2);background:var(--bg);color:var(--text);padding:10px 12px;font:inherit}" +
-      ".fav-embed-editor-error{color:#ef4444;font-size:.85rem;font-weight:600;margin-bottom:8px}" +
-      ".fav-embed-editor-preview{border:1px solid var(--stroke);border-radius:12px;overflow:hidden;height:160px;margin-bottom:12px;background:#000}" +
-      ".fav-embed-editor-preview-frame{width:100%;height:100%;border:0}" +
-      ".fav-time-card{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-width:0;min-height:0;height:100%;border:1px solid var(--stroke);border-radius:16px;background:linear-gradient(165deg,color-mix(in srgb,var(--accent) 12%,var(--panel-solid)),var(--panel-solid) 58%);overflow:hidden;position:relative;padding:18px 14px;text-align:center;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--accent) 22%,transparent)}" +
-      ".fav-time-card::before{content:\"\";position:absolute;inset:0;background:radial-gradient(ellipse 90% 70% at 50% -10%,color-mix(in srgb,var(--accent) 22%,transparent),transparent 68%);pointer-events:none}" +
-      ".fav-time-actions{position:absolute;top:8px;right:8px;z-index:2}" +
-      ".fav-time-menu-btn{border:1px solid var(--stroke-2);background:color-mix(in srgb,var(--panel-solid) 88%,transparent);color:var(--text);border-radius:999px;padding:4px 10px;font-size:.78rem;font-weight:700;cursor:pointer}" +
-      ".fav-time-menu{position:absolute;right:0;top:calc(100% + 4px);min-width:120px;z-index:5;padding:4px;background:var(--panel-solid);border:1px solid var(--stroke-2);border-radius:12px;box-shadow:var(--shadow)}" +
-      ".fav-time-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:8px 10px;border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer}" +
-      ".fav-time-menu-item.danger{color:#ef4444}" +
-      ".fav-time-body{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:100%;min-height:0;flex:1}" +
-      ".fav-time-clock{font-size:clamp(1.55rem,5.2vw,2.55rem);font-weight:700;letter-spacing:.03em;font-variant-numeric:tabular-nums;line-height:1.05;color:var(--text)}" +
-      ".fav-time-card[data-style=time_seconds] .fav-time-clock{font-size:clamp(1.25rem,4.4vw,2.05rem)}" +
-      ".fav-time-ampm{margin-left:.18em;font-size:.42em;font-weight:700;letter-spacing:.06em;color:var(--accent-2);vertical-align:super}" +
-      ".fav-time-date{font-size:.8rem;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim)}" +
-      ".fav-size-compact.fav-time-card{padding:8px 10px}" +
-      ".fav-size-compact.fav-time-card .fav-time-clock{font-size:clamp(1.05rem,3.6vw,1.45rem)}" +
-      ".fav-size-compact.fav-time-card[data-style=time_seconds] .fav-time-clock{font-size:clamp(.95rem,3.2vw,1.25rem)}" +
-      ".fav-size-compact.fav-time-card .fav-time-date{font-size:.68rem;margin-top:2px}" +
-      ".fav-size-standard.fav-time-card .fav-time-clock{font-size:clamp(1.35rem,4.4vw,1.95rem)}" +
-      ".fav-size-standard.fav-time-card[data-style=time_seconds] .fav-time-clock{font-size:clamp(1.15rem,3.8vw,1.65rem)}" +
-      ".fav-size-square.fav-time-card .fav-time-clock{font-size:clamp(1.7rem,5.6vw,2.75rem)}" +
-      ".fav-size-square.fav-time-card[data-style=time_seconds] .fav-time-clock{font-size:clamp(1.35rem,4.6vw,2.2rem)}" +
-      ".fav-size-wide.fav-time-card .fav-time-clock{font-size:clamp(1.85rem,5.8vw,3rem)}" +
-      ".fav-size-wide.fav-time-card[data-style=time_seconds] .fav-time-clock{font-size:clamp(1.45rem,4.8vw,2.35rem)}" +
-      ".fav-size-tall.fav-time-card{padding:28px 18px}" +
-      ".fav-size-tall.fav-time-card .fav-time-clock{font-size:clamp(2.4rem,8vw,4.2rem)}" +
-      ".fav-size-tall.fav-time-card[data-style=time_seconds] .fav-time-clock{font-size:clamp(1.9rem,6.5vw,3.3rem)}" +
-      ".fav-size-tall.fav-time-card .fav-time-date{font-size:1rem;margin-top:10px}" +
-      ".fav-size-large.fav-time-card{padding:36px 20px}" +
-      ".fav-size-large.fav-time-card .fav-time-clock{font-size:clamp(3rem,10vw,5.4rem)}" +
-      ".fav-size-large.fav-time-card[data-style=time_seconds] .fav-time-clock{font-size:clamp(2.3rem,8vw,4.2rem)}" +
-      ".fav-size-large.fav-time-card .fav-time-date{font-size:1.15rem;margin-top:14px;letter-spacing:.1em}" +
-      ".favorites-reorder-mode .fav-reorder-content.fav-time-card{height:100%}" +
-      ".fav-time-style-list{display:flex;flex-direction:column;gap:8px;margin:0 0 14px}" +
-      ".fav-time-style-option{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--stroke);border-radius:12px;background:var(--panel);cursor:pointer}" +
-      ".fav-time-style-option[aria-checked=true]{border-color:color-mix(in srgb,var(--accent) 55%,var(--stroke-2));background:color-mix(in srgb,var(--accent) 12%,var(--panel));box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 28%,transparent)}" +
-      ".fav-time-style-option input{accent-color:var(--accent)}" +
-      ".fav-time-style-label{flex:1;font-size:.9rem;font-weight:700;color:var(--text)}" +
-      ".fav-time-preview{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:110px;margin-bottom:12px;padding:16px;border-radius:14px;border:1px solid var(--stroke);background:linear-gradient(165deg,color-mix(in srgb,var(--accent) 12%,var(--panel-solid)),var(--panel-solid) 58%)}" +
-      ".fav-time-preview .fav-time-clock{font-size:2rem}" +
-      ".fav-time-preview[data-style=time_seconds] .fav-time-clock{font-size:1.65rem}" +
-      ".fav-notif-card{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;border:1px solid var(--stroke);border-radius:16px;background:var(--panel);overflow:hidden;position:relative}" +
-      ".fav-notif-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--stroke)}" +
-      ".fav-notif-title{flex:1;min-width:0;font-size:.92rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
-      ".fav-notif-actions{position:absolute;top:8px;right:8px;z-index:2}" +
-      ".fav-notif-menu-btn{border:1px solid var(--stroke-2);background:color-mix(in srgb,var(--panel-solid) 88%,transparent);color:var(--text);border-radius:999px;padding:4px 10px;font-size:.78rem;font-weight:700;cursor:pointer}" +
-      ".fav-notif-menu{position:absolute;right:0;top:calc(100% + 4px);min-width:120px;z-index:5;padding:4px;background:var(--panel-solid);border:1px solid var(--stroke-2);border-radius:12px;box-shadow:var(--shadow)}" +
-      ".fav-notif-menu-item{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:8px 10px;border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer}" +
-      ".fav-notif-menu-item.danger{color:#ef4444}" +
-      ".fav-notif-body{flex:1;min-height:0;overflow:auto;padding:8px 10px 10px}" +
-      ".fav-notif-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}" +
-      ".fav-notif-item{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;padding:6px 0;border-bottom:1px solid color-mix(in srgb,var(--stroke) 70%,transparent)}" +
-      ".fav-notif-item:last-child{border-bottom:0;padding-bottom:0}" +
-      ".fav-notif-bullet{color:var(--accent);font-size:1rem;line-height:1.35;font-weight:700}" +
-      ".fav-notif-content{min-width:0}" +
-      ".fav-notif-text{font-size:.86rem;font-weight:600;line-height:1.35;color:var(--text);word-break:break-word}" +
-      ".fav-notif-meta{margin-top:3px;font-size:.72rem;font-weight:600;color:var(--text-dim);line-height:1.3}" +
-      ".fav-notif-dismiss{border:1px solid var(--stroke-2);background:var(--panel-solid);color:var(--muted);border-radius:999px;width:22px;height:22px;padding:0;font-size:.95rem;line-height:1;cursor:pointer;flex-shrink:0}" +
-      ".fav-notif-dismiss:hover:not(:disabled),.fav-notif-dismiss:focus-visible:not(:disabled){color:var(--text);border-color:var(--stroke)}" +
-      ".fav-notif-dismiss:disabled{opacity:.45;cursor:not-allowed}" +
-      ".fav-notif-empty{font-size:.84rem;font-weight:600;color:var(--muted);padding:8px 2px}";
-    document.head.appendChild(style);
-  }
-  ensureFavEmbedStyles();
 
   function ensureColorPopup() {
     if (colorPopup) return colorPopup;
@@ -3644,13 +3517,51 @@
 
   function tstatModeDisplayLabel(tm) {
     const m = String(tm || "").toLowerCase();
-    if (m === "heat" || m === "emergency heat") return "Heat";
+    if (m === "heat" || m === "emergency heat" || m === "emergencyheat") return "Heat";
     if (m === "cool") return "Cool";
     if (m === "auto") return "Auto";
     if (m === "off") return "Off";
     if (m === "dry") return "Dry";
     if (m === "fan") return "Fan";
     return tm || "—";
+  }
+
+  let tstatModeLabelRo = null;
+
+  function fitTstatModeLabel(btn) {
+    const label = btn && btn.querySelector(".quick-fav-ctl-mode-label");
+    if (!label) return;
+    label.style.fontSize = "";
+    if (!btn.clientWidth) return;
+    const caret = btn.querySelector(".quick-fav-ctl-mode-caret");
+    const cs = getComputedStyle(btn);
+    let avail = btn.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    if (caret) avail -= caret.offsetWidth + (parseFloat(cs.columnGap || cs.gap) || 0);
+    if (avail < 8) return;
+    const textW = () => {
+      const r = document.createRange();
+      r.selectNodeContents(label);
+      return r.getBoundingClientRect().width;
+    };
+    let px = 13;
+    while (px > 8 && textW() > avail) {
+      px -= 0.5;
+      label.style.fontSize = px + "px";
+    }
+  }
+
+  function scheduleFitTstatModeLabel(btn) {
+    requestAnimationFrame(() => fitTstatModeLabel(btn));
+    if (typeof ResizeObserver === "undefined") return;
+    if (!tstatModeLabelRo) {
+      tstatModeLabelRo = new ResizeObserver((entries) => {
+        for (const e of entries) {
+          if (!e.target.isConnected) tstatModeLabelRo.unobserve(e.target);
+          else fitTstatModeLabel(e.target);
+        }
+      });
+    }
+    tstatModeLabelRo.observe(btn);
   }
 
   // Compact favorites: ring accent from operating state (mode off → muted).
@@ -3748,12 +3659,24 @@
     const deg = "°" + unit;
     const current = t.temp != null ? Math.round(t.temp) + deg : "—";
     const tm = String(t?.tm || "").toLowerCase();
-    if (tm === "off") return { current, setpoint: "Off", tone: "off" };
+    if (tm === "off") return { current, setpoint: "Off", value: "Off", unit: "", tone: "off" };
     const target = favoriteTstatTarget(t);
-    if (!target) return { current, setpoint: "—", tone: "off" };
+    if (!target) return { current, setpoint: "—", value: "—", unit: "", tone: "off" };
     const sp = target === "heat" ? t.hsp : t.csp;
-    const setpoint = sp != null ? Math.round(Number(sp)) + deg : "—";
-    return { current, setpoint, tone: target };
+    if (sp == null) return { current, setpoint: "—", value: "—", unit: "", tone: target };
+    const value = String(Math.round(Number(sp)));
+    return { current, setpoint: value + deg, value, unit: deg, tone: target };
+  }
+
+  function paintTstatSetpoint(el, temps) {
+    el.className = "quick-fav-tstat-sp " + temps.tone;
+    el.replaceChildren();
+    el.appendChild(document.createTextNode(temps.value));
+    if (temps.unit) {
+      const unitEl = ce("span", "quick-fav-tstat-unit");
+      unitEl.textContent = temps.unit;
+      el.appendChild(unitEl);
+    }
   }
 
   function favoriteTstatState(t) {
@@ -3761,14 +3684,26 @@
     const deg = "°" + unit;
     const tm = String(t?.tm || "").toLowerCase();
     const os = String(t?.os || "").toLowerCase();
-    const current = t.temp != null ? Math.round(t.temp) + deg : "—";
-    if (tm === "off") return { label: "Off · now " + current, active: false };
-    if (tm === "fan") return { label: "Fan · now " + current, active: true };
-    if (tm === "dry") return { label: "Dry · now " + current, active: os === "cooling" || os === "pending cool" };
-    if (os === "heating" || os === "pending heat") return { label: "Heating · now " + current, active: true };
-    if (os === "cooling" || os === "pending cool") return { label: "Cooling · now " + current, active: true };
-    if (os === "fan" || os === "fan only") return { label: "Fan · now " + current, active: true };
-    return { label: "Now " + current, active: false };
+    const now = t.temp != null ? Math.round(t.temp) + deg : "—";
+    let prefix = "Now ";
+    let active = false;
+    if (tm === "off") prefix = "Off · now ";
+    else if (tm === "fan") { prefix = "Fan · now "; active = true; }
+    else if (tm === "dry") {
+      prefix = "Dry · now ";
+      active = os === "cooling" || os === "pending cool";
+    } else if (os === "heating" || os === "pending heat") { prefix = "Heating · now "; active = true; }
+    else if (os === "cooling" || os === "pending cool") { prefix = "Cooling · now "; active = true; }
+    else if (os === "fan" || os === "fan only") { prefix = "Fan · now "; active = true; }
+    return { prefix, now, active, label: prefix + now };
+  }
+
+  function paintTstatStateTxt(el, info) {
+    el.replaceChildren();
+    el.appendChild(document.createTextNode(info.prefix));
+    const nowEl = ce("span", "quick-fav-tstat-now");
+    nowEl.textContent = info.now;
+    el.appendChild(nowEl);
   }
 
   function modeCmdForKey(key) {
@@ -5554,6 +5489,7 @@
     for (const out of outlets) addRef(out);
     for (const t of thermostats) addRef(t);
     for (const s of tempSensors) addRef(s);
+    for (const s of sensors) addRef(s);
     for (const lk of locks) addRef(lk);
     if (!byId.size) return;
     replaceList(rooms, [...byId.values()].sort((a, b) => a.id - b.id));
@@ -5659,7 +5595,10 @@
     if (!nav || nav.dataset.scrollFadeBound) return;
     nav.dataset.scrollFadeBound = "1";
     nav.addEventListener("scroll", updateQuickNavScrollFade, { passive: true });
-    window.addEventListener("resize", updateQuickNavScrollFade);
+    window.addEventListener("resize", () => {
+      updateQuickNavScrollFade();
+      document.querySelectorAll(".quick-fav-ctl-mode").forEach(fitTstatModeLabel);
+    });
     updateQuickNavScrollFade();
   }
 
@@ -5780,8 +5719,6 @@
     tipRoot.addEventListener("scroll", hideTip, true);
   }
 
-  // __MLD_SPLIT__
-
   async function saveRoomOrder(order) {
     if (!order?.length) {
       flash("No rooms to save", true);
@@ -5822,14 +5759,15 @@
     return false;
   }
 
-  async function saveCameraOrder(order) {
+  // Keep order persistence in core so mld-app-post.js retains File Manager headroom.
+  async function saveDeviceIdOrder(order, noun, paths, emptyMsg) {
     if (!order?.length) {
-      flash("No cameras to save", true);
+      flash(emptyMsg || ("No " + noun + " to save"), true);
       return false;
     }
     const headers = { "Accept": "application/json" };
-    const paths = ["camera-order", "settings/camera-order"];
-    let lastMsg = "Could not save camera order";
+    const fail = "Could not save " + noun + " order";
+    let lastMsg = fail;
     for (const path of paths) {
       try {
         let r = await fetch(withToken(path), {
@@ -5856,11 +5794,450 @@
         } catch {}
       } catch {}
     }
-    flash(lastMsg === "Could not save camera order"
-      ? "Could not save camera order — update the hub app code and try again"
-      : lastMsg, true);
+    flash(lastMsg === fail ? (fail + " — update the hub app code and try again") : lastMsg, true);
     return false;
   }
+
+  async function saveCameraOrder(order) {
+    return saveDeviceIdOrder(order, "camera", ["camera-order", "settings/camera-order"], "No cameras to save");
+  }
+
+  async function saveThermostatOrder(order) {
+    return saveDeviceIdOrder(order, "thermostat", ["thermostat-order", "settings/thermostat-order"], "No thermostats to save");
+  }
+
+  function isTstatReorderActive() {
+    return tstatReorderActive;
+  }
+
+  function sortThermostatsByOrder(list, order) {
+    const items = Array.isArray(list) ? list.slice() : [];
+    const fallback = () => postCall("sortByRoomThenFullName", items) || items;
+    if (!order?.length) return fallback();
+    const byId = new Map(items.map((t) => [Number(t.i), t]));
+    const sorted = [];
+    const seen = new Set();
+    for (const rawId of order) {
+      const id = Number(rawId);
+      const t = byId.get(id);
+      if (!t) continue;
+      sorted.push(t);
+      seen.add(id);
+    }
+    const rest = items.filter((t) => !seen.has(Number(t.i)));
+    const restSorted = postCall("sortByRoomThenFullName", rest);
+    sorted.push(...(Array.isArray(restSorted) ? restSorted : rest));
+    return sorted;
+  }
+
+  function tstatReorderGrid() {
+    return postCall("currentBody")?.querySelector?.(".quick-fav-grid") || null;
+  }
+
+  function currentTstatOrderFromDom() {
+    const grid = tstatReorderGrid();
+    if (!grid) return thermostats.map((t) => Number(t.i));
+    return Array.from(grid.querySelectorAll(".quick-fav-tstat"))
+      .map((el) => Number(el.dataset.tstatId))
+      .filter((id) => Number.isFinite(id));
+  }
+
+  function updateTstatDraftOrderFromDom() {
+    tstatReorderDraftOrder = currentTstatOrderFromDom();
+  }
+
+  function clearTstatReorderEls() {
+    tstatReorderEls.clear();
+  }
+
+  function registerTstatReorderControls(id, moveUp, moveDown) {
+    tstatReorderEls.set(Number(id), { moveUp, moveDown });
+  }
+
+  function updateTstatMoveButtons() {
+    if (!tstatReorderActive) return;
+    const grid = tstatReorderGrid();
+    if (!grid) return;
+    const cards = Array.from(grid.querySelectorAll(".quick-fav-tstat"));
+    cards.forEach((card, i) => {
+      const rec = tstatReorderEls.get(Number(card.dataset.tstatId));
+      if (!rec?.moveUp || !rec?.moveDown) return;
+      rec.moveUp.disabled = i === 0;
+      rec.moveDown.disabled = i === cards.length - 1;
+    });
+  }
+
+  function moveTstat(id, delta) {
+    const grid = tstatReorderGrid();
+    if (!grid) return;
+    const cards = Array.from(grid.querySelectorAll(".quick-fav-tstat"));
+    const idx = cards.findIndex((c) => Number(c.dataset.tstatId) === Number(id));
+    if (idx < 0) return;
+    const newIdx = idx + delta;
+    if (newIdx < 0 || newIdx >= cards.length) return;
+    const card = cards[idx];
+    const sibling = cards[newIdx];
+    if (delta < 0) grid.insertBefore(card, sibling);
+    else grid.insertBefore(sibling, card);
+    updateTstatDraftOrderFromDom();
+    updateTstatMoveButtons();
+    hapticTap();
+  }
+
+  function attachTstatReorder(card, handle) {
+    let active = false;
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let floatOffsetY = 0;
+    let placeholder = null;
+
+    function visibleCards() {
+      const el = tstatReorderGrid();
+      if (!el) return [];
+      return Array.from(el.querySelectorAll(".quick-fav-tstat:not(.tstat-dragging)"));
+    }
+
+    function movePlaceholderForY(y) {
+      if (!placeholder) return;
+      const el = tstatReorderGrid();
+      if (!el) return;
+      const cards = visibleCards();
+      let insertBefore = null;
+      for (const item of cards) {
+        const rect = item.getBoundingClientRect();
+        if (y < rect.top + rect.height / 2) {
+          insertBefore = item;
+          break;
+        }
+      }
+      if (insertBefore) el.insertBefore(placeholder, insertBefore);
+      else el.appendChild(placeholder);
+    }
+
+    function positionFloat(clientY) {
+      card.style.top = (clientY - floatOffsetY) + "px";
+    }
+
+    function beginDrag(e) {
+      dragging = true;
+      reorderBusy = true;
+      const rect = card.getBoundingClientRect();
+      floatOffsetY = e.clientY - rect.top;
+      placeholder = ce("div", "tstat-drag-placeholder");
+      placeholder.style.height = rect.height + "px";
+      card.parentNode.insertBefore(placeholder, card);
+      card.classList.add("tstat-dragging");
+      card.style.width = rect.width + "px";
+      card.style.left = rect.left + "px";
+      card.style.top = rect.top + "px";
+      positionFloat(e.clientY);
+      movePlaceholderForY(e.clientY);
+    }
+
+    function commitDrag() {
+      const el = tstatReorderGrid();
+      if (placeholder?.parentNode && el) {
+        el.insertBefore(card, placeholder);
+        placeholder.remove();
+      }
+      card.classList.remove("tstat-dragging");
+      card.style.width = "";
+      card.style.left = "";
+      card.style.top = "";
+      placeholder = null;
+      updateTstatDraftOrderFromDom();
+      updateTstatMoveButtons();
+    }
+
+    function onMove(e) {
+      if (!active) return;
+      if (!dragging) {
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (Math.hypot(dx, dy) < REORDER_DRAG_THRESHOLD) return;
+        beginDrag(e);
+      }
+      positionFloat(e.clientY);
+      movePlaceholderForY(e.clientY);
+    }
+
+    function onUp() {
+      if (!active) return;
+      if (dragging) commitDrag();
+      active = false;
+      dragging = false;
+      reorderBusy = false;
+    }
+
+    postCall("bindReorderPointer", handle, () => tstatReorderActive, (e) => {
+      active = true;
+      startX = e.clientX;
+      startY = e.clientY;
+    }, onMove, onUp);
+  }
+
+  function enterTstatReorderMode() {
+    if (thermostats.length < 2) {
+      flash("Need at least two thermostats to reorder");
+      return;
+    }
+    tstatReorderSnapshot = cfg.thermostatOrder?.length ? cfg.thermostatOrder.map(Number) : null;
+    tstatReorderDraftOrder = null;
+    tstatReorderEls.clear();
+    postCall("stopPolling");
+    reorderMode = true;
+    tstatReorderActive = true;
+    APP_EL?.classList.add("reorder-mode", "reorder-mode-thermostats");
+    postCall("closeTopbarOverflowMenu");
+    if (SEARCH_EL) {
+      SEARCH_EL.value = "";
+      postCall("applySearch");
+    }
+    if (REORDER_DONE_BTN) REORDER_DONE_BTN.hidden = false;
+    if (REORDER_CANCEL_BTN) REORDER_CANCEL_BTN.hidden = false;
+    postCall("renderThermostatsPopup");
+    updateTstatMoveButtons();
+  }
+
+  function exitTstatReorderMode(resumePoll) {
+    tstatReorderActive = false;
+    tstatReorderDraftOrder = null;
+    tstatReorderSnapshot = null;
+    tstatReorderEls.clear();
+    reorderMode = false;
+    reorderBusy = false;
+    APP_EL?.classList.remove("reorder-mode", "reorder-mode-thermostats");
+    if (REORDER_DONE_BTN) REORDER_DONE_BTN.hidden = true;
+    if (REORDER_CANCEL_BTN) REORDER_CANCEL_BTN.hidden = true;
+    if (resumePoll) {
+      postCall("startPolling");
+      postCall("refresh");
+    } else {
+      postCall("renderThermostatsPopup");
+    }
+  }
+
+  async function finishTstatReorderMode() {
+    const order = tstatReorderDraftOrder ?? currentTstatOrderFromDom();
+    const saved = await saveThermostatOrder(order);
+    if (!saved) return false;
+    cfg.thermostatOrder = order.length ? order.slice() : null;
+    lastDataSig = "";
+    exitTstatReorderMode(true);
+    flash("Order saved");
+    return true;
+  }
+
+  function cancelTstatReorderMode() {
+    cfg.thermostatOrder = tstatReorderSnapshot?.length ? tstatReorderSnapshot.slice() : null;
+    lastDataSig = "";
+    exitTstatReorderMode(false);
+  }
+
+  // ---------- HTML attribute favorite tiles (core; keeps post.js under File Manager size limits) ----------
+  function applyHtmlTileZoomToCard(card, zoom) {
+    if (!card) return;
+    const z = normalizeHtmlZoom(zoom);
+    card.dataset.htmlZoom = String(z);
+    card.style.setProperty("--html-zoom", String(z / 100));
+  }
+
+  function htmlTileThemeTokens(tile) {
+    const rootStyles = getComputedStyle(document.documentElement);
+    return {
+      font: rootStyles.getPropertyValue("--font-sans").trim() || "system-ui, sans-serif",
+      color: rootStyles.getPropertyValue("--text").trim() || "#f5f7fb",
+      colorScheme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
+      roomsCss: tile?.roomsCss || "",
+      alignCss: tile?.alignCss || "",
+      zoom: normalizeHtmlZoom(tile?.zoom),
+    };
+  }
+
+  function sanitizeHtmlTileMarkup(raw) {
+    const doc = new DOMParser().parseFromString(String(raw || ""), "text/html");
+    for (const node of doc.querySelectorAll("script,meta[http-equiv]")) {
+      if (node.tagName === "SCRIPT" || String(node.getAttribute("http-equiv") || "").toLowerCase() === "refresh") {
+        node.remove();
+      }
+    }
+    for (const el of doc.querySelectorAll("*")) {
+      for (const attr of Array.from(el.attributes)) {
+        const name = attr.name.toLowerCase();
+        const compactValue = String(attr.value || "").replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+        if (name.startsWith("on") || name === "srcdoc" || compactValue.includes("javascript:")) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    }
+    for (const style of doc.querySelectorAll("style")) {
+      style.textContent = String(style.textContent || "").replace(/javascript\s*:/gi, "");
+    }
+    return doc;
+  }
+
+  function htmlTileStubUrlFromDoc(doc) {
+    if (!doc?.body) return "";
+    const frames = Array.from(doc.body.querySelectorAll("iframe[src]"));
+    if (frames.length !== 1) return "";
+    const frame = frames[0];
+    for (const child of Array.from(doc.body.children)) {
+      if (child !== frame && child.tagName !== "STYLE") return "";
+    }
+    const copy = doc.body.cloneNode(true);
+    copy.querySelector("iframe[src]")?.remove();
+    for (const style of copy.querySelectorAll("style")) style.remove();
+    if (String(copy.textContent || "").trim()) return "";
+    const src = String(frame.getAttribute("src") || "").trim();
+    try {
+      const url = new URL(src);
+      return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function htmlTileSrcdocFromDoc(doc, tokens) {
+    const cleanCss = (value) => String(value || "").replace(/<\/style/gi, "<\\/style");
+    const cleanCssValue = (value, fallback) => {
+      const cleaned = String(value || "").replace(/[;{}<>]/g, "").trim();
+      return cleaned || fallback;
+    };
+    const style = doc.createElement("style");
+    style.setAttribute("data-mld-theme-bridge", "");
+    const zoomPct = normalizeHtmlZoom(tokens?.zoom);
+    style.textContent =
+      ":root{color-scheme:" + cleanCssValue(tokens?.colorScheme, "dark") + ";}" +
+      "html{zoom:" + (zoomPct / 100) + ";}" +
+      "html,body{margin:0;padding:0;background:transparent;color:" + cleanCssValue(tokens?.color, "#f5f7fb") +
+      ";font-family:" + cleanCssValue(tokens?.font, "system-ui, sans-serif") + ";}" +
+      cleanCss(tokens?.roomsCss) + "\n" + cleanCss(tokens?.alignCss);
+    doc.head.appendChild(style);
+    return "<!doctype html>\n" + doc.documentElement.outerHTML;
+  }
+
+  // One DOMParser pass: sanitize, then either stub URL or inline srcdoc.
+  function prepareHtmlTileFrame(raw, tokens) {
+    const doc = sanitizeHtmlTileMarkup(raw);
+    const stubUrl = htmlTileStubUrlFromDoc(doc);
+    if (stubUrl) return { kind: "stub", stubUrl };
+    return { kind: "inline", srcdoc: htmlTileSrcdocFromDoc(doc, tokens) };
+  }
+
+  function configureHtmlTileIframe(iframe, tile, unavailableEl) {
+    if (!iframe || !tile) return;
+    const card = iframe.closest(".fav-html-card");
+    if (card) applyHtmlTileZoomToCard(card, tile.zoom);
+    const raw = tile.html == null ? "" : String(tile.html);
+    iframe.dataset.html = raw;
+    iframe.dataset.htmlTileId = tile.id;
+    delete iframe.dataset.htmlMode;
+    iframe.removeAttribute("srcdoc");
+    iframe.src = "about:blank";
+    const showUnavailable = (message) => {
+      iframe.dataset.htmlMode = "unavailable";
+      iframe.hidden = true;
+      if (unavailableEl) {
+        unavailableEl.hidden = false;
+        unavailableEl.textContent = message;
+      }
+    };
+    if (tile.error) {
+      showUnavailable(tile.error === "too_large"
+        ? "This HTML value is too large to display in the dashboard."
+        : String(tile.error));
+    } else if (!raw.trim()) {
+      showUnavailable("No HTML is currently available for this source.");
+    } else {
+      const prepared = prepareHtmlTileFrame(raw, htmlTileThemeTokens(tile));
+      if (prepared.kind === "stub" && !isLocalOrigin()) {
+        const mixed = location.protocol === "https:" && new URL(prepared.stubUrl).protocol === "http:";
+        showUnavailable(mixed
+          ? "This local HTTP content is unavailable over a secure cloud connection."
+          : "This HTML iframe source is available only from the local dashboard.");
+      } else {
+        iframe.hidden = false;
+        if (unavailableEl) unavailableEl.hidden = true;
+        if (prepared.kind === "stub") {
+          iframe.dataset.htmlMode = "stub";
+          iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox");
+          iframe.src = prepared.stubUrl;
+        } else {
+          iframe.dataset.htmlMode = "inline";
+          iframe.setAttribute("sandbox", "");
+          iframe.srcdoc = prepared.srcdoc;
+        }
+      }
+    }
+    htmlTileIframes.set(tile.id, iframe);
+  }
+
+  function ensureHtmlTileLoaded(card) {
+    if (!card || card.dataset.htmlLoaded === "1") return;
+    const id = card.dataset.htmlTileId;
+    const iframe = card.querySelector(".fav-html-iframe");
+    const unavailable = card.querySelector(".fav-html-unavailable");
+    const tile = htmlTiles.find((candidate) => candidate.id === id);
+    if (!iframe || !tile) return;
+    card.dataset.htmlLoaded = "1";
+    configureHtmlTileIframe(iframe, tile, unavailable);
+  }
+
+  function observeFavHtmlCard(card) {
+    if (!card) return;
+    if (!("IntersectionObserver" in window)) {
+      ensureHtmlTileLoaded(card);
+      return;
+    }
+    if (!favHtmlObserver) {
+      favHtmlObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) ensureHtmlTileLoaded(entry.target);
+        }
+      }, { root: null, rootMargin: "80px", threshold: 0.05 });
+    }
+    favHtmlObserver.observe(card);
+  }
+
+  function refreshHtmlTileIframes() {
+    for (const [id, iframe] of htmlTileIframes) {
+      if (!iframe?.isConnected) {
+        htmlTileIframes.delete(id);
+        continue;
+      }
+      if (iframe.dataset.htmlMode !== "inline") continue;
+      const tile = htmlTiles.find((candidate) => candidate.id === id);
+      if (!tile) continue;
+      iframe.dataset.html = tile.html == null ? "" : String(tile.html);
+      const prepared = prepareHtmlTileFrame(iframe.dataset.html, htmlTileThemeTokens(tile));
+      if (prepared.kind === "inline") iframe.srcdoc = prepared.srcdoc;
+      else configureHtmlTileIframe(iframe, tile, iframe.parentElement?.querySelector(".fav-html-unavailable"));
+    }
+  }
+
+  function applyHtmlTileLiveAttr(deviceId, attr, value) {
+    const parsedDeviceId = Number(deviceId);
+    const attribute = String(attr || "");
+    const tile = htmlTiles.find((candidate) =>
+      Number(candidate.deviceId) === parsedDeviceId && candidate.attribute === attribute
+    );
+    if (!tile) return false;
+    tile.html = value == null ? "" : String(value);
+    delete tile.error;
+    const iframe = htmlTileIframes.get(tile.id);
+    // Not mounted yet (lazy): state is updated; paint happens when the card intersects.
+    if (iframe?.isConnected) {
+      const card = iframe.closest(".fav-html-card");
+      if (card && card.dataset.htmlLoaded !== "1") return true;
+      configureHtmlTileIframe(iframe, tile, iframe.parentElement?.querySelector(".fav-html-unavailable"));
+      if (card) card.dataset.htmlLoaded = "1";
+    }
+    return true;
+  }
+
+
+  // __MLD_SPLIT__
 
   function currentNavOrderFromDom() {
     const nav = document.querySelector(".quick-nav");
@@ -6733,6 +7110,10 @@
       postCall("enterFavoritesReorderMode");
       return;
     }
+    if (postCall("currentCategory") === "thermostats" || (tabMode && activeTab === "thermostats")) {
+      postCall("enterTstatReorderMode");
+      return;
+    }
     reorderSnapshot = cfg.roomOrder?.length ? cfg.roomOrder.slice() : null;
     reorderDraftOrder = currentRoomOrderFromDom();
     navReorderSnapshot = cfg.navOrder?.length ? cfg.navOrder.slice() : null;
@@ -6784,6 +7165,10 @@
       await postCall("finishFavoritesReorderMode");
       return;
     }
+    if (postCall("isTstatReorderActive")) {
+      await postCall("finishTstatReorderMode");
+      return;
+    }
     const order = reorderDraftOrder ?? currentRoomOrderFromDom();
     const navOrder = navReorderDraftOrder ?? currentNavOrderFromDom();
     const [roomsSaved, navSaved] = await Promise.all([
@@ -6805,6 +7190,10 @@
     }
     if (postCall("isFavoritesReorderActive")) {
       postCall("cancelFavoritesReorderMode");
+      return;
+    }
+    if (postCall("isTstatReorderActive")) {
+      postCall("cancelTstatReorderMode");
       return;
     }
     cfg.roomOrder = reorderSnapshot ? reorderSnapshot.slice() : null;
@@ -10057,6 +10446,100 @@
   }
 
 
+  async function removeHtmlFavoriteTile(id) {
+    const key = htmlFavoriteKey(id);
+    if (!favoritesLayout.includes(key)) return true;
+    const previousLayout = favoritesLayout.slice();
+    const nextLayout = favoritesLayout.filter((candidate) => candidate !== key);
+    replaceList(favoritesLayout, nextLayout);
+    if (currentCategory() === "favorites") renderFavoritesPopup();
+    const saved = await persistFavoriteLayout(nextLayout);
+    if (!saved) {
+      replaceList(favoritesLayout, previousLayout);
+      if (currentCategory() === "favorites") renderFavoritesPopup();
+      return false;
+    }
+    updateQuickNavVisibility();
+    flash("HTML tile removed");
+    return true;
+  }
+
+  function makeHtmlFavoriteCard(tile) {
+    const el = ce("article", "fav-html-card");
+    el.dataset.htmlTileId = tile.id;
+    const title = tile.title || tile.attribute || "HTML";
+    const head = ce("div", "fav-embed-head");
+    const titleEl = ce("div", "fav-embed-title");
+    titleEl.textContent = title;
+    head.appendChild(titleEl);
+    const actions = ce("div", "fav-embed-actions");
+    const expandBtn = ce("button", "fav-embed-expand");
+    expandBtn.type = "button";
+    expandBtn.textContent = "Expand";
+    expandBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hapticTap();
+      ensureHtmlTileLoaded(el);
+      expandEmbedCard(el, expandBtn);
+    });
+    const menuBtn = ce("button", "fav-embed-menu-btn fav-html-menu-btn");
+    menuBtn.type = "button";
+    menuBtn.setAttribute("aria-label", "HTML tile options");
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.textContent = "\u22ef";
+    const menu = ce("div", "fav-embed-menu fav-html-menu");
+    menu.hidden = true;
+    menu.setAttribute("role", "menu");
+    const renameBtn = ce("button", "fav-embed-menu-item");
+    renameBtn.type = "button";
+    renameBtn.setAttribute("role", "menuitem");
+    renameBtn.textContent = "Rename";
+    renameBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeFavTileOverflowMenu(menu, menuBtn);
+      openHtmlTileTitleEditor(tile);
+    });
+    const removeBtn = ce("button", "fav-embed-menu-item danger");
+    removeBtn.type = "button";
+    removeBtn.setAttribute("role", "menuitem");
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      closeFavTileOverflowMenu(menu, menuBtn);
+      const ok = await confirmAction({ message: "Remove this HTML tile from favorites?", confirmLabel: "Remove", danger: true });
+      if (ok) await removeHtmlFavoriteTile(tile.id);
+    });
+    menu.appendChild(renameBtn);
+    menu.appendChild(removeBtn);
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFavTileOverflowMenu(menuBtn, menu);
+    });
+    actions.appendChild(expandBtn);
+    actions.appendChild(menuBtn);
+    actions.appendChild(menu);
+    head.appendChild(actions);
+    el.appendChild(head);
+
+    const media = ce("div", "fav-html-media");
+    const iframe = ce("iframe", "fav-html-iframe");
+    iframe.setAttribute("title", title);
+    iframe.loading = "lazy";
+    iframe.referrerPolicy = "no-referrer";
+    iframe.src = "about:blank";
+    const unavailable = ce("div", "fav-html-unavailable");
+    unavailable.hidden = true;
+    media.appendChild(iframe);
+    media.appendChild(unavailable);
+    el.appendChild(media);
+    applyHtmlTileZoomToCard(el, tile.zoom);
+    htmlTileIframes.set(tile.id, iframe);
+    observeFavHtmlCard(el);
+    return el;
+  }
+
+
+
   // __MLD_SPLIT2__
 
   function favoritesPopupSignature() {
@@ -10976,6 +11459,7 @@
     const tm = String(t.tm || "").toLowerCase();
     const card = ce("div", "quick-fav-card quick-fav-tstat mode-" + (tm || "off"));
     card.dataset.name = String(t.n || "").toLowerCase();
+    card.dataset.tstatId = String(t.i);
     syncFavoriteTstatCompactState(card, t);
 
     const temps = favoriteTstatTemps(t);
@@ -10997,13 +11481,13 @@
     const stateEl = ce("div", "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : ""));
     const dot = ce("span", "quick-fav-tstat-dot");
     const stateTxt = ce("span", "quick-fav-tstat-state-txt");
-    stateTxt.textContent = stateInfo.label;
+    paintTstatStateTxt(stateTxt, stateInfo);
     stateEl.appendChild(dot);
     stateEl.appendChild(stateTxt);
     info.appendChild(stateEl);
 
     const spEl = ce("div", "quick-fav-tstat-sp " + temps.tone);
-    spEl.textContent = temps.setpoint;
+    paintTstatSetpoint(spEl, temps);
 
     const compactMode = ce("div", "quick-fav-tstat-mode" + (tm === "off" ? " is-off" : ""));
     compactMode.textContent = tstatModeDisplayLabel(t.tm);
@@ -11022,6 +11506,7 @@
     modeCaret.textContent = "▾";
     modeBtn.appendChild(modeLabel);
     modeBtn.appendChild(modeCaret);
+    scheduleFitTstatModeLabel(modeBtn);
     modeBtn.setAttribute("aria-label", "Change thermostat mode");
     modeBtn.setAttribute("aria-haspopup", "listbox");
     modeBtn.setAttribute("aria-expanded", "false");
@@ -11052,6 +11537,29 @@
     card.appendChild(spEl);
     card.appendChild(compactMode);
     card.appendChild(controls);
+    if (map === tstatsPopupMap) {
+      const dragHandle = ce("button", "tstat-drag-handle");
+      dragHandle.type = "button";
+      dragHandle.setAttribute("aria-label", "Drag to reorder");
+      dragHandle.innerHTML = DRAG_HANDLE_SVG;
+      const moveBtns = ce("div", "tstat-move-btns");
+      const moveUp = ce("button", "tstat-move-btn");
+      moveUp.type = "button";
+      moveUp.setAttribute("aria-label", "Move thermostat up");
+      moveUp.innerHTML = MOVE_UP_SVG;
+      moveUp.addEventListener("click", (e) => { e.stopPropagation(); moveTstat(t.i, -1); });
+      const moveDown = ce("button", "tstat-move-btn");
+      moveDown.type = "button";
+      moveDown.setAttribute("aria-label", "Move thermostat down");
+      moveDown.innerHTML = MOVE_DOWN_SVG;
+      moveDown.addEventListener("click", (e) => { e.stopPropagation(); moveTstat(t.i, 1); });
+      moveBtns.appendChild(moveUp);
+      moveBtns.appendChild(moveDown);
+      card.insertBefore(dragHandle, card.firstChild);
+      card.insertBefore(moveBtns, dragHandle.nextSibling);
+      attachTstatReorder(card, dragHandle);
+      registerTstatReorderControls(t.i, moveUp, moveDown);
+    }
     attachTstatTap(card, t);
 
     map.set(t.i, {
@@ -11073,11 +11581,11 @@
     syncFavoriteTstatCompactState(rec.card, t);
     const temps = favoriteTstatTemps(t);
     const stateInfo = favoriteTstatState(t);
-    rec.spEl.className = "quick-fav-tstat-sp " + temps.tone;
-    rec.spEl.textContent = temps.setpoint;
+    paintTstatSetpoint(rec.spEl, temps);
     rec.stateEl.className = "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : "");
-    rec.stateTxt.textContent = stateInfo.label;
+    paintTstatStateTxt(rec.stateTxt, stateInfo);
     rec.modeLabel.textContent = tstatModeDisplayLabel(t.tm);
+    fitTstatModeLabel(rec.modeBtn);
     if (rec.dialTemp) rec.dialTemp.textContent = temps.current;
     if (rec.compactMode) {
       rec.compactMode.textContent = tstatModeDisplayLabel(t.tm);
@@ -11993,6 +12501,7 @@
 
   function refreshThermostatsPopup() {
     if (currentCategory() !== "thermostats") return;
+    if (isTstatReorderActive()) return;
     const listSig = thermostatsListSignature();
     const body = currentBody();
     if (!body.querySelector(".quick-fav-grid") || listSig !== tstatsPopupSig) {
@@ -12013,12 +12522,13 @@
     setQuickBodyClass(body, "quick-body quick-body-thermostats");
     body.innerHTML = "";
     tstatsPopupMap.clear();
+    clearTstatReorderEls();
     tstatsPopupSig = thermostatsListSignature();
     if (!thermostats.length) {
       body.textContent = "No thermostats selected — add thermostats in the Hubitat app settings";
       return;
     }
-    const sorted = sortByRoomThenFullName(thermostats);
+    const sorted = sortThermostatsByOrder(thermostats, cfg.thermostatOrder);
     const grid = ce("div", "quick-fav-grid");
     for (const t of sorted) grid.appendChild(makeQuickTstatCard(t, tstatsPopupMap));
     body.appendChild(grid);
@@ -13048,12 +13558,13 @@
   // ---------- polling ----------
   async function refresh() {
     if (isDashboardGateOpen()) return;
+    const schedulerEpoch = postCall("schedulerResponseEpoch");
     try {
       const d = await fetchData();
       refreshLocalUrlFromConfig();
       updateLocalModeMenuUI();
       render(d);
-      retainPost3PendingData(d);
+      retainPost3PendingData(d, schedulerEpoch);
       setStatus("");
     } catch (e) {
       setStatus("Cannot reach hub", true);
@@ -13707,8 +14218,13 @@
     return post3LoadPromise;
   }
 
-  function retainPost3PendingData(d) {
-    if (!isPost3Ready()) post3PendingData = d;
+  function retainPost3PendingData(d, requestEpoch) {
+    if (!isPost3Ready()) {
+      post3PendingData = d;
+      return;
+    }
+    const apply = globalThis.__MLD?.applySchedulesFromData;
+    if (typeof apply === "function") apply(d, requestEpoch);
   }
 
   function applyPendingPost3Data() {
@@ -13846,8 +14362,8 @@
 
   if (globalThis.__MLD) globalThis.__MLD.updateQuickNavVisibility = updateQuickNavVisibility;
 
-  // HTML title editor + picker live in post2 so mld-app-post3.js stays under Hubitat
-  // Cloud's ~122 KB OAuth/MQTT response limit (scheduler/cameras ship in post3).
+  // HTML title editor + picker live in post2; card helpers live in post.js so
+  // post3 can keep scheduler/cameras under Hubitat Cloud's ~122 KB JS limit.
   function closeHtmlTileTitleEditor() {
     const popup = document.getElementById("fav-html-title-editor");
     if (popup) popup.remove();
@@ -14047,301 +14563,6 @@
   }
 
   // __MLD_SPLIT3__
-
-  // ---------- HTML attribute favorite tiles (post3; keeps post2 under hub limit) ----------
-  function applyHtmlTileZoomToCard(card, zoom) {
-    if (!card) return;
-    const z = normalizeHtmlZoom(zoom);
-    card.dataset.htmlZoom = String(z);
-    card.style.setProperty("--html-zoom", String(z / 100));
-  }
-
-  function htmlTileThemeTokens(tile) {
-    const rootStyles = getComputedStyle(document.documentElement);
-    return {
-      font: rootStyles.getPropertyValue("--font-sans").trim() || "system-ui, sans-serif",
-      color: rootStyles.getPropertyValue("--text").trim() || "#f5f7fb",
-      colorScheme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
-      roomsCss: tile?.roomsCss || "",
-      alignCss: tile?.alignCss || "",
-      zoom: normalizeHtmlZoom(tile?.zoom),
-    };
-  }
-
-  function sanitizeHtmlTileMarkup(raw) {
-    const doc = new DOMParser().parseFromString(String(raw || ""), "text/html");
-    for (const node of doc.querySelectorAll("script,meta[http-equiv]")) {
-      if (node.tagName === "SCRIPT" || String(node.getAttribute("http-equiv") || "").toLowerCase() === "refresh") {
-        node.remove();
-      }
-    }
-    for (const el of doc.querySelectorAll("*")) {
-      for (const attr of Array.from(el.attributes)) {
-        const name = attr.name.toLowerCase();
-        const compactValue = String(attr.value || "").replace(/[\u0000-\u0020]+/g, "").toLowerCase();
-        if (name.startsWith("on") || name === "srcdoc" || compactValue.includes("javascript:")) {
-          el.removeAttribute(attr.name);
-        }
-      }
-    }
-    for (const style of doc.querySelectorAll("style")) {
-      style.textContent = String(style.textContent || "").replace(/javascript\s*:/gi, "");
-    }
-    return doc;
-  }
-
-  function htmlTileStubUrlFromDoc(doc) {
-    if (!doc?.body) return "";
-    const frames = Array.from(doc.body.querySelectorAll("iframe[src]"));
-    if (frames.length !== 1) return "";
-    const frame = frames[0];
-    for (const child of Array.from(doc.body.children)) {
-      if (child !== frame && child.tagName !== "STYLE") return "";
-    }
-    const copy = doc.body.cloneNode(true);
-    copy.querySelector("iframe[src]")?.remove();
-    for (const style of copy.querySelectorAll("style")) style.remove();
-    if (String(copy.textContent || "").trim()) return "";
-    const src = String(frame.getAttribute("src") || "").trim();
-    try {
-      const url = new URL(src);
-      return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
-    } catch {
-      return "";
-    }
-  }
-
-  function htmlTileSrcdocFromDoc(doc, tokens) {
-    const cleanCss = (value) => String(value || "").replace(/<\/style/gi, "<\\/style");
-    const cleanCssValue = (value, fallback) => {
-      const cleaned = String(value || "").replace(/[;{}<>]/g, "").trim();
-      return cleaned || fallback;
-    };
-    const style = doc.createElement("style");
-    style.setAttribute("data-mld-theme-bridge", "");
-    const zoomPct = normalizeHtmlZoom(tokens?.zoom);
-    style.textContent =
-      ":root{color-scheme:" + cleanCssValue(tokens?.colorScheme, "dark") + ";}" +
-      "html{zoom:" + (zoomPct / 100) + ";}" +
-      "html,body{margin:0;padding:0;background:transparent;color:" + cleanCssValue(tokens?.color, "#f5f7fb") +
-      ";font-family:" + cleanCssValue(tokens?.font, "system-ui, sans-serif") + ";}" +
-      cleanCss(tokens?.roomsCss) + "\n" + cleanCss(tokens?.alignCss);
-    doc.head.appendChild(style);
-    return "<!doctype html>\n" + doc.documentElement.outerHTML;
-  }
-
-  // One DOMParser pass: sanitize, then either stub URL or inline srcdoc.
-  function prepareHtmlTileFrame(raw, tokens) {
-    const doc = sanitizeHtmlTileMarkup(raw);
-    const stubUrl = htmlTileStubUrlFromDoc(doc);
-    if (stubUrl) return { kind: "stub", stubUrl };
-    return { kind: "inline", srcdoc: htmlTileSrcdocFromDoc(doc, tokens) };
-  }
-
-  function configureHtmlTileIframe(iframe, tile, unavailableEl) {
-    if (!iframe || !tile) return;
-    const card = iframe.closest(".fav-html-card");
-    if (card) applyHtmlTileZoomToCard(card, tile.zoom);
-    const raw = tile.html == null ? "" : String(tile.html);
-    iframe.dataset.html = raw;
-    iframe.dataset.htmlTileId = tile.id;
-    delete iframe.dataset.htmlMode;
-    iframe.removeAttribute("srcdoc");
-    iframe.src = "about:blank";
-    const showUnavailable = (message) => {
-      iframe.dataset.htmlMode = "unavailable";
-      iframe.hidden = true;
-      if (unavailableEl) {
-        unavailableEl.hidden = false;
-        unavailableEl.textContent = message;
-      }
-    };
-    if (tile.error) {
-      showUnavailable(tile.error === "too_large"
-        ? "This HTML value is too large to display in the dashboard."
-        : String(tile.error));
-    } else if (!raw.trim()) {
-      showUnavailable("No HTML is currently available for this source.");
-    } else {
-      const prepared = prepareHtmlTileFrame(raw, htmlTileThemeTokens(tile));
-      if (prepared.kind === "stub" && !isLocalOrigin()) {
-        const mixed = location.protocol === "https:" && new URL(prepared.stubUrl).protocol === "http:";
-        showUnavailable(mixed
-          ? "This local HTTP content is unavailable over a secure cloud connection."
-          : "This HTML iframe source is available only from the local dashboard.");
-      } else {
-        iframe.hidden = false;
-        if (unavailableEl) unavailableEl.hidden = true;
-        if (prepared.kind === "stub") {
-          iframe.dataset.htmlMode = "stub";
-          iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox");
-          iframe.src = prepared.stubUrl;
-        } else {
-          iframe.dataset.htmlMode = "inline";
-          iframe.setAttribute("sandbox", "");
-          iframe.srcdoc = prepared.srcdoc;
-        }
-      }
-    }
-    htmlTileIframes.set(tile.id, iframe);
-  }
-
-  function ensureHtmlTileLoaded(card) {
-    if (!card || card.dataset.htmlLoaded === "1") return;
-    const id = card.dataset.htmlTileId;
-    const iframe = card.querySelector(".fav-html-iframe");
-    const unavailable = card.querySelector(".fav-html-unavailable");
-    const tile = htmlTiles.find((candidate) => candidate.id === id);
-    if (!iframe || !tile) return;
-    card.dataset.htmlLoaded = "1";
-    configureHtmlTileIframe(iframe, tile, unavailable);
-  }
-
-  function observeFavHtmlCard(card) {
-    if (!card) return;
-    if (!("IntersectionObserver" in window)) {
-      ensureHtmlTileLoaded(card);
-      return;
-    }
-    if (!favHtmlObserver) {
-      favHtmlObserver = new IntersectionObserver((entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) ensureHtmlTileLoaded(entry.target);
-        }
-      }, { root: null, rootMargin: "80px", threshold: 0.05 });
-    }
-    favHtmlObserver.observe(card);
-  }
-
-  function refreshHtmlTileIframes() {
-    for (const [id, iframe] of htmlTileIframes) {
-      if (!iframe?.isConnected) {
-        htmlTileIframes.delete(id);
-        continue;
-      }
-      if (iframe.dataset.htmlMode !== "inline") continue;
-      const tile = htmlTiles.find((candidate) => candidate.id === id);
-      if (!tile) continue;
-      iframe.dataset.html = tile.html == null ? "" : String(tile.html);
-      const prepared = prepareHtmlTileFrame(iframe.dataset.html, htmlTileThemeTokens(tile));
-      if (prepared.kind === "inline") iframe.srcdoc = prepared.srcdoc;
-      else configureHtmlTileIframe(iframe, tile, iframe.parentElement?.querySelector(".fav-html-unavailable"));
-    }
-  }
-
-  function applyHtmlTileLiveAttr(deviceId, attr, value) {
-    const parsedDeviceId = Number(deviceId);
-    const attribute = String(attr || "");
-    const tile = htmlTiles.find((candidate) =>
-      Number(candidate.deviceId) === parsedDeviceId && candidate.attribute === attribute
-    );
-    if (!tile) return false;
-    tile.html = value == null ? "" : String(value);
-    delete tile.error;
-    const iframe = htmlTileIframes.get(tile.id);
-    // Not mounted yet (lazy): state is updated; paint happens when the card intersects.
-    if (iframe?.isConnected) {
-      const card = iframe.closest(".fav-html-card");
-      if (card && card.dataset.htmlLoaded !== "1") return true;
-      configureHtmlTileIframe(iframe, tile, iframe.parentElement?.querySelector(".fav-html-unavailable"));
-      if (card) card.dataset.htmlLoaded = "1";
-    }
-    return true;
-  }
-
-  async function removeHtmlFavoriteTile(id) {
-    const key = htmlFavoriteKey(id);
-    if (!favoritesLayout.includes(key)) return true;
-    const previousLayout = favoritesLayout.slice();
-    const nextLayout = favoritesLayout.filter((candidate) => candidate !== key);
-    replaceList(favoritesLayout, nextLayout);
-    if (currentCategory() === "favorites") renderFavoritesPopup();
-    const saved = await persistFavoriteLayout(nextLayout);
-    if (!saved) {
-      replaceList(favoritesLayout, previousLayout);
-      if (currentCategory() === "favorites") renderFavoritesPopup();
-      return false;
-    }
-    updateQuickNavVisibility();
-    flash("HTML tile removed");
-    return true;
-  }
-
-  function makeHtmlFavoriteCard(tile) {
-    const el = ce("article", "fav-html-card");
-    el.dataset.htmlTileId = tile.id;
-    const title = tile.title || tile.attribute || "HTML";
-    const head = ce("div", "fav-embed-head");
-    const titleEl = ce("div", "fav-embed-title");
-    titleEl.textContent = title;
-    head.appendChild(titleEl);
-    const actions = ce("div", "fav-embed-actions");
-    const expandBtn = ce("button", "fav-embed-expand");
-    expandBtn.type = "button";
-    expandBtn.textContent = "Expand";
-    expandBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      hapticTap();
-      ensureHtmlTileLoaded(el);
-      expandEmbedCard(el, expandBtn);
-    });
-    const menuBtn = ce("button", "fav-embed-menu-btn fav-html-menu-btn");
-    menuBtn.type = "button";
-    menuBtn.setAttribute("aria-label", "HTML tile options");
-    menuBtn.setAttribute("aria-haspopup", "menu");
-    menuBtn.textContent = "\u22ef";
-    const menu = ce("div", "fav-embed-menu fav-html-menu");
-    menu.hidden = true;
-    menu.setAttribute("role", "menu");
-    const renameBtn = ce("button", "fav-embed-menu-item");
-    renameBtn.type = "button";
-    renameBtn.setAttribute("role", "menuitem");
-    renameBtn.textContent = "Rename";
-    renameBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      closeFavTileOverflowMenu(menu, menuBtn);
-      openHtmlTileTitleEditor(tile);
-    });
-    const removeBtn = ce("button", "fav-embed-menu-item danger");
-    removeBtn.type = "button";
-    removeBtn.setAttribute("role", "menuitem");
-    removeBtn.textContent = "Remove";
-    removeBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      closeFavTileOverflowMenu(menu, menuBtn);
-      const ok = await confirmAction({ message: "Remove this HTML tile from favorites?", confirmLabel: "Remove", danger: true });
-      if (ok) await removeHtmlFavoriteTile(tile.id);
-    });
-    menu.appendChild(renameBtn);
-    menu.appendChild(removeBtn);
-    menuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      toggleFavTileOverflowMenu(menuBtn, menu);
-    });
-    actions.appendChild(expandBtn);
-    actions.appendChild(menuBtn);
-    actions.appendChild(menu);
-    head.appendChild(actions);
-    el.appendChild(head);
-
-    const media = ce("div", "fav-html-media");
-    const iframe = ce("iframe", "fav-html-iframe");
-    iframe.setAttribute("title", title);
-    iframe.loading = "lazy";
-    iframe.referrerPolicy = "no-referrer";
-    iframe.src = "about:blank";
-    const unavailable = ce("div", "fav-html-unavailable");
-    unavailable.hidden = true;
-    media.appendChild(iframe);
-    media.appendChild(unavailable);
-    el.appendChild(media);
-    applyHtmlTileZoomToCard(el, tile.zoom);
-    htmlTileIframes.set(tile.id, iframe);
-    observeFavHtmlCard(el);
-    return el;
-  }
-
-
 
   // ---------- shades / fans / music / sensors / scenes (post3; keeps post2 under cloud MQTT limit) ----------
   function makeShadeTile(shade, context) {
@@ -14692,7 +14913,10 @@
         changed = true;
       }
     }
-    if (sen && applySensorWsAttr(sen, nm, value, unit)) changed = true;
+    if (sen && applySensorWsAttr(sen, nm, value, unit)) {
+      changed = true;
+      if (nm === "temperature") climate = true;
+    }
     if (s && sen && nm !== "temperature") syncTempSensorFromSensorEntry(s, sen);
     if (changed && climate) {
       updateClimateWidgets();
@@ -16297,50 +16521,87 @@
   const SCHED_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const SCHED_OFFSET_PRESETS = [-60, -45, -30, -15, 0, 15, 30, 45, 60];
   let schedules = [];
-  let schedulesLoadedFromHub = false;
+  let schedulesLoadState = "idle";
+  let schedulesLoadedAt = 0;
   let schedulesLoadPromise = null;
+  let schedulesRefreshEpoch = 0;
+  let schedulesMutationChain = Promise.resolve();
+  let schedulesMutationPending = 0;
+  let schedulesCloudOmitted = false;
+  let schedSaveInFlight = false;
+  const schedRowInFlight = new Set();
+  let hubTimeZone = "";
+  let hubNowMs = 0;
   let sunTimes = { sunrise: null, sunset: null };
   let schedUse24Hour = false;
   let schedDraft = null;     // in-progress create/edit draft
   let schedStep = 1;         // 1 | 2 | 3
   let schedEditingId = null;
+  let schedNameCustom = false;
 
-  function applySchedulesFromData(data) {
+  function applySchedulesResponse(res) {
+    const list = Array.isArray(res) ? res : res?.schedules;
+    if (!Array.isArray(list)) return;
+    schedules = list;
+    schedulesLoadState = "loaded";
+    schedulesLoadedAt = Date.now();
+  }
+
+  function applySchedulesFromData(data, requestEpoch) {
     if (!data) return;
     schedulerEnabled = data.schedulerEnabled !== false;
+    if (typeof data.hubTimeZone === "string") hubTimeZone = data.hubTimeZone.trim();
+    const hn = Number(data.hubNow);
+    if (hn > 0) hubNowMs = hn;
     if (!schedulerEnabled) {
       schedDraft = null;
       schedEditingId = null;
       schedStep = 1;
+      schedNameCustom = false;
+      schedulesLoadState = "idle";
+      schedulesLoadedAt = 0;
+      schedulesCloudOmitted = false;
       schedulesLoadedFromHub = false;
     }
-    if (Array.isArray(data.schedules)) {
-      schedules = data.schedules;
-      schedulesLoadedFromHub = true;
+    if (data.schedules === null) schedulesCloudOmitted = true;
+    else if (Array.isArray(data.schedules)) {
+      schedulesCloudOmitted = false;
+      const stale = typeof requestEpoch === "number" && requestEpoch !== schedulesRefreshEpoch;
+      if (!stale && !schedulesMutationPending) {
+        if (data.schedulesError && !data.schedules.length) {
+          schedules = [];
+          schedulesLoadState = "error";
+        } else applySchedulesResponse(data.schedules);
+      }
     }
     if (data.sunTimes && typeof data.sunTimes === "object") {
       sunTimes = { sunrise: data.sunTimes.sunrise ?? null, sunset: data.sunTimes.sunset ?? null };
     }
     schedUse24Hour = data.schedUse24Hour === true;
-    if (schedulerViewIsActive() && schedulerEnabled) renderSchedulerActive();
+    if (schedulerViewIsActive() && schedulerEnabled) {
+      if (schedulesCloudOmitted) void ensureSchedulesLoaded();
+      renderSchedulerActive();
+    }
   }
 
-  async function ensureSchedulesLoaded() {
-    if (!schedulerEnabled || schedulesLoadedFromHub) return;
+  async function ensureSchedulesLoaded(opts) {
+    if (!schedulerEnabled) return;
+    const force = !!(opts && opts.force);
+    if (!force && schedulesLoadState === "loaded" && (!schedulesCloudOmitted || Date.now() - schedulesLoadedAt < 15e3)) return;
+    if (schedulesMutationPending) return;
     if (schedulesLoadPromise) return schedulesLoadPromise;
-    schedulesLoadPromise = (async () => {
-      try {
-        const res = await getJson("schedules");
-        if (Array.isArray(res?.schedules)) {
-          schedules = res.schedules;
-          schedulesLoadedFromHub = true;
-        }
-      } catch (e) {
-        console.warn("Modern Dashboard: schedules fetch failed", e);
-      } finally {
-        schedulesLoadPromise = null;
-      }
-    })();
+    const had = schedulesLoadState === "loaded";
+    const epoch = schedulesRefreshEpoch;
+    if (!had) schedulesLoadState = "loading";
+    schedulesLoadPromise = getJson("schedules").then((res) => {
+      if (epoch !== schedulesRefreshEpoch) return;
+      applySchedulesResponse(res);
+      if (schedulesLoadState !== "loaded" && !had) schedulesLoadState = "error";
+    }).catch((e) => {
+      if (epoch !== schedulesRefreshEpoch) return;
+      console.warn("Modern Dashboard: schedules fetch failed", e);
+      if (!had) schedulesLoadState = "error";
+    }).finally(() => { schedulesLoadPromise = null; });
     return schedulesLoadPromise;
   }
 
@@ -16351,6 +16612,10 @@
 
   function schedulerHasContent() {
     return schedulerEnabled;
+  }
+
+  function schedulerResponseEpoch() {
+    return schedulesRefreshEpoch;
   }
 
   function schedParseTime24(str) {
@@ -16395,13 +16660,9 @@
   }
 
   function schedFmtDateTimeLocal(iso) {
-    if (!iso) return "";
-    if (schedUse24Hour) return iso;
-    try {
-      const d = new Date(iso.length >= 16 ? iso.substring(0, 16) : iso);
-      if (isNaN(d.getTime())) return iso;
-      return d.toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
-    } catch { return iso; }
+    const core = String(iso || "").slice(0, 16);
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(core)) return iso || "";
+    return core.slice(0, 10) + " " + schedFmtClockTime(core.slice(11));
   }
 
   const SCHED_WHEEL_ITEM_H = 44;
@@ -16688,14 +16949,25 @@
     parent.appendChild(wrap);
   }
 
+  function schedHubTimeHint() {
+    let browser = "";
+    try { browser = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch {}
+    if (!hubTimeZone || !browser || hubTimeZone === browser) return null;
+    const hint = ce("p", "sched-hint");
+    hint.textContent = "Times use hub time (" + hubTimeZone + ")";
+    return hint;
+  }
+
   function fmtSchedTime(ms) {
     if (ms == null) return "\u2014";
     try {
       const d = new Date(Number(ms));
       if (isNaN(d.getTime())) return "\u2014";
-      return d.toLocaleString([], schedUse24Hour
+      const opts = schedUse24Hour
         ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
-        : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+        : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true };
+      if (hubTimeZone) opts.timeZone = hubTimeZone;
+      return d.toLocaleString([], opts);
     } catch { return "\u2014"; }
   }
 
@@ -16831,10 +17103,19 @@
     return { primary: "Pending", secondary: "", muted: false };
   }
 
+  function schedLastResultNote(s) {
+    const lr = s?.lastResult;
+    if (!lr || lr.ok) return "";
+    const m = (lr.missing || []).length, f = (lr.failed || []).length;
+    return [m && (m + " missing"), f && (f + " failed"), !lr.succeeded && "no devices ran"].filter(Boolean).join(" \u00b7 ");
+  }
+
   function schedLastRunText(s) {
     if (s.lastFired == null) return { primary: "Not yet run", secondary: "", muted: false };
     const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
-    return { primary: rel || fmtSchedTime(s.lastFired), secondary: rel ? fmtSchedTime(s.lastFired) : "", muted: false };
+    const note = schedLastResultNote(s);
+    const secondary = [rel ? fmtSchedTime(s.lastFired) : "", note].filter(Boolean).join(" \u00b7 ");
+    return { primary: rel || fmtSchedTime(s.lastFired), secondary, muted: !!note };
   }
 
   function schedSearchText(s) {
@@ -16899,6 +17180,7 @@
     schedDraft.action = schedDraft.action || { target: "lights", states: [] };
     schedEditingId = s.id;
     schedStep = 1;
+    schedNameCustom = !!(schedDraft.name && String(schedDraft.name).trim());
     renderSchedulerActive();
   }
 
@@ -16924,8 +17206,31 @@
     } catch (e) { return { ok: false, error: String(e?.message || e) }; }
   }
 
+  function schedMutationApi(path, body) {
+    schedulesRefreshEpoch++;
+    schedulesMutationPending++;
+    const task = schedulesMutationChain.then(() => schedApi(path, body));
+    schedulesMutationChain = task.catch(() => {});
+    return task.finally(() => {
+      schedulesMutationPending = Math.max(0, schedulesMutationPending - 1);
+      // Invalidate /data polls that began while this mutation was in flight.
+      schedulesRefreshEpoch++;
+    });
+  }
+
+  function schedBeginRowOp(id) {
+    const key = String(id || "");
+    if (!key || schedRowInFlight.has(key)) return false;
+    schedRowInFlight.add(key);
+    return true;
+  }
+
+  function schedEndRowOp(id) {
+    schedRowInFlight.delete(String(id || ""));
+  }
+
   function renderSchedulerView() {
-    void ensureSchedulesLoaded().then(() => {
+    void ensureSchedulesLoaded({ force: true }).then(() => {
       if (schedulerViewIsActive()) renderSchedulerActive();
     });
     renderSchedulerActive();
@@ -16961,14 +17266,31 @@
       schedDraft = newSchedDraft();
       schedEditingId = null;
       schedStep = 1;
+      schedNameCustom = false;
       renderSchedulerActive();
     });
     header.appendChild(addBtn);
     wrap.appendChild(header);
 
-    if (!schedulesLoadedFromHub && schedulesLoadPromise) {
+    if (schedulesLoadState === "loading" && !schedules.length) {
       const empty = ce("div", "empty");
       empty.textContent = "Loading schedules\u2026";
+      wrap.appendChild(empty);
+      return wrap;
+    }
+    if (schedulesLoadState === "error" && !schedules.length) {
+      const empty = ce("p", "sched-empty");
+      empty.textContent = "Couldn\u2019t load schedules. ";
+      const retry = ce("button", "ghost-btn");
+      retry.type = "button";
+      retry.textContent = "Retry";
+      retry.addEventListener("click", () => {
+        schedulesLoadState = "idle";
+        void ensureSchedulesLoaded({ force: true }).then(() => {
+          if (schedulerViewIsActive()) renderSchedulerActive();
+        });
+      });
+      empty.appendChild(retry);
       wrap.appendChild(empty);
       return wrap;
     }
@@ -16990,6 +17312,7 @@
   function renderSchedRow(s) {
     const row = ce("div", "sched-row" + (s.enabled ? "" : " is-off"));
     row.dataset.name = schedSearchText(s);
+    const rowBusy = schedRowInFlight.has(String(s.id || ""));
 
     const head = ce("div", "sched-row-head");
     const nameEl = ce("div", "sched-row-name");
@@ -17000,20 +17323,19 @@
     toggle.type = "button";
     toggle.setAttribute("aria-pressed", s.enabled ? "true" : "false");
     toggle.textContent = s.enabled ? "Enabled" : "Disabled";
+    toggle.disabled = rowBusy;
     toggle.addEventListener("click", async (e) => {
       e.stopPropagation();
+      if (!schedBeginRowOp(s.id)) return;
       hapticTap();
-      toggle.disabled = true;
-      const res = await schedApi("toggle", { id: s.id });
-      toggle.disabled = false;
-      if (res?.ok) {
-        if (Array.isArray(res.schedules)) {
-          schedules = res.schedules;
-          schedulesLoadedFromHub = true;
-        }
+      renderSchedulerActive();
+      try {
+        const res = await schedMutationApi("toggle", { id: s.id });
+        applySchedulesResponse(res);
+        if (!res?.ok) flash(res?.error || "Toggle failed", true);
+      } finally {
+        schedEndRowOp(s.id);
         renderSchedulerActive();
-      } else {
-        flash(res?.error || "Toggle failed", true);
       }
     });
     head.appendChild(toggle);
@@ -17040,6 +17362,7 @@
     const editBtn = ce("button", "ghost-btn sched-icon-btn");
     editBtn.type = "button";
     editBtn.textContent = "Edit";
+    editBtn.disabled = rowBusy;
     editBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       hapticTap();
@@ -17049,35 +17372,42 @@
 
     const testBtn = ce("button", "ghost-btn sched-icon-btn");
     testBtn.type = "button";
-    testBtn.textContent = "Test";
+    testBtn.textContent = "Run actions now";
+    testBtn.title = "Ignores pause and mode rules";
+    testBtn.disabled = rowBusy;
     testBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
+      if (!schedBeginRowOp(s.id)) return;
       hapticTap();
-      testBtn.disabled = true;
-      const res = await schedApi("test", { id: s.id });
-      testBtn.disabled = false;
-      flash(res?.ok ? "Ran schedule actions" : (res?.error || "Test failed"), !res?.ok);
+      renderSchedulerActive();
+      try {
+        const res = await schedApi("test", { id: s.id });
+        const resultOk = res?.ok === true && res?.lastResult?.ok !== false;
+        flash(resultOk ? "Ran actions now" : (res?.error || "Actions did not complete"), !resultOk);
+      } finally {
+        schedEndRowOp(s.id);
+        renderSchedulerActive();
+      }
     });
     foot.appendChild(testBtn);
 
     const delBtn = ce("button", "ghost-btn sched-icon-btn sched-del-btn");
     delBtn.type = "button";
     delBtn.textContent = "Delete";
+    delBtn.disabled = rowBusy;
     delBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       if (!confirm("Delete this schedule?")) return;
+      if (!schedBeginRowOp(s.id)) return;
       hapticTap();
-      delBtn.disabled = true;
-      const res = await schedApi("delete", { id: s.id });
-      delBtn.disabled = false;
-      if (res?.ok) {
-        if (Array.isArray(res.schedules)) {
-          schedules = res.schedules;
-          schedulesLoadedFromHub = true;
-        }
+      renderSchedulerActive();
+      try {
+        const res = await schedMutationApi("delete", { id: s.id });
+        applySchedulesResponse(res);
+        if (!res?.ok) flash(res?.error || "Delete failed", true);
+      } finally {
+        schedEndRowOp(s.id);
         renderSchedulerActive();
-      } else {
-        flash(res?.error || "Delete failed", true);
       }
     });
     foot.appendChild(delBtn);
@@ -17085,6 +17415,7 @@
 
     row.addEventListener("click", (e) => {
       if (e.target.closest("button")) return;
+      if (schedRowInFlight.has(String(s.id || ""))) return;
       hapticTap();
       openSchedForEdit(s);
     });
@@ -17104,6 +17435,7 @@
     cancelBtn.addEventListener("click", () => {
       schedDraft = null;
       schedEditingId = null;
+      schedNameCustom = false;
       renderSchedulerActive();
     });
     head.appendChild(cancelBtn);
@@ -17117,6 +17449,7 @@
       if (i < 3) steps.appendChild(ce("div", "sched-step-line"));
     }
     wrap.appendChild(steps);
+    wrap.appendChild(renderSchedNameField());
 
     if (schedStep === 1) wrap.appendChild(renderSchedStep1());
     else if (schedStep === 2) wrap.appendChild(renderSchedStep2());
@@ -17137,6 +17470,7 @@
       const f = ce("button", "ghost-btn sched-primary-btn");
       f.type = "button";
       f.textContent = fwdLabel;
+      if (schedSaveInFlight && (fwdLabel === "Create" || fwdLabel === "Save")) f.disabled = true;
       f.addEventListener("click", fwdCb);
       nav.appendChild(f);
     }
@@ -17216,18 +17550,6 @@
       if (modeCond) wrap.appendChild(modeCond);
     }
 
-    const nameField = ce("div", "sched-field");
-    const nlbl = ce("label", "sched-field-label");
-    nlbl.textContent = "Schedule name (optional)";
-    nameField.appendChild(nlbl);
-    const nin = ce("input", "sched-input");
-    nin.type = "text";
-    nin.value = schedDraft.name || "";
-    nin.placeholder = autoSchedName();
-    nin.addEventListener("input", () => { schedDraft.name = nin.value; });
-    nameField.appendChild(nin);
-    wrap.appendChild(nameField);
-
     wrap.appendChild(schedNavRow(null, null, "Next", () => {
       if (!validateStep1()) return;
       schedStep = 2;
@@ -17241,7 +17563,7 @@
     const when = tr.when || "clock";
     if (tr.kind === "daily" || tr.kind === "weekly") {
       if (when === "clock") {
-        if (!/^\d{1,2}:\d{2}$/.test(tr.time || "")) { flash("Enter a valid time", true); return false; }
+        if (!schedParseTime24(tr.time || "")) { flash("Enter a valid time", true); return false; }
       } else {
         const off = Number(tr.offsetMin);
         if (!Number.isFinite(off) || off < -720 || off > 720) { flash("Offset must be between -720 and 720 minutes", true); return false; }
@@ -17250,9 +17572,9 @@
     if (tr.kind === "weekly" && (!tr.days || !tr.days.length)) { flash("Pick at least one day", true); return false; }
     if (tr.kind === "once") {
       if (!tr.at) { flash("Pick a date and time", true); return false; }
-      const atMs = new Date(tr.at.length >= 16 ? tr.at.substring(0, 16) : tr.at).getTime();
-      if (!Number.isFinite(atMs)) { flash("Invalid one-time date", true); return false; }
-      if (atMs <= Date.now()) { flash("One-time schedule must be in the future", true); return false; }
+      const core = tr.at.length >= 16 ? tr.at.substring(0, 16) : tr.at;
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(core)) { flash("Invalid one-time date", true); return false; }
+      if (!schedParseTime24(core.substring(11, 16))) { flash("Invalid one-time date", true); return false; }
     }
     if (tr.kind === "mode" && !tr.mode) { flash("Pick a hub mode", true); return false; }
     return true;
@@ -17366,7 +17688,7 @@
     inp.max = "720";
     inp.step = "5";
     inp.value = String(cur);
-    inp.addEventListener("input", () => { tr.offsetMin = Number(inp.value) || 0; });
+    inp.addEventListener("input", () => { tr.offsetMin = Number(inp.value) || 0; schedSyncNameField(); });
     custom.appendChild(inp);
     field.appendChild(custom);
     return field;
@@ -17393,7 +17715,9 @@
     const lbl = ce("label", "sched-field-label");
     lbl.textContent = "Time";
     field.appendChild(lbl);
-    schedAppendClockPicker(field, tr.time || "19:30", (t) => { tr.time = t; });
+    const hubHint = schedHubTimeHint();
+    if (hubHint) field.appendChild(hubHint);
+    schedAppendClockPicker(field, tr.time || "19:30", (t) => { tr.time = t; schedSyncNameField(); });
     return field;
   }
 
@@ -17421,9 +17745,18 @@
   }
 
   function defaultOnceAt() {
-    const d = new Date(Date.now() + 60 * 60 * 1000);
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const ms = (hubNowMs || Date.now()) + 36e5;
+    const o = { hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" };
+    if (hubTimeZone) o.timeZone = hubTimeZone;
+    try {
+      const p = {};
+      for (const x of new Intl.DateTimeFormat("en-US", o).formatToParts(new Date(ms))) p[x.type] = x.value;
+      return p.year + "-" + p.month + "-" + p.day + "T" + p.hour + ":" + p.minute;
+    } catch {
+      const d = new Date(ms);
+      const z = (n) => String(n).padStart(2, "0");
+      return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + "T" + z(d.getHours()) + ":" + z(d.getMinutes());
+    }
   }
 
   function renderSchedOncePicker(tr) {
@@ -17440,9 +17773,13 @@
     dateIn.addEventListener("input", () => {
       const timePart = tr.at.length >= 16 ? tr.at.substring(11, 16) : "19:30";
       tr.at = dateIn.value + "T" + timePart;
+      schedSyncNameField();
     });
     dateField.appendChild(dateIn);
     wrap.appendChild(dateField);
+
+    const hubHint = schedHubTimeHint();
+    if (hubHint) wrap.appendChild(hubHint);
 
     const timeField = ce("div", "sched-field");
     const tlbl = ce("label", "sched-field-label");
@@ -17452,6 +17789,7 @@
     schedAppendClockPicker(timeField, timePart, (t) => {
       const datePart = tr.at.length >= 10 ? tr.at.substring(0, 10) : defaultOnceAt().substring(0, 10);
       tr.at = datePart + "T" + t;
+      schedSyncNameField();
     });
     wrap.appendChild(timeField);
     return wrap;
@@ -17696,6 +18034,7 @@
         for (const d of unroomedSel) selList.appendChild(renderRow(d));
       }
       schedMountDeviceActionsSection(wrap, oldActions, selList, "Choose on or off for every selected device below.");
+      schedSyncNameField();
     }
 
     refreshOnOffAction();
@@ -17907,6 +18246,7 @@
         for (const d of unroomedSel) selList.appendChild(renderSchedLightRow(d));
       }
       schedMountDeviceActionsSection(wrap, oldActions, selList, "Choose on/off and brightness for every selected device below.");
+      schedSyncNameField();
     }
 
     refreshLightAction();
@@ -17977,7 +18317,7 @@
         heatField.appendChild(hlbl);
         const hin = ce("input", "sched-input");
         hin.type = "number"; hin.min = "40"; hin.max = "90"; hin.value = String(schedDraft.action.heat ?? 68);
-        hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); });
+        hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); schedSyncNameField(); });
         heatField.appendChild(hin);
         wrap.appendChild(heatField);
       }
@@ -17989,7 +18329,7 @@
         coolField.appendChild(clbl);
         const cin = ce("input", "sched-input");
         cin.type = "number"; cin.min = "50"; cin.max = "100"; cin.value = String(schedDraft.action.cool ?? 72);
-        cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); });
+        cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); schedSyncNameField(); });
         coolField.appendChild(cin);
         wrap.appendChild(coolField);
       }
@@ -18030,27 +18370,59 @@
   }
 
   function autoSchedName() {
-    const tr = schedDraft?.trigger;
-    const ac = schedDraft?.action;
-    let when = "Schedule";
-    if (tr?.kind === "daily") {
-      if (schedTriggerWhen(tr) === "clock") when = "Daily " + schedFmtClockTime(tr.time || "");
-      else when = "Daily " + schedSunLabel(schedTriggerWhen(tr), tr.offsetMin);
-    } else if (tr?.kind === "weekly") {
-      const days = (tr.days || []).join(",");
-      if (schedTriggerWhen(tr) === "clock") when = "Weekly " + days + " " + schedFmtClockTime(tr.time || "");
-      else when = "Weekly " + days + " " + schedSunLabel(schedTriggerWhen(tr), tr.offsetMin);
-    } else if (tr?.kind === "once") when = "Once " + schedFmtDateTimeLocal(tr.at || "");
-    else if (tr?.kind === "mode") when = "When mode is " + (tr.mode || "");
-    let what = "";
-    if (ac?.target === "lights") what = " lights";
-    else if (ac?.target === "outlets") what = " outlets";
-    else if (ac?.target === "thermostats") what = " thermostats";
-    else if (ac?.target === "hubMode") what = " \u2192 " + (ac.mode || "mode");
-    return when + what;
+    const fn = globalThis.autoScheduleName;
+    if (typeof fn !== "function") return "";
+    return fn(schedDraft, { rooms, devices, outlets, thermostats }, {
+      clockTime: schedFmtClockTime,
+      dateTimeLocal: schedFmtDateTimeLocal,
+    });
   }
 
-  async function saveSchedule() {
+  function schedLiveName() {
+    if (schedNameCustom && (schedDraft?.name || "").trim()) return schedDraft.name;
+    return autoSchedName();
+  }
+
+  function schedSyncNameField() {
+    const nin = document.querySelector(".sched-name-input");
+    if (!nin || !schedDraft) return;
+    const auto = autoSchedName();
+    nin.placeholder = auto;
+    if (schedNameCustom) return;
+    if (document.activeElement === nin) return;
+    nin.value = auto;
+  }
+
+  function renderSchedNameField() {
+    const nameField = ce("div", "sched-field sched-name-field");
+    const nlbl = ce("label", "sched-field-label");
+    nlbl.textContent = "Schedule name";
+    nameField.appendChild(nlbl);
+    const nin = ce("input", "sched-input sched-name-input");
+    nin.type = "text";
+    nin.value = schedLiveName();
+    nin.placeholder = autoSchedName();
+    nin.addEventListener("input", () => {
+      const auto = autoSchedName();
+      const v = nin.value;
+      if (!v.trim() || v === auto) {
+        schedNameCustom = false;
+        schedDraft.name = "";
+        nin.placeholder = auto;
+      } else {
+        schedNameCustom = true;
+        schedDraft.name = v;
+      }
+    });
+    nin.addEventListener("blur", () => {
+      if (!schedNameCustom) nin.value = autoSchedName();
+    });
+    nameField.appendChild(nin);
+    return nameField;
+  }
+
+  async function saveSchedule(e) {
+    if (schedSaveInFlight) return;
     if (!validateStep1()) { schedStep = 1; renderSchedulerActive(); return; }
     const ac = schedDraft.action;
     if (ac.target === "lights" && (!ac.states || !ac.states.length)) { flash("Select at least one light", true); return; }
@@ -18059,28 +18431,29 @@
     if (ac.target === "hubMode" && !ac.mode) { flash("Pick a hub mode", true); return; }
     const payload = {
       id: schedEditingId || undefined,
-      name: (schedDraft.name || "").trim() || autoSchedName(),
+      name: (schedNameCustom ? (schedDraft.name || "").trim() : "") || autoSchedName(),
       enabled: schedDraft.enabled,
       trigger: schedDraft.trigger,
       onlyInModes: schedDraft.onlyInModes || [],
       action: schedDraft.action
     };
-    const res = await schedApi("save", payload);
-    if (res?.ok) {
-      if (Array.isArray(res.schedules)) {
-        schedules = res.schedules;
-        schedulesLoadedFromHub = true;
-      }
-      schedDraft = null;
-      schedEditingId = null;
-      flash("Schedule saved");
+    schedSaveInFlight = true;
+    if (e?.currentTarget) e.currentTarget.disabled = true;
+    try {
+      const res = await schedMutationApi("save", payload);
+      applySchedulesResponse(res);
+      if (res?.ok) {
+        schedDraft = null;
+        schedEditingId = null;
+        flash("Schedule saved");
+      } else flash(res?.error || "Save failed", true);
+    } finally {
+      schedSaveInFlight = false;
       renderSchedulerActive();
-    } else {
-      flash(res?.error || "Save failed", true);
     }
   }
 
-  Object.assign(globalThis.__MLD, { applySchedulesFromData, schedulerHasContent, renderSchedulerView });
+  Object.assign(globalThis.__MLD, { applySchedulesFromData, schedulerHasContent, schedulerResponseEpoch, renderSchedulerView });
   globalThis.__MLD.updateQuickNavVisibility?.();
 
 })();
