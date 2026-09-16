@@ -3672,14 +3672,26 @@
     const deg = "°" + unit;
     const tm = String(t?.tm || "").toLowerCase();
     const os = String(t?.os || "").toLowerCase();
-    const current = t.temp != null ? Math.round(t.temp) + deg : "—";
-    if (tm === "off") return { label: "Off · now " + current, active: false };
-    if (tm === "fan") return { label: "Fan · now " + current, active: true };
-    if (tm === "dry") return { label: "Dry · now " + current, active: os === "cooling" || os === "pending cool" };
-    if (os === "heating" || os === "pending heat") return { label: "Heating · now " + current, active: true };
-    if (os === "cooling" || os === "pending cool") return { label: "Cooling · now " + current, active: true };
-    if (os === "fan" || os === "fan only") return { label: "Fan · now " + current, active: true };
-    return { label: "Now " + current, active: false };
+    const now = t.temp != null ? Math.round(t.temp) + deg : "—";
+    let prefix = "Now ";
+    let active = false;
+    if (tm === "off") prefix = "Off · now ";
+    else if (tm === "fan") { prefix = "Fan · now "; active = true; }
+    else if (tm === "dry") {
+      prefix = "Dry · now ";
+      active = os === "cooling" || os === "pending cool";
+    } else if (os === "heating" || os === "pending heat") { prefix = "Heating · now "; active = true; }
+    else if (os === "cooling" || os === "pending cool") { prefix = "Cooling · now "; active = true; }
+    else if (os === "fan" || os === "fan only") { prefix = "Fan · now "; active = true; }
+    return { prefix, now, active, label: prefix + now };
+  }
+
+  function paintTstatStateTxt(el, info) {
+    el.replaceChildren();
+    el.appendChild(document.createTextNode(info.prefix));
+    const nowEl = ce("span", "quick-fav-tstat-now");
+    nowEl.textContent = info.now;
+    el.appendChild(nowEl);
   }
 
   function modeCmdForKey(key) {
@@ -11457,7 +11469,7 @@
     const stateEl = ce("div", "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : ""));
     const dot = ce("span", "quick-fav-tstat-dot");
     const stateTxt = ce("span", "quick-fav-tstat-state-txt");
-    stateTxt.textContent = stateInfo.label;
+    paintTstatStateTxt(stateTxt, stateInfo);
     stateEl.appendChild(dot);
     stateEl.appendChild(stateTxt);
     info.appendChild(stateEl);
@@ -11560,7 +11572,7 @@
     rec.spEl.className = "quick-fav-tstat-sp " + temps.tone;
     rec.spEl.textContent = temps.setpoint;
     rec.stateEl.className = "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : "");
-    rec.stateTxt.textContent = stateInfo.label;
+    paintTstatStateTxt(rec.stateTxt, stateInfo);
     rec.modeLabel.textContent = tstatModeDisplayLabel(t.tm);
     fitTstatModeLabel(rec.modeBtn);
     if (rec.dialTemp) rec.dialTemp.textContent = temps.current;

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.14
+
+- **Thermostats tab:** restore the compact three-column cards on phones (name
+  and status, setpoint, mode controls). Cards are slightly taller so a long
+  HVAC mode can wrap to two lines in the pill, names wrap instead of
+  truncating, and the current “now” temperature is a bit larger.
+
 ## 0.4.13
 
 - **Thermostats tab:** restore compact cards on phones. Name, setpoint, and
