@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.12
+
+- **Thermostats:** overflow **Reorder** on the Thermostats tab rearranges thermostat
+  cards (drag or up/down) and saves the order on the hub. Lights still reorders
+  rooms and quick-nav icons.
+- **Thermostats:** HVAC mode labels on the card pill shrink to fit so long names
+  are not clipped; the pill size stays the same.
+- **Build:** File Manager JS/CSS must stay ≤ **120 KB** (blobs near 124 KB have
+  truncated). Favorites tile CSS moved into `mld-app.css`, and HTML-tile helpers
+  into `mld-app-core.js`, so `mld-app-core.js` / `mld-app-post.js` keep headroom.
+- **Scheduler:** Register sun and one-time jobs with `overwrite: false` so multiple
+  schedules can share `scheduledJobHandler`. After a sunrise/sunset fire, re-arm
+  only that schedule instead of unscheduling every pending job.
+- **Scheduler:** Five-minute cleanup rebuilds jobs only when a past one-time row
+  was pruned. Midnight re-arm moved to 00:01 so it does not compete with midnight
+  clock schedules.
+- **Scheduler:** Corrupt `schedulesJson` no longer looks like an empty list; save/
+  toggle/delete/import fail closed instead of wiping stored schedules.
+- **Scheduler:** Reject hub-mode trigger/action loops (including setting the same
+  mode). Missing or failed devices are recorded on `lastResult` instead of looking
+  like a full success.
+- **Scheduler:** Persist the rapid mode-transition guard across asynchronous hub
+  events, retry failed sun re-arms without rebuilding sibling jobs, and reject
+  impossible one-time calendar dates.
+- **Scheduler UI:** Cloud dashboards refresh the schedule list while Scheduler is
+  open; a failed load shows retry instead of “No schedules yet.” Create/Save
+  ignores double-taps. Times follow hub timezone. **Run actions now** states that
+  it ignores pause and mode rules.
+- **Scheduler UI:** Serialize mutations and reject stale refresh responses. Pending
+  row actions stay disabled across polling renders, and failed manual runs no
+  longer display a success message.
+- **Fix:** move HTML tile card helpers into `mld-app-post.js` so scheduler UI can
+  ship in `mld-app-post3.js` under Hubitat Cloud’s JS size limit.
+- **Build:** Preserve unrelated packages in the shared HPM repository catalog and
+  rebalance order-persistence helpers to restore File Manager size headroom.
+
 ## 0.4.11
 
 - **Logging:** device commands write Hubitat info lines tagged `manual` or

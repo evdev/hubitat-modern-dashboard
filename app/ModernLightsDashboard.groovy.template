@@ -1642,6 +1642,8 @@ mappings {
     path("/nav-order") { action: [GET: "saveNavOrderGet", POST: "saveNavOrder"] }
     path("/settings/camera-order") { action: [GET: "saveCameraOrderGet", POST: "saveCameraOrder"] }
     path("/camera-order") { action: [GET: "saveCameraOrderGet", POST: "saveCameraOrder"] }
+    path("/settings/thermostat-order") { action: [GET: "saveThermostatOrderGet", POST: "saveThermostatOrder"] }
+    path("/thermostat-order") { action: [GET: "saveThermostatOrderGet", POST: "saveThermostatOrder"] }
     path("/hub-mode") { action: [GET: "setHubModeGet", POST: "setHubMode"] }
     path("/hsm") { action: [GET: "setHsmGet", POST: "setHsm"] }
     path("/scene/activate") { action: [GET: "activateSceneGet", POST: "activateScene"] }
@@ -1835,6 +1837,7 @@ def renderData() {
     out << roomOrderJsonFragment()
     out << navOrderJsonFragment()
     out << cameraOrderJsonFragment()
+    out << thermostatOrderJsonFragment()
     out << favoritesJsonFragment()
     out << lightControlConfigJsonFragment()
     out << "},\"rooms\":["
@@ -2159,6 +2162,8 @@ def renderData() {
     out << ",\"roomClimateEnabled\":" << (roomClimateEnabled == null ? "true" : (roomClimateEnabled == true ? "true" : "false"))
     out << ",\"schedulerEnabled\":" << (schedulerIsEnabled() ? "true" : "false")
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
+    out << ",\"hubTimeZone\":" << jsonStr(hubTimeZoneId())
+    out << ",\"hubNow\":" << now().toString()
     out << ",\"triggersEnabled\":" << (triggersIsEnabled() ? "true" : "false")
     out << ",\"alertsArmed\":" << (readAlertsArmed() ? "true" : "false")
     out << ",\"alertsArmSwitchId\":" << (alertsArmSwitch?.id != null ? alertsArmSwitch.id.toString() : "null")
@@ -2908,19 +2913,21 @@ def setComfortFanSpeedCmd(t, speedStr) {
 
 def setThermostatFanModeCmd(t, modeStr) {
     def mode = modeStr?.toString()?.toLowerCase()
-    if (!mode) return
-    if (!(t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode") || tstatHasComfortFanSpeed(t))) return
+    if (!mode) return false
+    if (!(t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode") || tstatHasComfortFanSpeed(t))) return false
+    boolean dispatched = false
     try {
-        if (mode == "auto" && t.hasCommand("fanAuto")) t.fanAuto()
-        else if (mode == "on" && t.hasCommand("fanOn")) t.fanOn()
-        else if (mode == "circulate" && t.hasCommand("fanCirculate")) t.fanCirculate()
-        else if (t.hasCommand("setComfortFanSpeed")) t.setComfortFanSpeed(modeStr.toString())
-        else if (t.hasCommand("setThermostatFanMode")) t.setThermostatFanMode(modeStr.toString())
-        else if (t.hasCommand("setFanMode")) t.setFanMode(modeStr.toString())
+        if (mode == "auto" && t.hasCommand("fanAuto")) { t.fanAuto(); dispatched = true }
+        else if (mode == "on" && t.hasCommand("fanOn")) { t.fanOn(); dispatched = true }
+        else if (mode == "circulate" && t.hasCommand("fanCirculate")) { t.fanCirculate(); dispatched = true }
+        else if (t.hasCommand("setComfortFanSpeed")) { t.setComfortFanSpeed(modeStr.toString()); dispatched = true }
+        else if (t.hasCommand("setThermostatFanMode")) { t.setThermostatFanMode(modeStr.toString()); dispatched = true }
+        else if (t.hasCommand("setFanMode")) { t.setFanMode(modeStr.toString()); dispatched = true }
     } catch (e) {
         log.warn "Modern Dashboard: setFanMode ${mode} failed for ${t.id}: ${e}"
         throw e
     }
+    return dispatched
 }
 
 def runLockCmd(dev, c, v) {
@@ -3150,6 +3157,7 @@ def executeOneCmd(id, c, v, pin) {
     }
     def targetDev = dev ?: outletDev ?: t ?: lk ?: garage ?: shade ?: fan ?: valve ?: mp
     try {
+        logControl("manual", "${deviceLabel(targetDev)} ${cmdDetail(c, v)}")
         if (shade != null && isShadeCmd(c)) {
             runShadeCmd(shade, c, v)
         } else if (fan != null && (c == "on" || c == "off" || c == "setSpeed")) {
@@ -3181,7 +3189,6 @@ def executeOneCmd(id, c, v, pin) {
         } else {
             runAudioCmd(mp, c, v)
         }
-        logControl("manual", "${deviceLabel(targetDev)} ${cmdDetail(c, v)}")
         return [ok: true]
     } catch (e) {
         logCmdFailure(targetDev, c, v, e.message ?: e.toString())
@@ -3591,9 +3598,6 @@ def lightCommandNextStep() {
             if (shouldSkipLightCmd(dev, c, v, snap)) continue
             try {
                 runLightCmd(dev, c, v)
-                def kind = job.kind?.toString()
-                def kindBit = kind ? " (${kind})" : ""
-                logControl("manual", "${deviceLabel(dev)} ${cmdDetail(c, v)}${kindBit}")
             } catch (e) {
                 job.failed = (job.failed ?: 0) + 1
                 logCmdFailure(dev, c, v, e.message ?: e.toString())
@@ -4056,21 +4060,20 @@ def saveNavOrderFromList(order) {
 }
 
 // ---------------------------------------------------------------------------
-// Camera order (state.cameraOrder — synced across devices)
+// Numeric device-id order (cameras, thermostats — synced across devices)
 // ---------------------------------------------------------------------------
-def parseCameraOrderState() {
-    if (!state.cameraOrder) return []
+def parseNumericIdOrderState(raw) {
+    if (!raw) return []
     try {
-        return state.cameraOrder.split(",").collect { it.trim() }.findAll { it }.collect { it.toLong() }
+        return raw.toString().split(",").collect { it.trim() }.findAll { it }.collect { it.toLong() }
     } catch (e) {
         return []
     }
 }
 
-def cameraOrderJsonFragment() {
-    def ids = parseCameraOrderState()
+def numericIdOrderJsonFragment(ids, jsonKey) {
     def out = new StringBuilder()
-    out << ",\"cameraOrder\":["
+    out << ",\"" << jsonKey << "\":["
     boolean first = true
     for (id in ids) {
         if (!first) out << ","; first = false
@@ -4078,6 +4081,69 @@ def cameraOrderJsonFragment() {
     }
     out << "]"
     return out.toString()
+}
+
+def parseOrderParamList() {
+    def orderStr = params?.order
+    if (!orderStr?.trim()) return null
+    return orderStr.split(",").collect { it.trim() }.findAll { it }
+}
+
+def parseOrderBodyList() {
+    def body = request?.JSON
+    if (body == null) {
+        try {
+            def raw = request?.postBody ?: request?.content
+            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+        } catch (e) {}
+    }
+    return body?.order
+}
+
+def validateNumericIdOrder(order, valid) {
+    if (!(order instanceof List) || order.isEmpty()) return null
+    def validated = []
+    def seen = new HashSet()
+    for (item in order) {
+        def key
+        try {
+            key = (item instanceof Number) ? item.longValue().toString() : item.toString().trim()
+        } catch (e) { continue }
+        if (!key || !valid.contains(key)) continue
+        if (seen.contains(key)) continue
+        seen.add(key)
+        validated << key.toLong()
+    }
+    return validated
+}
+
+def renderNumericIdOrderResult(validated) {
+    if (validated == null) {
+        return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
+    }
+    if (validated.isEmpty()) {
+        return renderJsonNoStore( '{"ok":false,"error":"empty order"}', 400)
+    }
+    def out = new StringBuilder()
+    out << "{\"ok\":true,\"order\":["
+    boolean first = true
+    for (id in validated) {
+        if (!first) out << ","; first = false
+        out << id
+    }
+    out << "]}"
+    return renderJsonNoStore( withAuthJson(out.toString()), 200)
+}
+
+// ---------------------------------------------------------------------------
+// Camera order (state.cameraOrder — synced across devices)
+// ---------------------------------------------------------------------------
+def parseCameraOrderState() {
+    return parseNumericIdOrderState(state.cameraOrder)
+}
+
+def cameraOrderJsonFragment() {
+    return numericIdOrderJsonFragment(parseCameraOrderState(), "cameraOrder")
 }
 
 def validCameraIdSet() {
@@ -4111,57 +4177,72 @@ def orderedCamerasList() {
 }
 
 def saveCameraOrderGet() {
-    def orderStr = params?.order
-    if (!orderStr?.trim()) {
+    def order = parseOrderParamList()
+    if (order == null) {
         return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
     }
-    def order = orderStr.split(",").collect { it.trim() }.findAll { it }
     return saveCameraOrderFromList(order)
 }
 
 def saveCameraOrder() {
-    def body = request?.JSON
-    if (body == null) {
-        try {
-            def raw = request?.postBody ?: request?.content
-            if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
-        } catch (e) {}
-    }
-    def order = body?.order
-    return saveCameraOrderFromList(order)
+    return saveCameraOrderFromList(parseOrderBodyList())
 }
 
 def saveCameraOrderFromList(order) {
     if (!guardDashboardAccess()) return renderAuthRequired()
-    if (!(order instanceof List) || order.isEmpty()) {
+    def validated = validateNumericIdOrder(order, validCameraIdSet())
+    if (validated == null) {
         return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
-    }
-    def valid = validCameraIdSet()
-    def validated = []
-    def seen = new HashSet()
-    for (item in order) {
-        def key
-        try {
-            key = (item instanceof Number) ? item.longValue().toString() : item.toString().trim()
-        } catch (e) { continue }
-        if (!key || !valid.contains(key)) continue
-        if (seen.contains(key)) continue
-        seen.add(key)
-        validated << key.toLong()
     }
     if (validated.isEmpty()) {
         return renderJsonNoStore( '{"ok":false,"error":"empty order"}', 400)
     }
     state.cameraOrder = validated.join(",")
-    def out = new StringBuilder()
-    out << "{\"ok\":true,\"order\":["
-    boolean first = true
-    for (id in validated) {
-        if (!first) out << ","; first = false
-        out << id
+    return renderNumericIdOrderResult(validated)
+}
+
+// ---------------------------------------------------------------------------
+// Thermostat order (state.thermostatOrder — synced across devices)
+// ---------------------------------------------------------------------------
+def parseThermostatOrderState() {
+    return parseNumericIdOrderState(state.thermostatOrder)
+}
+
+def thermostatOrderJsonFragment() {
+    return numericIdOrderJsonFragment(parseThermostatOrderState(), "thermostatOrder")
+}
+
+def validThermostatIdSet() {
+    def set = new HashSet()
+    for (d in asDeviceList(thermostats)) {
+        try { set.add(d.id.toString()) } catch (e) {}
     }
-    out << "]}"
-    return renderJsonNoStore( withAuthJson(out.toString()), 200)
+    return set
+}
+
+def saveThermostatOrderGet() {
+    def order = parseOrderParamList()
+    if (order == null) {
+        return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
+    }
+    return saveThermostatOrderFromList(order)
+}
+
+def saveThermostatOrder() {
+    return saveThermostatOrderFromList(parseOrderBodyList())
+}
+
+def saveThermostatOrderFromList(order) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def validated = validateNumericIdOrder(order, validThermostatIdSet())
+    if (validated == null) {
+        return renderJsonNoStore( '{"ok":false,"error":"missing order"}', 400)
+    }
+    if (validated.isEmpty()) {
+        return renderJsonNoStore( '{"ok":false,"error":"empty order"}', 400)
+    }
+    state.thermostatOrder = validated.join(",")
+    return renderNumericIdOrderResult(validated)
 }
 
 // ---------------------------------------------------------------------------
@@ -5718,7 +5799,6 @@ def setHubModeFromName(modeName) {
     }
     try {
         location.setMode(modeName)
-        logControl("manual", "hub mode → ${modeName}")
         return renderJsonNoStore( withAuthJson("{\"ok\":true,\"mode\":${jsonStr(modeName)}}"), 200)
     } catch (e) {
         log.warn "Modern Dashboard: hub mode failed — ${modeName}: ${e.message ?: e}"
@@ -6752,7 +6832,6 @@ def alertsArmFromValue(armed) {
         return renderJsonNoStore('{"ok":false,"error":"missing armed"}', 400)
     }
     try {
-        logControl("manual", "${deviceLabel(sw)} ${wantOn ? 'on' : 'off'} (alerts arm)")
         if (wantOn) sw.on()
         else sw.off()
         state.alertsArmed = wantOn
@@ -7443,8 +7522,6 @@ def activateSceneFromId(id) {
         return renderJsonNoStore( '{"ok":false,"error":"scene not found"}', 404)
     }
     try {
-        def sceneName = scenesMap[sceneId]?.toString()
-        logControl("manual", "scene ${sceneName ?: sceneId}")
         location.activateScene(sceneId)
         return renderJsonNoStore( withAuthJson("{\"ok\":true,\"id\":${sceneId}}"), 200)
     } catch (e) {
@@ -8015,89 +8092,108 @@ def schedImportApplyOk(okRows) {
     if (schedulerIsEnabled() != true) {
         return [error: "Scheduler is disabled in app settings", count: 0]
     }
-    def priorJson = null
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) {
+        return [error: (parsed.error ?: "schedule store unreadable").toString(), count: 0]
+    }
+    def map = parsed.map ?: [:]
+    def priorJson = state.schedulesJson
     def count = 0
-    def applyError = withSchedulesLock {
-        def map = parseSchedulesMap()
-        priorJson = state.schedulesJson
-        try {
-            okRows.each { row ->
-                def draft = row.schedule
-                def s = schedulesNormalizePayload(draft)
-                def verr = schedulesValidateNormalized(s)
-                if (verr) throw new RuntimeException(verr.toString())
-                def key = s.importKey?.toString()
-                def priorLastFired = null
-                if (key) {
-                    def removeIds = []
-                    map.each { k, v ->
-                        if (v?.importKey?.toString() == key) {
-                            if (priorLastFired == null && v?.lastFired != null) priorLastFired = v.lastFired
-                            removeIds << k
-                        }
+    try {
+        okRows.each { row ->
+            def draft = row.schedule
+            def s = schedulesNormalizePayload(draft)
+            def verr = schedulesValidateNormalized(s)
+            if (verr) throw new RuntimeException(verr.toString())
+            def deviceErr = schedulesUnknownDeviceError(s)
+            if (deviceErr) throw new RuntimeException(deviceErr.toString())
+            def key = s.importKey?.toString()
+            def priorLastFired = null
+            if (key) {
+                def removeIds = []
+                map.each { k, v ->
+                    if (v?.importKey?.toString() == key) {
+                        if (priorLastFired == null && v?.lastFired != null) priorLastFired = v.lastFired
+                        removeIds << k
                     }
-                    removeIds.each { rid -> map.remove(rid) }
                 }
-                def id = scheduleNewId()
-                s.id = id
-                if (priorLastFired != null) s.lastFired = priorLastFired
-                map[id] = s
-                count++
+                removeIds.each { rid -> map.remove(rid) }
             }
-            saveSchedulesMap(map)
-            return null
-        } catch (e) {
+            def id = scheduleNewId()
+            s.id = id
+            if (priorLastFired != null) s.lastFired = priorLastFired
+            map[id] = s
+            count++
+        }
+        def cycleErr = schedulesModeCycleError(map)
+        if (cycleErr) throw new RuntimeException(cycleErr.toString())
+        saveSchedulesMap(map)
+        def rebuild = rebuildScheduledJobs()
+        def failures = rebuild?.failures
+        if (failures instanceof Map && failures) {
             if (priorJson != null) state.schedulesJson = priorJson
             else state.remove("schedulesJson")
-            return (e.message ?: e).toString()
+            rebuildScheduledJobs()
+            def first = "schedule registration failed"
+            failures.each { k, v ->
+                if (v && first == "schedule registration failed") first = v.toString()
+            }
+            return [error: first, count: 0]
         }
-    }
-    if (applyError) {
+        return [error: null, count: count]
+    } catch (e) {
+        if (priorJson != null) state.schedulesJson = priorJson
+        else state.remove("schedulesJson")
         try { rebuildScheduledJobs() } catch (e2) {}
-        return [error: applyError, count: 0]
+        return [error: (e.message ?: e).toString(), count: 0]
     }
-    def rebuild = rebuildScheduledJobs()
-    def failures = rebuild?.failures
-    if (failures instanceof Map && failures) {
-        withSchedulesLock {
-            if (priorJson != null) state.schedulesJson = priorJson
-            else state.remove("schedulesJson")
-        }
-        rebuildScheduledJobs()
-        def first = "schedule registration failed"
-        failures.each { k, v ->
-            if (v && first == "schedule registration failed") first = v.toString()
-        }
-        return [error: first, count: 0]
-    }
-    return [error: null, count: count]
 }
 
 // ===========================================================================
 // Scheduler
 // ===========================================================================
 // Schedules are stored as a JSON map id->schedule in state.schedulesJson.
-// A single `schedulerNextFireHandler` runOnce is armed for the earliest
-// time-based schedule. When it fires, every due schedule is processed in one
-// top-level execution, then the next dispatcher is armed. This avoids Hubitat's
-// same-handler overwrite behavior and duplicate runOnce jobs. App-level
-// singleThreaded execution makes state.schedulesJson read/modify/write atomic
-// across scheduled handlers, location events, and dashboard endpoints.
+// One shared handler `scheduledJobHandler(data)` runs each job, identified by
+// the schedule id carried in the `data` map. `rebuildScheduledJobs()` applies
+// the full job set after lifecycle/config changes (install, save/toggle/delete,
+// sun-time events, midnight re-arm). Sun jobs re-arm individually after fire.
 // ===========================================================================
 
-def withSchedulesLock(Closure body) {
-    // Kept as a small transaction boundary for scheduler call sites. Hubitat's
-    // definition(singleThreaded: true) provides the actual serialization.
-    return body()
+def parseSchedulesMapResult() {
+    if (!state.schedulesJson) return [ok: true, map: [:], error: null]
+    try {
+        def parsed = new groovy.json.JsonSlurper().parseText(state.schedulesJson.toString())
+        if (parsed instanceof Map) return [ok: true, map: parsed, error: null]
+        log.warn "Modern Dashboard: schedulesJson is not a map"
+        return [ok: false, map: [:], error: "schedule store unreadable"]
+    } catch (e) {
+        log.warn "Modern Dashboard: schedulesJson parse failed: ${e}"
+        return [ok: false, map: [:], error: "schedule store unreadable"]
+    }
 }
 
 def parseSchedulesMap() {
-    if (!state.schedulesJson) return [:]
+    def parsed = parseSchedulesMapResult()
+    return (parsed.map instanceof Map) ? parsed.map : [:]
+}
+
+def requireSchedulesMap() {
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok == true) return parsed.map instanceof Map ? parsed.map : [:]
+    return null
+}
+
+def renderSchedulesStoreError(parsed) {
+    def msg = (parsed?.error ?: "schedule store unreadable").toString()
+    return renderJsonNoStore(("{\"ok\":false,\"error\":" + jsonStr(msg) + "}").toString(), 500)
+}
+
+def hubTimeZoneId() {
     try {
-        return new groovy.json.JsonSlurper().parseText(state.schedulesJson.toString()) ?: [:]
-    } catch (e) {
-        return [:]
-    }
+        def tz = location.timeZone
+        if (tz?.ID) return tz.ID.toString()
+    } catch (e) {}
+    return ""
 }
 
 def saveSchedulesMap(map) {
@@ -8256,9 +8352,14 @@ def formatSchedDateTimeLocal(at) {
     if (schedulerUse24Hour == true) return s
     try {
         def iso = s.length() >= 16 ? s.substring(0, 16) : s
+        def tz = location.timeZone
         def inFmt = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm")
-        def dt = inFmt.parse(iso)
         def outFmt = new java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.US)
+        if (tz) {
+            inFmt.setTimeZone(tz)
+            outFmt.setTimeZone(tz)
+        }
+        def dt = inFmt.parse(iso)
         return outFmt.format(dt)
     } catch (e) {
         return s
@@ -8298,17 +8399,14 @@ def schedulerIsEnabled() {
 
 def shutdownScheduler() {
     // Targeted unschedules only — never bare unschedule() (would kill light metering jobs).
-    // scheduledJobHandler is the pre-0.4.8 per-schedule handler; clear any
-    // legacy jobs during upgrade before arming the single dispatcher.
     try { unschedule("scheduledJobHandler") } catch (e) {}
-    try { unschedule("schedulerNextFireHandler") } catch (e) {}
+    try { unschedule("schedulerSunRetry") } catch (e) {}
     try { unschedule("cleanupSchedules") } catch (e) {}
     try { unschedule("schedulerMidnightRearm") } catch (e) {}
     // Drop location subscriptions so updated()/installed() do not stack duplicates.
     // Do not unsubscribe hubSystemStart — reboot re-init must stay armed even when
     // the scheduler UI is hidden (other features still need systemStart).
     try { unsubscribe("schedulerSunTimeChanged") } catch (e) {}
-    try { unsubscribe("schedulerSunEvent") } catch (e) {}
     try { unsubscribe("schedulerModeChanged") } catch (e) {}
 }
 
@@ -8318,9 +8416,23 @@ def guardSchedulerEnabled() {
     return false
 }
 
+def lastResultJson(s) {
+    def lr = s?.lastResult
+    if (!(lr instanceof Map)) return "null"
+    try {
+        return groovy.json.JsonOutput.toJson(lr)
+    } catch (e) {
+        return "null"
+    }
+}
+
 def schedulesJsonFragment() {
     if (!schedulerIsEnabled()) return ',"schedules":[]'
-    def map = parseSchedulesMap()
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) {
+        return ',"schedules":[],"schedulesError":' + jsonStr(parsed.error ?: "schedule store unreadable")
+    }
+    def map = parsed.map instanceof Map ? parsed.map : [:]
     def out = new StringBuilder()
     out << ",\"schedules\":["
     boolean first = true
@@ -8348,6 +8460,7 @@ def schedulesJsonFragment() {
             out << jsonStr(m?.toString())
         }
         out << "]"
+        out << ",\"lastResult\":" << lastResultJson(s)
         out << ",\"ts\":" << (s?.ts == null ? "0" : s.ts.toString())
         out << "}"
     }
@@ -8361,62 +8474,19 @@ def initializeScheduler() {
     rebuildScheduledJobs()
     try { subscribe(location, "sunriseTime", schedulerSunTimeChanged) } catch (e) {}
     try { subscribe(location, "sunsetTime", schedulerSunTimeChanged) } catch (e) {}
-    try { subscribe(location, "sunrise", schedulerSunEvent) } catch (e) {}
-    try { subscribe(location, "sunset", schedulerSunEvent) } catch (e) {}
     try { subscribe(location, "mode", schedulerModeChanged) } catch (e) {}
-    try { schedule("0 0 0 * * ?", "schedulerMidnightRearm") } catch (e) {}
+    try { schedule("0 1 0 * * ?", "schedulerMidnightRearm") } catch (e) {}
     try { runEvery5Minutes("cleanupSchedules") } catch (e) {}
 }
 
 def schedulerSunTimeChanged(evt) {
     if (!schedulerIsEnabled()) return
-    try { rebuildScheduledJobs() } catch (e) {
-        log.warn "Modern Dashboard: sun time re-arm failed: ${e}"
-    }
-}
-
-def schedulerSunEvent(evt) {
-    if (!schedulerIsEnabled()) return
-    def which = evt?.name?.toString()?.trim()?.toLowerCase()
-    if (which != "sunrise" && which != "sunset") return
-    def eventMs = now()
-    def tz = location.timeZone
-    def cal = Calendar.getInstance()
-    if (tz) cal.setTimeZone(tz)
-    def map = parseSchedulesMap()
-    def ids = []
-    try { ids = map.keySet().toList() } catch (e) {}
-    for (id in ids) {
-        def s = map[id]
-        if (!s || s?.enabled != true) continue
-        def tr = s?.trigger ?: [:]
-        def kind = tr?.kind?.toString()
-        if (kind != "daily" && kind != "weekly") continue
-        if (scheduleTriggerWhen(tr) != which) continue
-        if (!scheduleDayMatchesWeekly(tr, cal)) continue
-        // The location event is an independent fallback for exact sun-time
-        // schedules. Offset schedules stay on the single dispatcher.
-        if (scheduleOffsetMin(tr) != 0) continue
-        // The dispatcher may already have consumed this occurrence. Only run
-        // the event fallback while the stored occurrence is due, never early.
-        def storedFire = null
-        try { storedFire = s?.nextFire as Long } catch (e) {}
-        if (storedFire == null || storedFire > eventMs ||
-            storedFire < eventMs - schedulerDueGraceMs()) continue
-        try {
-            runScheduledJobById(id.toString(), false)
-        } catch (e) {
-            log.warn "Modern Dashboard: ${which} schedule ${id} failed: ${e}"
-        }
-    }
-    rebuildScheduledJobs()
+    try { rebuildScheduledJobs() } catch (e) { log.warn "Modern Dashboard: sun time re-arm failed: ${e}" }
 }
 
 def schedulerMidnightRearm() {
     if (!schedulerIsEnabled()) return
-    try { rebuildScheduledJobs() } catch (e) {
-        log.warn "Modern Dashboard: midnight scheduler re-arm failed: ${e}"
-    }
+    try { rebuildScheduledJobs() } catch (e) { log.warn "Modern Dashboard: midnight scheduler re-arm failed: ${e}" }
 }
 
 def schedulerModeChanged(evt) {
@@ -8426,176 +8496,179 @@ def schedulerModeChanged(evt) {
         try { newMode = location.mode?.toString()?.trim() } catch (e) {}
     }
     if (!newMode) return
-    def map = parseSchedulesMap()
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) {
+        log.warn "Modern Dashboard: mode schedule skipped — schedule store unreadable"
+        return
+    }
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def cycleErr = schedulesModeCycleError(map)
+    if (cycleErr) {
+        log.warn "Modern Dashboard: mode schedules skipped — ${cycleErr}"
+        return
+    }
     for (id in map.keySet().toList()) {
         def s = map[id]
         if (!s || s?.enabled != true) continue
         if (s?.trigger?.kind?.toString() != "mode") continue
         if (s?.trigger?.mode?.toString() != newMode) continue
         try {
-            runScheduledJobById(id.toString(), false)
+            scheduledJobHandler([id: id.toString()])
         } catch (e) {
             log.warn "Modern Dashboard: mode schedule ${id} failed: ${e}"
         }
     }
 }
 
-def schedulerDueGraceMs() {
-    // The five-minute watchdog can recover a missed dispatcher without running
-    // an old daily automation hours later.
-    return 10L * 60L * 1000L
-}
-
-def schedulerExistingDueMs(s, long fromMs) {
-    def nf = s?.nextFire
-    if (nf == null) return null
-    try {
-        long t = nf as Long
-        if (t >= fromMs - schedulerDueGraceMs() && t <= fromMs + 2000L) return t
-    } catch (e) {}
-    return null
-}
-
-def schedulerNextFireForSchedule(s, long fromMs) {
-    if (!s || s?.enabled != true) return null
-    def due = schedulerExistingDueMs(s, fromMs)
-    if (due != null) return due
-    def tr = s?.trigger ?: [:]
-    def kind = tr?.kind?.toString()
-    if (kind == "daily" || kind == "weekly") {
-        def when = scheduleTriggerWhen(tr)
-        if (when == "clock") {
-            def cron = scheduleCronForTrigger(kind, tr?.time, tr?.days)
-            return cron ? cronNextFire(cron, fromMs) : null
-        }
-        return scheduleSunNextFire(tr, when, fromMs)
-    }
-    if (kind == "once") {
-        def atMs = scheduleOnceToMs(tr?.at)
-        if (atMs != null && atMs >= fromMs - schedulerDueGraceMs()) return atMs
-    }
-    return null
-}
-
-def schedulerArmNextDispatcher(map) {
-    try { unschedule("schedulerNextFireHandler") } catch (e) {}
-    def earliest = null
-    for (id in map.keySet()) {
-        def s = map[id]
-        if (!s || s?.enabled != true || s?.nextFire == null) continue
-        try {
-            long t = s.nextFire as Long
-            if (earliest == null || t < earliest) earliest = t
-        } catch (e) {}
-    }
-    if (earliest == null) return false
-    long fireMs = Math.max(earliest as Long, now() + 1000L)
-    runOnce(new Date(fireMs), "schedulerNextFireHandler", [overwrite: true])
-    return true
+def scheduleJobOptions(id) {
+    return [data: [id: id.toString()], overwrite: false]
 }
 
 def rebuildScheduledJobs() {
     def result = [registered: 0, failures: [:]]
     if (!schedulerIsEnabled()) return result
-    return withSchedulesLock {
-        def map = parseSchedulesMap()
-        def fromMs = now()
-        def updated = false
-        def removeIds = []
-        for (id in map.keySet().toList()) {
-            def s = map[id]
-            if (!s) continue
-            def tr = s?.trigger ?: [:]
-            def kind = tr?.kind?.toString()
-            def nextFire = null
-            try {
-                nextFire = schedulerNextFireForSchedule(s, fromMs)
-                if (s?.enabled == true && kind == "once" && nextFire == null) {
-                    def atMs = scheduleOnceToMs(tr?.at)
-                    if (atMs != null && atMs < fromMs - schedulerDueGraceMs()) removeIds << id
-                    else result.failures[id.toString()] = "invalid one-time date"
-                } else if (s?.enabled == true && kind != "mode" && nextFire == null) {
-                    result.failures[id.toString()] = "could not compute next run time"
-                }
-            } catch (e) {
-                log.warn "Modern Dashboard: schedule ${id} next-run failed: ${e}"
-                result.failures[id.toString()] = (e?.message ?: e?.toString() ?: "next-run failed").toString()
-            }
-            if (s.nextFire != nextFire) {
-                s.nextFire = nextFire
-                updated = true
-            }
-        }
-        for (id in removeIds) {
-            map.remove(id)
-            updated = true
-        }
-        if (updated) saveSchedulesMap(map)
-        try {
-            if (schedulerArmNextDispatcher(map)) result.registered = 1
-        } catch (e) {
-            log.warn "Modern Dashboard: dispatcher arm failed: ${e}"
-            for (id in map.keySet()) {
-                def s = map[id]
-                if (s?.enabled == true && s?.nextFire != null) {
-                    result.failures[id.toString()] = (e?.message ?: e?.toString() ?: "dispatcher arm failed").toString()
-                }
-            }
-        }
-        logDbg("scheduler rebuild — dispatcher=${result.registered == 1}")
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) {
+        def storeErr = (parsed.error ?: "schedule store unreadable").toString()
+        result.failures["_store"] = storeErr
+        log.warn "Modern Dashboard: scheduler rebuild skipped — ${storeErr}"
         return result
     }
-}
-
-def schedulerDueScheduleIds(map, long atMs) {
-    def due = []
-    // Never consume a future occurrence. If Hubitat invokes runOnce early,
-    // rebuild simply re-arms the same dispatcher at least one second later.
-    long cutoff = atMs
-    long oldest = atMs - schedulerDueGraceMs()
-    for (id in map.keySet()) {
+    try { unschedule("scheduledJobHandler") } catch (e) {}
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def now = now()
+    def updated = false
+    for (id in map.keySet().toList()) {
         def s = map[id]
-        if (!s || s?.enabled != true || s?.nextFire == null) continue
-        try {
-            long t = s.nextFire as Long
-            if (t >= oldest && t <= cutoff) due << [id: id.toString(), at: t]
-        } catch (e) {}
-    }
-    due.sort { a, b ->
-        def byTime = (a.at as Long) <=> (b.at as Long)
-        return byTime != 0 ? byTime : (a.id <=> b.id)
-    }
-    return due.collect { it.id }
-}
-
-def schedulerNextFireHandler() {
-    if (!schedulerIsEnabled()) return
-    def map = parseSchedulesMap()
-    def ids = schedulerDueScheduleIds(map, now())
-    for (id in ids) {
-        try {
-            runScheduledJobById(id.toString(), false)
-        } catch (e) {
-            log.warn "Modern Dashboard: schedule ${id} failed: ${e}"
+        if (!s) continue
+        def enabled = (s?.enabled == true)
+        def nextFire = null
+        if (enabled) {
+            nextFire = armEnabledSchedule(id, s, now, result)
+        }
+        if (s.nextFire != nextFire) {
+            s.nextFire = nextFire
+            updated = true
         }
     }
-    rebuildScheduledJobs()
+    if (updated) saveSchedulesMap(map)
+    logDbg("scheduler rebuild — ${result.registered} jobs")
+    return result
 }
 
-// Compatibility path for jobs left by an older app version during upgrade.
-def scheduledJobHandler(data) {
+def armEnabledSchedule(id, s, long nowMs, result) {
+    def tr = s?.trigger ?: [:]
+    def kind = tr?.kind?.toString()
+    def nextFire = null
+    try {
+        if (kind == "daily" || kind == "weekly") {
+            def when = scheduleTriggerWhen(tr)
+            if (when == "clock") {
+                def cron = scheduleCronForTrigger(kind, tr?.time, tr?.days)
+                if (cron) {
+                    schedule(cron, "scheduledJobHandler", scheduleJobOptions(id))
+                    result.registered++
+                    def nf = cronNextFire(cron, nowMs)
+                    if (nf != null) nextFire = nf
+                    else result.failures[id.toString()] = "could not compute next run time"
+                } else {
+                    result.failures[id.toString()] = "invalid clock trigger"
+                }
+            } else {
+                def nf = scheduleSunNextFire(tr, when, nowMs)
+                if (nf != null && nf > nowMs) {
+                    runOnce(new Date(nf), "scheduledJobHandler", scheduleJobOptions(id))
+                    result.registered++
+                    nextFire = nf
+                } else {
+                    result.failures[id.toString()] = "could not schedule next ${when}"
+                }
+            }
+        } else if (kind == "once") {
+            def atMs = scheduleOnceToMs(tr?.at)
+            if (atMs != null && atMs > nowMs) {
+                runOnce(new Date(atMs), "scheduledJobHandler", scheduleJobOptions(id))
+                result.registered++
+                nextFire = atMs
+            } else if (atMs != null && atMs <= nowMs) {
+                // past one-time — will be removed by cleanupSchedules shortly
+                nextFire = null
+            } else {
+                result.failures[id.toString()] = "invalid one-time date"
+            }
+        } else if (kind == "mode") {
+            nextFire = null
+        }
+    } catch (e) {
+        log.warn "Modern Dashboard: schedule ${id} register failed: ${e}"
+        result.failures[id.toString()] = (e?.message ?: e?.toString() ?: "register failed").toString()
+    }
+    return nextFire
+}
+
+def armSunScheduleNext(id, s, long fromMs) {
+    def tr = s?.trigger
+    def when = scheduleTriggerWhen(tr)
+    def nf = scheduleSunNextFire(tr, when, fromMs)
+    s.nextFire = null
+    if (nf != null && nf > fromMs) {
+        try {
+            runOnce(new Date(nf), "scheduledJobHandler", scheduleJobOptions(id))
+            s.nextFire = nf
+            return true
+        } catch (e) {
+            log.warn "Modern Dashboard: schedule ${id} sun re-arm failed: ${e}"
+        }
+    }
+    return false
+}
+
+def scheduleSunRetryLater(id, int attempt) {
+    if (!id || attempt > 5) return
+    int delaySec = Math.min(900, 60 * (1 << Math.max(0, attempt - 1)))
+    try {
+        runIn(delaySec, "schedulerSunRetry",
+            [data: [id: id.toString(), attempt: attempt], overwrite: false])
+    } catch (e) {
+        log.warn "Modern Dashboard: schedule ${id} sun retry registration failed: ${e}"
+    }
+}
+
+def schedulerSunRetry(data) {
     if (!schedulerIsEnabled()) return
-    schedulerNextFireHandler()
+    def id = data?.id?.toString()
+    int attempt = 1
+    try { attempt = (data?.attempt ?: 1) as Integer } catch (e) {}
+    if (!id) return
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def s = map[id]
+    if (!s || s?.enabled != true) return
+    def kind = s?.trigger?.kind?.toString()
+    if (!(kind in ["daily", "weekly"])) return
+    def when = scheduleTriggerWhen(s?.trigger)
+    if (!(when in ["sunrise", "sunset"])) return
+    try {
+        if (s?.nextFire != null && s.nextFire.toLong() > now()) return
+    } catch (e) {}
+    if (armSunScheduleNext(id, s, now())) {
+        saveSchedulesMap(map)
+        return
+    }
+    saveSchedulesMap(map)
+    scheduleSunRetryLater(id, attempt + 1)
 }
 
 def scheduleOnceToMs(at) {
     if (at == null) return null
     try {
-        String v = at.toString()
+        String v = at.toString()?.trim()
         // Accept "yyyy-MM-ddTHH:mm" or "yyyy-MM-ddTHH:mm:ss"
-        if (v.length() >= 16) {
+        if (v ==~ /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/) {
             def tz = location.timeZone
-            def fmt = new java.text.SimpleDateFormat(v.length() >= 19 ? "yyyy-MM-dd'T'HH:mm:ss" : "yyyy-MM-dd'T'HH:mm")
+            def fmt = new java.text.SimpleDateFormat(v.length() == 19 ? "yyyy-MM-dd'T'HH:mm:ss" : "yyyy-MM-dd'T'HH:mm")
+            fmt.setLenient(false)
             if (tz) fmt.setTimeZone(tz)
             return fmt.parse(v).getTime()
         }
@@ -8603,8 +8676,8 @@ def scheduleOnceToMs(at) {
     return null
 }
 
-// Advance nextFire after a trigger is consumed (whether action ran or mode-skipped).
-// The single dispatcher is re-armed after the due batch completes.
+// Advance nextFire / re-arm after a trigger consumed (whether action ran or mode-skipped).
+// Returns true if the schedule was removed (one-time).
 def scheduleAdvanceAfterTrigger(id, s, map, boolean markFired) {
     def kind = s?.trigger?.kind?.toString()
     if (markFired) s.lastFired = now()
@@ -8618,12 +8691,17 @@ def scheduleAdvanceAfterTrigger(id, s, map, boolean markFired) {
         return false
     }
     try {
+        def tr = s?.trigger
         if (kind == "daily" || kind == "weekly") {
-            // Clear the consumed occurrence so the due-preservation guard does
-            // not return it when computing the next one.
-            s.nextFire = null
-            s.nextFire = schedulerNextFireForSchedule(s, now())
-            saveSchedulesMap(map)
+            def when = scheduleTriggerWhen(tr)
+            if (when == "clock") {
+                def cron = scheduleCronForTrigger(kind, tr?.time, tr?.days)
+                if (cron) s.nextFire = cronNextFire(cron, now())
+                saveSchedulesMap(map)
+            } else {
+                if (!armSunScheduleNext(id, s, now())) scheduleSunRetryLater(id, 1)
+                saveSchedulesMap(map)
+            }
             return false
         }
     } catch (e) {
@@ -8633,50 +8711,52 @@ def scheduleAdvanceAfterTrigger(id, s, map, boolean markFired) {
     return false
 }
 
-def runScheduledJobById(id, boolean rebuildAfter = true) {
+def scheduledJobHandler(data) {
+    if (!schedulerIsEnabled()) return
+    def id = data?.id?.toString()
     if (!id) return
-    def action = null
-    def logSource = null
-    def advanced = false
-    def shouldRun = withSchedulesLock {
-        def map = parseSchedulesMap()
-        def s = map[id]
-        if (!s) return false
-        if (s?.enabled != true) return false
-        def kind = s?.trigger?.kind?.toString()
-        // Mode condition applies to time-based schedules only (not mode triggers)
-        if (kind != "mode") {
-            def onlyInModes = s?.onlyInModes
-            if (onlyInModes instanceof List && onlyInModes) {
-                def cur = ""
-                try { cur = location.mode?.toString() ?: "" } catch (e) {}
-                def ok = false
-                for (m in onlyInModes) { if (m?.toString() == cur) { ok = true; break } }
-                if (!ok) {
-                    log.info "Modern Dashboard: schedule skipped — ${scheduleLogName(id, s)} (hub mode ${cur ?: '(none)'} not allowed)"
-                    // Trigger consumed without running — still advance nextFire.
-                    scheduleAdvanceAfterTrigger(id, s, map, false)
-                    advanced = true
-                    return false
-                }
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) {
+        log.warn "Modern Dashboard: schedule ${id} skipped — schedule store unreadable"
+        return
+    }
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def s = map[id]
+    if (!s) return
+    if (s?.enabled != true) return
+    def kind = s?.trigger?.kind?.toString()
+    // Mode condition applies to time-based schedules only (not mode triggers)
+    if (kind != "mode") {
+        def onlyInModes = s?.onlyInModes
+        if (onlyInModes instanceof List && onlyInModes) {
+            def cur = ""
+            try { cur = location.mode?.toString() ?: "" } catch (e) {}
+            def ok = false
+            for (m in onlyInModes) { if (m?.toString() == cur) { ok = true; break } }
+            if (!ok) {
+                log.info "Modern Dashboard: schedule skipped — ${scheduleLogName(id, s)} (hub mode ${cur ?: '(none)'} not allowed)"
+                // Trigger consumed without running — still advance nextFire / re-arm sun jobs.
+                scheduleAdvanceAfterTrigger(id, s, map, false)
+                return
             }
         }
-        log.info "Modern Dashboard: schedule ran — ${scheduleLogName(id, s)} · ${scheduleSummary(s)} · ${scheduleActionLogSummary(s?.action)}"
-        action = s?.action
-        logSource = "automation ${scheduleLogName(id, s)}"
-        // Persist the consumed occurrence before issuing device commands.
-        scheduleAdvanceAfterTrigger(id, s, map, true)
-        advanced = true
-        return true
     }
-    if (shouldRun == true) {
-        try {
-            runScheduleAction(action, logSource)
-        } catch (e) {
-            log.warn "Modern Dashboard: schedule ${id} action failed: ${e}"
-        }
+    log.info "Modern Dashboard: schedule ran — ${scheduleLogName(id, s)} · ${scheduleSummary(s)} · ${scheduleActionLogSummary(s?.action)}"
+    def result = newScheduleActionResult()
+    try {
+        result = runScheduleAction(s?.action)
+    } catch (e) {
+        log.warn "Modern Dashboard: schedule ${id} action failed: ${e}"
+        if (result) result.failed << (e?.message ?: e?.toString() ?: "action failed").toString()
     }
-    if (rebuildAfter && advanced) rebuildScheduledJobs()
+    s.lastResult = captureScheduleActionResult(result)
+    if (result?.missing instanceof List && result.missing) {
+        log.warn "Modern Dashboard: schedule ${id} missing device(s) — ${result.missing.join(', ')}"
+    }
+    if (result?.failed instanceof List && result.failed) {
+        log.warn "Modern Dashboard: schedule ${id} failed device(s) — ${result.failed.join(', ')}"
+    }
+    scheduleAdvanceAfterTrigger(id, s, map, true)
 }
 
 def scheduleLogName(id, s) {
@@ -8709,140 +8789,246 @@ def scheduleActionLogSummary(action) {
     }
 }
 
-def runScheduleAction(action, logSource) {
-    if (!action) return
-    if (!logSource) logSource = "automation"
+def newScheduleActionResult() {
+    return [attempted: 0, succeeded: 0, missing: [], failed: []]
+}
+
+def captureScheduleActionResult(result) {
+    def missing = []
+    def failed = []
+    if (result?.missing instanceof List) {
+        for (x in result.missing) { if (x != null) missing << x.toString() }
+    }
+    if (result?.failed instanceof List) {
+        for (x in result.failed) { if (x != null) failed << x.toString() }
+    }
+    int attempted = 0
+    int succeeded = 0
+    try { attempted = (result?.attempted ?: 0) as Integer } catch (e) {}
+    try { succeeded = (result?.succeeded ?: 0) as Integer } catch (e) {}
+    def ok = (attempted > 0 && succeeded == attempted && !missing && !failed)
+    return [ok: ok, attempted: attempted, succeeded: succeeded, missing: missing, failed: failed, ts: now()]
+}
+
+def scheduleActionResultError(lastResult) {
+    int missing = 0
+    int failed = 0
+    int succeeded = 0
+    try { missing = (lastResult?.missing instanceof List) ? lastResult.missing.size() : 0 } catch (e) {}
+    try { failed = (lastResult?.failed instanceof List) ? lastResult.failed.size() : 0 } catch (e) {}
+    try { succeeded = (lastResult?.succeeded ?: 0) as Integer } catch (e) {}
+    def bits = []
+    if (missing) bits << "${missing} missing"
+    if (failed) bits << "${failed} failed"
+    if (!succeeded) bits << "no actions succeeded"
+    return bits ? bits.join(", ") : "actions did not complete"
+}
+
+def runScheduleAction(action) {
+    def result = newScheduleActionResult()
+    if (!action) return result
     def target = action?.target?.toString()
     switch (target) {
         case "lights":
-            runScheduleLightAction(action, logSource)
-            break
+            return runScheduleLightAction(action, result)
         case "outlets":
-            runScheduleOnOffAction(action, outletSwitches, logSource)
-            break
+            return runScheduleOnOffAction(action, outletSwitches, result)
         case "thermostats":
-            runScheduleThermostatAction(action, logSource)
-            break
+            return runScheduleThermostatAction(action, result)
         case "hubMode":
             def mode = action?.mode?.toString()?.trim()
-            if (mode) {
-                try {
-                    logControl(logSource, "hub mode → ${mode}")
-                    location.setMode(mode)
-                } catch (e) {
-                    log.warn "Modern Dashboard: hub mode failed — ${mode}: ${e}"
-                }
+            result.attempted++
+            if (!mode) {
+                result.missing << "mode"
+                return result
             }
-            break
+            try {
+                long nowMs = now()
+                long startedAt = 0L
+                int transitions = 0
+                try { startedAt = (state.schedulerModeCascadeStartedAt ?: 0) as Long } catch (e) {}
+                try { transitions = (state.schedulerModeCascadeTransitions ?: 0) as Integer } catch (e) {}
+                if (startedAt <= 0L || nowMs - startedAt > 10000L) {
+                    startedAt = nowMs
+                    transitions = 0
+                }
+                transitions++
+                state.schedulerModeCascadeStartedAt = startedAt
+                state.schedulerModeCascadeTransitions = transitions
+                if (transitions > 8) {
+                    log.warn "Modern Dashboard: hub mode action skipped — more than 8 scheduler transitions in 10 seconds"
+                    result.failed << mode
+                    return result
+                }
+                location.setMode(mode)
+                logControl("automation", "hub mode → ${mode}")
+                result.succeeded++
+            } catch (e) {
+                log.warn "Modern Dashboard: hub mode failed — ${mode}: ${e}"
+                result.failed << mode
+            }
+            return result
         default:
-            break
+            return result
     }
 }
 
-def runScheduleOnOffAction(action, deviceList, logSource) {
+def runScheduleOnOffAction(action, deviceList, result) {
+    if (result == null) result = newScheduleActionResult()
     def states = action?.states
-    if (!(states instanceof List)) return
+    if (!(states instanceof List)) return result
     for (st in states) {
         def id = st?.id
         if (id == null) continue
+        result.attempted++
         def dev = deviceList?.find { it.id.toString() == id.toString() }
-        if (!dev) continue
+        if (!dev) {
+            result.missing << id.toString()
+            continue
+        }
         try {
             def cmd = (st?.on == true) ? "on" : "off"
-            logControl(logSource, "${deviceLabel(dev)} ${cmd}")
+            logControl("automation", "${deviceLabel(dev)} ${cmd}")
             if (st?.on == true) dev.on() else dev.off()
+            result.succeeded++
         } catch (e) {
             log.warn "Modern Dashboard: schedule on/off cmd failed for ${id}: ${e}"
+            result.failed << id.toString()
         }
     }
+    return result
 }
 
-def runScheduleLightAction(action, logSource) {
+def runScheduleLightAction(action, result) {
+    if (result == null) result = newScheduleActionResult()
     def states = action?.states
-    if (!(states instanceof List)) return
+    if (!(states instanceof List)) return result
     for (st in states) {
         def id = st?.id
         if (id == null) continue
+        result.attempted++
         def dev = lights?.find { it.id.toString() == id.toString() }
-        if (!dev) continue
+        if (!dev) {
+            result.missing << id.toString()
+            continue
+        }
         try {
             def on = (st?.on == true)
             if (on) {
                 def detail = "on"
                 if (st?.level != null) detail += " level=${st.level}"
                 if (st?.ct != null) detail += " ct=${st.ct}"
-                logControl(logSource, "${deviceLabel(dev)} ${detail}")
+                logControl("automation", "${deviceLabel(dev)} ${detail}")
                 dev.on()
                 def lvl = st?.level
-                if (lvl != null && dev.hasCapability("SwitchLevel")) {
-                    int l = Math.max(0, Math.min(100, lvl.toInteger()))
-                    dev.setLevel(l)
+                if (lvl != null) {
+                    if (!dev.hasCapability("SwitchLevel")) throw new RuntimeException("setLevel is unavailable")
+                    int levelValue = Math.max(0, Math.min(100, lvl.toInteger()))
+                    dev.setLevel(levelValue)
                 }
                 def ct = st?.ct
-                if (ct != null && dev.hasCapability("ColorTemperature")) {
+                if (ct != null) {
+                    if (!dev.hasCapability("ColorTemperature")) throw new RuntimeException("setColorTemperature is unavailable")
                     int k = Math.max(2500, Math.min(6000, ct.toInteger()))
-                    try { dev.setColorTemperature(k) } catch (e) {
-                        log.warn "Modern Dashboard: schedule light CT failed for ${id}: ${e}"
-                    }
+                    dev.setColorTemperature(k)
                 }
             } else {
-                logControl(logSource, "${deviceLabel(dev)} off")
+                logControl("automation", "${deviceLabel(dev)} off")
                 dev.off()
             }
+            result.succeeded++
         } catch (e) {
             log.warn "Modern Dashboard: schedule light cmd failed for ${id}: ${e}"
+            result.failed << id.toString()
         }
     }
+    return result
 }
 
-def runScheduleThermostatAction(action, logSource) {
+def runScheduleThermostatAction(action, result) {
+    if (result == null) result = newScheduleActionResult()
     def ids = action?.devices
-    if (!(ids instanceof List)) return
+    if (!(ids instanceof List)) return result
     def mode = action?.mode?.toString()
     def heat = action?.heat
     def cool = action?.cool
     def fanMode = action?.fanMode?.toString()
     for (id in ids) {
+        if (id == null) continue
+        result.attempted++
         def dev = thermostats?.find { it.id.toString() == id.toString() }
-        if (!dev) continue
-        try {
-            def bits = []
-            if (mode) bits << "mode=${mode}"
-            if (heat != null) bits << "heat=${heat}"
-            if (cool != null) bits << "cool=${cool}"
-            if (fanMode) bits << "fan=${fanMode}"
-            if (bits) logControl(logSource, "${deviceLabel(dev)} ${bits.join(' ')}")
-            if (mode) {
-                try { dev.setThermostatMode(mode) } catch (e) {
-                    log.warn "Modern Dashboard: schedule tstat mode failed for ${id}: ${e}"
-                }
-            }
-            if (heat != null) {
-                try { dev.setHeatingSetpoint(heat.toInteger()) } catch (e) {
-                    log.warn "Modern Dashboard: schedule tstat heat failed for ${id}: ${e}"
-                }
-            }
-            if (cool != null) {
-                try { dev.setCoolingSetpoint(cool.toInteger()) } catch (e) {
-                    log.warn "Modern Dashboard: schedule tstat cool failed for ${id}: ${e}"
-                }
-            }
-            if (fanMode && (dev.hasCapability("ThermostatFanMode") || dev.hasAttribute("thermostatFanMode"))) {
-                try { setThermostatFanModeCmd(dev, fanMode) } catch (e) {
-                    log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: ${e}"
-                }
-            }
-        } catch (e) {
-            log.warn "Modern Dashboard: schedule tstat cmd failed for ${id}: ${e}"
+        if (!dev) {
+            result.missing << id.toString()
+            continue
         }
+        def bits = []
+        if (mode) bits << "mode=${mode}"
+        if (heat != null) bits << "heat=${heat}"
+        if (cool != null) bits << "cool=${cool}"
+        if (fanMode) bits << "fan=${fanMode}"
+        if (bits) logControl("automation", "${deviceLabel(dev)} ${bits.join(' ')}")
+        boolean deviceFailed = false
+        if (mode) {
+            try { dev.setThermostatMode(mode) } catch (e) {
+                deviceFailed = true
+                log.warn "Modern Dashboard: schedule tstat mode failed for ${id}: ${e}"
+            }
+        }
+        if (heat != null) {
+            try { dev.setHeatingSetpoint(heat.toInteger()) } catch (e) {
+                deviceFailed = true
+                log.warn "Modern Dashboard: schedule tstat heat failed for ${id}: ${e}"
+            }
+        }
+        if (cool != null) {
+            try { dev.setCoolingSetpoint(cool.toInteger()) } catch (e) {
+                deviceFailed = true
+                log.warn "Modern Dashboard: schedule tstat cool failed for ${id}: ${e}"
+            }
+        }
+        if (fanMode) {
+            try {
+                if (setThermostatFanModeCmd(dev, fanMode) != true) {
+                    deviceFailed = true
+                    log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: no compatible fan command"
+                }
+            } catch (e) {
+                deviceFailed = true
+                log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: ${e}"
+            }
+        }
+        if (deviceFailed) result.failed << id.toString()
+        else result.succeeded++
     }
+    return result
 }
 
 def cleanupSchedules() {
     if (!schedulerIsEnabled()) return
-    // Watchdog: recover a dispatcher callback delayed or lost by the hub.
-    // Due one-time schedules run before they are removed.
-    schedulerNextFireHandler()
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) {
+        log.warn "Modern Dashboard: schedule cleanup skipped — schedule store unreadable"
+        return
+    }
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def now = now()
+    def changed = false
+    for (id in map.keySet().toList()) {
+        def s = map[id]
+        if (!s) continue
+        def kind = s?.trigger?.kind?.toString()
+        if (kind == "once") {
+            def atMs = scheduleOnceToMs(s?.trigger?.at)
+            if (atMs != null && atMs < now) {
+                map.remove(id)
+                changed = true
+            }
+        }
+    }
+    if (changed) {
+        saveSchedulesMap(map)
+        rebuildScheduledJobs()
+    }
 }
 
 // --- endpoints ---
@@ -8850,11 +9036,17 @@ def cleanupSchedules() {
 def schedulesGet() {
     if (!guardDashboardAccess()) return renderAuthRequired()
     if (!guardSchedulerEnabled()) return
-    return renderJsonNoStore( withAuthJson(groovy.json.JsonOutput.toJson([ok: true, schedules: schedulesListForClient()])), 200)
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return renderSchedulesStoreError(parsed)
+    return renderJsonNoStore( withAuthJson(groovy.json.JsonOutput.toJson([ok: true, schedules: schedulesListForClient(parsed.map)])), 200)
 }
 
-def schedulesListForClient() {
-    def map = parseSchedulesMap()
+def schedulesListForClient(mapIn = null) {
+    def map = mapIn
+    if (map == null) {
+        def parsed = parseSchedulesMapResult()
+        map = (parsed.ok == true && parsed.map instanceof Map) ? parsed.map : [:]
+    }
     def out = []
     def ids = []
     try { ids = map.keySet().sort { a, b -> a.toString() <=> b.toString() } } catch (e) {}
@@ -8868,6 +9060,7 @@ def schedulesListForClient() {
             summary: scheduleSummary(s),
             lastFired: s?.lastFired,
             nextFire: s?.nextFire,
+            lastResult: (s?.lastResult instanceof Map) ? s.lastResult : null,
             trigger: s?.trigger,
             action: s?.action,
             onlyInModes: (s?.onlyInModes instanceof List) ? s.onlyInModes : [],
@@ -8910,6 +9103,75 @@ def schedulesValidateNormalized(s) {
         if (!(ac?.devices instanceof List) || !ac.devices) return "select at least one thermostat"
     } else if (target == "hubMode") {
         if (!ac?.mode?.toString()?.trim()) return "pick a hub mode"
+    }
+    return null
+}
+
+def schedulesUnknownDeviceError(s) {
+    def ac = s?.action ?: [:]
+    def target = ac?.target?.toString()
+    if (target == "lights" || target == "outlets") {
+        def states = ac?.states
+        if (!(states instanceof List)) return null
+        def deviceList = (target == "lights") ? lights : outletSwitches
+        for (st in states) {
+            def id = st?.id
+            if (id == null) continue
+            def dev = deviceList?.find { it.id.toString() == id.toString() }
+            if (!dev) return "device ${id} is not available in the ${target} picker"
+        }
+    } else if (target == "thermostats") {
+        def ids = ac?.devices
+        if (!(ids instanceof List)) return null
+        for (id in ids) {
+            if (id == null) continue
+            def dev = thermostats?.find { it.id.toString() == id.toString() }
+            if (!dev) return "thermostat ${id} is not available in the thermostats picker"
+        }
+    }
+    return null
+}
+
+def schedulesModeCycleError(map) {
+    def graph = [:]
+    def nodes = [] as Set
+    if (!(map instanceof Map)) return null
+    for (id in map.keySet()) {
+        def s = map[id]
+        if (!s || s.enabled != true) continue
+        if (s?.trigger?.kind?.toString() != "mode") continue
+        if (s?.action?.target?.toString() != "hubMode") continue
+        def from = s?.trigger?.mode?.toString()?.trim()
+        def to = s?.action?.mode?.toString()?.trim()
+        if (!from || !to) continue
+        if (from == to) return "mode trigger cannot set the same hub mode"
+        if (!graph.containsKey(from)) graph[from] = [] as Set
+        graph[from] << to
+        nodes << from
+        nodes << to
+    }
+    def visiting = [] as Set
+    def seen = [] as Set
+    def box = [found: false]
+    def visit
+    visit = { node ->
+        if (box.found) return
+        if (visiting.contains(node)) {
+            box.found = true
+            return
+        }
+        if (seen.contains(node)) return
+        visiting << node
+        def nexts = graph[node]
+        if (nexts) {
+            for (n in nexts) visit(n)
+        }
+        visiting.remove(node)
+        seen << node
+    }
+    for (n in nodes) {
+        visit(n)
+        if (box.found) return "mode schedules form a hub-mode loop"
     }
     return null
 }
@@ -9005,32 +9267,37 @@ def schedulesSave() {
     if (body == null) {
         return renderJsonNoStore( '{"ok":false,"error":"missing body"}', 400)
     }
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return renderSchedulesStoreError(parsed)
     def s = schedulesNormalizePayload(body)
     def validationError = schedulesValidateNormalized(s)
     if (validationError) {
         return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(validationError)}}".toString(), 422)
     }
-    def priorJson = null
-    def id = withSchedulesLock {
-        def map = parseSchedulesMap()
-        priorJson = state.schedulesJson
-        def sid = s.id
-        if (!sid) sid = scheduleNewId()
-        def existing = map[sid]
-        if (existing && existing.lastFired != null) s.lastFired = existing.lastFired
-        map[sid] = s
-        saveSchedulesMap(map)
-        return sid
+    def deviceErr = schedulesUnknownDeviceError(s)
+    if (deviceErr) {
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(deviceErr)}}".toString(), 422)
     }
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def priorJson = state.schedulesJson
+    def id = s.id
+    if (!id) id = scheduleNewId()
+    def existing = map[id]
+    if (existing && existing.lastFired != null) s.lastFired = existing.lastFired
+    if (existing && existing.lastResult instanceof Map) s.lastResult = existing.lastResult
+    map[id] = s
+    def cycleErr = schedulesModeCycleError(map)
+    if (cycleErr) {
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(cycleErr)}}".toString(), 422)
+    }
+    saveSchedulesMap(map)
     def rebuild = rebuildScheduledJobs()
     def failReason = null
     try { failReason = rebuild?.failures ? rebuild.failures[id.toString()] : null } catch (e) {}
     if (failReason && s.enabled == true) {
         // Roll back so a broken schedule is never persisted as "saved".
-        withSchedulesLock {
-            if (priorJson != null) state.schedulesJson = priorJson
-            else state.remove("schedulesJson")
-        }
+        if (priorJson != null) state.schedulesJson = priorJson
+        else state.remove("schedulesJson")
         rebuildScheduledJobs()
         return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(failReason)},\"schedules\":${groovy.json.JsonOutput.toJson(schedulesListForClient())}}".toString(), 422)
     }
@@ -9049,12 +9316,12 @@ def schedulesDelete() {
     if (!id) {
         return renderJsonNoStore( '{"ok":false,"error":"missing id"}', 400)
     }
-    withSchedulesLock {
-        def map = parseSchedulesMap()
-        if (map.containsKey(id)) {
-            map.remove(id)
-            saveSchedulesMap(map)
-        }
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return renderSchedulesStoreError(parsed)
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    if (map.containsKey(id)) {
+        map.remove(id)
+        saveSchedulesMap(map)
     }
     rebuildScheduledJobs()
     def out = new StringBuilder()
@@ -9072,44 +9339,35 @@ def schedulesToggle() {
     if (!id) {
         return renderJsonNoStore( '{"ok":false,"error":"missing id"}', 400)
     }
-    def current = parseSchedulesMap()[id]
-    if (!current) {
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return renderSchedulesStoreError(parsed)
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def s = map[id]
+    if (!s) {
         return renderJsonNoStore( '{"ok":false,"error":"not found"}', 404)
     }
-    if (current?.enabled != true) {
-        def validationError = schedulesValidateNormalized(current)
-        if (validationError) {
-            return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(validationError)}}".toString(), 422)
-        }
+    def priorJson = state.schedulesJson
+    s.enabled = (s.enabled != true)
+    map[id] = s
+    def cycleErr = schedulesModeCycleError(map)
+    if (cycleErr) {
+        s.enabled = (s.enabled != true)
+        map[id] = s
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(cycleErr)}}".toString(), 422)
     }
-    def priorJson = null
-    def enabledNow = withSchedulesLock {
-        def map = parseSchedulesMap()
-        def row = map[id]
-        if (!row) return null
-        priorJson = state.schedulesJson
-        row.enabled = (row.enabled != true)
-        map[id] = row
-        saveSchedulesMap(map)
-        return row.enabled
-    }
-    if (enabledNow == null) {
-        return renderJsonNoStore( '{"ok":false,"error":"not found"}', 404)
-    }
+    saveSchedulesMap(map)
     def rebuild = rebuildScheduledJobs()
     def failReason = null
     try { failReason = rebuild?.failures ? rebuild.failures[id] : null } catch (e) {}
-    if (failReason && enabledNow == true) {
-        withSchedulesLock {
-            if (priorJson != null) state.schedulesJson = priorJson
-            else state.remove("schedulesJson")
-        }
+    if (failReason && s.enabled == true) {
+        if (priorJson != null) state.schedulesJson = priorJson
+        else state.remove("schedulesJson")
         rebuildScheduledJobs()
         return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(failReason)},\"schedules\":${groovy.json.JsonOutput.toJson(schedulesListForClient())}}".toString(), 422)
     }
     def out = new StringBuilder()
     out << "{\"ok\":true,\"id\":" << jsonStr(id.toString())
-    out << ",\"enabled\":" << (enabledNow == true ? "true" : "false")
+    out << ",\"enabled\":" << (s.enabled == true ? "true" : "false")
     out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
     out << "}"
     return renderJsonNoStore( withAuthJson(out.toString()), 200)
@@ -9123,19 +9381,26 @@ def schedulesTest() {
     if (!id) {
         return renderJsonNoStore( '{"ok":false,"error":"missing id"}', 400)
     }
-    def map = parseSchedulesMap()
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return renderSchedulesStoreError(parsed)
+    def map = parsed.map instanceof Map ? parsed.map : [:]
     def s = map[id]
     if (!s) {
         return renderJsonNoStore( '{"ok":false,"error":"not found"}', 404)
     }
+    def result = newScheduleActionResult()
     try {
         log.info "Modern Dashboard: schedule test — ${scheduleLogName(id, s)} · ${scheduleActionLogSummary(s?.action)}"
-        runScheduleAction(s?.action, "automation ${scheduleLogName(id, s)}")
+        result = runScheduleAction(s?.action)
     } catch (e) {
         log.warn "Modern Dashboard: schedule ${id} test failed: ${e}"
         return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}".toString(), 500)
     }
-    return renderJsonNoStore( withAuthJson('{"ok":true}'), 200)
+    def lastResult = captureScheduleActionResult(result)
+    def ok = (lastResult?.ok == true)
+    def response = [ok: ok, lastResult: lastResult]
+    if (!ok) response.error = scheduleActionResultError(lastResult)
+    return renderJsonNoStore( withAuthJson(groovy.json.JsonOutput.toJson(response)), 200)
 }
 
 // --- cron next-fire helper (7-field Quartz: sec min hour dom mon dow year) ---

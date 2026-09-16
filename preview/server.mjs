@@ -15,6 +15,7 @@ import {
   recomputeNextFire,
   scheduleOffsetMin,
   scheduleTriggerWhen,
+  modeCycleError,
 } from "../lib/scheduler-core.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -256,10 +257,10 @@ function buildMockData(count) {
     { i: 5102, n: "Master Bedroom Fan", r: 3, s: 0, sp: "off", supSp: "low,medium-low,medium,medium-high,high", hasSw: 1 },
     { i: 5103, n: "Patio DC Fan", r: 7, s: 1, sp: "4", supSp: "1,2,3,4,5,6", hasSw: 1 },
   ];
-  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, htmlZooms: {}, htmlTitles: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: mockHtmlTilesCatalog(), rooms, devices, outlets: [
+  return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], thermostatOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, htmlZooms: {}, htmlTitles: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: mockHtmlTilesCatalog(), rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, triggersEnabled: true, alertsArmed: true, alertsArmSwitchId: 9100, triggerSourceIds: [101, 201], triggerActions: [], unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
+  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, hubTimeZone: (Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Denver"), hubNow: Date.now(), triggersEnabled: true, alertsArmed: true, alertsArmSwitchId: 9100, triggerSourceIds: [101, 201], triggerActions: [], unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
 }
 
 function tstatOstateForMode(tm) {
@@ -1017,8 +1018,9 @@ const server = createServer(async (req, res) => {
       state.config.timeCards || [],
       state.config.notificationCards || []
     );
-    const payload = appendDashSession({ ...state, htmlTiles: htmlTilesForPayload() }, auth.renewed);
+    const payload = appendDashSession({ ...state, htmlTiles: htmlTilesForPayload(), hubNow: Date.now() }, auth.renewed);
     if (!schedulerMockEnabled()) payload.schedules = [];
+    else if (url.searchParams.get("omitSchedules") === "1") payload.schedules = null;
     return res.end(JSON.stringify(payload));
   }
   if (p === "/device") {
@@ -1266,6 +1268,51 @@ const server = createServer(async (req, res) => {
         return res.end('{"ok":false,"error":"empty order"}');
       }
       state.config.cameraOrder = validated;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, order: validated }));
+    }
+  }
+  if (p === "/settings/thermostat-order" || p === "/thermostat-order") {
+    const orderParam = url.searchParams.get("order");
+    const validTstat = new Set((state.thermostats || []).map(t => String(t.i)));
+    const validateOrder = (order) => {
+      const validated = [];
+      const seen = new Set();
+      for (const item of order) {
+        const key = String(item);
+        if (!validTstat.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        validated.push(Number(key));
+      }
+      return validated;
+    };
+    if (req.method === "GET" && orderParam) {
+      const validated = validateOrder(orderParam.split(",").map(s => s.trim()).filter(Boolean));
+      if (!validated.length) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end('{"ok":false,"error":"empty order"}');
+      }
+      state.config.thermostatOrder = validated;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, order: validated }));
+    }
+    if (req.method === "POST") {
+      let body;
+      try { body = await readJsonBody(req); } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end('{"ok":false,"error":"invalid json"}');
+      }
+      const order = body?.order;
+      if (!Array.isArray(order) || !order.length) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end('{"ok":false,"error":"missing order"}');
+      }
+      const validated = validateOrder(order);
+      if (!validated.length) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end('{"ok":false,"error":"empty order"}');
+      }
+      state.config.thermostatOrder = validated;
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ ok: true, order: validated }));
     }
@@ -2136,6 +2183,10 @@ const server = createServer(async (req, res) => {
     if (!schedulerMockEnabled()) return sendSchedulerDisabled(res);
     const sub = p.replace(/^\/schedules\/?/, "");
     if (req.method === "GET" && (sub === "" || sub === "/")) {
+      if (url.searchParams.get("fail") === "1") {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "schedule store unreadable" }));
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ ok: true, schedules: mockSchedulesList() }));
     }
@@ -2148,7 +2199,7 @@ const server = createServer(async (req, res) => {
       const id = body?.id || ("sc-" + Date.now() + "-" + Math.floor(Math.random() * 100000));
       const existing = state.schedules.find((s) => s.id === id);
       const s = mockNormalizeSchedule(body, id, existing);
-      const validationError = validateSchedulePayload(s);
+      const validationError = validateSchedulePayload(s) || mockUnknownDeviceError(s) || modeCycleError(state.schedules, s);
       if (validationError) {
         res.writeHead(422, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ ok: false, error: validationError, schedules: mockSchedulesList() }));
@@ -2188,6 +2239,12 @@ const server = createServer(async (req, res) => {
       }
       const prior = { ...s, trigger: { ...s.trigger }, action: { ...s.action } };
       s.enabled = !s.enabled;
+      const cycleErr = modeCycleError(state.schedules);
+      if (cycleErr) {
+        s.enabled = !s.enabled;
+        res.writeHead(422, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: cycleErr, schedules: mockSchedulesList() }));
+      }
       mockRecomputeNextFire(s);
       if (s.enabled && (s.trigger?.kind === "daily" || s.trigger?.kind === "weekly") && scheduleTriggerWhen(s.trigger) === "clock" && s.nextFire == null) {
         Object.assign(s, prior);
@@ -2199,8 +2256,18 @@ const server = createServer(async (req, res) => {
       return res.end(JSON.stringify({ ok: true, id, enabled: s.enabled, schedules: mockSchedulesList() }));
     }
     if (sub === "test") {
+      const forced = body?.simulateResult;
+      const lastResult = forced === "missing"
+        ? { ok: false, attempted: 1, succeeded: 0, missing: ["999999"], failed: [] }
+        : forced === "failed"
+          ? { ok: false, attempted: 1, succeeded: 0, missing: [], failed: ["1"] }
+          : { ok: true, attempted: 1, succeeded: 1, missing: [], failed: [] };
       res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end('{"ok":true}');
+      return res.end(JSON.stringify({
+        ok: lastResult.ok,
+        ...(lastResult.ok ? {} : { error: forced === "missing" ? "1 missing, no actions succeeded" : "1 failed, no actions succeeded" }),
+        lastResult,
+      }));
     }
   }
   res.writeHead(404, { "Content-Type": "text/plain" });
@@ -2270,10 +2337,33 @@ function mockNormalizeSchedule(body, id, existing) {
     onlyInModes: kind === "mode" ? [] : (body?.onlyInModes || []),
     action: body?.action || { target: "lights", states: [] },
     lastFired: existing?.lastFired ?? null,
+    lastResult: existing?.lastResult ?? null,
     nextFire: null,
     ts: Date.now(),
   };
   return s;
+}
+
+function mockUnknownDeviceError(s) {
+  const ac = s?.action || {};
+  const target = String(ac.target || "");
+  if (target === "lights") {
+    const ids = new Set((state.devices || []).map((d) => String(d.i)));
+    for (const st of ac.states || []) {
+      if (st?.id != null && !ids.has(String(st.id))) return "device " + st.id + " is not available in the lights picker";
+    }
+  } else if (target === "outlets") {
+    const ids = new Set((state.outlets || []).map((d) => String(d.i)));
+    for (const st of ac.states || []) {
+      if (st?.id != null && !ids.has(String(st.id))) return "device " + st.id + " is not available in the outlets picker";
+    }
+  } else if (target === "thermostats") {
+    const ids = new Set((state.thermostats || []).map((d) => String(d.i)));
+    for (const id of ac.devices || []) {
+      if (id != null && !ids.has(String(id))) return "thermostat " + id + " is not available in the thermostats picker";
+    }
+  }
+  return null;
 }
 
 function mockRecomputeNextFire(s) {
@@ -2285,7 +2375,7 @@ function mockSchedulesList() {
   return state.schedules.map((s) => ({
     id: s.id, name: s.name, enabled: s.enabled,
     summary: mockScheduleSummary(s),
-    lastFired: s.lastFired, nextFire: s.nextFire,
+    lastFired: s.lastFired, nextFire: s.nextFire, lastResult: s.lastResult || null,
     trigger: s.trigger, action: s.action,
     onlyInModes: s.onlyInModes || [],
     ts: s.ts,

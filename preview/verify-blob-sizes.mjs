@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Ensure Hubitat File Manager blobs stay within size limits:
-//   All JS/CSS → 124 KB (File Manager per-file ceiling)
-//   Cloud-critical JS (mld-app.js, mld-app-post3.js) → 118 KB
+//   All JS/CSS → 120 KB (File Manager truncates near the ~124 KB ceiling)
+//   Cloud-critical JS (mld-app.js, mld-app-post2.js, mld-app-post3.js) → 118 KB
 //     (Hubitat Cloud OAuth/MQTT drops larger responses)
 // Run:  node preview/verify-blob-sizes.mjs
 // Requires:  npm run build  (or existing dist/upload output)
@@ -13,7 +13,7 @@ import { dirname } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const upload = join(root, "dist", "upload");
-const HUB_MAX_BLOB = 124 * 1024;
+const HUB_MAX_BLOB = 120 * 1024;
 const CLOUD_SAFE_JS_BLOB = 118 * 1024;
 /** Boot + deferred post3 are the cloud-critical OAuth JS responses. */
 const CLOUD_CRITICAL_JS = new Set(["mld-app.js", "mld-app-post2.js", "mld-app-post3.js"]);
@@ -30,7 +30,7 @@ function limitFor(path) {
 function limitLabel(path) {
   const name = basename(path);
   if (CLOUD_CRITICAL_JS.has(name)) return "118 KB (cloud-critical JS)";
-  return "124 KB";
+  return "120 KB";
 }
 
 function checkFile(path) {
@@ -59,9 +59,9 @@ for (const name of readdirSync(upload).sort()) {
 if (failures.length) {
   console.error(
     "\n" + failures.length +
-      " file(s) exceed Hubitat blob limits (all ≤ 124 KB; cloud-critical JS ≤ 118 KB)."
+      " file(s) exceed Hubitat blob limits (all ≤ 120 KB; cloud-critical JS ≤ 118 KB)."
   );
   process.exit(1);
 }
 
-console.log("\nAll upload blobs are under limits (cloud-critical JS ≤ 118 KB; others ≤ 124 KB).");
+console.log("\nAll upload blobs are under limits (cloud-critical JS ≤ 118 KB; others ≤ 120 KB).");

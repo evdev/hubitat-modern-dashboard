@@ -23,7 +23,9 @@ const MLD_SPLIT_CORE = "// __MLD_SPLIT_CORE__";
 const MLD_SPLIT = "// __MLD_SPLIT__";
 const MLD_SPLIT2 = "// __MLD_SPLIT2__";
 const MLD_SPLIT3 = "// __MLD_SPLIT3__";
-const HUB_MAX_BLOB = 124 * 1024;
+// File Manager's documented ceiling is ~124 KB, but uploads near that size have
+// truncated in practice. Keep a 120 KB safety cap so local blobs actually load.
+const HUB_MAX_BLOB = 120 * 1024;
 // Hubitat Cloud MQTT drops OAuth responses near ~122 KB in practice (see 0.3.20 /
 // post2 split). Keep cloud-critical chunks (boot mld-app.js, post2/init, deferred
 // post3) under 118 KB so the cloud URL loads.
@@ -464,7 +466,7 @@ function assertUnderHubLimit(label, content) {
   const size = typeof content === "number" ? content : byteSize(content);
   if (size >= HUB_MAX_BLOB) {
     throw new Error(
-      `${label} is ${size} bytes (limit ${HUB_MAX_BLOB} / 124 KB). Split src/app.js further or trim the asset.`
+      `${label} is ${size} bytes (limit ${HUB_MAX_BLOB} / 120 KB). Split src/app.js further or trim the asset.`
     );
   }
 }
@@ -782,26 +784,39 @@ mkdirSync(hubitat, { recursive: true });
 writeFileSync(join(hubitat, "packageManifest.json"), hpmManifestJson);
 writeFileSync(join(dist, "packageManifest.json"), hpmManifestJson);
 
-const hpmRepository = {
-  author: APP_AUTHOR,
-  gitHubUrl: GITHUB_URL,
-  packages: [
-    {
-      id: HPM_REPO_PACKAGE_ID,
-      name: APP_DISPLAY_NAME,
-      category: "Convenience",
-      location: PACKAGE_MANIFEST_URL,
-      description: PACKAGE_DESCRIPTION,
-      tags: [
-        "Cloud",
-        "Dashboards",
-        "Lights & Switches",
-        "Climate Control",
-        "Temperature & Humidity",
-        "Multimedia",
-      ],
-    },
+const repositoryPath = join(hubitat, "repository.json");
+let existingRepository = {};
+try {
+  existingRepository = JSON.parse(readFileSync(repositoryPath, "utf8"));
+} catch {}
+const currentRepositoryPackage = {
+  id: HPM_REPO_PACKAGE_ID,
+  name: APP_DISPLAY_NAME,
+  category: "Convenience",
+  location: PACKAGE_MANIFEST_URL,
+  description: PACKAGE_DESCRIPTION,
+  tags: [
+    "Cloud",
+    "Dashboards",
+    "Lights & Switches",
+    "Climate Control",
+    "Temperature & Humidity",
+    "Multimedia",
   ],
+};
+const repositoryPackages = Array.isArray(existingRepository.packages)
+  ? existingRepository.packages.slice()
+  : [];
+const repositoryPackageIndex = repositoryPackages.findIndex(
+  (entry) => entry?.id === HPM_REPO_PACKAGE_ID
+);
+if (repositoryPackageIndex >= 0) repositoryPackages[repositoryPackageIndex] = currentRepositoryPackage;
+else repositoryPackages.push(currentRepositoryPackage);
+const hpmRepository = {
+  ...existingRepository,
+  author: existingRepository.author || APP_AUTHOR,
+  gitHubUrl: existingRepository.gitHubUrl || GITHUB_URL,
+  packages: repositoryPackages,
 };
 writeFileSync(join(hubitat, "repository.json"), JSON.stringify(hpmRepository, null, "\t") + "\n");
 
@@ -815,7 +830,7 @@ console.log(`  dist/ModernLightsDashboard.groovy       ${kb(join(dist, "ModernLi
 console.log(`  dist/ModernLightsDashboard.bundle.zip   ${kb(bundleZip)} KB  ← manual Bundles → Import`);
 for (const { name } of FILE_MANAGER_ASSETS) {
   const path = join(upload, name);
-  const limitNote = CLOUD_CRITICAL_JS.has(name) ? "vs 118 KB cloud" : "vs 124 KB";
+  const limitNote = CLOUD_CRITICAL_JS.has(name) ? "vs 118 KB cloud" : "vs 120 KB";
   console.log(`  dist/upload/${name.padEnd(24)} ${kb(path).padStart(6)} KB  (${blobHeadroom(path, name)} KB headroom ${limitNote})`);
 }
 console.log(`  hubitat/packageManifest.json            (HPM: app + oauth + driver + ${FILE_MANAGER_ASSETS.length} files)`);

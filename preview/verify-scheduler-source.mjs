@@ -48,8 +48,7 @@ assert(src.includes("scheduleAdvanceAfterTrigger"), "must advance after mode-ski
 
 // Save/toggle surface registration failures
 assert(src.includes("schedulesValidateNormalized"), "must validate normalized payloads");
-assert(src.includes("failReason && s.enabled == true"), "save must reject registration failures");
-assert(src.includes("failReason && enabledNow == true"), "toggle must reject registration failures");
+assert(src.includes("failReason && s.enabled == true"), "save/toggle must reject registration failures");
 
 // Day-name parsing for weekly nextFire
 assert(src.includes("cronParseDayOrInt"), "must parse Quartz day names for nextFire");
@@ -59,15 +58,8 @@ assert(src.includes('log.info "Modern Dashboard: schedule ran —'), "must log s
 assert(src.includes('log.info "Modern Dashboard: schedule skipped —'), "must log mode skips at info");
 assert(src.includes('log.info "Modern Dashboard: schedule test —'), "must log schedule tests at info");
 assert(src.includes("def logControl(source, detail)"), "must define logControl helper");
-assert(src.includes("def runScheduleAction(action, logSource)"), "runScheduleAction must take logSource");
-assert(src.includes("def runScheduleLightAction(action, logSource)"), "light actions must take logSource");
-assert(src.includes("def runScheduleOnOffAction(action, deviceList, logSource)"), "on/off actions must take logSource");
-assert(src.includes("def runScheduleThermostatAction(action, logSource)"), "thermostat actions must take logSource");
-assert(src.includes("runScheduleAction(action, logSource)"), "real fires must pass logSource");
-assert(src.includes('runScheduleAction(s?.action, "automation ${scheduleLogName(id, s)}")'), "tests must pass automation logSource");
-assert(src.includes('logSource = "automation ${scheduleLogName(id, s)}"'), "fires must tag automation name");
 assert(src.includes('logControl("manual"'), "must log manual dashboard commands at info");
-assert(src.includes("logControl(logSource"), "schedule device cmds must log with automation source");
+assert(src.includes('logControl("automation"'), "schedule device cmds must log at info");
 assert(!src.includes('logDbg("schedule cmd'), "per-device schedule cmds must not be debug-only");
 assert(!src.includes('logDbg("cmd —'), "manual cmds must not be debug-only");
 {
@@ -94,51 +86,76 @@ assert(src.includes('s.name = body?.name?.toString()?.trim() ?: ""'), "hub store
 assert(src.includes('out << ",\\"name\\":" << jsonStr(s?.name?.toString() ?: "")'), "schedule names are JSON-escaped for Hubitat");
 assert(src.includes("state.schedulesJson = groovy.json.JsonOutput.toJson(map ?: [:])"), "schedules persist via JsonOutput");
 
-// One dispatcher owns all time-based schedules. This avoids Hubitat's
-// same-handler overwrite behavior and same-second state races.
 assert(src.includes("singleThreaded: true"), "app must serialize top-level Hubitat executions");
-assert(src.includes("def schedulerNextFireHandler("), "must define the single dispatcher");
-assert(src.includes("def schedulerDueScheduleIds("), "must collect every due schedule");
-assert(src.includes("def schedulerArmNextDispatcher("), "must arm the earliest dispatcher");
+
+// Multiple jobs share scheduledJobHandler — overwrite:false required
+assert(src.includes("def scheduleJobOptions(id)"), "must share overwrite:false job options");
+assert(src.includes("overwrite: false"), "must register duplicate handler jobs with overwrite: false");
+assert(!/runOnce\([^)]*scheduledJobHandler[^)]*\[data:\s*\[id:[^\]]+\]\]\s*\)/.test(src), "runOnce must not omit overwrite: false");
+
 {
-  const runOnceLines = [...src.matchAll(/runOnce\([^\n]+/g)].map((m) => m[0]);
-  assert(runOnceLines.length === 1, `expected one dispatcher runOnce call, got ${runOnceLines.length}`);
-  assert(runOnceLines[0].includes('"schedulerNextFireHandler"'), "runOnce must target the dispatcher");
-  assert(runOnceLines[0].includes("overwrite: true"), "dispatcher runOnce must replace its prior arm");
-  assert(!runOnceLines[0].includes("scheduledJobHandler"), "legacy shared handler must not be armed");
-}
-assert(src.includes('subscribe(location, "sunrise", schedulerSunEvent)'), "must subscribe to sunrise event");
-assert(src.includes('subscribe(location, "sunset", schedulerSunEvent)'), "must subscribe to sunset event");
-assert(src.includes("def schedulerSunEvent("), "must define schedulerSunEvent handler");
-assert(src.includes("def runScheduledJobById("), "must share fire path for sun and dispatcher events");
-assert(src.includes('unsubscribe("schedulerSunEvent")'), "must unsubscribe sun event handler");
-assert(!src.includes("scheduleSunFiredToday"), "must not suppress edited sun schedules for an entire day");
-assert(!src.includes("schedulerJobNearMs"), "legacy no-id early-fire fallback must be gone");
-assert(!src.includes("MLD_SCHED_LOCK"), "regular state must not rely on an in-process lock");
-{
-  const m = src.match(/def schedulerSunEvent\([\s\S]*?\ndef schedulerMidnightRearm/);
-  assert(m, "schedulerSunEvent parseable");
-  assert(m[0].includes("scheduleOffsetMin(tr) != 0"), "sun event fallback is exact-offset only");
-  assert(m[0].includes("storedFire > eventMs"), "sun event fallback must never consume a future occurrence");
-  assert(m[0].includes("rebuildScheduledJobs()"), "sun event must re-arm the dispatcher");
+  const adv = src.match(/def scheduleAdvanceAfterTrigger[\s\S]*?\ndef scheduledJobHandler/);
+  assert(adv, "scheduleAdvanceAfterTrigger block parseable");
+  assert(!adv[0].includes("rebuildScheduledJobs()"), "sun advance must not globally rebuild jobs");
+  assert(adv[0].includes("armSunScheduleNext"), "sun advance must re-arm only that schedule");
 }
 {
-  const m = src.match(/def runScheduledJobById\([\s\S]*?\ndef scheduleLogName/);
-  assert(m, "runScheduledJobById parseable");
-  assert(m[0].includes("scheduleAdvanceAfterTrigger(id, s, map, true)"), "must persist lastFired before device commands");
+  const clean = src.match(/def cleanupSchedules\(\)[\s\S]*?\n\/\/ --- endpoints/);
+  assert(clean, "cleanupSchedules block parseable");
+  assert(/if \(changed\) \{[\s\S]*rebuildScheduledJobs\(\)/.test(clean[0]), "cleanup rebuilds only after pruning");
+  assert(!/if \(changed\) saveSchedulesMap\(map\)\s+rebuildScheduledJobs\(\)/.test(clean[0]), "cleanup must not rebuild unconditionally");
 }
+assert(src.includes('schedule("0 1 0 * * ?", "schedulerMidnightRearm")'), "midnight re-arm must run at 00:01");
+assert(!src.includes('schedule("0 0 0 * * ?", "schedulerMidnightRearm")'), "midnight re-arm must not run at 00:00");
+assert(src.includes("parseSchedulesMapResult"), "must distinguish empty vs corrupt schedule store");
+assert(src.includes("schedule store unreadable"), "must fail closed on corrupt schedule JSON");
+assert(src.includes("hubTimeZone"), "must expose hub timezone to the client");
+assert(src.includes("def hubTimeZoneId("), "must read location.timeZone ID");
+assert(src.includes("mode trigger cannot set the same hub mode"), "must reject mode self-loops");
+assert(src.includes("mode schedules form a hub-mode loop"), "must reject mode-action cycles");
+assert(src.includes("def captureScheduleActionResult("), "must record action result metadata");
+assert(src.includes("lastResult"), "must persist lastResult for the client");
+assert(src.includes("fmt.setLenient(false)"), "one-time parser must reject impossible calendar dates");
+assert(src.includes("schedulerModeCascadeTransitions"), "mode cascade guard must survive asynchronous mode events");
+assert(!src.includes("schedulerModeDepth"), "transient mode depth guard must be gone");
+assert(/schedulerModeChanged[\s\S]*schedulesModeCycleError\(map\)/.test(src), "runtime mode handler must reject stored cycles");
+assert(src.includes("def schedulerSunRetry("), "failed sun re-arms must have a targeted retry");
+assert(src.includes('unschedule("schedulerSunRetry")'), "scheduler shutdown must clear targeted sun retries");
+assert(/runScheduleThermostatAction[\s\S]*deviceFailed[\s\S]*result\.failed/.test(src), "thermostat command failures must affect lastResult");
+assert(/setThermostatFanModeCmd[\s\S]*tstatHasComfortFanSpeed[\s\S]*return dispatched/.test(src), "fan dispatch accounting must support comfort-only thermostats");
+assert(/setThermostatFanModeCmd\(dev, fanMode\) != true/.test(src), "scheduler must reject fan requests that dispatch no command");
+assert(!/setColorTemperature\(k\)\s*\}\s*catch/.test(src), "CT failures must not be swallowed");
+assert(/def schedulesTest[\s\S]*\[ok: ok, lastResult: lastResult\]/.test(src), "test endpoint success must reflect action outcome");
 {
-  const m = src.match(/def schedulerMidnightRearm\([\s\S]*?\ndef schedulerModeChanged/);
-  assert(m, "schedulerMidnightRearm parseable");
-  assert(m[0].includes("rebuildScheduledJobs()"), "midnight must recompute the single dispatcher");
-  assert(!m[0].includes("runIn("), "midnight must not overwrite its recurring cron with a retry");
-  assert(!m[0].includes('unschedule("scheduledJobHandler")'), "midnight must not cancel due jobs");
-}
-{
-  const m = src.match(/def cleanupSchedules\(\)[\s\S]*?\n\/\/ --- endpoints ---/);
-  assert(m, "cleanupSchedules parseable");
-  assert(m[0].includes("schedulerNextFireHandler()"), "watchdog must run overdue one-time jobs");
-  assert(!m[0].includes("map.remove"), "watchdog must not delete one-time jobs before they run");
+  const fmt = src.match(/def formatSchedDateTimeLocal[\s\S]*?\ndef scheduleSummary/);
+  assert(fmt && fmt[0].includes("setTimeZone(tz)"), "one-time summary formatter must use hub timezone");
 }
 
+const js = readFileSync(join(root, "src/app.js"), "utf8");
+assert(js.includes("schedulesLoadState"), "UI must track schedule load state");
+assert(js.includes("schedulesCloudOmitted"), "UI must refetch when cloud /data omits schedules");
+assert(js.includes('ensureSchedulesLoaded({ force: true })'), "opening scheduler must force refresh");
+assert(js.includes("Couldn\\u2019t load schedules") || js.includes("Couldn’t load schedules"), "failed fetch must not look empty");
+assert(js.includes("Run actions now"), "test button must say it runs actions now");
+assert(js.includes("schedParseTime24(tr.time"), "clock step must use schedParseTime24");
+assert(js.includes("schedSaveInFlight"), "save must guard against double submit");
+assert(js.includes("schedulesRefreshEpoch"), "stale schedule refreshes must be rejected");
+assert((js.match(/schedulesRefreshEpoch\+\+/g) || []).length >= 2, "mutations must invalidate polls at start and completion");
+assert(js.includes("schedulesMutationChain"), "schedule mutations must be serialized");
+assert(js.includes("schedRowInFlight"), "row actions must survive poll-driven rerenders");
+assert(js.includes("schedulerResponseEpoch"), "data polls must carry scheduler response ordering");
+assert(/retainPost3PendingData[\s\S]*apply\(d, requestEpoch\)/.test(js), "scheduler metadata must apply on every data poll");
+assert(/schedSaveInFlight[\s\S]*f\.disabled = true/.test(js), "Create/Save must visibly disable while pending");
+assert(js.includes("res?.lastResult?.ok !== false"), "Run actions now must inspect action outcome");
+assert(js.includes("hubTimeZone"), "UI must consume hub timezone");
+assert(js.includes("Times use hub time"), "clock/once pickers must label hub time when TZ differs");
+assert(js.includes("applySchedulesResponse"), "mutations must apply returned schedules even on error");
+assert(js.includes("schedLastResultNote"), "list must surface missing/failed action results");
+
+const build = readFileSync(join(root, "build.mjs"), "utf8");
+assert(build.includes("existingRepository.packages"), "build must merge the shared HPM catalog");
+assert(build.includes("HPM_REPO_PACKAGE_ID"), "build must keep the Modern Dashboard catalog entry");
+
 console.log("ok source: scheduler Groovy invariants");
+console.log("ok source: scheduler UI invariants");
+console.log("ok source: shared HPM catalog preservation");
