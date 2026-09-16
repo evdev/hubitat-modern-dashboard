@@ -3659,12 +3659,24 @@
     const deg = "°" + unit;
     const current = t.temp != null ? Math.round(t.temp) + deg : "—";
     const tm = String(t?.tm || "").toLowerCase();
-    if (tm === "off") return { current, setpoint: "Off", tone: "off" };
+    if (tm === "off") return { current, setpoint: "Off", value: "Off", unit: "", tone: "off" };
     const target = favoriteTstatTarget(t);
-    if (!target) return { current, setpoint: "—", tone: "off" };
+    if (!target) return { current, setpoint: "—", value: "—", unit: "", tone: "off" };
     const sp = target === "heat" ? t.hsp : t.csp;
-    const setpoint = sp != null ? Math.round(Number(sp)) + deg : "—";
-    return { current, setpoint, tone: target };
+    if (sp == null) return { current, setpoint: "—", value: "—", unit: "", tone: target };
+    const value = String(Math.round(Number(sp)));
+    return { current, setpoint: value + deg, value, unit: deg, tone: target };
+  }
+
+  function paintTstatSetpoint(el, temps) {
+    el.className = "quick-fav-tstat-sp " + temps.tone;
+    el.replaceChildren();
+    el.appendChild(document.createTextNode(temps.value));
+    if (temps.unit) {
+      const unitEl = ce("span", "quick-fav-tstat-unit");
+      unitEl.textContent = temps.unit;
+      el.appendChild(unitEl);
+    }
   }
 
   function favoriteTstatState(t) {
@@ -11475,7 +11487,7 @@
     info.appendChild(stateEl);
 
     const spEl = ce("div", "quick-fav-tstat-sp " + temps.tone);
-    spEl.textContent = temps.setpoint;
+    paintTstatSetpoint(spEl, temps);
 
     const compactMode = ce("div", "quick-fav-tstat-mode" + (tm === "off" ? " is-off" : ""));
     compactMode.textContent = tstatModeDisplayLabel(t.tm);
@@ -11569,8 +11581,7 @@
     syncFavoriteTstatCompactState(rec.card, t);
     const temps = favoriteTstatTemps(t);
     const stateInfo = favoriteTstatState(t);
-    rec.spEl.className = "quick-fav-tstat-sp " + temps.tone;
-    rec.spEl.textContent = temps.setpoint;
+    paintTstatSetpoint(rec.spEl, temps);
     rec.stateEl.className = "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : "");
     paintTstatStateTxt(rec.stateTxt, stateInfo);
     rec.modeLabel.textContent = tstatModeDisplayLabel(t.tm);
