@@ -159,6 +159,13 @@ assert(js.includes("schedLastResultNote"), "list must surface missing/failed act
 assert(js.includes("function schedIdList("), "Then line must normalize thermostat id lists");
 assert(js.includes("schedActionDescription(s.action, { thermostats })"), "Then line must resolve thermostat names");
 assert(js.includes("new Set(schedIdList(schedDraft.action.devices))"), "thermostat picker must not iterate a string id");
+assert(js.includes("function ensurePost3Loaded"), "post3 must load through ensurePost3Loaded");
+assert(js.includes("loadPost3AfterFirstRender"), "post3 must load after the first render");
+{
+  const index = readFileSync(join(root, "src/index.html"), "utf8");
+  assert(/<head>[\s\S]*meta name="mld-post3"[\s\S]*<\/head>/.test(index), "index must advertise the post3 URL in head");
+  assert(!/<script[^>]+src="[^"]*app-post3\.js/.test(index), "index must not parser-load app-post3.js");
+}
 
 const build = readFileSync(join(root, "build.mjs"), "utf8");
 assert(build.includes("existingRepository.packages"), "build must merge the shared HPM catalog");

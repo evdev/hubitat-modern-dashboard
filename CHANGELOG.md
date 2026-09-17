@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.17
+
+- **Fix:** dashboard boot no longer dies with `schedulesLoadedFromHub is not defined`
+  (local and cloud). A leftover scheduler flag ran after `/data` and replaced the
+  UI with a connection error.
+- **Boot:** cameras/scheduler JS (`app-post3.js`) loads after the first render
+  instead of blocking the initial parse. Opening those tabs still waits on the
+  same loader.
+
 ## 0.4.16
 
 - **Fix:** dashboard boot no longer dies with `schedulesLoadedFromHub is not defined`

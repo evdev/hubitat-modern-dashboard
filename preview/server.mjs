@@ -920,6 +920,28 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "no-store" });
     return res.end(MOCK_MJPEG_JPEG);
   }
+  if (p === "/__preview/dash-password") {
+    if (req.method !== "POST") {
+      res.writeHead(405, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "method not allowed" }));
+    }
+    let body = null;
+    try { body = await readJsonBody(req); } catch {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+    }
+    const enabled = body?.enabled === true;
+    state.dashboardPasswordEnabled = enabled;
+    state.dashboardPasswordRequired = enabled;
+    syncDashPasswordEpoch();
+    const required = dashboardPasswordRequired();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({
+      ok: true,
+      enabled: state.dashboardPasswordEnabled === true,
+      required,
+    }));
+  }
   if (p === "/auth/status") {
     if (!dashboardPasswordRequired()) syncDashPasswordEpoch();
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
