@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.18
+
+- **Fix:** dashboard boot no longer dies with “Cannot reach hub” when the
+  default tab is Sensors, Music, Blinds, Fans, or Favorites with those tiles.
+  0.4.17 deferred `app-post3.js`, but that chunk now also owns those views;
+  first paint called them before they existed. Parser-load post3 again (as in
+  0.4.16). Cameras/scheduler can still use the existing on-demand loader.
+- **Thermostats tab:** on narrow phones the mode pill no longer collapses into
+  a circle (`Coo` / `Of`). Name uses leftover space; setpoint and +/- stay
+  content-sized so Cool/Heat/Off remain readable.
+
 ## 0.4.17
 
 - **Fix:** dashboard boot no longer dies with `schedulesLoadedFromHub is not defined`

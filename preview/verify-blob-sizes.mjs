@@ -15,7 +15,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const upload = join(root, "dist", "upload");
 const HUB_MAX_BLOB = 120 * 1024;
 const CLOUD_SAFE_JS_BLOB = 118 * 1024;
-/** Boot + deferred post3 are the cloud-critical OAuth JS responses. */
+/** Boot chunks plus post3 are the cloud-critical OAuth JS responses. */
 const CLOUD_CRITICAL_JS = new Set(["mld-app.js", "mld-app-post2.js", "mld-app-post3.js"]);
 const CHECK_EXTS = new Set([".js", ".css"]);
 
