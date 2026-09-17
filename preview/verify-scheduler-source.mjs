@@ -122,6 +122,9 @@ assert(/schedulerModeChanged[\s\S]*schedulesModeCycleError\(map\)/.test(src), "r
 assert(src.includes("def schedulerSunRetry("), "failed sun re-arms must have a targeted retry");
 assert(src.includes('unschedule("schedulerSunRetry")'), "scheduler shutdown must clear targeted sun retries");
 assert(/runScheduleThermostatAction[\s\S]*deviceFailed[\s\S]*result\.failed/.test(src), "thermostat command failures must affect lastResult");
+assert(src.includes("def scheduleThermostatIds("), "must normalize scalar or list thermostat ids");
+assert(src.includes("ac.devices = scheduleThermostatIds(body?.action?.devices)"), "save must persist normalized thermostat ids");
+assert(/runScheduleThermostatAction[\s\S]*scheduleThermostatIds\(action\?\.devices\)/.test(src), "run must use normalized thermostat ids");
 assert(/setThermostatFanModeCmd[\s\S]*tstatHasComfortFanSpeed[\s\S]*return dispatched/.test(src), "fan dispatch accounting must support comfort-only thermostats");
 assert(/setThermostatFanModeCmd\(dev, fanMode\) != true/.test(src), "scheduler must reject fan requests that dispatch no command");
 assert(!/setColorTemperature\(k\)\s*\}\s*catch/.test(src), "CT failures must not be swallowed");
@@ -151,6 +154,9 @@ assert(js.includes("hubTimeZone"), "UI must consume hub timezone");
 assert(js.includes("Times use hub time"), "clock/once pickers must label hub time when TZ differs");
 assert(js.includes("applySchedulesResponse"), "mutations must apply returned schedules even on error");
 assert(js.includes("schedLastResultNote"), "list must surface missing/failed action results");
+assert(js.includes("function schedIdList("), "Then line must normalize thermostat id lists");
+assert(js.includes("schedActionDescription(s.action, { thermostats })"), "Then line must resolve thermostat names");
+assert(js.includes("new Set(schedIdList(schedDraft.action.devices))"), "thermostat picker must not iterate a string id");
 
 const build = readFileSync(join(root, "build.mjs"), "utf8");
 assert(build.includes("existingRepository.packages"), "build must merge the shared HPM catalog");

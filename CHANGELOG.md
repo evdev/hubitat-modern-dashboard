@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.16
+
+- **Scheduler:** the Then line for a thermostat schedule names the device and
+  states the climate setting once (for example `Living Room · Cool 72°`). One
+  or two thermostats keep their names; three or more collapse to
+  `3 thermostats · Cool 72°`. It no longer treats a Hubitat device id such as
+  `37` as a count, and it no longer repeats the mode (`cool · cool 72°`).
+
 ## 0.4.15
 
 - **Thermostats tab:** restore compact three-column cards on phones (name and

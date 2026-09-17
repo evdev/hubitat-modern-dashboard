@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.15
+// Modern Dashboard v0.4.16
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.15"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.16"
 
 definition(
     name: "Modern Dashboard",
@@ -68,7 +68,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.15 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.16 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -1690,7 +1690,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-192-0.4.15.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.16.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1775,7 +1775,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-${size}-0.4.15.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.16.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -8765,6 +8765,26 @@ def scheduleLogName(id, s) {
     return (id ?: "?").toString()
 }
 
+// Hubitat JSON may unwrap a one-item array to a scalar (devices: 37 instead of [37]).
+def scheduleThermostatIds(raw) {
+    def out = []
+    def seen = [] as Set
+    if (raw instanceof List) {
+        for (id in raw) {
+            if (id == null) continue
+            def s = id.toString().trim()
+            if (!s || s == "null") continue
+            if (seen.contains(s)) continue
+            seen << s
+            out << s
+        }
+    } else if (raw != null) {
+        def s = raw.toString().trim()
+        if (s && s != "null") out << s
+    }
+    return out
+}
+
 def scheduleActionLogSummary(action) {
     def target = action?.target?.toString()
     switch (target) {
@@ -8775,7 +8795,7 @@ def scheduleActionLogSummary(action) {
             def n = (action?.states instanceof List) ? action.states.size() : 0
             return "outlets (${n} device(s))"
         case "thermostats":
-            def n = (action?.devices instanceof List) ? action.devices.size() : 0
+            def n = scheduleThermostatIds(action?.devices).size()
             def bits = ["thermostats (${n} device(s))"]
             if (action?.mode) bits << "mode=${action.mode}"
             if (action?.heat != null) bits << "heat=${action.heat}"
@@ -8947,8 +8967,7 @@ def runScheduleLightAction(action, result) {
 
 def runScheduleThermostatAction(action, result) {
     if (result == null) result = newScheduleActionResult()
-    def ids = action?.devices
-    if (!(ids instanceof List)) return result
+    def ids = scheduleThermostatIds(action?.devices)
     def mode = action?.mode?.toString()
     def heat = action?.heat
     def cool = action?.cool
@@ -9100,7 +9119,7 @@ def schedulesValidateNormalized(s) {
     if (target == "lights" || target == "outlets") {
         if (!(ac?.states instanceof List) || !ac.states) return "select at least one device"
     } else if (target == "thermostats") {
-        if (!(ac?.devices instanceof List) || !ac.devices) return "select at least one thermostat"
+        if (!scheduleThermostatIds(ac?.devices)) return "select at least one thermostat"
     } else if (target == "hubMode") {
         if (!ac?.mode?.toString()?.trim()) return "pick a hub mode"
     }
@@ -9121,10 +9140,8 @@ def schedulesUnknownDeviceError(s) {
             if (!dev) return "device ${id} is not available in the ${target} picker"
         }
     } else if (target == "thermostats") {
-        def ids = ac?.devices
-        if (!(ids instanceof List)) return null
+        def ids = scheduleThermostatIds(ac?.devices)
         for (id in ids) {
-            if (id == null) continue
             def dev = thermostats?.find { it.id.toString() == id.toString() }
             if (!dev) return "thermostat ${id} is not available in the thermostats picker"
         }
@@ -9244,8 +9261,7 @@ def schedulesNormalizePayload(body) {
             ac.states = []
         }
     } else if (ac.target == "thermostats") {
-        def devs = body?.action?.devices
-        ac.devices = (devs instanceof List) ? devs.collect { it } : []
+        ac.devices = scheduleThermostatIds(body?.action?.devices)
         if (body?.action?.mode != null) ac.mode = body.action.mode.toString()
         if (body?.action?.heat != null) ac.heat = body.action.heat
         if (body?.action?.cool != null) ac.cool = body.action.cool

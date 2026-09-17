@@ -98,6 +98,7 @@ const catalogs = {
     { i: 31, n: "Office Thermostat", r: 3 },
     { i: 32, n: "Kitchen Thermostat", r: 1 },
     { i: 33, n: "Hall Upstairs", r: 2 },
+    { i: 37, n: "Living Room Thermostat", r: 1 },
   ],
 };
 
@@ -273,6 +274,14 @@ assert(
   "null state rows are ignored"
 );
 
+assert(
+  nameOf({
+    trigger: { kind: "daily", when: "clock", time: "8:00" },
+    action: { target: "thermostats", devices: 37, mode: "cool", cool: 72 },
+  }) === "Living Room Thermostat Cool 72\u00b0 at 8:00 AM",
+  "scalar thermostat id is one device, not a count"
+);
+
 {
   const cats = {
     ...catalogs,
@@ -286,5 +295,58 @@ assert(
     "whitespace-only device name falls back to Device id"
   );
 }
+
+function loadSchedActionDescription() {
+  const src = readFileSync(join(root, "src/app.js"), "utf8");
+  const start = src.indexOf("  function schedIdList(");
+  if (start < 0) throw new Error("schedIdList missing from src/app.js");
+  const end = src.indexOf("  function schedOnlyInModesList(");
+  if (end < 0) throw new Error("schedOnlyInModesList missing from src/app.js");
+  const fnSrc = src.slice(start, end);
+  return new Function(`${fnSrc}\nreturn { schedIdList, schedActionDescription };`)();
+}
+
+const { schedIdList, schedActionDescription } = loadSchedActionDescription();
+
+assert(schedIdList(37).join(",") === "37", "scalar device id is one thermostat");
+assert(schedIdList("37").join(",") === "37", "string device id is not split into digits");
+assert(schedIdList([37]).join(",") === "37", "single-item id array stays one thermostat");
+assert(schedIdList([37, "37", 37]).join(",") === "37", "duplicate ids collapse");
+
+{
+  const thenLine = schedActionDescription(
+    { target: "thermostats", devices: 37, mode: "cool", cool: 72 },
+    catalogs
+  );
+  assert(
+    thenLine === "Living Room Thermostat \u00b7 Cool 72\u00b0",
+    "Then line names the thermostat and does not repeat cool: " + thenLine
+  );
+  assert(!thenLine.includes("37 thermostat"), "Then line must not treat the device id as a count");
+}
+
+assert(
+  schedActionDescription(
+    { target: "thermostats", devices: [30, 31], mode: "heat", heat: 68 },
+    catalogs
+  ) === "Hall Thermostat & Office Thermostat \u00b7 Heat 68\u00b0",
+  "two thermostats list both names"
+);
+
+assert(
+  schedActionDescription(
+    { target: "thermostats", devices: [30, 31, 32], mode: "cool", cool: 72 },
+    catalogs
+  ) === "3 thermostats \u00b7 Cool 72\u00b0",
+  "three or more thermostats collapse to a count"
+);
+
+assert(
+  schedActionDescription(
+    { target: "thermostats", devices: [30], mode: "auto", heat: 68, cool: 72, fanMode: "on" },
+    catalogs
+  ) === "Hall Thermostat \u00b7 Auto \u00b7 Heat 68\u00b0 \u00b7 Cool 72\u00b0 \u00b7 Fan on",
+  "auto mode lists both setpoints without duplicating heat/cool as the mode word"
+);
 
 console.log("ok unit: scheduler default naming");

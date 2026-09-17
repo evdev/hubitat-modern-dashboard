@@ -17001,7 +17001,46 @@
     return w === "sunrise" || w === "sunset" ? w : "clock";
   }
 
-  function schedActionDescription(action) {
+  // Hubitat may unwrap a one-item JSON array to a scalar (e.g. devices: 37).
+  // Never iterate a string: [..."37"] / new Set("37") becomes ["3","7"].
+  function schedIdList(raw) {
+    if (raw == null || raw === "") return [];
+    const arr = Array.isArray(raw) ? raw : [raw];
+    const out = [];
+    const seen = new Set();
+    for (const id of arr) {
+      if (id == null || id === "") continue;
+      if (typeof id === "object") continue;
+      const sid = String(id).trim();
+      if (!sid || sid === "null" || sid === "undefined") continue;
+      if (seen.has(sid)) continue;
+      seen.add(sid);
+      out.push(sid);
+    }
+    return out;
+  }
+
+  function schedThermoThenBits(ac) {
+    const mode = String(ac.mode || "").trim();
+    const modeKey = mode.toLowerCase();
+    const bits = [];
+    const heat = ac.heat;
+    const cool = ac.cool;
+    if (modeKey === "off") bits.push("Off");
+    else if (modeKey === "cool") bits.push(cool != null && cool !== "" ? "Cool " + cool + "\u00b0" : "Cool");
+    else if (modeKey === "heat") bits.push(heat != null && heat !== "" ? "Heat " + heat + "\u00b0" : "Heat");
+    else {
+      if (modeKey === "auto") bits.push("Auto");
+      else if (mode) bits.push(mode.charAt(0).toUpperCase() + mode.slice(1));
+      if (heat != null && heat !== "") bits.push("Heat " + heat + "\u00b0");
+      if (cool != null && cool !== "") bits.push("Cool " + cool + "\u00b0");
+    }
+    const fan = String(ac.fanMode || "").trim();
+    if (fan && fan.toLowerCase() !== "auto") bits.push("Fan " + fan);
+    return bits;
+  }
+
+  function schedActionDescription(action, catalogs) {
     const ac = action || {};
     const target = String(ac.target || "");
     if (target === "lights" || target === "outlets") {
@@ -17025,16 +17064,19 @@
       return "Set " + n + " " + noun;
     }
     if (target === "thermostats") {
-      const devices = Array.isArray(ac.devices) ? ac.devices : [];
-      const n = devices.length;
-      if (!n) return "No thermostats selected";
-      const bits = [n + " thermostat" + (n === 1 ? "" : "s")];
-      const mode = ac.mode ? String(ac.mode) : "";
-      if (mode && mode !== "auto") bits.push(mode);
-      if (ac.heat != null && mode !== "cool") bits.push("heat " + ac.heat + "\u00b0");
-      if (ac.cool != null && mode !== "heat") bits.push("cool " + ac.cool + "\u00b0");
-      if (ac.fanMode && ac.fanMode !== "auto") bits.push("fan " + ac.fanMode);
-      return bits.join(" \u00b7 ");
+      const ids = schedIdList(ac.devices);
+      if (!ids.length) return "No thermostats selected";
+      const tstats = (catalogs && catalogs.thermostats) || [];
+      const names = ids.map((id) => {
+        const t = tstats.find((x) => String(x.i) === id);
+        const nm = t && t.n ? String(t.n).trim() : "";
+        return nm || ("Thermostat " + id);
+      });
+      let scope;
+      if (names.length === 1) scope = names[0];
+      else if (names.length === 2) scope = names[0] + " & " + names[1];
+      else scope = ids.length + " thermostats";
+      return [scope].concat(schedThermoThenBits(ac)).filter(Boolean).join(" \u00b7 ");
     }
     if (target === "hubMode") {
       const mode = ac.mode ? String(ac.mode).trim() : "";
@@ -17343,7 +17385,7 @@
 
     const rule = ce("div", "sched-row-rule");
     schedAppendRuleLine(rule, "When", s.summary || "");
-    schedAppendRuleLine(rule, "Then", schedActionDescription(s.action));
+    schedAppendRuleLine(rule, "Then", schedActionDescription(s.action, { thermostats }));
     row.appendChild(rule);
 
     const onlyModes = Array.isArray(s.onlyInModes) ? s.onlyInModes.filter(Boolean) : [];
@@ -18259,7 +18301,7 @@
     q.textContent = "Select thermostats and settings";
     wrap.appendChild(q);
 
-    const selectedIds = new Set(schedDraft.action.devices || []);
+    const selectedIds = new Set(schedIdList(schedDraft.action.devices));
     const list = ce("div", "sched-lights");
     for (const t of thermostats) {
       const sel = selectedIds.has(String(t.i));
@@ -18284,7 +18326,7 @@
     }
     wrap.appendChild(list);
 
-    if (!(schedDraft.action.devices || []).length) {
+    if (!schedIdList(schedDraft.action.devices).length) {
       const note = ce("p", "sched-empty");
       note.textContent = "No thermostats selected.";
       wrap.appendChild(note);
@@ -18427,7 +18469,10 @@
     const ac = schedDraft.action;
     if (ac.target === "lights" && (!ac.states || !ac.states.length)) { flash("Select at least one light", true); return; }
     if (ac.target === "outlets" && (!ac.states || !ac.states.length)) { flash("Select at least one outlet", true); return; }
-    if (ac.target === "thermostats" && (!ac.devices || !ac.devices.length)) { flash("Select at least one thermostat", true); return; }
+    if (ac.target === "thermostats") {
+      ac.devices = schedIdList(ac.devices);
+      if (!ac.devices.length) { flash("Select at least one thermostat", true); return; }
+    }
     if (ac.target === "hubMode" && !ac.mode) { flash("Pick a hub mode", true); return; }
     const payload = {
       id: schedEditingId || undefined,
