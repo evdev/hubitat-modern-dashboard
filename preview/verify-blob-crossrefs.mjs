@@ -222,56 +222,99 @@ function auditBuiltBlobs() {
   ok("post chunks use __MLD IIFE wrapper + Object.assign exports");
 
   const html = readFileSync(join(upload, "mld-index.html"), "utf8");
+  const srcHtml = readFileSync(join(root, "src", "index.html"), "utf8");
   const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1]);
-  const expected = ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"];
-  for (const needle of expected) {
-    if (!scripts.some((s) => s.includes(needle))) {
-      fail(`mld-index.html missing script for ${needle}`);
+  const expected = ["app.js", "app-core.js", "app-post.js", "app-post2.js"];
+  for (let i = 0; i < expected.length; i++) {
+    if (!scripts[i] || !scripts[i].includes(expected[i])) {
+      fail(`mld-index.html script[${i}] should be ${expected[i]} (got ${scripts[i] || "missing"})`);
     }
   }
-  if (!html.includes('meta name="mld-post3"')) fail("mld-index.html missing mld-post3 meta");
-  else ok("mld-index.html script order + post3 meta present");
+  if (scripts.some((s) => s.includes("app-post3.js"))) {
+    fail("mld-index.html must not parser-load app-post3.js (deferred via ensurePost3Loaded)");
+  }
+  if (scripts.length !== expected.length) {
+    fail(`mld-index.html unexpected extra scripts: ${scripts.join(", ")}`);
+  }
+  if (!/<head>[\s\S]*meta name="mld-post3"[\s\S]*<\/head>/.test(html)
+    || !/<head>[\s\S]*meta name="mld-post3"[\s\S]*<\/head>/.test(srcHtml)) {
+    fail("index.html missing mld-post3 meta in head");
+  } else if (/<script[^>]+src="[^"]*app-post3\.js/.test(srcHtml)) {
+    fail("src/index.html must not parser-load app-post3.js");
+  } else {
+    ok("mld-index.html boot scripts + deferred post3 meta present");
+  }
 }
 
 function auditRuntimeExportChain() {
-  const makeEl = (tag) => ({
-    tagName: String(tag || "div").toUpperCase(),
-    style: {},
-    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-    dataset: {},
-    hidden: false,
-    disabled: false,
-    textContent: "",
-    innerHTML: "",
-    value: "",
-    checked: false,
-    children: [],
-    parentElement: null,
-    appendChild(c) {
-      this.children.push(c);
-      c.parentElement = this;
-    },
-    remove() {},
-    setAttribute() {},
-    getAttribute: () => null,
-    hasAttribute: () => false,
-    addEventListener() {},
-    removeEventListener() {},
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    closest: () => null,
-    focus() {},
-    click() {},
-    getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
-  });
+  const makeEl = (tag) => {
+    const el = {
+      tagName: String(tag || "div").toUpperCase(),
+      id: "",
+      style: {},
+      classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+      dataset: {},
+      hidden: false,
+      disabled: false,
+      textContent: "",
+      innerHTML: "",
+      value: "",
+      checked: false,
+      children: [],
+      parentElement: null,
+      parentNode: null,
+      nextSibling: null,
+      appendChild(c) {
+        this.children.push(c);
+        c.parentElement = this;
+        c.parentNode = this;
+        return c;
+      },
+      insertBefore(c, ref) {
+        const i = ref ? this.children.indexOf(ref) : -1;
+        if (i >= 0) this.children.splice(i, 0, c);
+        else this.children.push(c);
+        c.parentElement = this;
+        c.parentNode = this;
+        return c;
+      },
+      remove() {},
+      setAttribute() {},
+      getAttribute: () => null,
+      removeAttribute() {},
+      hasAttribute: () => false,
+      toggleAttribute() {},
+      addEventListener() {},
+      removeEventListener() {},
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      closest: () => null,
+      focus() {},
+      click() {},
+      getBoundingClientRect: () => ({ top: 0, left: 0, width: 0, height: 0 }),
+    };
+    return el;
+  };
+  const elsById = Object.create(null);
+  const getEl = (id) => {
+    if (id == null || id === "") return null;
+    const key = String(id);
+    if (!elsById[key]) {
+      elsById[key] = makeEl("div");
+      elsById[key].id = key;
+    }
+    return elsById[key];
+  };
 
   const sandbox = {
     globalThis: {},
     console,
-    setTimeout,
-    clearTimeout,
-    setInterval,
-    clearInterval,
+    // No-op timers so dashboard init/polling cannot keep the process alive or
+    // throw after the audit returns (real timers dumped chunk source on exit).
+    setTimeout() { return 0; },
+    clearTimeout() {},
+    setInterval() { return 0; },
+    clearInterval() {},
     URL,
     Blob,
     FormData,
@@ -288,8 +331,8 @@ function auditRuntimeExportChain() {
     location: { href: "http://localhost/", origin: "http://localhost", pathname: "/", search: "" },
     history: { replaceState() {} },
     matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
-    requestAnimationFrame: (fn) => setTimeout(fn, 0),
-    cancelAnimationFrame: clearTimeout,
+    requestAnimationFrame() { return 0; },
+    cancelAnimationFrame() {},
     Event: class {},
     CustomEvent: class {},
     MutationObserver: class {
@@ -314,8 +357,11 @@ function auditRuntimeExportChain() {
       pause() {}
     },
     document: {
-      getElementById: () => null,
-      querySelector: () => null,
+      getElementById: (id) => getEl(id),
+      querySelector: (sel) => {
+        const m = String(sel || "").match(/^#([\w-]+)$/);
+        return m ? getEl(m[1]) : null;
+      },
       querySelectorAll: () => [],
       createElement: (t) => makeEl(t),
       createElementNS: () => makeEl("svg"),
@@ -325,7 +371,10 @@ function auditRuntimeExportChain() {
       addEventListener() {},
       removeEventListener() {},
     },
-    fetch: async () => ({ ok: false, status: 404, json: async () => ({}) }),
+    fetch() {
+      // Leave init() pending so its 404/error path cannot throw after the audit.
+      return new Promise(() => {});
+    },
   };
   sandbox.globalThis = sandbox;
   sandbox.window = sandbox;
@@ -352,14 +401,47 @@ function auditRuntimeExportChain() {
   const missing = REQUIRED_MLD_FUNCTIONS.filter((k) => typeof mld[k] !== "function");
   if (missing.length) fail(`__MLD missing functions after full load: ${missing.join(", ")}`);
   else ok("critical __MLD functions present after all chunks load");
+
+  try {
+    mld.applySchedulesFromData({ schedulerEnabled: false });
+    ok("applySchedulesFromData({ schedulerEnabled: false }) does not throw");
+  } catch (e) {
+    fail(`applySchedulesFromData with scheduler disabled threw: ${e.message}`);
+  }
 }
 
-auditSourceCrossRefs();
-auditBuiltBlobs();
-auditRuntimeExportChain();
+async function drainMicrotasks() {
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+}
 
-if (failures) {
-  console.error(`\n${failures} blob cross-reference check(s) failed.`);
+function drainMacrotask() {
+  // unhandledRejection is a later event-loop turn, not a microtask.
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function main() {
+  const lateErrors = [];
+  const onLate = (err) => {
+    lateErrors.push(err);
+    fail(`late sandbox error: ${err?.message || err}`);
+  };
+  process.on("unhandledRejection", onLate);
+  auditSourceCrossRefs();
+  auditBuiltBlobs();
+  auditRuntimeExportChain();
+  await drainMicrotasks();
+  await drainMacrotask();
+  if (failures || lateErrors.length) {
+    console.error(`\n${failures} blob cross-reference check(s) failed.`);
+    process.exit(1);
+  }
+  console.log("\nAll blob cross-reference checks passed.");
+  // Hung sandbox fetch keeps the event loop alive; exit only after late errors
+  // have had a turn so a success code cannot mask them.
+  process.exit(0);
+}
+
+main().catch((e) => {
+  console.error(e);
   process.exit(1);
-}
-console.log("\nAll blob cross-reference checks passed.");
+});
