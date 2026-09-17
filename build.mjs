@@ -623,7 +623,7 @@ const jsOutputs = [
 
 for (const [name, content] of jsOutputs) {
   assertUnderHubLimit(name, content);
-  // Boot + deferred post3 are cloud-critical OAuth responses — keep under 118 KB.
+  // Boot chunks plus post3 are cloud-critical OAuth responses — keep under 118 KB.
   if (CLOUD_CRITICAL_JS.has(name)) assertUnderCloudSafeJsLimit(name, content);
   writeFileSync(join(upload, name), content);
 }

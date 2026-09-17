@@ -45,6 +45,16 @@ const REQUIRED_MLD_FUNCTIONS = [
   "isPost3Ready",
   "ensurePost3Loaded",
   "activateDeferredModule",
+  "renderSensorsPopup",
+  "renderMusicPopup",
+  "refreshBlindsPopup",
+  "refreshFansPopup",
+  "makeShadeTile",
+  "makeFanTile",
+  "makeFavoriteSensorCard",
+  "makeMusicRow",
+  "showTab",
+  "makeFavoriteEntryElement",
 ];
 
 let failures = 0;
@@ -224,14 +234,11 @@ function auditBuiltBlobs() {
   const html = readFileSync(join(upload, "mld-index.html"), "utf8");
   const srcHtml = readFileSync(join(root, "src", "index.html"), "utf8");
   const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1]);
-  const expected = ["app.js", "app-core.js", "app-post.js", "app-post2.js"];
+  const expected = ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"];
   for (let i = 0; i < expected.length; i++) {
     if (!scripts[i] || !scripts[i].includes(expected[i])) {
       fail(`mld-index.html script[${i}] should be ${expected[i]} (got ${scripts[i] || "missing"})`);
     }
-  }
-  if (scripts.some((s) => s.includes("app-post3.js"))) {
-    fail("mld-index.html must not parser-load app-post3.js (deferred via ensurePost3Loaded)");
   }
   if (scripts.length !== expected.length) {
     fail(`mld-index.html unexpected extra scripts: ${scripts.join(", ")}`);
@@ -239,10 +246,11 @@ function auditBuiltBlobs() {
   if (!/<head>[\s\S]*meta name="mld-post3"[\s\S]*<\/head>/.test(html)
     || !/<head>[\s\S]*meta name="mld-post3"[\s\S]*<\/head>/.test(srcHtml)) {
     fail("index.html missing mld-post3 meta in head");
-  } else if (/<script[^>]+src="[^"]*app-post3\.js/.test(srcHtml)) {
-    fail("src/index.html must not parser-load app-post3.js");
+  }
+  if (!/<script[^>]+src="[^"]*app-post3\.js/.test(srcHtml)) {
+    fail("src/index.html must parser-load app-post3.js after app-post2.js");
   } else {
-    ok("mld-index.html boot scripts + deferred post3 meta present");
+    ok("mld-index.html boot scripts include parser-loaded post3");
   }
 }
 

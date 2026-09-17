@@ -3454,12 +3454,15 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
     padding: 14px 18px;
   }
 }
-/* Thermostats tab: compact 3-column row on phones. Stretch the name column
-   so the “now” chip sits on the bottom of every card. Hide °F on the setpoint
+/* Thermostats tab: compact 3-column row on phones. Name takes leftover
+   space; setpoint + controls size to content so the mode pill cannot be
+   squeezed into a circle on narrow phones. Stretch the name column so the
+   “now” chip sits on the bottom of every card. Hide °F on the setpoint
    so on/off cards keep the same control spacing. */
 .quick-body-thermostats .quick-fav-tstat {
+  container-type: inline-size;
   display: grid !important;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: stretch;
   gap: 8px 10px;
   padding: 10px 12px;
@@ -3503,14 +3506,20 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
 .quick-body-thermostats .quick-fav-tstat-sp {
   text-align: center;
   align-self: center;
-  min-width: 52px;
+  font-size: clamp(28px, 12cqi, 40px);
+  min-width: 2.2ch;
+  padding-inline: 2px;
+}
+.quick-body-thermostats .quick-fav-tstat-sp.off {
+  font-size: clamp(22px, 9cqi, 26px);
 }
 .quick-body-thermostats .quick-fav-tstat-unit { display: none; }
 .quick-body-thermostats .quick-fav-tstat-controls {
   justify-self: end;
   align-self: center;
   margin-top: 0;
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   min-width: 0;
   gap: 6px;
 }
@@ -3518,12 +3527,13 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
   width: 36px;
   height: 36px;
   min-height: 36px;
+  flex: 0 0 36px;
   font-size: 22px;
 }
 .quick-body-thermostats .quick-fav-ctl-mode {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 88px;
+  flex: 0 0 auto;
+  min-width: 64px;
+  max-width: 92px;
   min-height: 48px;
   height: auto;
   padding: 5px 7px;

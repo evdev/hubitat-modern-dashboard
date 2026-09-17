@@ -164,7 +164,7 @@ assert(js.includes("loadPost3AfterFirstRender"), "post3 must load after the firs
 {
   const index = readFileSync(join(root, "src/index.html"), "utf8");
   assert(/<head>[\s\S]*meta name="mld-post3"[\s\S]*<\/head>/.test(index), "index must advertise the post3 URL in head");
-  assert(!/<script[^>]+src="[^"]*app-post3\.js/.test(index), "index must not parser-load app-post3.js");
+  assert(/<script[^>]+src="[^"]*app-post3\.js/.test(index), "index must parser-load app-post3.js after app-post2.js");
 }
 
 const build = readFileSync(join(root, "build.mjs"), "utf8");
