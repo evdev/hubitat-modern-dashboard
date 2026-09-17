@@ -14218,21 +14218,29 @@
     return post3LoadPromise;
   }
 
+  function applySchedulesFromDataSafe(d, requestEpoch) {
+    const apply = globalThis.__MLD?.applySchedulesFromData;
+    if (typeof apply !== "function") return;
+    try {
+      apply(d, requestEpoch);
+    } catch (e) {
+      console.warn("Modern Dashboard: applySchedulesFromData failed", e);
+    }
+  }
+
   function retainPost3PendingData(d, requestEpoch) {
     if (!isPost3Ready()) {
       post3PendingData = d;
       return;
     }
-    const apply = globalThis.__MLD?.applySchedulesFromData;
-    if (typeof apply === "function") apply(d, requestEpoch);
+    applySchedulesFromDataSafe(d, requestEpoch);
   }
 
   function applyPendingPost3Data() {
     const d = post3PendingData;
     post3PendingData = null;
     if (!d) return;
-    const apply = globalThis.__MLD?.applySchedulesFromData;
-    if (typeof apply === "function") apply(d);
+    applySchedulesFromDataSafe(d);
     updateQuickNavVisibility();
   }
 
@@ -16561,7 +16569,6 @@
       schedulesLoadState = "idle";
       schedulesLoadedAt = 0;
       schedulesCloudOmitted = false;
-      schedulesLoadedFromHub = false;
     }
     if (data.schedules === null) schedulesCloudOmitted = true;
     else if (Array.isArray(data.schedules)) {

@@ -137,6 +137,7 @@ assert(/def schedulesTest[\s\S]*\[ok: ok, lastResult: lastResult\]/.test(src), "
 const js = readFileSync(join(root, "src/app.js"), "utf8");
 assert(js.includes("schedulesLoadState"), "UI must track schedule load state");
 assert(js.includes("schedulesCloudOmitted"), "UI must refetch when cloud /data omits schedules");
+assert(!js.includes("schedulesLoadedFromHub"), "removed leftover schedulesLoadedFromHub global");
 assert(js.includes('ensureSchedulesLoaded({ force: true })'), "opening scheduler must force refresh");
 assert(js.includes("Couldn\\u2019t load schedules") || js.includes("Couldn’t load schedules"), "failed fetch must not look empty");
 assert(js.includes("Run actions now"), "test button must say it runs actions now");
@@ -147,7 +148,8 @@ assert((js.match(/schedulesRefreshEpoch\+\+/g) || []).length >= 2, "mutations mu
 assert(js.includes("schedulesMutationChain"), "schedule mutations must be serialized");
 assert(js.includes("schedRowInFlight"), "row actions must survive poll-driven rerenders");
 assert(js.includes("schedulerResponseEpoch"), "data polls must carry scheduler response ordering");
-assert(/retainPost3PendingData[\s\S]*apply\(d, requestEpoch\)/.test(js), "scheduler metadata must apply on every data poll");
+assert(/retainPost3PendingData[\s\S]*applySchedulesFromDataSafe\(d, requestEpoch\)/.test(js), "scheduler metadata must apply on every data poll");
+assert(js.includes("applySchedulesFromData failed"), "scheduler apply must not throw out of boot/poll");
 assert(/schedSaveInFlight[\s\S]*f\.disabled = true/.test(js), "Create/Save must visibly disable while pending");
 assert(js.includes("res?.lastResult?.ok !== false"), "Run actions now must inspect action outcome");
 assert(js.includes("hubTimeZone"), "UI must consume hub timezone");

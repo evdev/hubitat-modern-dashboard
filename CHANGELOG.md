@@ -2,6 +2,9 @@
 
 ## 0.4.16
 
+- **Fix:** dashboard boot no longer dies with `schedulesLoadedFromHub is not defined`
+  (local and cloud). A leftover scheduler flag ran after `/data` and replaced the
+  UI with a connection error.
 - **Scheduler:** the Then line for a thermostat schedule names the device and
   states the climate setting once (for example `Living Room · Cool 72°`). One
   or two thermostats keep their names; three or more collapse to
