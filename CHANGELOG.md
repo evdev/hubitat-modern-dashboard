@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.20
+
+- **Thermostats:** Fan-only cards show **Fan** on the setpoint instead of a dash.
+  Dry / Fan / Dehumidify use the mode name on the now-temp line so those states
+  stay readable.
+
 ## 0.4.19
 
 - **Music:** HomeKit / media-transport devices (`mediaTransport`) can be selected

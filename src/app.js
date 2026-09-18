@@ -3698,6 +3698,7 @@
     const tm = String(t?.tm || "").toLowerCase();
     const tone = favoriteTstatTone(t);
     if (tm === "off") return { current, setpoint: "Off", value: "Off", unit: "", tone: "off" };
+    if (tstatFanOnlyMode(tm)) return { current, setpoint: "Fan", value: "Fan", unit: "", tone };
     const target = favoriteTstatTarget(t);
     if (!target) return { current, setpoint: "—", value: "—", unit: "", tone };
     const sp = target === "heat" ? t.hsp : t.csp;
@@ -3727,10 +3728,9 @@
     let prefix = "Now ";
     let active = false;
     if (tm === "off") prefix = "Off · now ";
-    else if (tstatFanOnlyMode(tm)) { prefix = "Fan · now "; active = true; }
-    else if (tstatDryMode(tm)) {
-      prefix = (normalizeTstatModeKey(tm).startsWith("dehumid") ? "Dehumidify" : "Dry") + " · now ";
-      active = os === "cooling" || os === "pending cool";
+    else if (tstatAuxMode(tm)) {
+      prefix = tstatModeDisplayLabel(tm) + " · now ";
+      active = true;
     } else if (os === "heating" || os === "pending heat") { prefix = "Heating · now "; active = true; }
     else if (os === "cooling" || os === "pending cool") { prefix = "Cooling · now "; active = true; }
     else if (os === "fan" || os === "fan only") { prefix = "Fan · now "; active = true; }
