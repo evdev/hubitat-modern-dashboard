@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.21
+
+- **Thermostats:** Fan / Dry / Dehumidify cards use the green accent (including
+  `fan_only` from drivers). The status dot pulses green in those modes instead
+  of inheriting heat/cool color.
+
 ## 0.4.20
 
 - **Thermostats:** Fan-only cards show **Fan** on the setpoint instead of a dash.

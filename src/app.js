@@ -3542,18 +3542,32 @@
   }
 
   function tstatModeClassName(tm) {
-    const key = String(tm || "off").toLowerCase().trim().replace(/\s+/g, "-") || "off";
+    const key = String(tm || "off").toLowerCase().trim().replace(/[\s_]+/g, "-") || "off";
     return "mode-" + key;
   }
 
+  // Accent class from mode family so fan_only / dry / dehumidify all get green.
+  function tstatCardModeClass(t) {
+    const tm = String(t?.tm || "").toLowerCase();
+    if (tstatAuxMode(tm)) return "mode-fan";
+    if (tm === "emergency heat" || tm === "emergencyheat") return "mode-heat";
+    return tstatModeClassName(tm);
+  }
+
+  function tstatStateElClass(info, tone) {
+    return "quick-fav-tstat-state"
+      + (info.active ? " is-active" : "")
+      + (tone === "fan" ? " tone-fan" : "");
+  }
+
   function tstatModeDisplayLabel(tm) {
-    const m = String(tm || "").toLowerCase();
-    if (m === "heat" || m === "emergency heat" || m === "emergencyheat") return "Heat";
+    const m = normalizeTstatModeKey(tm);
+    if (m === "heat" || m === "emergencyheat") return "Heat";
     if (m === "cool") return "Cool";
     if (m === "auto") return "Auto";
     if (m === "off") return "Off";
-    if (m === "dry" || m === "dry mode" || m === "drymode") return "Dry";
-    if (m === "fan" || m === "fan only" || m === "fanonly") return "Fan";
+    if (m === "dry" || m === "drymode") return "Dry";
+    if (m === "fan" || m === "fanonly") return "Fan";
     if (m === "dehumidify" || m === "dehumidification") return "Dehumidify";
     return tm || "—";
   }
@@ -3604,7 +3618,7 @@
     const os = String(t?.os || "").toLowerCase();
     if (os === "heating" || os === "pending heat") return "state-heat";
     if (os === "cooling" || os === "pending cool") return "state-cool";
-    if (os === "fan" || os === "fan only") return "state-fan";
+    if (os === "fan" || os === "fan only" || os === "fan_only") return "state-fan";
     if (t?.hasFm && fanModeActive(t.fm)) return "state-fan";
     return "state-off";
   }
@@ -3733,7 +3747,7 @@
       active = true;
     } else if (os === "heating" || os === "pending heat") { prefix = "Heating · now "; active = true; }
     else if (os === "cooling" || os === "pending cool") { prefix = "Cooling · now "; active = true; }
-    else if (os === "fan" || os === "fan only") { prefix = "Fan · now "; active = true; }
+    else if (os === "fan" || os === "fan only" || os === "fan_only") { prefix = "Fan · now "; active = true; }
     return { prefix, now, active, label: prefix + now };
   }
 
@@ -11499,7 +11513,7 @@
 
   function makeQuickTstatCard(t, map) {
     const tm = String(t.tm || "").toLowerCase();
-    const card = ce("div", "quick-fav-card quick-fav-tstat " + tstatModeClassName(tm));
+    const card = ce("div", "quick-fav-card quick-fav-tstat " + tstatCardModeClass(t));
     card.dataset.name = String(t.n || "").toLowerCase();
     card.dataset.tstatId = String(t.i);
     syncFavoriteTstatCompactState(card, t);
@@ -11520,7 +11534,7 @@
 
     const info = ce("div", "quick-fav-tstat-info");
     info.appendChild(nameBtn);
-    const stateEl = ce("div", "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : ""));
+    const stateEl = ce("div", tstatStateElClass(stateInfo, temps.tone));
     const dot = ce("span", "quick-fav-tstat-dot");
     const stateTxt = ce("span", "quick-fav-tstat-state-txt");
     paintTstatStateTxt(stateTxt, stateInfo);
@@ -11615,7 +11629,7 @@
     const rec = map.get(t.i);
     if (!rec) return;
     const tm = String(t.tm || "").toLowerCase();
-    const nextMode = tstatModeClassName(tm);
+    const nextMode = tstatCardModeClass(t);
     for (const cls of rec.card.classList) {
       if (cls.startsWith("mode-")) rec.card.classList.remove(cls);
     }
@@ -11624,7 +11638,7 @@
     const temps = favoriteTstatTemps(t);
     const stateInfo = favoriteTstatState(t);
     paintTstatSetpoint(rec.spEl, temps);
-    rec.stateEl.className = "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : "");
+    rec.stateEl.className = tstatStateElClass(stateInfo, temps.tone);
     paintTstatStateTxt(rec.stateTxt, stateInfo);
     rec.modeLabel.textContent = tstatModeDisplayLabel(t.tm);
     fitTstatModeLabel(rec.modeBtn);

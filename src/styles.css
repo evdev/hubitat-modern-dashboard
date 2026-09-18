@@ -3620,6 +3620,20 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--tstat-accent, var(--accent)) 70%, transparent);
   animation: fav-tstat-pulse 1.8s var(--ease) infinite;
 }
+.quick-fav-tstat-state.tone-fan .quick-fav-tstat-dot,
+.quick-fav-tstat-state.is-active.tone-fan .quick-fav-tstat-dot {
+  background: #3dd68c;
+}
+.quick-fav-tstat-state.is-active.tone-fan .quick-fav-tstat-dot {
+  background: #3dd68c;
+  box-shadow: 0 0 0 0 color-mix(in srgb, #3dd68c 70%, transparent);
+  animation-name: fav-tstat-pulse-fan;
+}
+@keyframes fav-tstat-pulse-fan {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, #3dd68c 70%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, #3dd68c 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, #3dd68c 0%, transparent); }
+}
 .quick-fav-tstat-state.is-active .quick-fav-tstat-state-txt { color: var(--text-dim); }
 @keyframes fav-tstat-pulse {
   0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tstat-accent, var(--accent)) 70%, transparent); }
