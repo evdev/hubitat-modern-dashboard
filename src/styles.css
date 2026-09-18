@@ -3328,9 +3328,12 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
   text-align: left;
   text-shadow: none;
 }
-.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-sp.off {
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-sp.off,
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-sp.fan.is-label {
   font-size: 13px;
   font-weight: 700;
+}
+.quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-sp.off {
   color: var(--text-faint);
 }
 .quick-body-favorites .fav-size-compact.quick-fav-tstat .quick-fav-tstat-mode {
@@ -3510,7 +3513,8 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
   min-width: 2.2ch;
   padding-inline: 2px;
 }
-.quick-body-thermostats .quick-fav-tstat-sp.off {
+.quick-body-thermostats .quick-fav-tstat-sp.off,
+.quick-body-thermostats .quick-fav-tstat-sp.fan.is-label {
   font-size: clamp(22px, 9cqi, 26px);
 }
 .quick-body-thermostats .quick-fav-tstat-unit { display: none; }
@@ -3550,9 +3554,16 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
   line-height: 1.15;
   max-width: 100%;
 }
-.quick-fav-tstat.mode-heat { --tstat-accent: #ff8a5c; }
+.quick-fav-tstat.mode-heat,
+.quick-fav-tstat.mode-emergency-heat { --tstat-accent: #ff8a5c; }
 .quick-fav-tstat.mode-cool { --tstat-accent: #5b9cff; }
 .quick-fav-tstat.mode-auto { --tstat-accent: #b58cff; }
+.quick-fav-tstat.mode-fan,
+.quick-fav-tstat.mode-fan-only,
+.quick-fav-tstat.mode-dry,
+.quick-fav-tstat.mode-dry-mode,
+.quick-fav-tstat.mode-dehumidify,
+.quick-fav-tstat.mode-dehumidification { --tstat-accent: #3dd68c; }
 .quick-fav-tstat.mode-off  { --tstat-accent: var(--text-faint); }
 
 .quick-fav-tstat-name {
@@ -3587,7 +3598,9 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
 }
 .quick-fav-tstat-sp.heat { color: #ff6b4a; }
 .quick-fav-tstat-sp.cool { color: #3b8bff; }
+.quick-fav-tstat-sp.fan { color: #3dd68c; }
 .quick-fav-tstat-sp.off { color: var(--text-dim); font-size: 26px; font-weight: 700; }
+.quick-fav-tstat-sp.fan.is-label { font-size: 26px; font-weight: 700; }
 
 .quick-fav-tstat-state {
   display: inline-flex; align-items: center; gap: 6px;

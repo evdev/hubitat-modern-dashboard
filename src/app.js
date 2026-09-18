@@ -1450,6 +1450,11 @@
     };
   }
 
+  function musicHasControls(dev) {
+    const ctrl = musicControls(dev);
+    return !!(ctrl.play || ctrl.pause || ctrl.stop || ctrl.prev || ctrl.next || ctrl.volume);
+  }
+
   function effectiveMusicStatus(dev) {
     const opt = musicOptimistic.get(dev.i);
     if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
@@ -3148,8 +3153,8 @@
     if (!t || !tstatSession) return null;
     const tm = String(t.tm || "").toLowerCase();
     if (tstatSession?.central && !tm) return null;
-    if (tm === "off" || tm === "fan") return null;
-    return (tstatSession.edit === "cool" && tm === "auto") || tm === "cool" || tm === "dry" ? "cool" : "heat";
+    if (tm === "off" || tstatFanOnlyMode(tm)) return null;
+    return (tstatSession.edit === "cool" && tm === "auto") || tm === "cool" || tstatDryMode(tm) ? "cool" : "heat";
   }
 
   async function commitTstatSetpoint(ids, target, val, { haptic = true } = {}) {
@@ -3207,7 +3212,7 @@
     }
 
     const showHeat = (tm === "heat" || tm === "auto" || tm === "emergency heat");
-    const showCool = (tm === "cool" || tm === "auto" || tm === "dry");
+    const showCool = (tm === "cool" || tm === "auto" || tstatDryMode(tm));
     const editHeat = tm === "heat" || tm === "emergency heat"
       || (tm === "auto" && tstatSession.edit !== "cool");
 
@@ -3240,9 +3245,9 @@
     // setpoint readout
     let spText;
     if (tm === "off") spText = "Off";
-    else if (tm === "fan") spText = "Fan";
+    else if (tstatFanOnlyMode(tm)) spText = "Fan";
     else if (tm === "heat" || tm === "emergency heat") spText = hsp != null ? hsp + deg : "—";
-    else if (tm === "cool" || tm === "dry") spText = csp != null ? csp + deg : "—";
+    else if (tm === "cool" || tstatDryMode(tm)) spText = csp != null ? csp + deg : "—";
     else if (tm === "auto") spText = (editHeat ? hsp : csp) != null ? (editHeat ? hsp : csp) + deg : "—";
     else spText = "—";
     popup._spEl.textContent = spText;
@@ -3254,10 +3259,10 @@
 
     // disabled look when off or none selected for bulk
     const noneSelected = !!(tstatTargetPickerEnabled() && !tstatSession.ids?.length);
-    popup._svg.classList.toggle("disabled", tm === "off" || tm === "fan" || noneSelected);
+    popup._svg.classList.toggle("disabled", tm === "off" || tstatFanOnlyMode(tm) || noneSelected);
     const noMode = !!(tstatSession?.roomGroup && tstatSession.ids?.length !== 1)
       || !!(tstatSession?.central && !tm);
-    const canAdjust = tm !== "off" && tm !== "fan" && !noMode && !noneSelected;
+    const canAdjust = tm !== "off" && !tstatFanOnlyMode(tm) && !noMode && !noneSelected;
     if (popup._minusBtn) popup._minusBtn.disabled = !canAdjust;
     if (popup._plusBtn) popup._plusBtn.disabled = !canAdjust;
   }
@@ -3515,14 +3520,41 @@
     }
   }
 
+  function normalizeTstatModeKey(tm) {
+    return String(tm || "").toLowerCase().replace(/[\s_-]+/g, "");
+  }
+
+  // Fan / dry / dehumidify: circulate air or moisture, not a heat/cool setpoint.
+  function tstatAuxMode(tm) {
+    const m = normalizeTstatModeKey(tm);
+    return m === "fan" || m === "fanonly" || m === "dry" || m === "drymode"
+      || m === "dehumidify" || m === "dehumidification";
+  }
+
+  function tstatFanOnlyMode(tm) {
+    const m = normalizeTstatModeKey(tm);
+    return m === "fan" || m === "fanonly";
+  }
+
+  function tstatDryMode(tm) {
+    const m = normalizeTstatModeKey(tm);
+    return m === "dry" || m === "drymode" || m === "dehumidify" || m === "dehumidification";
+  }
+
+  function tstatModeClassName(tm) {
+    const key = String(tm || "off").toLowerCase().trim().replace(/\s+/g, "-") || "off";
+    return "mode-" + key;
+  }
+
   function tstatModeDisplayLabel(tm) {
     const m = String(tm || "").toLowerCase();
     if (m === "heat" || m === "emergency heat" || m === "emergencyheat") return "Heat";
     if (m === "cool") return "Cool";
     if (m === "auto") return "Auto";
     if (m === "off") return "Off";
-    if (m === "dry") return "Dry";
-    if (m === "fan") return "Fan";
+    if (m === "dry" || m === "dry mode" || m === "drymode") return "Dry";
+    if (m === "fan" || m === "fan only" || m === "fanonly") return "Fan";
+    if (m === "dehumidify" || m === "dehumidification") return "Dehumidify";
     return tm || "—";
   }
 
@@ -3568,8 +3600,7 @@
   function favoriteTstatCompactStateClass(t) {
     const tm = String(t?.tm || "").toLowerCase();
     if (tm === "off") return "state-off";
-    if (tm === "fan") return "state-fan";
-    if (tm === "dry") return "state-cool";
+    if (tstatAuxMode(tm)) return "state-fan";
     const os = String(t?.os || "").toLowerCase();
     if (os === "heating" || os === "pending heat") return "state-heat";
     if (os === "cooling" || os === "pending cool") return "state-cool";
@@ -3642,10 +3673,9 @@
 
   function favoriteTstatTarget(t) {
     const tm = String(t?.tm || "").toLowerCase();
-    if (tm === "off") return null;
-    if (tm === "fan") return null;
-    if (tm === "cool" || tm === "dry") return "cool";
-    if (tm === "heat" || tm === "emergency heat") return "heat";
+    if (tm === "off" || tstatFanOnlyMode(tm)) return null;
+    if (tm === "cool" || tstatDryMode(tm)) return "cool";
+    if (tm === "heat" || tm === "emergency heat" || tm === "emergencyheat") return "heat";
     if (tm === "auto") {
       const os = String(t?.os || "").toLowerCase();
       if (os === "cooling" || os === "pending cool") return "cool";
@@ -3654,22 +3684,31 @@
     return "heat";
   }
 
+  function favoriteTstatTone(t) {
+    const tm = String(t?.tm || "").toLowerCase();
+    if (tm === "off") return "off";
+    if (tstatAuxMode(tm)) return "fan";
+    return favoriteTstatTarget(t) || "off";
+  }
+
   function favoriteTstatTemps(t) {
     const unit = normalizeTstatUnit(t.u);
     const deg = "°" + unit;
     const current = t.temp != null ? Math.round(t.temp) + deg : "—";
     const tm = String(t?.tm || "").toLowerCase();
+    const tone = favoriteTstatTone(t);
     if (tm === "off") return { current, setpoint: "Off", value: "Off", unit: "", tone: "off" };
     const target = favoriteTstatTarget(t);
-    if (!target) return { current, setpoint: "—", value: "—", unit: "", tone: "off" };
+    if (!target) return { current, setpoint: "—", value: "—", unit: "", tone };
     const sp = target === "heat" ? t.hsp : t.csp;
-    if (sp == null) return { current, setpoint: "—", value: "—", unit: "", tone: target };
+    if (sp == null) return { current, setpoint: "—", value: "—", unit: "", tone };
     const value = String(Math.round(Number(sp)));
-    return { current, setpoint: value + deg, value, unit: deg, tone: target };
+    return { current, setpoint: value + deg, value, unit: deg, tone };
   }
 
   function paintTstatSetpoint(el, temps) {
-    el.className = "quick-fav-tstat-sp " + temps.tone;
+    const label = !temps.unit && (temps.tone === "off" || temps.tone === "fan");
+    el.className = "quick-fav-tstat-sp " + temps.tone + (label ? " is-label" : "");
     el.replaceChildren();
     el.appendChild(document.createTextNode(temps.value));
     if (temps.unit) {
@@ -3688,9 +3727,9 @@
     let prefix = "Now ";
     let active = false;
     if (tm === "off") prefix = "Off · now ";
-    else if (tm === "fan") { prefix = "Fan · now "; active = true; }
-    else if (tm === "dry") {
-      prefix = "Dry · now ";
+    else if (tstatFanOnlyMode(tm)) { prefix = "Fan · now "; active = true; }
+    else if (tstatDryMode(tm)) {
+      prefix = (normalizeTstatModeKey(tm).startsWith("dehumid") ? "Dehumidify" : "Dry") + " · now ";
       active = os === "cooling" || os === "pending cool";
     } else if (os === "heating" || os === "pending heat") { prefix = "Heating · now "; active = true; }
     else if (os === "cooling" || os === "pending cool") { prefix = "Cooling · now "; active = true; }
@@ -3720,10 +3759,10 @@
       if (!t) continue;
       t.tm = key;
       if (key === "heat") t.os = "heating";
-      else if (key === "cool" || key === "dry") t.os = "cooling";
+      else if (key === "cool" || tstatDryMode(key)) t.os = "cooling";
       else if (key === "off") t.os = "idle";
       else if (key === "auto") t.os = "idle";
-      else if (key === "fan") t.os = "fan";
+      else if (tstatFanOnlyMode(key)) t.os = "fan";
       tstatDeviceModeLock.set(id, { until: Date.now() + 4000, mode: key });
     }
     refreshOpenTstatQuickPopups();
@@ -4050,7 +4089,7 @@
         const ref = thermostats.find(x => x.csp != null);
         ct.csp = ref ? Number(ref.csp) : 74;
       }
-      tstatSession.edit = (key === "cool" || key === "dry") ? "cool" : "heat";
+      tstatSession.edit = (key === "cool" || tstatDryMode(key)) ? "cool" : "heat";
     }
     tstatSession.modeLockUntil = Date.now() + 4000;
     tstatSession.lockedMode = key;
@@ -6925,7 +6964,10 @@
       const valve = valves.find(x => x.i === id);
       if (valve) { deviceById.set(id, { type: "sensor", dev: normalizeValveForCard(valve) }); continue; }
       const mp = music.find(x => x.i === id);
-      if (mp) { deviceById.set(id, { type: "music", dev: mp }); continue; }
+      if (mp) {
+        if (musicHasControls(mp)) deviceById.set(id, { type: "music", dev: mp });
+        continue;
+      }
       const lk = locks.find(x => x.i === id);
       if (lk) { deviceById.set(id, { type: "lock", dev: lk }); continue; }
       const garage = garageDoors.find(x => x.i === id);
@@ -7594,7 +7636,7 @@
     replaceList(ceilingFans, d.ceilingFans);
     if (!Array.isArray(valves)) valves = [];
     replaceList(valves, Array.isArray(d.valves) ? d.valves : []);
-    replaceList(music, d.music);
+    replaceList(music, (Array.isArray(d.music) ? d.music : []).filter(musicHasControls));
     replaceList(cameras, sortCamerasByOrder(Array.isArray(d.cameras) ? d.cameras : [], cfg.cameraOrder));
     if (Array.isArray(d.config?.favorites) && !postCall("isFavoritesReorderActive") && !embedEditorOpen && !globalThis.__MLD?.embedEditorOpen) {
       replaceList(favorites, d.config.favorites.map(Number));
@@ -11457,7 +11499,7 @@
 
   function makeQuickTstatCard(t, map) {
     const tm = String(t.tm || "").toLowerCase();
-    const card = ce("div", "quick-fav-card quick-fav-tstat mode-" + (tm || "off"));
+    const card = ce("div", "quick-fav-card quick-fav-tstat " + tstatModeClassName(tm));
     card.dataset.name = String(t.n || "").toLowerCase();
     card.dataset.tstatId = String(t.i);
     syncFavoriteTstatCompactState(card, t);
@@ -11573,7 +11615,7 @@
     const rec = map.get(t.i);
     if (!rec) return;
     const tm = String(t.tm || "").toLowerCase();
-    const nextMode = "mode-" + (tm || "off");
+    const nextMode = tstatModeClassName(tm);
     for (const cls of rec.card.classList) {
       if (cls.startsWith("mode-")) rec.card.classList.remove(cls);
     }
@@ -15007,7 +15049,12 @@
       playPauseBtn.innerHTML = isPlay ? MUSIC_PLAY_SVG : MUSIC_PAUSE_SVG;
       if (playing) playPauseBtn.classList.add("active");
       playPauseBtn.addEventListener("click", () => {
-        sendMusicCmd(dev.i, playing ? "pause" : "play");
+        const live = music.find((m) => m.i === dev.i) || dev;
+        const liveCtrl = musicControls(live);
+        const nowPlaying = isMusicPlaying(effectiveMusicStatus(live));
+        if (!nowPlaying) sendMusicCmd(dev.i, "play");
+        else if (liveCtrl.pause) sendMusicCmd(dev.i, "pause");
+        else sendMusicCmd(dev.i, "stop");
       });
       transport.appendChild(playPauseBtn);
     }
@@ -15063,10 +15110,12 @@
 
     row.appendChild(art);
     row.appendChild(infoHead);
-    const right = ce("div", "music-right");
-    if (transport.childElementCount) right.appendChild(transport);
-    if (ctrl.volume) right.appendChild(volWrap);
-    row.appendChild(right);
+    if (transport.childElementCount || ctrl.volume) {
+      const right = ce("div", "music-right");
+      if (transport.childElementCount) right.appendChild(transport);
+      if (ctrl.volume) right.appendChild(volWrap);
+      row.appendChild(right);
+    }
 
     if (inFav) {
       favMusicMap.set(dev.i, {
@@ -15119,11 +15168,11 @@
     const body = currentBody();
     setQuickBodyClass(body, "quick-body quick-body-music");
     body.innerHTML = "";
-    if (!music.length) {
-      body.textContent = "No speakers selected — add music players or additional speakers in the Hubitat app settings";
+    const sorted = sortByRoomThenFullName(music).filter(musicHasControls);
+    if (!sorted.length) {
+      body.textContent = "No speakers selected — add music players, speakers, or media-transport devices in the Hubitat app settings";
       return;
     }
-    const sorted = sortByRoomThenFullName(music);
     const list = ce("div", "quick-list music-list");
     for (const dev of sorted) list.appendChild(makeMusicRow(dev, "popup"));
     body.appendChild(list);

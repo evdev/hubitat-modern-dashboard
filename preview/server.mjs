@@ -77,6 +77,7 @@ const MOCK_TRACKS = [
 const AUDIO_F_FULL = 127;
 const AUDIO_F_CHROMECAST = 39; // play|pause|stop|volume
 const AUDIO_F_AIRPLAY = 111;   // play|pause|stop|next|volume|mute (no prev)
+const AUDIO_F_TRANSPORT = 7;   // play|pause|stop (HomeKit / mediaTransport)
 const HSM_VALID_MODES = new Set([
   "disarm", "armAway", "armHome", "armNight",
   "armAll", "disarmAll", "armRules", "disarmRules", "cancelAlerts",
@@ -238,6 +239,7 @@ function buildMockData(count) {
     { i: 4003, n: "Living Room Chromecast", r: 1, st: "playing", v: 60, tr: "YouTube", m: "unmuted", f: AUDIO_F_CHROMECAST },
     { i: 4004, n: "Office HomePod", r: 4, st: "playing", v: 28, tr: "Khruangbin — Texas Sun", m: "unmuted", trackIdx: 3, f: AUDIO_F_AIRPLAY },
     { i: 4005, n: "Patio Speaker", r: 7, st: "stopped", v: 0, tr: "", m: "muted", trackIdx: 2, f: AUDIO_F_FULL },
+    { i: 4007, n: "Living Room TV", r: 1, st: "paused", v: null, tr: "", m: "unmuted", f: AUDIO_F_TRANSPORT },
   ];
   const cameras = [
     { i: 4201, n: "Front Door", u: "http://127.0.0.1:1984/webrtc.html?src=front_door_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=front_door&media=video+audio", t: "webrtc" },

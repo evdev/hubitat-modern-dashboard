@@ -56,9 +56,11 @@ Maker API setup. Rooms and names come from your Hubitat room assignments. You
   supports it; pickers for Window Shade, Window Blind, and Switch Level
   (dimmer-style) drivers
 - **Ceiling fans** — on/off and speed control on a dedicated Fans tab
-- **Music / media** — Sonos, Echo Speaks, AirPlay, Chromecast (where supported)
+- **Music / media** — Sonos, Echo Speaks, AirPlay, Chromecast, HomeKit /
+  media-transport devices (where supported)
 - **Sensors** — motion, contact, shock/glass-break, water, presence, humidity,
-  illuminance, smoke/CO, temperature, valves (+ battery when available); optional
+  illuminance, smoke/CO, temperature, valves (+ battery when available); C-8 Pro
+  BTHome / Shelly BLU via the matching lists or Other / generic sensors; optional
   flat-by-type layout instead of rooms
 - **Cameras** — live go2rtc WebRTC grid on the **local** URL (HD toggle, reorder,
   1/2/3 columns)

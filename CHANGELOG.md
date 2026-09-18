@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.19
+
+- **Music:** HomeKit / media-transport devices (`mediaTransport`) can be selected
+  in app preferences and appear on the Music tab with play/pause/stop (and
+  volume when advertised). Bluetooth speakers show only when they have volume or
+  transport; TTS-only announcement speakers are not listed. Volume uses
+  `setVolume` or `setLevel`; play falls back to stop when the driver has no
+  pause command.
+- **Sensors:** C-8 Pro BTHome / Shelly BLU devices stay on the Sensors tab
+  (typed pickers or Other / generic sensors), not Music.
+
 ## 0.4.18
 
 - **Fix:** dashboard boot no longer dies with “Cannot reach hub” when the

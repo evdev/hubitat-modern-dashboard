@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.18
+// Modern Dashboard v0.4.19
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.18"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.19"
 
 definition(
     name: "Modern Dashboard",
@@ -46,7 +46,8 @@ def mainPage() {
     def climateCount = devicePickerCount(thermostats) + devicePickerCount(tempSensors)
     def shadesMediaCount = devicePickerCount(windowShades) + devicePickerCount(windowBlinds) +
         devicePickerCount(windowShadesLevel) + devicePickerCount(ceilingFans) +
-        devicePickerCount(musicPlayers) + devicePickerCount(audioSpeakers)
+        devicePickerCount(musicPlayers) + devicePickerCount(audioSpeakers) +
+        devicePickerCount(mediaTransportPlayers)
     def locksCount = devicePickerCount(locks) + devicePickerCount(garageDoors)
     def sensorsCount = devicePickerCount(motionSensors) + devicePickerCount(shockSensors) +
         devicePickerCount(contactSensors) + devicePickerCount(waterSensors) +
@@ -68,7 +69,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.18 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.19 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -142,8 +143,11 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "musicPlayers", "capability.musicPlayer", title: "Music / media players (Sonos, Echo Speaks, AirPlay, …)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, …)",
+            input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, Bluetooth volume, …)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "mediaTransportPlayers", "capability.mediaTransport", title: "Media transport (HomeKit speakers, TVs, …)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            paragraph "<small>The Music tab only lists devices you can control from the dashboard (play/pause/stop or volume). TTS-only Bluetooth speakers are not shown — use Rule Machine to speak or play a track. C-8 Pro <b>BTHome</b> sensors belong under Sensors, not here.</small>"
         }
         section(sectionTitleWithCount("Locks & garage", locksCount), hideable: true, hidden: locksSectionCollapsed()) {
             paragraph "<small>Locks and garage doors appear in the Locks dashboard popup.</small>"
@@ -158,7 +162,7 @@ def mainPage() {
             }
         }
         section(sectionTitleWithCount("Sensors", sensorsCount), hideable: true, hidden: sensorsSectionCollapsed()) {
-            paragraph "<small>Sensors appear in the Sensors popup. Multi-sensors may overlap with other pickers; temperature + humidity or illuminance merge into one tile. Alert types (motion, contact, etc.) stay primary with other readings in the footer.</small>"
+            paragraph "<small>Sensors appear in the Sensors popup. Multi-sensors may overlap with other pickers; temperature + humidity or illuminance merge into one tile. Alert types (motion, contact, etc.) stay primary with other readings in the footer. C-8 Pro <b>BTHome</b> / Shelly BLU devices use the matching typed lists (motion, contact, temperature, …); occupancy-only and button devices go under <b>Other / generic sensors</b>.</small>"
             input "motionSensors", "capability.motionSensor", title: "Motion sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "shockSensors", "capability.accelerationSensor", title: "Shock / glass-break sensors",
@@ -859,19 +863,25 @@ def logInit() {
     if (!assetsPresent()) { log.warn "Modern Dashboard: upload all mld-* dashboard files to File Manager (see app setup page)" }
 }
 
+def audioHasDashboardControls(d) {
+    if (d == null) return false
+    return d.hasCommand("play") || d.hasCommand("pause") || d.hasCommand("stop") ||
+        d.hasCommand("previousTrack") || d.hasCommand("nextTrack") ||
+        d.hasCommand("setVolume") || d.hasCommand("setLevel")
+}
+
 def allAudioDevices() {
     def out = []
     def seen = [:]
-    if (musicPlayers) {
-        for (d in musicPlayers) {
-            def key = d.id.toString()
-            if (!seen[key]) { seen[key] = true; out << d }
-        }
-    }
-    if (audioSpeakers) {
-        for (d in audioSpeakers) {
-            def key = d.id.toString()
-            if (!seen[key]) { seen[key] = true; out << d }
+    for (list in [musicPlayers, audioSpeakers, mediaTransportPlayers]) {
+        for (d in asDeviceList(list)) {
+            if (d == null) continue
+            def key = null
+            try { key = d.id?.toString() } catch (e) { key = null }
+            if (!key || seen[key]) continue
+            if (!audioHasDashboardControls(d)) continue
+            seen[key] = true
+            out << d
         }
     }
     return out
@@ -1150,7 +1160,7 @@ def audioControlFlags(d) {
     if (d.hasCommand("stop")) f |= 4
     if (d.hasCommand("previousTrack")) f |= 8
     if (d.hasCommand("nextTrack")) f |= 16
-    if (d.hasCommand("setVolume") || d.hasCapability("MusicPlayer") || d.hasCapability("AudioVolume")) f |= 32
+    if (d.hasCommand("setVolume") || d.hasCommand("setLevel")) f |= 32
     if (d.hasCommand("mute")) f |= 64
     return f
 }
@@ -1690,7 +1700,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.18.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.19.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1775,7 +1785,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.18.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.19.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -2483,7 +2493,8 @@ def shadesMediaSectionCollapsed() {
         devicePickerCount(windowShadesLevel) == 0 &&
         devicePickerCount(ceilingFans) == 0 &&
         devicePickerCount(musicPlayers) == 0 &&
-        devicePickerCount(audioSpeakers) == 0
+        devicePickerCount(audioSpeakers) == 0 &&
+        devicePickerCount(mediaTransportPlayers) == 0
 }
 
 def locksSectionCollapsed() {
@@ -3104,11 +3115,14 @@ def runAudioCmd(dev, c, v) {
             dev.unmute()
             break
         case "setVolume":
-            if (!dev.hasCommand("setVolume") && !dev.hasCapability("MusicPlayer") && !dev.hasCapability("AudioVolume")) {
+            int vol = (v != null) ? Math.max(0, Math.min(100, v.toInteger())) : 0
+            if (dev.hasCommand("setVolume")) {
+                dev.setVolume(vol)
+            } else if (dev.hasCommand("setLevel")) {
+                dev.setLevel(vol)
+            } else {
                 throw new IllegalArgumentException("unsupported command")
             }
-            int vol = (v != null) ? Math.max(0, Math.min(100, v.toInteger())) : 0
-            dev.setVolume(vol)
             break
         default:
             throw new IllegalArgumentException("unknown command")

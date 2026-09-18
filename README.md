@@ -259,16 +259,22 @@ Hub mode can also be used as a **scheduler trigger** or **scheduler action**
 
 ### Music & media
 
-Two device pickers in app preferences:
+Three device pickers in app preferences. Devices that appear in more than one
+list are shown once.
 
 | Picker | Typical devices | Controls |
 | ------ | ----------------- | -------- |
 | **Music / media players** | Sonos, Echo Speaks, AirPlay | Transport (prev/play-pause/stop/next when supported), volume, current track |
-| **Additional speakers** | Chromecast, Google Home | Play/pause/stop, volume (per device capabilities) |
+| **Additional speakers** | Chromecast, Google Home, Bluetooth speakers with volume | Play/pause/stop, volume (per device capabilities) |
+| **Media transport** | HomeKit speakers, TVs / set-top boxes | Play/pause/stop (and volume when advertised) |
 
 The **Music** quick-nav popup lists all configured players. The top-bar **All
 music** button appears when multiple players are selected. An animated equalizer
 on the album icon indicates playback (respects reduced-motion preferences).
+
+TTS-only speakers (speak / playTrack with no volume or transport) are not listed
+— use Rule Machine for those. C-8 Pro **BTHome** sensors belong on the
+**Sensors** tab, not Music.
 
 ### Cameras
 
@@ -307,6 +313,10 @@ to keep hub CPU and network load low (especially for native RTSP MJPEG).
 Most sensors are **read-only** on the dashboard. Select them in the **Sensors**
 section of app preferences (motion, contact, water, presence, humidity,
 illuminance, smoke/CO, valves) plus **Temperature sensors** for display-only temperature.
+
+C-8 Pro **BTHome** / Shelly BLU devices (Bluetooth Integration) use the matching
+typed lists. Occupancy-only and button devices that do not match a typed picker
+go under **Other / generic sensors**. BTHome is not listed on the Music tab.
 
 The **Sensors** quick-nav popup aggregates all selected sensors and valves.
 Temperature sensors also appear in room headers. Battery percentage is shown when
@@ -832,7 +842,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | ------- | ------- | ------- | ----- |
 | Lights & outlets | Lights, outlets, separate Outlets tab | — | See [device selection](#device-selection) |
 | Climate | Thermostats, temperature sensors, room cards, quick menu | — | See [device selection](#device-selection) |
-| Shades, fans & media | Shades, blinds, fans, music, speakers | — | See [device selection](#device-selection) |
+| Shades, fans & media | Shades, blinds, fans, music, speakers, media transport | — | See [device selection](#device-selection) |
 | Locks & garage | Locks, garage doors, unlock PIN | — | See [device selection](#device-selection) |
 | Sensors | Motion, contact, water, presence, etc. | — | See [device selection](#device-selection) |
 | Cameras | go2rtc and/or native RTSP cameras | — | See [device selection](#device-selection) |
@@ -869,13 +879,13 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Blinds (Window Blind) | — | — | Blinds popup; All blinds bulk |
 | Shades (Switch Level) | — | — | Blinds popup; All blinds bulk — pick shades only; list also includes normal dimmers |
 | Ceiling fans | — | — | Fans popup; All fans bulk |
-| Music / speakers | — | — | Music popup |
+| Music / speakers | — | — | Music popup (musicPlayer, audioVolume, mediaTransport) |
 | Cameras (go2rtc) | — | — | Cameras tab (local URL only; requires category tabs) |
 | Cameras (native RTSP) | — | — | C-8 Pro; hub MJPEG proxy; Cameras tab (local URL only) |
 | HTML source devices | — | — | Favorites HTML tiles (discovered attributes) |
 | Popup notification devices | — | — | Full-screen notification popup queue |
 | Tile notification devices | — | — | Favorites notifications tile queue |
-| Motion, contact, water, etc. | — | — | Sensors popup |
+| Motion, contact, water, etc. | — | — | Sensors popup (includes C-8 Pro BTHome / Shelly BLU) |
 | Valves | — | — | Sensors popup (open/close) |
 | Hub scenes | — | — | Scenes popup (all hub scenes) |
 | Hub mode | — | Trigger & action | Hub mode popup |
