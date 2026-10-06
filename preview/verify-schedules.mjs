@@ -15,7 +15,12 @@ import {
   nextDispatcherAt,
   scheduleSunNextFire,
   validateSchedulePayload,
+  thermostatSettingError,
+  thermostatSettingNormalized,
+  onceScheduleDisposition,
+  ONCE_CATCHUP_MS,
 } from "../lib/scheduler-core.mjs";
+import { readFileSync } from "node:fs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = String(18000 + Math.floor(Math.random() * 2000));
@@ -168,6 +173,77 @@ function futureOnceAt(hoursAhead = 2) {
     { id: "b", enabled: true, trigger: { kind: "mode", mode: "Evening" }, action: { target: "lights", states: [{ id: 1, on: false }] } },
   ]) == null, "mode→lights cascade allowed");
   console.log("ok unit: mode-cycle validation");
+}
+
+{
+  const browserSrc = readFileSync(join(root, "src/app.js"), "utf8");
+  const pick = (name) => {
+    const start = browserSrc.indexOf(`function ${name}(`);
+    assert(start >= 0, `${name} missing from src/app.js`);
+    let depth = 0;
+    let end = browserSrc.indexOf("{", start);
+    for (; end < browserSrc.length; end++) {
+      if (browserSrc[end] === "{") depth++;
+      else if (browserSrc[end] === "}" && --depth === 0) { end++; break; }
+    }
+    return browserSrc.slice(start, end);
+  };
+  const browserErr = new Function(
+    `${pick("normalizeTstatModeKey")}\n${pick("thermostatSetpointsForMode")}\n${pick("thermostatSettingError")}\nreturn thermostatSettingError;`,
+  )();
+
+  const cases = [
+    [{ mode: "heat", heat: 68 }, null],
+    [{ mode: "heat", heat: 68, cool: 60 }, null],
+    [{ mode: "heat" }, "enter a heat setpoint"],
+    [{ mode: "heat", heat: "" }, "enter a heat setpoint"],
+    [{ mode: "emergency heat", heat: 66 }, null],
+    [{ mode: "cool" }, "enter a cool setpoint"],
+    [{ mode: "cool", cool: 74, heat: 80 }, null],
+    [{ mode: "auto", heat: 68 }, "enter a cool setpoint"],
+    [{ mode: "auto", heat: 72, cool: 72 }, "heat setpoint must be below cool setpoint"],
+    [{ mode: "auto", heat: 68, cool: 72 }, null],
+    [{ mode: "off", heat: 90, cool: 50 }, null],
+    [{ mode: "fan only" }, null],
+    [{}, "choose a mode, setpoint, or fan mode"],
+    [{ fanMode: "on" }, null],
+    [{ heat: 70, cool: 68 }, "heat setpoint must be below cool setpoint"],
+    [{ mode: "heat", heat: 40 }, "heat setpoint must be between 50 and 90", "F"],
+    [{ mode: "heat", heat: 50 }, null, "F"],
+    [{ mode: "heat", heat: 90 }, null, "F"],
+    [{ mode: "heat", heat: 91 }, "heat setpoint must be between 50 and 90", "F"],
+    [{ mode: "cool", cool: 9 }, "cool setpoint must be between 10 and 32", "C"],
+    [{ mode: "cool", cool: 24 }, null, "C"],
+    [{ mode: "heat", heat: 68 }, "heat setpoint must be between 10 and 32", "C"],
+    [{ mode: "off", heat: 40, cool: 5 }, null, "F"],
+    [{ mode: "heat", heat: 40 }, null],
+  ];
+  for (const [ac, want, unit] of cases) {
+    const got = thermostatSettingError(ac, unit);
+    assert(got === want, `thermostatSettingError(${JSON.stringify(ac)}, ${unit}) = ${got}, want ${want}`);
+    assert(browserErr(ac, unit) === want, `editor copy of thermostatSettingError(${JSON.stringify(ac)}, ${unit}) = ${browserErr(ac, unit)}, want ${want}`);
+  }
+
+  const n = thermostatSettingNormalized({ mode: "heat", heat: "68.6", cool: 72, fanMode: "" });
+  assert(JSON.stringify(n) === JSON.stringify({ mode: "heat", heat: 69 }), "heat mode keeps a whole-degree heat setpoint only: " + JSON.stringify(n));
+  const off = thermostatSettingNormalized({ mode: "off", heat: 68, cool: 72, fanMode: "auto" });
+  assert(JSON.stringify(off) === JSON.stringify({ mode: "off", fanMode: "auto" }), "off mode drops setpoints: " + JSON.stringify(off));
+  assert(
+    validateSchedulePayload({ trigger: { kind: "daily", time: "07:00" }, action: { target: "thermostats", devices: ["1"], mode: "auto", heat: 74, cool: 70 } })
+      === "heat setpoint must be below cool setpoint",
+    "schedule save rejects a reversed auto range",
+  );
+  console.log("ok unit: thermostat setting rules (preview and editor agree)");
+}
+
+{
+  const now = 1_700_000_000_000;
+  assert(onceScheduleDisposition(now + 1000, now) === "schedule", "future once schedules");
+  assert(onceScheduleDisposition(now - 60 * 1000, now) === "catchup", "one minute late still runs");
+  assert(onceScheduleDisposition(now - ONCE_CATCHUP_MS, now) === "catchup", "exactly 10 minutes late still runs");
+  assert(onceScheduleDisposition(now - ONCE_CATCHUP_MS - 1, now) === "drop", "older than 10 minutes is dropped");
+  assert(onceScheduleDisposition(Number.NaN, now) === "invalid", "bad once time");
+  console.log("ok unit: once catch-up window");
 }
 
 const child = spawn("node", ["preview/server.mjs"], {

@@ -17021,7 +17021,8 @@
     holidaysAvailable = data.holidaysAvailable === true;
     if (schedulerViewIsActive() && schedulerEnabled) {
       if (schedulesCloudOmitted) void ensureSchedulesLoaded();
-      renderSchedulerActive();
+      // A poll must not wipe an open editor. Cancel still shows the updated list.
+      if (!schedDraft) renderSchedulerActive();
     }
   }
 
@@ -17477,7 +17478,7 @@
       if (cool != null && cool !== "") bits.push("Cool " + cool + "\u00b0");
     }
     const fan = String(ac.fanMode || "").trim();
-    if (fan && fan.toLowerCase() !== "auto") bits.push("Fan " + fan);
+    if (fan) bits.push("Fan " + fan);
     return bits;
   }
 
@@ -17673,7 +17674,7 @@
       enabled: true,
       trigger: { kind: "daily", when: "clock", time: "19:30", offsetMin: 0, days: [], at: "", mode: "" },
       onlyInModes: [],
-      action: { target: "lights", states: [], "devices": [], mode: "heat", heat: 68, cool: 72, fanMode: "auto" }
+      action: { target: "lights", states: [], "devices": [], mode: null, heat: null, cool: null, fanMode: null }
     };
   }
 
@@ -17939,6 +17940,7 @@
       if (i < 3) steps.appendChild(ce("div", "sched-step-line"));
     }
     wrap.appendChild(steps);
+    if (schedDraft.action.target === "thermostats") schedTstatNormalize(schedDraft.action, schedTstatList(schedDraft.action.devices));
     wrap.appendChild(renderSchedNameField());
 
     if (schedStep === 1) wrap.appendChild(renderSchedStep1());
@@ -18306,6 +18308,12 @@
       b.type = "button";
       b.textContent = label;
       b.addEventListener("click", () => {
+        if (schedDraft.action.target !== k) {
+          schedDraft.action.mode = null;
+          schedDraft.action.heat = null;
+          schedDraft.action.cool = null;
+          schedDraft.action.fanMode = null;
+        }
         schedDraft.action.target = k;
         if ((k === "lights" || k === "outlets") && !schedDraft.action.states) schedDraft.action.states = [];
         if (k === "thermostats" && !schedDraft.action.devices) schedDraft.action.devices = [];
@@ -18743,11 +18751,150 @@
     return wrap;
   }
 
+  const SCHED_TSTAT_MODE_ORDER = ["heat", "cool", "auto", "emergencyheat", "off"];
+  const SCHED_TSTAT_DEFAULTS = { F: { heat: 68, cool: 72 }, C: { heat: 20, cool: 24 } };
+
+  // Same rules as thermostatSetpointsForMode / thermostatSettingError in the hub app and lib/scheduler-core.mjs.
+  function thermostatSetpointsForMode(mode) {
+    const key = normalizeTstatModeKey(mode);
+    if (!key) return { heat: true, cool: true };
+    return { heat: key === "heat" || key === "emergencyheat" || key === "auto", cool: key === "cool" || key === "auto" };
+  }
+
+  function thermostatSettingError(raw, unit) {
+    const num = (v) => (v == null || String(v).trim() === "" || !Number.isFinite(Number(v)) ? null : Math.round(Number(v)));
+    const mode = String(raw?.mode ?? "").trim();
+    const needs = thermostatSetpointsForMode(mode);
+    const heat = needs.heat ? num(raw?.heat) : null;
+    const cool = needs.cool ? num(raw?.cool) : null;
+    if (mode) {
+      if (needs.heat && heat == null) return "enter a heat setpoint";
+      if (needs.cool && cool == null) return "enter a cool setpoint";
+    } else if (heat == null && cool == null && !String(raw?.fanMode ?? "").trim()) {
+      return "choose a mode, setpoint, or fan mode";
+    }
+    if (heat != null && cool != null && heat >= cool) return "heat setpoint must be below cool setpoint";
+    const key = String(unit || "").replace(/°/g, "").trim().toUpperCase();
+    const range = key === "C" ? { min: 10, max: 32 } : (key === "F" ? { min: 50, max: 90 } : null);
+    if (range && heat != null && (heat < range.min || heat > range.max)) return "heat setpoint must be between " + range.min + " and " + range.max;
+    if (range && cool != null && (cool < range.min || cool > range.max)) return "cool setpoint must be between " + range.min + " and " + range.max;
+    return null;
+  }
+
+  function schedTstatList(ids) {
+    const want = new Set(schedIdList(ids));
+    return thermostats.filter((t) => want.has(String(t.i)));
+  }
+
+  /** Every selected thermostat's dial must accept the setpoints. No catalog falls back to °F. */
+  function schedTstatRangeError(ac) {
+    const selected = schedTstatList(ac?.devices);
+    const units = [...new Set((selected.length ? selected : [{ u: "F" }]).map((t) => normalizeTstatUnit(t.u)))];
+    for (const unit of units) {
+      const err = thermostatSettingError(ac, unit);
+      if (err) return err;
+    }
+    return null;
+  }
+
+  function schedTstatUnit(list) {
+    return normalizeTstatUnit(list?.[0]?.u);
+  }
+
+  function schedTstatMixedUnits(list) {
+    return new Set((list || []).map((t) => normalizeTstatUnit(t.u))).size > 1;
+  }
+
+  /** Values every selected device accepts, spelled as the first device spells them. */
+  function schedTstatShared(list, valuesOf, keyOf) {
+    if (!list?.length) return [];
+    const [first, ...rest] = list.map(valuesOf);
+    return first.filter((v) => rest.every((vals) => vals.some((o) => keyOf(o) === keyOf(v))));
+  }
+
+  function schedTstatModeChoices(list) {
+    const modes = schedTstatShared(list, supportedModes, normalizeTstatModeKey);
+    const rank = (m) => {
+      const i = SCHED_TSTAT_MODE_ORDER.indexOf(normalizeTstatModeKey(m));
+      return i < 0 ? SCHED_TSTAT_MODE_ORDER.length : i;
+    };
+    return modes.slice().sort((a, b) => rank(a) - rank(b));
+  }
+
+  function schedTstatFanChoices(list) {
+    return schedTstatShared(list, supportedFanModes, (v) => String(v).toLowerCase());
+  }
+
+  function schedTstatModeLabel(mode) {
+    return normalizeTstatModeKey(mode) === "emergencyheat" ? "Emergency heat" : tstatModeDisplayLabel(mode);
+  }
+
+  /** Sets the mode and fills any empty setpoint it uses from the first device (or a default). */
+  function schedTstatSetMode(ac, list, mode) {
+    ac.mode = mode;
+    const needs = thermostatSetpointsForMode(mode);
+    const unit = schedTstatUnit(list);
+    const seed = (sp, fallback) => clampSetpoint(sp != null && Number.isFinite(Number(sp)) ? Number(sp) : fallback, unit);
+    if (needs.heat && ac.heat == null) ac.heat = seed(list?.[0]?.hsp, SCHED_TSTAT_DEFAULTS[unit].heat);
+    if (needs.cool && ac.cool == null) ac.cool = seed(list?.[0]?.csp, SCHED_TSTAT_DEFAULTS[unit].cool);
+  }
+
+  /** Picks a mode every device supports, clears setpoints it doesn't use, and drops a fan mode the devices lack. */
+  function schedTstatNormalize(ac, list) {
+    if (!list?.length) return;
+    const choices = schedTstatModeChoices(list);
+    const modeKey = normalizeTstatModeKey(ac.mode);
+    if (!modeKey || !choices.some((m) => normalizeTstatModeKey(m) === modeKey)) {
+      const current = choices.find((m) => {
+        const k = normalizeTstatModeKey(m);
+        return k === normalizeTstatModeKey(list[0].tm) && k !== "off" && !tstatAuxMode(k);
+      });
+      const start = current || choices.find((m) => normalizeTstatModeKey(m) === "heat") || choices[0] || null;
+      if (start || modeKey || (ac.heat == null && ac.cool == null)) schedTstatSetMode(ac, list, start);
+    }
+    const needs = thermostatSetpointsForMode(ac.mode);
+    if (!needs.heat) ac.heat = null;
+    if (!needs.cool) ac.cool = null;
+    if (ac.fanMode && !schedTstatFanChoices(list).some((f) => String(f).toLowerCase() === String(ac.fanMode).toLowerCase())) {
+      ac.fanMode = null;
+    }
+  }
+
+  function renderSchedTstatSetpoint(label, key, unit) {
+    const field = ce("div", "sched-field");
+    const lbl = ce("label", "sched-field-label");
+    lbl.textContent = label + " (" + tstatTempSuffix(unit) + ")";
+    field.appendChild(lbl);
+    const range = tstatRange(unit);
+    const input = ce("input", "sched-input");
+    input.type = "number";
+    input.min = String(range.min);
+    input.max = String(range.max);
+    input.step = "1";
+    input.value = schedDraft.action[key] == null ? "" : String(schedDraft.action[key]);
+    input.addEventListener("input", () => {
+      const v = input.value.trim();
+      schedDraft.action[key] = v === "" || !Number.isFinite(Number(v)) ? null : Math.round(Number(v));
+      schedSyncNameField();
+    });
+    input.addEventListener("blur", () => {
+      const v = input.value.trim();
+      if (v === "" || !Number.isFinite(Number(v))) return;
+      const clamped = clampSetpoint(Math.round(Number(v)), unit);
+      schedDraft.action[key] = clamped;
+      input.value = String(clamped);
+      schedSyncNameField();
+    });
+    field.appendChild(input);
+    return field;
+  }
+
   function renderSchedThermostatAction() {
     const wrap = ce("div", "sched-action");
     const q = ce("p", "sched-question");
     q.textContent = "Select thermostats and settings";
     wrap.appendChild(q);
+    const selected = schedTstatList(schedDraft.action.devices);
 
     const selectedIds = new Set(schedIdList(schedDraft.action.devices));
     const list = ce("div", "sched-lights");
@@ -18774,66 +18921,65 @@
     }
     wrap.appendChild(list);
 
-    if (!schedIdList(schedDraft.action.devices).length) {
+    if (!selected.length) {
       const note = ce("p", "sched-empty");
       note.textContent = "No thermostats selected.";
       wrap.appendChild(note);
-    } else {
+      return wrap;
+    }
+    const ac = schedDraft.action;
+    const unit = schedTstatUnit(selected);
+    const modes = schedTstatModeChoices(selected);
+    if (modes.length) {
       const modeField = ce("div", "sched-field");
       const mlbl = ce("label", "sched-field-label");
       mlbl.textContent = "System mode";
       modeField.appendChild(mlbl);
-      const modes = ["auto", "heat", "cool", "off"];
       const seg = ce("div", "sched-segment");
-      const sysMode = schedDraft.action.mode || "auto";
       for (const m of modes) {
-        const b = ce("button", "sched-seg " + (sysMode === m ? "is-active" : ""));
-        b.type = "button"; b.textContent = m;
+        const active = normalizeTstatModeKey(ac.mode) === normalizeTstatModeKey(m);
+        const b = ce("button", "sched-seg " + (active ? "is-active" : ""));
+        b.type = "button";
+        b.textContent = schedTstatModeLabel(m);
         b.addEventListener("click", () => {
-          schedDraft.action.mode = m;
-          if (m === "heat") schedDraft.action.cool = null;
-          else if (m === "cool") schedDraft.action.heat = null;
+          schedTstatSetMode(ac, selected, m);
           renderSchedulerActive();
         });
         seg.appendChild(b);
       }
       modeField.appendChild(seg);
       wrap.appendChild(modeField);
+    } else {
+      const note = ce("p", "sched-empty");
+      note.textContent = selected.length > 1
+        ? "These thermostats don't share a system mode, so only setpoints will change."
+        : "This thermostat doesn't report its system modes, so only setpoints will change.";
+      wrap.appendChild(note);
+    }
 
-      if (sysMode !== "cool") {
-        const heatField = ce("div", "sched-field");
-        const hlbl = ce("label", "sched-field-label");
-        hlbl.textContent = "Heat setpoint (\u00b0F)";
-        heatField.appendChild(hlbl);
-        const hin = ce("input", "sched-input");
-        hin.type = "number"; hin.min = "40"; hin.max = "90"; hin.value = String(schedDraft.action.heat ?? 68);
-        hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); schedSyncNameField(); });
-        heatField.appendChild(hin);
-        wrap.appendChild(heatField);
-      }
+    const needs = thermostatSetpointsForMode(ac.mode);
+    if (needs.heat) wrap.appendChild(renderSchedTstatSetpoint("Heat setpoint", "heat", unit));
+    if (needs.cool) wrap.appendChild(renderSchedTstatSetpoint("Cool setpoint", "cool", unit));
+    if (schedTstatMixedUnits(selected)) {
+      const note = ce("p", "sched-empty");
+      note.textContent = "These thermostats use different temperature units, but each one gets the same setpoint number. Schedule them separately.";
+      wrap.appendChild(note);
+    }
 
-      if (sysMode !== "heat") {
-        const coolField = ce("div", "sched-field");
-        const clbl = ce("label", "sched-field-label");
-        clbl.textContent = "Cool setpoint (\u00b0F)";
-        coolField.appendChild(clbl);
-        const cin = ce("input", "sched-input");
-        cin.type = "number"; cin.min = "50"; cin.max = "100"; cin.value = String(schedDraft.action.cool ?? 72);
-        cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); schedSyncNameField(); });
-        coolField.appendChild(cin);
-        wrap.appendChild(coolField);
-      }
-
+    const fanModes = schedTstatFanChoices(selected);
+    if (fanModes.length) {
       const fanField = ce("div", "sched-field");
       const flbl = ce("label", "sched-field-label");
       flbl.textContent = "Fan mode";
       fanField.appendChild(flbl);
-      const fanModes = ["auto", "on", "circulate"];
       const fseg = ce("div", "sched-segment");
-      for (const m of fanModes) {
-        const b = ce("button", "sched-seg " + (schedDraft.action.fanMode === m ? "is-active" : ""));
-        b.type = "button"; b.textContent = m;
-        b.addEventListener("click", () => { schedDraft.action.fanMode = m; renderSchedulerActive(); });
+      const fanLabels = [...FAN_MODE_OPTS, ...COMFORT_FAN_SPEED_OPTS];
+      for (const m of [null, ...fanModes]) {
+        const active = m == null ? !ac.fanMode : String(ac.fanMode || "").toLowerCase() === String(m).toLowerCase();
+        const b = ce("button", "sched-seg " + (active ? "is-active" : ""));
+        b.type = "button";
+        b.textContent = m == null ? "No change" : tstatChoiceLabel(fanLabels, m);
+        b.addEventListener("click", () => { ac.fanMode = m; renderSchedulerActive(); });
         fseg.appendChild(b);
       }
       fanField.appendChild(fseg);
@@ -18920,6 +19066,8 @@
     if (ac.target === "thermostats") {
       ac.devices = schedIdList(ac.devices);
       if (!ac.devices.length) { flash("Select at least one thermostat", true); return; }
+      const tstatErr = thermostatSettingError(ac) || schedTstatRangeError(ac);
+      if (tstatErr) { flash(tstatErr.charAt(0).toUpperCase() + tstatErr.slice(1), true); return; }
     }
     if (ac.target === "hubMode" && !ac.mode) { flash("Pick a hub mode", true); return; }
     const payload = {

@@ -16,6 +16,7 @@ import {
   scheduleOffsetMin,
   scheduleTriggerWhen,
   modeCycleError,
+  thermostatSettingNormalized,
 } from "../lib/scheduler-core.mjs";
 import {
   HOLIDAY_API_VERSION,
@@ -23,6 +24,7 @@ import {
   expandUpcoming,
   preflight,
   conflictingSchedules,
+  sameMinuteWarnings,
   templateBadge,
   zonedMs,
   zonedParts,
@@ -146,8 +148,19 @@ state.holiday.skipped = [];
 state.holiday.pausedOccasions = [];
 state.holiday.showMissed = false;
 state.holiday.templates.shabbat = {
-  start: { states: [{ id: "1", kind: "light", on: true, level: 80 }, { id: "2", kind: "light", on: false }], repeatLaterNights: false },
-  night: [{ time: "23:00", states: [{ id: "1", kind: "light", on: false }] }],
+  start: {
+    states: [
+      { id: "1", kind: "light", on: true, level: 80 },
+      { id: "2", kind: "light", on: false },
+      { id: "5001", kind: "blind", open: true, position: 40 },
+      { id: "5003", kind: "blind", open: false },
+      { id: "5101", kind: "fan", on: true, speed: "medium" },
+      { id: "3001", kind: "lock", locked: false },
+      { id: "1005", kind: "thermostat", mode: "cool", cool: 72, fanMode: "quiet" },
+    ],
+    repeatLaterNights: false,
+  },
+  night: [{ time: "23:00", states: [{ id: "1", kind: "light", on: false }, { id: "1005", kind: "thermostat", mode: "heat", heat: 68 }] }],
   morning: [{ time: "08:00", states: [{ id: "3", kind: "light", on: true }] }],
   afternoon: [],
   evening: [],
@@ -996,7 +1009,7 @@ function holidayPreviewPayload(draft) {
     ...span,
     skipped: skipped.has(span.id),
     actions: actions.filter((a) => a.spanId === span.id),
-    warnings: [],
+    warnings: sameMinuteWarnings((actions || []).filter((a) => a.spanId === span.id)),
   }));
   const rows = packed.map((span, index) => ({
     spanId: span.id,
@@ -1025,6 +1038,7 @@ function holidayPreviewPayload(draft) {
     rows,
     spans: packed,
     conflicts: conflictingSchedules(state.schedules, config.settings.holidayMode),
+    deviceKinds: ["light", "outlet", "blind", "fan", "lock", "thermostat"],
     modes: ["Day", "Evening", "Night", "Away"],
   };
 }
@@ -2640,6 +2654,12 @@ function mockScheduleSummary(s) {
   return tr.kind || "";
 }
 
+function mockNormalizeAction(action) {
+  if (!action) return { target: "lights", states: [] };
+  if (action.target !== "thermostats") return action;
+  return { target: "thermostats", devices: action.devices, ...thermostatSettingNormalized(action) };
+}
+
 function mockNormalizeSchedule(body, id, existing) {
   const tr = body?.trigger || {};
   let when = String(tr.when || "clock").toLowerCase();
@@ -2663,7 +2683,7 @@ function mockNormalizeSchedule(body, id, existing) {
       mode: tr.mode || "",
     },
     onlyInModes: kind === "mode" ? [] : (body?.onlyInModes || []),
-    action: body?.action || { target: "lights", states: [] },
+    action: mockNormalizeAction(body?.action),
     lastFired: existing?.lastFired ?? null,
     lastResult: existing?.lastResult ?? null,
     nextFire: null,

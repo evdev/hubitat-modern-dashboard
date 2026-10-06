@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.45
+
+- **Shabbat & holidays:** lock timelines show Locked and Unlocked on each
+  section. The time tick at each change stays.
+
+## 0.4.44
+
+- **Shabbat & holidays:** fan timelines show each speed, and blind timelines
+  show how far open they are. The time tick at each change stays.
+
+## 0.4.43
+
+- **Shabbat & holidays:** a thermostat timeline is red for heat, blue for cool,
+  and green for fan, with the setpoint on each section. The time tick at each
+  change stays.
+
+## 0.4.42
+
+- **Shabbat & holidays:** candle lighting, night, morning, afternoon, evening,
+  havdalah, and custom times can set blinds, ceiling fans, locks, and
+  thermostats. Each device uses its own open position, fan speed, or
+  thermostat mode. A missed unlock is not replayed after a delay. Update both
+  Modern Dashboard and mDash Shabbat and Holidays.
+
+## 0.4.41
+
+- **Shabbat & holidays:** the Modern Dashboard app page does not mention the
+  feature unless `mld-holiday.js` is already in File Manager.
+- **Scheduling:** thermostat schedules offer only the modes and fan modes the
+  chosen thermostats support, and show setpoints in each thermostat's unit
+  with its dial's range. A schedule sends only the setpoints its mode uses: a
+  heat schedule no longer also sends a hidden cool setpoint, and an off
+  schedule sends none. Thermostats without a fan mode no longer report a
+  failed run. Saving asks for any missing setpoint and requires heat below
+  cool in auto.
+
 ## 0.4.40
 
 - **Shabbat & holidays:** `mld-holiday.js` is its own Hubitat Package Manager

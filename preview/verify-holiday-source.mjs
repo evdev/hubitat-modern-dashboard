@@ -25,13 +25,34 @@ for (const piece of [
   "2L * 60 * 60 * 1000",
   "mDash Holidays:",
   "holidayParentPause",
-  "HOLIDAY_API_VERSION 1",
+  "HOLIDAY_API_VERSION 2",
+  "apiVersion: 2",
+  "parent.holidaySupportedKinds()",
+  'return ["light", "outlet"]',
+  "parent.thermostatSettingError",
+  "skipped a late unlock",
+  "holidayCloneStates(raw)",
 ]) {
   assert(groovy.includes(piece), `child app missing ${piece}`);
+}
+assert((groovy.match(/apiVersion: 2/g) || []).length >= 3, "status, preview, and try-now return apiVersion 2");
+assert(/holidayTemplateSlots[\s\S]*"night"[\s\S]*"evening"[\s\S]*template\?\.custom/.test(groovy), "every time slot is checked for conflicting commands");
+{
+  const save = groovy.slice(groovy.indexOf("def holidaysSave"), groovy.indexOf("def holidaysSkip"));
+  const checked = save.indexOf("holidayTemplateErrors");
+  const stored = save.indexOf("state.config.templates[id] = body.template");
+  assert(checked >= 0 && stored > checked, "a rejected schedule must not be stored");
 }
 
 assert(parent.includes('path("/holidays")'), "parent must expose /holidays");
 assert(parent.includes("def holidayRunAction"), "parent must run holiday device actions");
+assert(parent.includes("def holidaySupportedKinds()"), "parent must tell the child which device kinds it can run");
+assert(/def holidayRunKind[\s\S]*runShadeCmd\(dev,/.test(parent), "blinds go through runShadeCmd");
+assert(/def holidayRunKind[\s\S]*runFanCmd\(dev,/.test(parent), "fans go through runFanCmd");
+assert(/def holidayRunKind[\s\S]*runLockCmd\(dev,/.test(parent), "locks go through runLockCmd");
+assert(/def holidayRunKind[\s\S]*runThermostatSetting\(dev, st\)/.test(parent), "thermostats go through runThermostatSetting");
+assert(/kind == "light"\) \{[\s\S]*?runScheduleLightAction/.test(parent), "only lights reach the light action");
+assert(!/for \(st in states\) \{[\s\S]{0,500}def one = \[states: \[\[id: st\?\.id, on:/.test(parent), "states are not rebuilt as lights before the kind is known");
 assert(parent.includes("holidayFilePresent"), "parent enables holidays when mld-holiday.js is present");
 assert(parent.includes("holidaysAvailable"), "parent must report holidaysAvailable");
 assert(!parent.includes('app(name: "mDashHolidays"'), "parent must not offer a child-app install button");

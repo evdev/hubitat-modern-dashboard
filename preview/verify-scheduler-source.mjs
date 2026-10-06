@@ -102,9 +102,16 @@ assert(!/runOnce\([^)]*scheduledJobHandler[^)]*\[data:\s*\[id:[^\]]+\]\]\s*\)/.t
 {
   const clean = src.match(/def cleanupSchedules\(\)[\s\S]*?\n\/\/ --- endpoints/);
   assert(clean, "cleanupSchedules block parseable");
-  assert(/if \(changed\) \{[\s\S]*rebuildScheduledJobs\(\)/.test(clean[0]), "cleanup rebuilds only after pruning");
+  assert(/if \(changed \|\| needsArm\) rebuildScheduledJobs\(\)/.test(clean[0]), "cleanup rebuilds after a drop or a late catch-up");
   assert(!/if \(changed\) saveSchedulesMap\(map\)\s+rebuildScheduledJobs\(\)/.test(clean[0]), "cleanup must not rebuild unconditionally");
+  assert(clean[0].includes("onceScheduleDisposition"), "cleanup must use the one-time catch-up window");
+  assert(clean[0].includes('how == "drop"'), "cleanup drops one-time schedules only after the catch-up window");
+  assert(clean[0].includes('how == "catchup" && s?.enabled == true'), "paused one-time schedules stay through the catch-up window");
 }
+assert(src.includes("def onceScheduleDisposition("), "one-time arming must classify future, catch-up, and drop");
+assert(src.includes("return 10L * 60L * 1000L"), "one-time catch-up window is 10 minutes");
+assert(/how == "catchup"[\s\S]*nowMs \+ 2000L/.test(src), "a late one-time schedule is armed a couple of seconds ahead");
+assert(src.includes("thermostatSettingError(ac, thermostatTempUnit(dev))"), "save must reject setpoints outside that thermostat's dial");
 assert(src.includes('schedule("0 1 0 * * ?", "schedulerMidnightRearm")'), "midnight re-arm must run at 00:01");
 assert(!src.includes('schedule("0 0 0 * * ?", "schedulerMidnightRearm")'), "midnight re-arm must not run at 00:00");
 assert(src.includes("parseSchedulesMapResult"), "must distinguish empty vs corrupt schedule store");
@@ -121,12 +128,18 @@ assert(!src.includes("schedulerModeDepth"), "transient mode depth guard must be 
 assert(/schedulerModeChanged[\s\S]*schedulesModeCycleError\(map\)/.test(src), "runtime mode handler must reject stored cycles");
 assert(src.includes("def schedulerSunRetry("), "failed sun re-arms must have a targeted retry");
 assert(src.includes('unschedule("schedulerSunRetry")'), "scheduler shutdown must clear targeted sun retries");
-assert(/runScheduleThermostatAction[\s\S]*deviceFailed[\s\S]*result\.failed/.test(src), "thermostat command failures must affect lastResult");
+assert(/runScheduleThermostatAction[\s\S]*?if \(runThermostatSetting\(dev, action\)\) result\.succeeded\+\+\s*else result\.failed/.test(src), "thermostat command failures must affect lastResult");
+assert(/def runThermostatSetting[\s\S]*?return !deviceFailed/.test(src), "runThermostatSetting must report command failures");
 assert(src.includes("def scheduleThermostatIds("), "must normalize scalar or list thermostat ids");
 assert(src.includes("ac.devices = scheduleThermostatIds(body?.action?.devices)"), "save must persist normalized thermostat ids");
 assert(/runScheduleThermostatAction[\s\S]*scheduleThermostatIds\(action\?\.devices\)/.test(src), "run must use normalized thermostat ids");
 assert(/setThermostatFanModeCmd[\s\S]*tstatHasComfortFanSpeed[\s\S]*return dispatched/.test(src), "fan dispatch accounting must support comfort-only thermostats");
 assert(/setThermostatFanModeCmd\(dev, fanMode\) != true/.test(src), "scheduler must reject fan requests that dispatch no command");
+assert(/runScheduleThermostatAction[\s\S]*?runThermostatSetting\(dev, action\)/.test(src), "schedule run must send each thermostat through runThermostatSetting");
+assert(/def runThermostatSetting\(dev, raw\) \{\s*def setting = thermostatSettingNormalized\(raw\)/.test(src), "runThermostatSetting must skip setpoints the mode does not use");
+assert(/def runThermostatSetting[\s\S]*?if \(fanMode && !tstatSupportsFanMode\(dev\)\)[\s\S]*?fanMode = null/.test(src), "thermostats without fan modes must skip the fan step instead of failing");
+assert(src.includes("ac.putAll(thermostatSettingNormalized(body?.action))"), "save must store only the fields the thermostat mode uses");
+assert(/target == "thermostats"\) \{[\s\S]{0,200}thermostatSettingError\(ac\)/.test(src), "save must reject missing or reversed thermostat setpoints");
 assert(!/setColorTemperature\(k\)\s*\}\s*catch/.test(src), "CT failures must not be swallowed");
 assert(/def schedulesTest[\s\S]*\[ok: ok, lastResult: lastResult\]/.test(src), "test endpoint success must reflect action outcome");
 {
@@ -159,6 +172,21 @@ assert(js.includes("schedLastResultNote"), "list must surface missing/failed act
 assert(js.includes("function schedIdList("), "Then line must normalize thermostat id lists");
 assert(js.includes("schedActionDescription(s.action, { thermostats })"), "Then line must resolve thermostat names");
 assert(js.includes("new Set(schedIdList(schedDraft.action.devices))"), "thermostat picker must not iterate a string id");
+{
+  const start = js.indexOf("function renderSchedThermostatAction(");
+  const body = js.slice(start, js.indexOf("function renderSchedHubModeAction(", start));
+  assert(body.includes("schedTstatModeChoices(selected)"), "thermostat modes must come from the selected devices");
+  assert(body.includes("schedTstatFanChoices(selected)") && body.includes("if (fanModes.length)"), "fan mode row must only show for thermostats that support it");
+  assert(body.includes('renderSchedTstatSetpoint("Heat setpoint", "heat", unit)'), "setpoints must use the thermostat's own unit");
+  assert(!/\u00b0F|\\u00b0F|"auto", "heat", "cool", "off"/.test(body), "thermostat step must not hardcode modes or Fahrenheit");
+}
+assert(/ac\.target === "thermostats"[\s\S]{0,300}thermostatSettingError\(ac\)/.test(js), "save must check thermostat setpoints before sending");
+assert(js.includes("schedTstatRangeError(ac)"), "save must check each thermostat's dial range");
+assert(/if \(!schedDraft\) renderSchedulerActive\(\)/.test(js), "poll refresh must not rebuild an open schedule editor");
+assert(js.includes('bits.push("Fan " + fan)'), "Then line must show an explicit fan mode");
+assert(!js.includes('fan.toLowerCase() !== "auto"'), "Fan auto must not be hidden on the Then line");
+assert(/input\.addEventListener\("blur"[\s\S]{0,400}clampSetpoint\(/.test(js), "setpoint blur must snap into the dial range");
+assert(/action: \{ target: "lights"[^}]*mode: null, heat: null, cool: null, fanMode: null \}/.test(js), "new drafts must not carry hidden thermostat defaults");
 assert(js.includes("function ensurePost3Loaded"), "post3 must load through ensurePost3Loaded");
 assert(js.includes("loadPost3AfterFirstRender"), "post3 must load after the first render");
 {

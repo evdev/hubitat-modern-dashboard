@@ -8,7 +8,9 @@ import {
   formatHubTime,
   occasionLabel,
   templateBadge,
+  resolveTemplate,
   templateErrors,
+  thermostatTone,
   zonedMs,
   zonedParts,
 } from "../lib/holiday-core.mjs";
@@ -31,6 +33,10 @@ function catalog() {
   return {
     lights: api.devices || [],
     outlets: api.outlets || [],
+    shades: api.windowShades || [],
+    fans: api.ceilingFans || [],
+    locks: api.locks || [],
+    thermostats: api.thermostats || [],
     hubModes: api.hubModes || [],
     schedules: live.schedules || [],
     rooms: api.rooms || [],
@@ -87,8 +93,62 @@ function upcomingFriday() {
   return date;
 }
 
-function stateText(s) {
-  let text = deviceName(s.id) + (s.on ? " on" : " off");
+function offeredKinds() {
+  const reported = Array.isArray(model?.deviceKinds) && model.deviceKinds.length
+    ? model.deviceKinds.map(String)
+    : ["light", "outlet"];
+  const api = M();
+  const thermostatReady = typeof api.schedTstatModeChoices === "function"
+    && typeof api.schedTstatNormalize === "function"
+    && typeof api.schedTstatSetMode === "function"
+    && typeof api.thermostatSetpointsForMode === "function";
+  return thermostatReady ? reported : reported.filter((k) => k !== "thermostat");
+}
+
+function parentUpdateNote() {
+  const reported = Array.isArray(model?.deviceKinds) ? model.deviceKinds.map(String) : ["light", "outlet"];
+  const missing = ["blind", "fan", "lock", "thermostat"].filter((k) => !reported.includes(k));
+  if (!missing.length && offeredKinds().includes("thermostat")) return "";
+  if (missing.length) return "Update Modern Dashboard to schedule blinds, fans, locks, and thermostats.";
+  return "Reload the dashboard to schedule thermostats.";
+}
+
+function holidayErrorText(errs) {
+  const detailed = (errs || []).find((e) => e.error);
+  if (detailed?.error) return String(detailed.error).replace(/^./, (c) => c.toUpperCase());
+  return "A device is listed twice with different commands.";
+}
+
+function stateIsOn(s) {
+  const kind = s?.kind || "light";
+  if (kind === "blind") return s.open === true;
+  if (kind === "fan") return s.on === true;
+  if (kind === "lock") return s.locked === false;
+  if (kind === "thermostat") return String(s.mode || "").toLowerCase() !== "off";
+  return s.on === true;
+}
+
+function stateChipText(s) {
+  const name = deviceName(s.id);
+  const kind = s?.kind || "light";
+  if (kind === "blind") {
+    if (s.open === true && s.position != null && s.position !== "") return `${name} open ${s.position}%`;
+    return name + (s.open === true ? " open" : " closed");
+  }
+  if (kind === "fan") {
+    if (s.on !== true) return name + " off";
+    return s.speed ? `${name} ${fanSpeedLabel(s.speed)}` : name + " on";
+  }
+  if (kind === "lock") return name + (s.locked === false ? " unlocked" : " locked");
+  if (kind === "thermostat") {
+    const bits = [];
+    if (s.mode) bits.push(String(s.mode));
+    if (s.heat != null) bits.push(s.heat + "°");
+    if (s.cool != null) bits.push(s.cool + "°");
+    if (s.fanMode) bits.push("fan " + s.fanMode);
+    return name + (bits.length ? " " + bits.join(" ") : " set");
+  }
+  let text = name + (s.on ? " on" : " off");
   if (s.on && s.level != null && s.level !== "") text += " " + s.level + "%";
   if (s.on && s.ct != null && s.ct !== "") text += " " + s.ct + "K";
   return text;
@@ -125,9 +185,20 @@ function spanById(id) {
 
 function deviceName(id) {
   const cat = catalog();
-  const all = [...(cat.lights || []), ...(cat.outlets || [])];
+  const all = [
+    ...(cat.lights || []), ...(cat.outlets || []), ...(cat.shades || []),
+    ...(cat.fans || []), ...(cat.locks || []), ...(cat.thermostats || []),
+  ];
   const hit = all.find((d) => String(d.i) === String(id));
   return hit?.n || `Device ${id}`;
+}
+
+function knownDeviceIds() {
+  const cat = catalog();
+  return new Set([
+    ...(cat.lights || []), ...(cat.outlets || []), ...(cat.shades || []),
+    ...(cat.fans || []), ...(cat.locks || []), ...(cat.thermostats || []),
+  ].map((d) => String(d.i)));
 }
 
 function mount(host) {
@@ -188,7 +259,7 @@ function renderList() {
   actions.appendChild(setup);
   const byLight = ce("button", "ghost-btn");
   byLight.type = "button";
-  byLight.textContent = "Timeline by light";
+  byLight.textContent = "Timeline by device";
   byLight.addEventListener("click", () => { view = "light"; lightId = null; render(); });
   actions.appendChild(byLight);
   head.appendChild(actions);
@@ -342,7 +413,7 @@ function renderDetail() {
     ? `Skipped this time · ${fmt(span.start)} – ${fmt(span.end)}`
     : `${fmt(span.start)} – ${fmt(span.end)}`;
   wrap.appendChild(when);
-  const known = new Set([...(catalog().lights || []), ...(catalog().outlets || [])].map((d) => String(d.i)));
+  const known = knownDeviceIds();
   const missing = [];
   for (const a of span.actions || []) {
     for (const s of a.states || []) {
@@ -351,7 +422,7 @@ function renderDetail() {
   }
   if (missing.length) {
     const w = ce("p", "holiday-warn");
-    w.textContent = "A saved light is no longer in the dashboard: " + missing.map(deviceName).join(", ");
+    w.textContent = "A saved device is no longer in the dashboard: " + missing.map(deviceName).join(", ");
     wrap.appendChild(w);
   }
   const tools = ce("div", "holiday-tools");
@@ -371,7 +442,7 @@ function renderDetail() {
   wrap.appendChild(tools);
   const tryRow = ce("div", "holiday-tools holiday-tools-quiet");
   const tryLabel = ce("span", "holiday-kicker");
-  tryLabel.textContent = "Try the lights";
+  tryLabel.textContent = "Try now";
   tryRow.appendChild(tryLabel);
   const testStart = ce("button", "ghost-btn");
   testStart.type = "button";
@@ -391,9 +462,9 @@ function renderDetail() {
   wrap.appendChild(tryRow);
   const section = ce("div", "holiday-section-head");
   const sectionTitle = ce("h4", "holiday-section");
-  sectionTitle.textContent = "Each light";
+  sectionTitle.textContent = "Each device";
   section.appendChild(sectionTitle);
-  section.appendChild(timelineLegend());
+  section.appendChild(timelineLegend(span.actions || []));
   wrap.appendChild(section);
   wrap.appendChild(renderTimelines(span, span.actions || []));
   wrap.appendChild(renderEventList(span.actions || []));
@@ -404,7 +475,7 @@ function renderByLight() {
   const wrap = ce("div", "holiday-slot");
   wrap.appendChild(backRow("Shabbat & holidays", () => { view = "list"; render(); }));
   const title = ce("h3", "sched-section-title");
-  title.textContent = "Timeline by light";
+  title.textContent = "Timeline by device";
   wrap.appendChild(title);
   const ids = new Map();
   for (const span of nearHolidaySpans()) {
@@ -412,9 +483,9 @@ function renderByLight() {
   }
   if (!lightId && ids.size) lightId = [...ids.keys()][0];
   const pickerLabel = ce("label", "holiday-kicker");
-  pickerLabel.textContent = "Light";
+  pickerLabel.textContent = "Device";
   const picker = ce("select", "sched-input");
-  picker.setAttribute("aria-label", "Light");
+  picker.setAttribute("aria-label", "Device");
   for (const id of ids.keys()) {
     const opt = ce("option");
     opt.value = id;
@@ -441,7 +512,7 @@ function renderTimelines(span, actions) {
   const devices = devicesInActions(actions);
   if (!devices.length) {
     const p = ce("p", "sched-empty");
-    p.textContent = "No lights or outlets in this schedule.";
+    p.textContent = "No devices in this schedule.";
     box.appendChild(p);
     return box;
   }
@@ -512,12 +583,27 @@ function renderSpanTrack(span, id, actions, opts) {
     const a = Math.max(seg.start, from);
     const b = Math.min(seg.end, to);
     if (b <= a) continue;
-    const piece = ce("div", "holiday-seg is-" + seg.state);
+    const piece = ce("div", "holiday-seg is-" + (seg.tone || seg.state));
     piece.style.left = leftOf(a);
     piece.style.width = `${((b - a) / scale) * 100}%`;
-    const bits = [fmt(seg.start), seg.state];
-    if (seg.state === "on" && seg.level != null) bits.push(seg.level + "%");
+    const bits = [fmt(seg.start)];
+    if (seg.label) bits.push(seg.label);
+    else {
+      bits.push(seg.state);
+      if (seg.state === "on" && seg.level != null) bits.push(seg.level + "%");
+    }
     piece.title = bits.join(" ");
+    if (seg.tone === "auto") {
+      piece.appendChild(thermostatHalf("heat", seg.heat));
+      piece.appendChild(thermostatHalf("cool", seg.cool));
+    } else if (seg.tone === "heat") {
+      appendSetpoint(piece, seg.heat);
+    } else if (seg.tone === "cool") {
+      appendSetpoint(piece, seg.cool);
+    } else if (seg.caption) {
+      appendCaption(piece, seg.caption);
+    }
+    if (seg.tone === "blind-open" && seg.level != null) piece.style.setProperty("--open", seg.level + "%");
     bar.appendChild(piece);
   }
   const now = model?.now || Date.now();
@@ -568,6 +654,24 @@ function renderChangeTimes(from, to, scale, changes, spanEnd) {
     hours.appendChild(label);
   }
   return hours;
+}
+
+function thermostatHalf(tone, value) {
+  const half = ce("span", "holiday-seg-half is-" + tone);
+  appendSetpoint(half, value);
+  return half;
+}
+
+function appendSetpoint(parent, value) {
+  if (value == null || value === "") return;
+  appendCaption(parent, value + "°");
+}
+
+function appendCaption(parent, text) {
+  if (!text) return;
+  const label = ce("span", "holiday-setpoint");
+  label.textContent = text;
+  parent.appendChild(label);
 }
 
 function markInSlice(at, from, to, spanEnd) {
@@ -722,6 +826,17 @@ function renderEventList(actions, onlyId) {
   return list;
 }
 
+function chipTone(s) {
+  if (s?.kind === "thermostat") {
+    const tone = thermostatTone(s.mode);
+    return tone === "off" ? "is-off" : "is-" + tone;
+  }
+  if (s?.kind === "fan") return s.on === true ? "is-fan-on" : "is-off";
+  if (s?.kind === "blind") return s.open === true ? "is-blind-open" : "is-off";
+  if (s?.kind === "lock") return s.locked === false ? "is-lock-open" : "is-lock-shut";
+  return stateIsOn(s) ? "is-on" : "is-off";
+}
+
 function renderEventRow(action, states) {
   const row = ce("div", "holiday-event");
   const time = ce("div", "holiday-event-time");
@@ -732,11 +847,8 @@ function renderEventRow(action, states) {
   body.appendChild(label);
   const chips = ce("div", "holiday-chips");
   for (const s of states) {
-    const chip = ce("span", "holiday-chip " + (s.on ? "is-on" : "is-off"));
-    let text = deviceName(s.id);
-    if (s.on && s.level != null && s.level !== "") text += " " + s.level + "%";
-    if (s.on && s.ct != null && s.ct !== "") text += " " + s.ct + "K";
-    chip.textContent = text;
+    const chip = ce("span", "holiday-chip " + chipTone(s));
+    chip.textContent = stateChipText(s);
     chips.appendChild(chip);
   }
   body.appendChild(chips);
@@ -754,7 +866,7 @@ async function togglePause(occasion) {
 
 async function removeSchedule(occasion) {
   const label = occasionLabel(occasion);
-  if (!confirm(`Remove the ${label} schedule? It will not change lights or the hub mode. You can add it again from Set up.`)) return;
+  if (!confirm(`Remove the ${label} schedule? It will not change devices or the hub mode. You can add it again from Set up.`)) return;
   const saved = await post("holidays/save", {
     revision: model.revision,
     occasion,
@@ -787,8 +899,14 @@ function alsoControlled(deviceId) {
 }
 
 async function runHolidayTest(occasion, which) {
-  const noun = which === "end" ? "end" : "start";
-  if (!confirm(`Run ${noun} actions now? This does not change the hub mode.`)) return;
+  const noun = which === "end" ? "havdalah" : "candle lighting";
+  const template = resolveTemplate(occasion, model);
+  if (!template) { flash("This holiday has no schedule", true); return; }
+  const states = which === "end" ? template.end?.states : template.start?.states;
+  const unlocks = (states || []).filter((s) => s?.kind === "lock" && s.locked === false);
+  let msg = `Run the ${noun} actions now? This does not change the hub mode.`;
+  if (unlocks.length) msg += " This will unlock " + unlocks.map((s) => deviceName(s.id)).join(", ") + ".";
+  if (!confirm(msg)) return;
   const res = await post("holidays/test", { which, occasion });
   flash(res?.ok ? "Ran actions now" : "Actions did not complete", !res?.ok);
 }
@@ -956,7 +1074,7 @@ function timingStep() {
   }
 
   const earlyLabel = ce("p", "sched-hint");
-  earlyLabel.textContent = "Start the mode and candle-lighting lights this many minutes early. 0 means at candle lighting.";
+  earlyLabel.textContent = "Start the mode and the candle-lighting actions this many minutes early. 0 means at candle lighting.";
   box.appendChild(earlyLabel);
   const early = ce("input", "sched-input");
   early.type = "number";
@@ -1095,7 +1213,8 @@ function questionStep() {
     render();
   };
   const goNext = () => {
-    if (templateErrors(wizard.template).length) { flash("A device is in both lists", true); return; }
+    const stepErrs = templateErrors(wizard.template);
+    if (stepErrs.length) { flash(holidayErrorText(stepErrs), true); return; }
     wizard.q += 1;
     render();
   };
@@ -1141,7 +1260,7 @@ function questionStep() {
   const errs = templateErrors(wizard.template);
   if (errs.length) {
     const w = ce("p", "holiday-warn");
-    w.textContent = "A device is in both the on list and the off list.";
+    w.textContent = holidayErrorText(errs);
     box.appendChild(w);
   }
   box.appendChild(nav(goBack, goNext));
@@ -1163,27 +1282,83 @@ function questionTitle(key) {
 
 function questionPrompt(key) {
   switch (key) {
-    case "start": return "At candle lighting, what turns on, and what turns off?";
-    case "night": return "What turns off (or on) at night, and at what time? You can add another time.";
-    case "morning": return "What turns on (or off) in the morning, and at what time?";
+    case "start": return "At candle lighting, what should change?";
+    case "night": return "What should change at night, and at what time? You can add another time.";
+    case "morning": return "What should change in the morning, and at what time?";
     case "afternoon": return "What should change in the afternoon, and at what time?";
     case "evening": return "What should change in the evening, before the day ends?";
-    case "end": return "At havdalah, what turns off, and what turns on?";
+    case "end": return "At havdalah, what should change?";
     default: return "Add a custom time that does not fit the questions above.";
   }
 }
 
 const openHolidayRooms = new Set();
 
+function fanSpeedChoices(fan) {
+  const api = M();
+  if (typeof api.ceilingFanSpeeds === "function") return api.ceilingFanSpeeds(fan);
+  const raw = fan?.supSp;
+  const list = (Array.isArray(raw) ? raw : String(raw || "").split(","))
+    .map((s) => String(s).trim().toLowerCase())
+    .filter((s) => s && s !== "off" && s !== "on" && s !== "auto");
+  if (list.length && list.every((s) => /^\d+$/.test(s)) && Math.max(...list.map(Number)) > 10) return ["low", "medium", "high"];
+  return list.length ? list : ["low", "medium", "high"];
+}
+
+function fanSpeedLabel(sp) {
+  const api = M();
+  if (typeof api.ceilingFanSpeedLabel === "function") return api.ceilingFanSpeedLabel(sp);
+  return String(sp || "");
+}
+
+function holidayDevices() {
+  const kinds = new Set(offeredKinds());
+  const cat = catalog();
+  const shadeIds = new Set((cat.shades || []).map((d) => String(d.i)));
+  const fanIds = new Set((cat.fans || []).map((d) => String(d.i)));
+  const out = [];
+  const seen = new Set();
+  const add = (d) => {
+    if (!d || seen.has(d.id) || !kinds.has(d.kind)) return;
+    seen.add(d.id);
+    out.push(d);
+  };
+  if (kinds.has("blind")) {
+    for (const d of cat.shades || []) add({ id: String(d.i), kind: "blind", name: d.n, room: d.r, hasPos: !!d.hasPos, raw: d });
+  }
+  if (kinds.has("fan")) {
+    for (const d of cat.fans || []) add({ id: String(d.i), kind: "fan", name: d.n, room: d.r, speed: d.sp, raw: d });
+  }
+  for (const d of cat.lights || []) {
+    const id = String(d.i);
+    if (shadeIds.has(id) || fanIds.has(id)) continue;
+    add({ id, kind: "light", name: d.n, room: d.r, dim: !!d.d, ct: !!d.ct, raw: d });
+  }
+  for (const d of cat.outlets || []) {
+    const id = String(d.i);
+    if (shadeIds.has(id) || fanIds.has(id)) continue;
+    add({ id, kind: "outlet", name: d.n, room: d.r, raw: d });
+  }
+  if (kinds.has("lock")) {
+    for (const d of cat.locks || []) add({ id: String(d.i), kind: "lock", name: d.n, room: d.r, raw: d });
+  }
+  if (kinds.has("thermostat")) {
+    for (const d of cat.thermostats || []) add({ id: String(d.i), kind: "thermostat", name: d.n, room: d.r, raw: d });
+  }
+  return out;
+}
+
 function deviceLists(states) {
   const box = ce("div");
+  const note = parentUpdateNote();
+  if (note) {
+    const p = ce("p", "sched-hint");
+    p.textContent = note;
+    box.appendChild(p);
+  }
   const cat = catalog();
-  const all = [
-    ...(cat.lights || []).map((d) => ({ id: String(d.i), kind: "light", name: d.n, room: d.r, dim: !!d.d, ct: !!d.ct })),
-    ...(cat.outlets || []).map((d) => ({ id: String(d.i), kind: "outlet", name: d.n, room: d.r, dim: false, ct: false })),
-  ].filter((d) => d.kind === "light" || d.kind === "outlet");
   const byRoom = new Map();
-  for (const d of all) {
+  for (const d of holidayDevices()) {
     const rid = d.room == null ? -1 : d.room;
     if (!byRoom.has(rid)) byRoom.set(rid, []);
     byRoom.get(rid).push(d);
@@ -1209,29 +1384,60 @@ function deviceLists(states) {
       render();
     });
     heading.appendChild(toggle);
-    heading.appendChild(roomStateSelector(devices, states));
     box.appendChild(heading);
-    if (open) {
-      const body = ce("div", "holiday-room-body");
-      for (const d of devices) appendHolidayDevice(body, d, states);
-      box.appendChild(body);
-    }
+    if (open) box.appendChild(renderRoomDevices(devices, states));
   }
   return box;
 }
 
+function renderRoomDevices(devices, states) {
+  const body = ce("div", "holiday-room-body");
+  const groups = [
+    ["Lights & outlets", devices.filter((d) => d.kind === "light" || d.kind === "outlet"), true],
+    ["Blinds", devices.filter((d) => d.kind === "blind"), false],
+    ["Fans", devices.filter((d) => d.kind === "fan"), false],
+    ["Locks", devices.filter((d) => d.kind === "lock"), false],
+    ["Thermostats", devices.filter((d) => d.kind === "thermostat"), false],
+  ];
+  for (const [label, list, bulk] of groups) {
+    if (!list.length) continue;
+    const head = ce("div", "holiday-group-head");
+    const title = ce("div", "holiday-kicker");
+    title.textContent = label;
+    head.appendChild(title);
+    if (bulk) head.appendChild(roomStateSelector(list, states));
+    body.appendChild(head);
+    for (const d of list) appendHolidayDevice(body, d, states);
+  }
+  return body;
+}
+
 function roomStateSummary(devices, states) {
-  let on = 0;
-  let off = 0;
+  const counts = { on: 0, off: 0, open: 0, closed: 0, locked: 0, unlocked: 0, set: 0 };
   for (const d of devices) {
     const current = states.find((s) => String(s.id) === d.id);
     if (!current) continue;
-    if (current.on) on += 1;
-    else off += 1;
+    if (d.kind === "blind") {
+      if (current.open === true) counts.open += 1;
+      else counts.closed += 1;
+    } else if (d.kind === "fan") {
+      if (current.on === true) counts.on += 1;
+      else counts.off += 1;
+    } else if (d.kind === "lock") {
+      if (current.locked === false) counts.unlocked += 1;
+      else counts.locked += 1;
+    } else if (d.kind === "thermostat") counts.set += 1;
+    else if (current.on) counts.on += 1;
+    else counts.off += 1;
   }
   const bits = [];
-  if (on) bits.push(on + " on");
-  if (off) bits.push(off + " off");
+  if (counts.on) bits.push(counts.on + " on");
+  if (counts.off) bits.push(counts.off + " off");
+  if (counts.open) bits.push(counts.open + " open");
+  if (counts.closed) bits.push(counts.closed + " closed");
+  if (counts.locked) bits.push(counts.locked + " locked");
+  if (counts.unlocked) bits.push(counts.unlocked + " unlocked");
+  if (counts.set) bits.push(counts.set + " set");
   return bits.join(", ");
 }
 
@@ -1281,9 +1487,15 @@ function stateButtonClass(on, active) {
   return "sched-seg holiday-state " + kind + (active ? " is-active" : "");
 }
 
-function timelineLegend() {
+function timelineLegend(actions) {
   const row = ce("div", "holiday-legend");
-  for (const [cls, label] of [["is-on", "On"], ["is-off", "Off"], ["is-unchanged", "No change yet"]]) {
+  const items = [["is-on", "On"], ["is-off", "Off"], ["is-unchanged", "No change yet"]];
+  const kinds = new Set(devicesInActions(actions).map((d) => d.kind));
+  if (kinds.has("thermostat")) items.push(["is-heat", "Heat"], ["is-cool", "Cool"], ["is-fan", "Fan"]);
+  if (kinds.has("fan")) items.push(["is-fan-low", "Low"], ["is-fan-med", "Medium"], ["is-fan-high", "High"]);
+  if (kinds.has("blind")) items.push(["is-blind-open", "Open"], ["is-blind-closed", "Closed"]);
+  if (kinds.has("lock")) items.push(["is-lock-shut", "Locked"], ["is-lock-open", "Unlocked"]);
+  for (const [cls, label] of items) {
     const item = ce("span", "holiday-legend-item");
     const sw = ce("span", "holiday-legend-swatch " + cls);
     item.appendChild(sw);
@@ -1307,59 +1519,244 @@ function holidaySliderField(label, valueText, makeTrack) {
   return field;
 }
 
+function findState(states, id) {
+  return states.findIndex((s) => String(s.id) === String(id));
+}
+
+function choiceRow(choices, active, onPick) {
+  const seg = ce("div", "sched-segment holiday-state-seg");
+  for (const [value, label, tone] of choices) {
+    const b = ce("button", stateButtonClass(tone, active(value)));
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", () => onPick(value));
+    seg.appendChild(b);
+  }
+  return seg;
+}
+
 function appendHolidayDevice(box, d, states) {
-    const row = ce("div", "holiday-device");
-    const name = ce("span", "holiday-device-name");
-    name.textContent = d.name;
-    row.appendChild(name);
-    const current = states.find((s) => String(s.id) === d.id);
-    const seg = ce("div", "sched-segment holiday-state-seg");
-    for (const [on, label] of [[true, "On"], [false, "Off"], [null, "Skip"]]) {
-      const active = on == null ? !current : current && current.on === on;
-      const b = ce("button", stateButtonClass(on, active));
-      b.type = "button";
-      b.textContent = label;
-      b.addEventListener("click", () => {
-        const idx = states.findIndex((s) => String(s.id) === d.id);
-        if (on == null) { if (idx >= 0) states.splice(idx, 1); }
-        else if (idx >= 0) {
-          states[idx].on = on;
-          if (!on) { states[idx].level = null; states[idx].ct = null; }
-          else {
-            if (d.dim && states[idx].level == null) states[idx].level = 100;
-            if (d.ct && states[idx].ct == null) states[idx].ct = 3000;
-          }
+  const row = ce("div", "holiday-device");
+  const name = ce("span", "holiday-device-name");
+  name.textContent = d.name;
+  row.appendChild(name);
+  const idx = findState(states, d.id);
+  const current = idx >= 0 ? states[idx] : null;
+  if (d.kind === "blind") appendBlindChoices(row, d, states, current);
+  else if (d.kind === "fan") appendFanChoices(row, d, states, current);
+  else if (d.kind === "lock") appendLockChoices(row, d, states, current);
+  else if (d.kind === "thermostat") appendThermostatChoices(row, d, states, current);
+  else appendSwitchChoices(row, d, states, current);
+  box.appendChild(row);
+}
+
+function appendSwitchChoices(row, d, states, current) {
+  row.appendChild(choiceRow(
+    [[true, "On", true], [false, "Off", false], [null, "Skip", null]],
+    (on) => (on == null ? !current : current && current.on === on),
+    (on) => {
+      const idx = findState(states, d.id);
+      if (on == null) { if (idx >= 0) states.splice(idx, 1); }
+      else if (idx >= 0) {
+        states[idx].on = on;
+        if (!on) { states[idx].level = null; states[idx].ct = null; }
+        else {
+          if (d.dim && states[idx].level == null) states[idx].level = 100;
+          if (d.ct && states[idx].ct == null) states[idx].ct = 3000;
         }
-        else states.push({ id: d.id, kind: d.kind, on, level: on && d.dim ? 100 : null, ct: on && d.ct ? 3000 : null });
+      } else states.push({ id: d.id, kind: d.kind, on, level: on && d.dim ? 100 : null, ct: on && d.ct ? 3000 : null });
+      render();
+    },
+  ));
+  if (current?.on && d.kind === "light" && (d.dim || d.ct)) appendLightSliders(row, d, current);
+}
+
+function appendLightSliders(row, d, current) {
+  const api = M();
+  if (d.dim && typeof api.makeLevelTrackSlider === "function") {
+    if (current.level == null) current.level = 100;
+    row.appendChild(holidaySliderField("Brightness", (current.level ?? 100) + "%", (val) => {
+      return api.makeLevelTrackSlider({
+        value: current.level ?? 100,
+        min: 1,
+        max: 100,
+        onChange: (level) => { current.level = level; val.textContent = level + "%"; },
+      }).el;
+    }));
+  }
+  if (d.ct && typeof api.makeCtTrackSlider === "function") {
+    if (current.ct == null) current.ct = 3000;
+    row.appendChild(holidaySliderField("White balance (K)", (current.ct ?? 3000) + "K", (val) => {
+      return api.makeCtTrackSlider({
+        value: current.ct ?? 3000,
+        onChange: (k) => { current.ct = k; val.textContent = k + "K"; },
+      }).el;
+    }));
+  }
+}
+
+function appendBlindChoices(row, d, states, current) {
+  const open = current?.kind === "blind" ? current.open === true : null;
+  row.appendChild(choiceRow(
+    [[true, "Open", true], [false, "Close", false], [null, "Skip", null]],
+    (v) => (v == null ? !current : open === v),
+    (v) => {
+      const idx = findState(states, d.id);
+      if (v == null) { if (idx >= 0) states.splice(idx, 1); }
+      else if (idx >= 0) {
+        states[idx].open = v;
+        states[idx].kind = "blind";
+        if (!v) states[idx].position = null;
+        else if (d.hasPos && states[idx].position == null) states[idx].position = 100;
+      } else states.push({ id: d.id, kind: "blind", open: v, position: v && d.hasPos ? 100 : null });
+      render();
+    },
+  ));
+  if (current?.open === true && d.hasPos && typeof M().makeLevelTrackSlider === "function") {
+    if (current.position == null) current.position = 100;
+    row.appendChild(holidaySliderField("Position", (current.position ?? 100) + "%", (val) => {
+      return M().makeLevelTrackSlider({
+        value: current.position ?? 100,
+        min: 1,
+        max: 100,
+        onChange: (level) => { current.position = level; val.textContent = level + "%"; },
+      }).el;
+    }));
+  }
+}
+
+function appendFanChoices(row, d, states, current) {
+  const speeds = fanSpeedChoices(d.raw);
+  row.appendChild(choiceRow(
+    [[true, "On", true], [false, "Off", false], [null, "Skip", null]],
+    (v) => (v == null ? !current : current?.on === v),
+    (v) => {
+      const idx = findState(states, d.id);
+      if (v == null) { if (idx >= 0) states.splice(idx, 1); }
+      else if (idx >= 0) {
+        states[idx].on = v;
+        states[idx].kind = "fan";
+        if (!v) states[idx].speed = null;
+        else if (!states[idx].speed) states[idx].speed = firstFanSpeed(d, speeds);
+      } else states.push({ id: d.id, kind: "fan", on: v, speed: v ? firstFanSpeed(d, speeds) : null });
+      render();
+    },
+  ));
+  if (current?.on === true && speeds.length) {
+    const seg = ce("div", "sched-segment holiday-speed-seg");
+    for (const sp of speeds) {
+      const b = ce("button", "sched-seg" + (String(current.speed).toLowerCase() === String(sp).toLowerCase() ? " is-active" : ""));
+      b.type = "button";
+      b.textContent = fanSpeedLabel(sp);
+      b.addEventListener("click", () => { current.speed = sp; render(); });
+      seg.appendChild(b);
+    }
+    row.appendChild(seg);
+  }
+}
+
+function firstFanSpeed(d, speeds) {
+  const cur = String(d.speed || d.raw?.sp || "").toLowerCase();
+  if (speeds.some((sp) => String(sp).toLowerCase() === cur)) return speeds.find((sp) => String(sp).toLowerCase() === cur);
+  return null;
+}
+
+function appendLockChoices(row, d, states, current) {
+  const locked = current?.kind === "lock" ? current.locked !== false : null;
+  row.appendChild(choiceRow(
+    [[true, "Lock", false], [false, "Unlock", true], [null, "Skip", null]],
+    (v) => (v == null ? !current : locked === v),
+    (v) => {
+      const idx = findState(states, d.id);
+      if (v == null) { if (idx >= 0) states.splice(idx, 1); }
+      else if (idx >= 0) { states[idx].kind = "lock"; states[idx].locked = v; }
+      else states.push({ id: d.id, kind: "lock", locked: v });
+      render();
+    },
+  ));
+  if (current?.kind === "lock" && current.locked === false) {
+    const hint = ce("p", "sched-hint holiday-lock-hint");
+    hint.textContent = "A saved schedule unlocks this door without asking for the PIN.";
+    row.appendChild(hint);
+  }
+}
+
+function appendThermostatChoices(row, d, states, current) {
+  const api = M();
+  const t = d.raw;
+  row.appendChild(choiceRow(
+    [[true, "Set", true], [null, "Skip", null]],
+    (v) => (v == null ? !current : !!current),
+    (v) => {
+      const idx = findState(states, d.id);
+      if (v == null) { if (idx >= 0) states.splice(idx, 1); }
+      else if (idx < 0) {
+        const state = { id: d.id, kind: "thermostat", mode: null, heat: null, cool: null, fanMode: null };
+        api.schedTstatNormalize(state, [t]);
+        states.push(state);
+      }
+      render();
+    },
+  ));
+  if (!current || current.kind !== "thermostat") return;
+  const panel = ce("div", "holiday-tstat");
+  const modes = api.schedTstatModeChoices([t]) || [];
+  if (modes.length) {
+    const seg = ce("div", "sched-segment");
+    for (const m of modes) {
+      const active = api.normalizeTstatModeKey?.(current.mode) === api.normalizeTstatModeKey?.(m)
+        || String(current.mode || "").toLowerCase().replace(/[\s_-]+/g, "") === String(m).toLowerCase().replace(/[\s_-]+/g, "");
+      const b = ce("button", "sched-seg" + (active ? " is-active" : ""));
+      b.type = "button";
+      b.textContent = typeof api.schedTstatModeLabel === "function" ? api.schedTstatModeLabel(m) : m;
+      b.addEventListener("click", () => {
+        api.schedTstatSetMode(current, [t], m);
+        api.schedTstatNormalize(current, [t]);
         render();
       });
       seg.appendChild(b);
     }
-    row.appendChild(seg);
-    if (current?.on && d.kind === "light" && (d.dim || d.ct)) {
-      const api = M();
-      if (d.dim && typeof api.makeLevelTrackSlider === "function") {
-        if (current.level == null) current.level = 100;
-        row.appendChild(holidaySliderField("Brightness", (current.level ?? 100) + "%", (val) => {
-          return api.makeLevelTrackSlider({
-            value: current.level ?? 100,
-            min: 1,
-            max: 100,
-            onChange: (level) => { current.level = level; val.textContent = level + "%"; },
-          }).el;
-        }));
-      }
-      if (d.ct && typeof api.makeCtTrackSlider === "function") {
-        if (current.ct == null) current.ct = 3000;
-        row.appendChild(holidaySliderField("White balance (K)", (current.ct ?? 3000) + "K", (val) => {
-          return api.makeCtTrackSlider({
-            value: current.ct ?? 3000,
-            onChange: (k) => { current.ct = k; val.textContent = k + "K"; },
-          }).el;
-        }));
-      }
+    panel.appendChild(seg);
+  }
+  const needs = api.thermostatSetpointsForMode(current.mode);
+  const range = (globalThis.tstatRange || api.tstatRange)?.(t.u) || { min: 50, max: 90 };
+  const suffix = (globalThis.tstatTempSuffix || api.tstatTempSuffix)?.(t.u) || "°";
+  if (needs.heat) panel.appendChild(setpointField("Heat", "heat", current, range, suffix));
+  if (needs.cool) panel.appendChild(setpointField("Cool", "cool", current, range, suffix));
+  const fans = typeof api.schedTstatFanChoices === "function" ? api.schedTstatFanChoices([t]) : [];
+  if (fans.length) {
+    const seg = ce("div", "sched-segment");
+    const labels = [...(globalThis.FAN_MODE_OPTS || []), ...(globalThis.COMFORT_FAN_SPEED_OPTS || [])];
+    for (const m of [null, ...fans]) {
+      const active = m == null ? !current.fanMode : String(current.fanMode || "").toLowerCase() === String(m).toLowerCase();
+      const b = ce("button", "sched-seg" + (active ? " is-active" : ""));
+      b.type = "button";
+      b.textContent = m == null ? "No change" : (typeof api.tstatChoiceLabel === "function" ? api.tstatChoiceLabel(labels, m) : String(m));
+      b.addEventListener("click", () => { current.fanMode = m; render(); });
+      seg.appendChild(b);
     }
-    box.appendChild(row);
+    panel.appendChild(seg);
+  }
+  row.appendChild(panel);
+}
+
+function setpointField(label, key, state, range, suffix) {
+  const field = ce("div", "sched-field");
+  const lbl = ce("label", "sched-field-label");
+  lbl.textContent = label + " (" + suffix + ")";
+  field.appendChild(lbl);
+  const input = ce("input", "sched-input");
+  input.type = "number";
+  input.min = String(range.min);
+  input.max = String(range.max);
+  input.step = "1";
+  input.value = state[key] == null ? "" : String(state[key]);
+  input.addEventListener("input", () => {
+    const v = input.value.trim();
+    state[key] = v === "" || !Number.isFinite(Number(v)) ? null : Math.round(Number(v));
+  });
+  field.appendChild(input);
+  return field;
 }
 
 const CUSTOM_ANCHORS = [
@@ -1472,7 +1869,7 @@ function reviewStep() {
     }
     if (res?.warnings?.length) {
       const w = ce("p", "holiday-warn");
-      w.textContent = "A device is turned on and off at the same minute.";
+      w.textContent = "A device is set two ways at the same minute.";
       holder.appendChild(w);
     }
   }).catch(() => { holder.textContent = "Could not preview."; });

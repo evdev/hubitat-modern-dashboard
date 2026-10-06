@@ -528,7 +528,9 @@ function minifyJs(label, source) {
     loader: "js",
     minifyWhitespace: true,
     minifySyntax: true,
-    minifyIdentifiers: false,
+    // Renames locals only. Script top-level names (app-pre globals) are kept, and chunks
+    // reach each other through __MLD property names, which renaming never touches.
+    minifyIdentifiers: true,
     legalComments: "none",
     target: ["es2018"],
   });

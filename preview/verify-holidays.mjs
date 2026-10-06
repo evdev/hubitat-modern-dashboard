@@ -9,6 +9,8 @@ import {
   buildObservedDays,
   buildSpans,
   calendarQueryKey,
+  cloneStates,
+  conflictingSchedules,
   duplicateDeviceIds,
   expandSpan,
   expandUpcoming,
@@ -507,6 +509,124 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
     { kind: "devices", skipped: false, at: 60000, states: [light("a", false)] },
   ]);
   eq(warns.length, 1, "same minute on and off warns");
+}
+
+{
+  const cloned = cloneStates([
+    { id: "s", kind: "blind", open: true, position: 40.4 },
+    { id: "p", kind: "blind", open: false, position: 80 },
+    { id: "f", kind: "fan", on: true, speed: "medium" },
+    { id: "f2", kind: "fan", on: false, speed: "high" },
+    { id: "l", kind: "lock", locked: false },
+    { id: "t", kind: "thermostat", mode: "heat", heat: 68.6, cool: 74, fanMode: "auto" },
+    { id: "g", kind: "garage", open: true },
+    { id: "old", on: true },
+  ]);
+  const byId = Object.fromEntries(cloned.map((s) => [s.id, s]));
+  assert(!byId.g, "unknown kinds are dropped");
+  eq(byId.old.kind, "light", "a state with no kind stays a light");
+  eq(byId.s.position, 40, "blind position is a whole percent");
+  assert(byId.p.position == null, "a closed blind does not keep a position");
+  assert(byId.f2.speed == null, "an off fan does not keep a speed");
+  eq(byId.t.heat, 69, "thermostat heat is a whole degree");
+  assert(byId.t.cool == null, "heat mode drops the cool setpoint");
+  eq(duplicateDeviceIds([{ id: "a", kind: "blind", open: true }, { id: "a", kind: "blind", open: false }]).join(), "a", "two blind commands conflict");
+  assert(duplicateDeviceIds([{ id: "a", kind: "fan", on: true, speed: "low" }, { id: "a", kind: "fan", on: true, speed: "low" }]).length === 0, "the same command twice is fine");
+  const night = { night: [{ time: "23:00", states: [{ id: "a", kind: "lock", locked: true }, { id: "a", kind: "lock", locked: false }] }] };
+  assert(templateErrors(night).some((e) => e.label === "night 1"), "conflicts are checked in every time slot");
+  const reversed = { start: { states: [{ id: "t", kind: "thermostat", mode: "auto", heat: 74, cool: 70 }] } };
+  assert(templateErrors(reversed).some((e) => e.error === "heat setpoint must be below cool setpoint"), "auto requires heat below cool");
+  const warns = sameMinuteWarnings([
+    { kind: "devices", skipped: false, at: 120000, states: [{ id: "d", kind: "blind", open: true, position: 40 }] },
+    { kind: "devices", skipped: false, at: 120000, states: [{ id: "d", kind: "blind", open: false }] },
+  ]);
+  eq(warns.join(), "d", "same-minute blind commands warn");
+  const span = { id: "s", start: 0, end: 10 };
+  const actions = [
+    { spanId: "s", kind: "devices", skipped: false, at: 1, states: [{ id: "b", kind: "blind", open: true, position: 40 }] },
+    { spanId: "s", kind: "devices", skipped: false, at: 2, states: [{ id: "f", kind: "fan", on: false }] },
+    { spanId: "s", kind: "devices", skipped: false, at: 3, states: [{ id: "l", kind: "lock", locked: false }] },
+    { spanId: "s", kind: "devices", skipped: false, at: 4, states: [{ id: "t", kind: "thermostat", mode: "off" }] },
+    { spanId: "s", kind: "devices", skipped: false, at: 5, states: [{ id: "h", kind: "thermostat", mode: "heat", heat: 68 }] },
+  ];
+  eq(buildDeviceTimeline(span, actions, "b").segments.at(-1).state, "on", "an open blind uses the on color");
+  assert(buildDeviceTimeline(span, actions, "b").segments.at(-1).label.includes("40"), "blind timeline names the position");
+  eq(buildDeviceTimeline(span, actions, "f").segments.at(-1).state, "off", "a fan off uses the off color");
+  eq(buildDeviceTimeline(span, actions, "l").segments.at(-1).state, "on", "unlocked uses the on color");
+  eq(buildDeviceTimeline(span, actions, "l").segments.at(-1).tone, "lock-open", "an unlocked door has its own section");
+  eq(buildDeviceTimeline(span, actions, "l").segments.at(-1).caption, "Unlocked", "the lock section says Unlocked");
+  const locked = buildDeviceTimeline(span, [
+    { spanId: "s", kind: "devices", skipped: false, at: 3, states: [{ id: "l", kind: "lock", locked: true }] },
+  ], "l");
+  eq(locked.segments.at(-1).tone, "lock-shut", "a locked door has its own section");
+  eq(locked.segments.at(-1).caption, "Locked", "the lock section says Locked");
+  eq(locked.changes.map((c) => c.at).join(), "3", "a lock change keeps its time");
+  eq(buildDeviceTimeline(span, actions, "t").segments.at(-1).state, "off", "thermostat off uses the off color");
+  eq(buildDeviceTimeline(span, actions, "h").segments.at(-1).state, "on", "a heating thermostat uses the on color");
+  eq(buildDeviceTimeline(span, actions, "h").segments.at(-1).tone, "heat", "heat uses the heat tone");
+  eq(buildDeviceTimeline(span, actions, "h").segments.at(-1).heat, 68, "heat setpoint stays on the segment");
+  const tstatSpan = { id: "ts", start: 0, end: 20 };
+  const tstatActions = [
+    { spanId: "ts", kind: "devices", skipped: false, at: 1, question: "start", states: [{ id: "t", kind: "thermostat", mode: "heat", heat: 72 }] },
+    { spanId: "ts", kind: "devices", skipped: false, at: 5, question: "night", states: [{ id: "t", kind: "thermostat", mode: "auto", heat: 68, cool: 74 }] },
+    { spanId: "ts", kind: "devices", skipped: false, at: 9, question: "morning", states: [{ id: "t", kind: "thermostat", mode: "cool", cool: 73 }] },
+    { spanId: "ts", kind: "devices", skipped: false, at: 13, question: "afternoon", states: [{ id: "t", kind: "thermostat", mode: "fan", fanMode: "on" }] },
+  ];
+  const tstat = buildDeviceTimeline(tstatSpan, tstatActions, "t");
+  eq(tstat.segments[0].tone, "unchanged", "thermostat is unchanged before the first setting");
+  eq(tstat.segments[1].tone, "heat", "candle lighting is heat");
+  eq(tstat.segments[1].heat, 72, "heat section keeps 72");
+  eq(tstat.segments[2].tone, "auto", "night is auto");
+  eq(tstat.segments[2].heat, 68, "auto keeps the heat setpoint");
+  eq(tstat.segments[2].cool, 74, "auto keeps the cool setpoint");
+  eq(tstat.segments[3].tone, "cool", "morning is cool");
+  eq(tstat.segments[3].cool, 73, "cool section keeps 73");
+  eq(tstat.segments[4].tone, "fan", "later is fan");
+  assert(tstat.segments[4].heat == null && tstat.segments[4].cool == null, "fan has no setpoint");
+  eq(tstat.changes.map((c) => c.at).join(), "1,5,9,13", "each thermostat change keeps its time");
+  const cover = buildDeviceTimeline(span, actions, "b");
+  eq(cover.segments.at(-1).tone, "blind-open", "an open blind has its own section");
+  eq(cover.segments.at(-1).caption, "40%", "the blind section shows its position");
+  eq(cover.changes.map((c) => c.at).join(), "1", "a blind change keeps its time");
+  const fanBar = buildDeviceTimeline(span, [
+    { spanId: "s", kind: "devices", skipped: false, at: 2, states: [{ id: "f", kind: "fan", on: true, speed: "low" }] },
+    { spanId: "s", kind: "devices", skipped: false, at: 6, states: [{ id: "f", kind: "fan", on: true, speed: "high" }] },
+    { spanId: "s", kind: "devices", skipped: false, at: 8, states: [{ id: "f", kind: "fan", on: false }] },
+  ], "f");
+  eq(fanBar.segments[1].tone, "fan-low", "low speed has its own tone");
+  eq(fanBar.segments[1].caption, "Low", "low speed is labeled");
+  eq(fanBar.segments[2].tone, "fan-high", "high speed has its own tone");
+  eq(fanBar.segments[3].tone, "fan-off", "a stopped fan is off");
+  eq(fanBar.changes.map((c) => c.at).join(), "2,6,8", "each fan change keeps its time");
+  const now = 1_000_000;
+  const catchUp = planCatchUp({
+    actions: [
+      { id: "blind", at: now - 1000, kind: "devices", skipped: false, states: [{ id: "b", kind: "blind", open: true, position: 40 }] },
+      { id: "fan", at: now - 2000, kind: "devices", skipped: false, states: [{ id: "f", kind: "fan", on: true, speed: "high" }] },
+      { id: "lock", at: now - 3000, kind: "devices", skipped: false, states: [{ id: "l", kind: "lock", locked: true }] },
+      { id: "unlock", at: now - 4000, kind: "devices", skipped: false, states: [{ id: "u", kind: "lock", locked: false }] },
+      { id: "tstat", at: now - 5000, kind: "devices", skipped: false, states: [{ id: "t", kind: "thermostat", mode: "cool", cool: 72 }] },
+    ],
+    now,
+    doneIds: {},
+    currentMode: "Shabbat",
+    holidayMode: "Shabbat",
+    endMode: "Home",
+    held: false,
+    overridden: false,
+    startRan: true,
+    spanEnded: false,
+  });
+  assert(catchUp.replay.some((s) => s.kind === "blind" && s.position === 40), "catch-up replays a blind position");
+  assert(catchUp.replay.some((s) => s.kind === "fan" && s.speed === "high"), "catch-up replays a fan speed");
+  assert(catchUp.replay.some((s) => s.kind === "lock" && s.locked === true), "catch-up replays a lock");
+  assert(catchUp.replay.some((s) => s.kind === "thermostat" && s.mode === "cool"), "catch-up replays a thermostat mode");
+  assert(!catchUp.replay.some((s) => s.locked === false), "catch-up never replays an unlock");
+  assert(catchUp.markSkipped.includes("unlock"), "a missed unlock is marked skipped");
+  const conflicts = conflictingSchedules([
+    { id: "s", enabled: true, name: "Evening", trigger: { kind: "daily" }, action: { target: "thermostats", devices: [1005], mode: "heat", heat: 68 } },
+  ], "Night");
+  eq(conflicts[0].devices.join(), "1005", "thermostat schedules count as also controlling that thermostat");
 }
 
 assert(addDays("2026-12-31", 1) === "2027-01-01", "addDays crosses the year");

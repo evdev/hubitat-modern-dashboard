@@ -89,7 +89,6 @@ def mainPage() {
                     "Upload these files via <b>Settings → File Manager</b> (root folder, exact names). " +
                     "Easiest: install/update via <b>Hubitat Package Manager</b>.")
                 paragraph "<ul><li><code>mld-index.html</code></li><li><code>mld-app.css</code></li><li><code>mld-app-post.css</code></li><li><code>mld-app.js</code></li><li><code>mld-app-core.js</code></li><li><code>mld-app-post.js</code></li><li><code>mld-app-post2.js</code></li><li><code>mld-app-post3.js</code></li><li><code>mld-manifest.webmanifest</code></li><li><code>mld-sw.js</code></li><li><code>mld-icon-192.b64</code></li><li><code>mld-icon-512.b64</code></li></ul>"
-                paragraph "<small><code>mld-holiday.js</code> and the mDash Shabbat and Holidays child app are needed only for Shabbat &amp; holidays.</small>"
                 if (names) {
                     def mld = names.findAll { it?.contains("mld-") }
                     paragraph "<small>Files seen on hub: ${mld ? mld.join(', ') : '(none matching mld-*)'}</small>"
@@ -310,19 +309,19 @@ def mainPage() {
                     description: "Paste a Hubitat App Export to create mDash schedules",
                     page: "schedImportPage"
             }
-            paragraph "<small>When scheduler is hidden, no schedules run, including Shabbat and holiday schedules. Saved schedules are kept if you turn it back on.</small>"
+            if (holidayFilePresent()) {
+                paragraph "<small>When scheduler is hidden, no schedules run, including Shabbat and holiday schedules. Saved schedules are kept if you turn it back on.</small>"
+            } else {
+                paragraph "<small>When scheduler is hidden, no schedules run. Saved schedules are kept if you turn it back on.</small>"
+            }
             input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             paragraph "<small>Logs command traces to Hubitat Logs for troubleshooting. Auto-disables after 30 minutes. Failures are always logged regardless of this setting.</small>"
         }
-        section("Shabbat & holidays") {
-            def holidayFile = false
-            try { holidayFile = holidayFilePresent() } catch (e) { holidayFile = false }
-            if (holidayFile) {
+        if (holidayFilePresent()) {
+            section("Shabbat & holidays") {
                 paragraph "<small><b>Enabled.</b> <code>mld-holiday.js</code> is in File Manager, so Shabbat &amp; holidays is on. That file comes from the separate <b>mDash Shabbat and Holidays</b> package in Hubitat Package Manager. This page does not install it.</small>"
-            } else {
-                paragraph "<small><b>Not enabled.</b> <code>mld-holiday.js</code> was not found in File Manager. Install the <b>mDash Shabbat and Holidays</b> package in Hubitat Package Manager if you want Shabbat &amp; holidays. Modern Dashboard does not install that file.</small>"
+                paragraph "<small>If Shabbat and Holiday Scheduler is also installed, turn off its mode switching so the hub is not switched twice.</small>"
             }
-            paragraph "<small>If Shabbat and Holiday Scheduler is also installed, turn off its mode switching so the hub is not switched twice.</small>"
         }
         section("Light control", hideable: true, hidden: true) {
             paragraph "<small>Applies to snapshot restore, All on/off, and room on/off. Metering is on by default.</small>"
@@ -1636,7 +1635,7 @@ def renderPngFromBase64Asset(String b64FileName, String missingMsg) {
 }
 
 def missingAssetHtml() {
-    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup</title></head><body style="font-family:system-ui;padding:24px;max-width:520px;margin:auto;line-height:1.5"><h1>Setup required</h1><p>Modern Dashboard serves its UI from File Manager on your hub. Upload these twelve files to <b>Settings &rarr; File Manager</b> (root folder, exact names):</p><ul><li>mld-index.html</li><li>mld-app.css</li><li>mld-app-post.css</li><li>mld-app.js</li><li>mld-app-core.js</li><li>mld-app-post.js</li><li>mld-app-post2.js</li><li>mld-app-post3.js</li><li>mld-manifest.webmanifest</li><li>mld-sw.js</li><li>mld-icon-192.b64</li><li>mld-icon-512.b64</li></ul><p><code>mld-holiday.js</code> and the mDash Shabbat and Holidays child app are needed only for Shabbat &amp; holidays.</p><p><b>Easiest install:</b> use <a href="__GITHUB_URL__#readme">Hubitat Package Manager</a> — OAuth and File Manager files are deployed automatically.</p><p>Then reopen the Modern Dashboard app, select your devices, and open the dashboard link.</p></body></html>"""
+    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup</title></head><body style="font-family:system-ui;padding:24px;max-width:520px;margin:auto;line-height:1.5"><h1>Setup required</h1><p>Modern Dashboard serves its UI from File Manager on your hub. Upload these twelve files to <b>Settings &rarr; File Manager</b> (root folder, exact names):</p><ul><li>mld-index.html</li><li>mld-app.css</li><li>mld-app-post.css</li><li>mld-app.js</li><li>mld-app-core.js</li><li>mld-app-post.js</li><li>mld-app-post2.js</li><li>mld-app-post3.js</li><li>mld-manifest.webmanifest</li><li>mld-sw.js</li><li>mld-icon-192.b64</li><li>mld-icon-512.b64</li></ul><p><b>Easiest install:</b> use <a href="__GITHUB_URL__#readme">Hubitat Package Manager</a> — OAuth and File Manager files are deployed automatically.</p><p>Then reopen the Modern Dashboard app, select your devices, and open the dashboard link.</p></body></html>"""
 }
 
 // ---------------------------------------------------------------------------
@@ -2957,10 +2956,14 @@ def setComfortFanSpeedCmd(t, speedStr) {
     else if (t.hasCommand("setFanMode")) t.setFanMode(speed)
 }
 
+def tstatSupportsFanMode(t) {
+    return t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode") || tstatHasComfortFanSpeed(t)
+}
+
 def setThermostatFanModeCmd(t, modeStr) {
     def mode = modeStr?.toString()?.toLowerCase()
     if (!mode) return false
-    if (!(t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode") || tstatHasComfortFanSpeed(t))) return false
+    if (!tstatSupportsFanMode(t)) return false
     boolean dispatched = false
     try {
         if (mode == "auto" && t.hasCommand("fanAuto")) { t.fanAuto(); dispatched = true }
@@ -6127,6 +6130,15 @@ def holidaysTest() { return holidaysRoute("test") }
 def holidaysSkip() { return holidaysRoute("skip") }
 def holidaysRefresh() { return holidaysRoute("refresh") }
 
+def holidaySupportedKinds() {
+    return ["light", "outlet", "blind", "fan", "lock", "thermostat"]
+}
+
+def holidayFindDevice(list, id) {
+    if (id == null) return null
+    return list?.find { it?.id?.toString() == id.toString() }
+}
+
 def holidayRunAction(states) {
     def result = newScheduleActionResult()
     if (!(states instanceof List)) return result
@@ -6140,9 +6152,14 @@ def holidayRunAction(states) {
             try { pauseExecution(delay) } catch (e) {}
         }
         first = false
-        def one = [states: [[id: st?.id, on: (st?.on == true), level: st?.level, ct: st?.ct]]]
-        if (st?.kind?.toString() == "outlet") runScheduleOnOffAction(one, outletSwitches, result)
-        else runScheduleLightAction(one, result)
+        def kind = st?.kind?.toString() ?: "light"
+        if (kind == "outlet") {
+            runScheduleOnOffAction([states: [[id: st?.id, on: (st?.on == true)]]], outletSwitches, result)
+        } else if (kind == "light") {
+            runScheduleLightAction([states: [[id: st?.id, on: (st?.on == true), level: st?.level, ct: st?.ct]]], result)
+        } else {
+            holidayRunKind(kind, st, result)
+        }
     }
     return [
         attempted: result.attempted,
@@ -6150,6 +6167,45 @@ def holidayRunAction(states) {
         missing: result.missing,
         failed: result.failed
     ]
+}
+
+// Blinds, fans, locks, and thermostats. Lights and outlets never reach here.
+def holidayRunKind(kind, st, result) {
+    result.attempted++
+    def id = st?.id?.toString()
+    def dev = null
+    if (kind == "blind") dev = holidayFindDevice(allWindowShades(), id)
+    else if (kind == "fan") dev = holidayFindDevice(ceilingFans, id)
+    else if (kind == "lock") dev = holidayFindDevice(locks, id)
+    else if (kind == "thermostat") dev = holidayFindDevice(thermostats, id)
+    if (!dev) {
+        if (id) result.missing << id
+        return
+    }
+    try {
+        if (kind == "blind") {
+            if (st?.open == true && st?.position != null && st.position.toString().trim()) runShadeCmd(dev, "setPosition", st.position)
+            else runShadeCmd(dev, st?.open == true ? "open" : "close", null)
+        } else if (kind == "fan") {
+            if (st?.on != true) runFanCmd(dev, "off", null)
+            else if (st?.speed?.toString()?.trim()) runFanCmd(dev, "setSpeed", st.speed)
+            else runFanCmd(dev, "on", null)
+        } else if (kind == "lock") {
+            runLockCmd(dev, st?.locked == false ? "unlock" : "lock", null)
+        } else if (kind == "thermostat") {
+            if (runThermostatSetting(dev, st) != true) {
+                result.failed << id
+                return
+            }
+        } else {
+            result.missing << id
+            return
+        }
+        result.succeeded++
+    } catch (e) {
+        result.failed << id
+        log.warn "Modern Dashboard: holiday ${kind} failed for ${id}: ${e}"
+    }
 }
 
 def pinsMatch(expected, provided) {
@@ -8932,12 +8988,18 @@ def armEnabledSchedule(id, s, long nowMs, result) {
             }
         } else if (kind == "once") {
             def atMs = scheduleOnceToMs(tr?.at)
-            if (atMs != null && atMs > nowMs) {
-                runOnce(new Date(atMs), "scheduledJobHandler", scheduleJobOptions(id))
+            def how = onceScheduleDisposition(atMs, nowMs)
+            if (how == "schedule") {
+                runOnce(new Date(atMs as long), "scheduledJobHandler", scheduleJobOptions(id))
                 result.registered++
                 nextFire = atMs
-            } else if (atMs != null && atMs <= nowMs) {
-                // past one-time — will be removed by cleanupSchedules shortly
+            } else if (how == "catchup") {
+                // A couple of seconds ahead so Hubitat does not drop a past runOnce.
+                long catchAt = nowMs + 2000L
+                runOnce(new Date(catchAt), "scheduledJobHandler", scheduleJobOptions(id))
+                result.registered++
+                nextFire = catchAt
+            } else if (how == "drop") {
                 nextFire = null
             } else {
                 result.failures[id.toString()] = "invalid one-time date"
@@ -9004,6 +9066,20 @@ def schedulerSunRetry(data) {
     }
     saveSchedulesMap(map)
     scheduleSunRetryLater(id, attempt + 1)
+}
+
+def scheduleOnceCatchUpMs() {
+    return 10L * 60L * 1000L
+}
+
+// "schedule" (future), "catchup" (up to 10 minutes late), "drop", or "invalid".
+def onceScheduleDisposition(atMs, long nowMs) {
+    if (atMs == null) return "invalid"
+    long at
+    try { at = atMs as Long } catch (e) { return "invalid" }
+    if (at > nowMs) return "schedule"
+    if (at >= nowMs - scheduleOnceCatchUpMs()) return "catchup"
+    return "drop"
 }
 
 def scheduleOnceToMs(at) {
@@ -9314,10 +9390,6 @@ def runScheduleLightAction(action, result) {
 def runScheduleThermostatAction(action, result) {
     if (result == null) result = newScheduleActionResult()
     def ids = scheduleThermostatIds(action?.devices)
-    def mode = action?.mode?.toString()
-    def heat = action?.heat
-    def cool = action?.cool
-    def fanMode = action?.fanMode?.toString()
     for (id in ids) {
         if (id == null) continue
         result.attempted++
@@ -9326,46 +9398,127 @@ def runScheduleThermostatAction(action, result) {
             result.missing << id.toString()
             continue
         }
-        def bits = []
-        if (mode) bits << "mode=${mode}"
-        if (heat != null) bits << "heat=${heat}"
-        if (cool != null) bits << "cool=${cool}"
-        if (fanMode) bits << "fan=${fanMode}"
-        if (bits) logControl("automation", "${deviceLabel(dev)} ${bits.join(' ')}")
-        boolean deviceFailed = false
-        if (mode) {
-            try { dev.setThermostatMode(mode) } catch (e) {
-                deviceFailed = true
-                log.warn "Modern Dashboard: schedule tstat mode failed for ${id}: ${e}"
-            }
-        }
-        if (heat != null) {
-            try { dev.setHeatingSetpoint(heat.toInteger()) } catch (e) {
-                deviceFailed = true
-                log.warn "Modern Dashboard: schedule tstat heat failed for ${id}: ${e}"
-            }
-        }
-        if (cool != null) {
-            try { dev.setCoolingSetpoint(cool.toInteger()) } catch (e) {
-                deviceFailed = true
-                log.warn "Modern Dashboard: schedule tstat cool failed for ${id}: ${e}"
-            }
-        }
-        if (fanMode) {
-            try {
-                if (setThermostatFanModeCmd(dev, fanMode) != true) {
-                    deviceFailed = true
-                    log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: no compatible fan command"
-                }
-            } catch (e) {
-                deviceFailed = true
-                log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: ${e}"
-            }
-        }
-        if (deviceFailed) result.failed << id.toString()
-        else result.succeeded++
+        if (runThermostatSetting(dev, action)) result.succeeded++
+        else result.failed << id.toString()
     }
     return result
+}
+
+// Which setpoints a thermostat mode uses. No mode means the setting only changes setpoints.
+def thermostatSetpointsForMode(mode) {
+    def key = mode?.toString()?.toLowerCase()?.replaceAll(/[\s_-]+/, "") ?: ""
+    if (!key) return [heat: true, cool: true]
+    return [heat: key in ["heat", "emergencyheat", "auto"], cool: key in ["cool", "auto"]]
+}
+
+def thermostatSetpointValue(v) {
+    if (v == null || v.toString().trim() == "" || !isNumberLike(v)) return null
+    return Math.round(new BigDecimal(v.toString()).doubleValue()) as Integer
+}
+
+// Keeps only the fields a setting can use: the mode, the setpoints that mode uses, and a fan mode.
+def thermostatSettingNormalized(raw) {
+    def out = [:]
+    def mode = raw?.mode?.toString()?.trim()
+    if (mode) out.mode = mode
+    def needs = thermostatSetpointsForMode(mode)
+    def heat = needs.heat ? thermostatSetpointValue(raw?.heat) : null
+    def cool = needs.cool ? thermostatSetpointValue(raw?.cool) : null
+    if (heat != null) out.heat = heat
+    if (cool != null) out.cool = cool
+    def fan = raw?.fanMode?.toString()?.trim()
+    if (fan) out.fanMode = fan
+    return out
+}
+
+def thermostatDialRange(unit) {
+    def key = unit?.toString()?.replace("°", "")?.trim()?.toUpperCase()
+    if (key == "C") return [min: 10, max: 32]
+    if (key == "F") return [min: 50, max: 90]
+    return null
+}
+
+def thermostatTempUnit(dev) {
+    def unit = "F"
+    try {
+        def st = dev?.currentState("temperature")
+        def u = st?.unit?.toString()
+        if (u) unit = u
+    } catch (e) {}
+    return thermostatDialRange(unit) ? unit.replace("°", "").trim().toUpperCase() : "F"
+}
+
+def thermostatSettingError(raw, String unit = null) {
+    def mode = raw?.mode?.toString()?.trim()
+    def needs = thermostatSetpointsForMode(mode)
+    def heat = needs.heat ? thermostatSetpointValue(raw?.heat) : null
+    def cool = needs.cool ? thermostatSetpointValue(raw?.cool) : null
+    if (mode) {
+        if (needs.heat && heat == null) return "enter a heat setpoint"
+        if (needs.cool && cool == null) return "enter a cool setpoint"
+    } else if (heat == null && cool == null && !raw?.fanMode?.toString()?.trim()) {
+        return "choose a mode, setpoint, or fan mode"
+    }
+    if (heat != null && cool != null && heat >= cool) return "heat setpoint must be below cool setpoint"
+    def range = thermostatDialRange(unit)
+    if (range != null && heat != null && (heat < range.min || heat > range.max)) {
+        return "heat setpoint must be between ${range.min} and ${range.max}".toString()
+    }
+    if (range != null && cool != null && (cool < range.min || cool > range.max)) {
+        return "cool setpoint must be between ${range.min} and ${range.max}".toString()
+    }
+    return null
+}
+
+// Sends one setting to one thermostat. Returns false if any requested command failed.
+def runThermostatSetting(dev, raw) {
+    def setting = thermostatSettingNormalized(raw)
+    def id = dev.id
+    def mode = setting.mode
+    def heat = setting.heat
+    def cool = setting.cool
+    def fanMode = setting.fanMode
+    if (fanMode && !tstatSupportsFanMode(dev)) {
+        if (debugLogActive()) log.debug "Modern Dashboard: ${deviceLabel(dev)} has no fan mode; skipped fan=${fanMode}"
+        fanMode = null
+    }
+    def bits = []
+    if (mode) bits << "mode=${mode}"
+    if (heat != null) bits << "heat=${heat}"
+    if (cool != null) bits << "cool=${cool}"
+    if (fanMode) bits << "fan=${fanMode}"
+    if (bits) logControl("automation", "${deviceLabel(dev)} ${bits.join(' ')}")
+    boolean deviceFailed = false
+    if (mode) {
+        try { dev.setThermostatMode(mode) } catch (e) {
+            deviceFailed = true
+            log.warn "Modern Dashboard: schedule tstat mode failed for ${id}: ${e}"
+        }
+    }
+    if (heat != null) {
+        try { dev.setHeatingSetpoint(heat) } catch (e) {
+            deviceFailed = true
+            log.warn "Modern Dashboard: schedule tstat heat failed for ${id}: ${e}"
+        }
+    }
+    if (cool != null) {
+        try { dev.setCoolingSetpoint(cool) } catch (e) {
+            deviceFailed = true
+            log.warn "Modern Dashboard: schedule tstat cool failed for ${id}: ${e}"
+        }
+    }
+    if (fanMode) {
+        try {
+            if (setThermostatFanModeCmd(dev, fanMode) != true) {
+                deviceFailed = true
+                log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: no compatible fan command"
+            }
+        } catch (e) {
+            deviceFailed = true
+            log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: ${e}"
+        }
+    }
+    return !deviceFailed
 }
 
 def cleanupSchedules() {
@@ -9378,22 +9531,24 @@ def cleanupSchedules() {
     def map = parsed.map instanceof Map ? parsed.map : [:]
     def now = now()
     def changed = false
+    def needsArm = false
     for (id in map.keySet().toList()) {
         def s = map[id]
         if (!s) continue
         def kind = s?.trigger?.kind?.toString()
-        if (kind == "once") {
-            def atMs = scheduleOnceToMs(s?.trigger?.at)
-            if (atMs != null && atMs < now) {
-                map.remove(id)
-                changed = true
-            }
+        if (kind != "once") continue
+        def how = onceScheduleDisposition(scheduleOnceToMs(s?.trigger?.at), now as long)
+        if (how == "drop") {
+            map.remove(id)
+            changed = true
+        } else if (how == "catchup" && s?.enabled == true) {
+            def nf = null
+            try { if (s.nextFire != null) nf = (s.nextFire as Long) } catch (e) {}
+            if (nf == null || nf <= now) needsArm = true
         }
     }
-    if (changed) {
-        saveSchedulesMap(map)
-        rebuildScheduledJobs()
-    }
+    if (changed) saveSchedulesMap(map)
+    if (changed || needsArm) rebuildScheduledJobs()
 }
 
 // --- endpoints ---
@@ -9466,6 +9621,14 @@ def schedulesValidateNormalized(s) {
         if (!(ac?.states instanceof List) || !ac.states) return "select at least one device"
     } else if (target == "thermostats") {
         if (!scheduleThermostatIds(ac?.devices)) return "select at least one thermostat"
+        def tstatErr = thermostatSettingError(ac)
+        if (tstatErr) return tstatErr
+        for (id in scheduleThermostatIds(ac?.devices)) {
+            def dev = thermostats?.find { it.id.toString() == id.toString() }
+            if (!dev) continue
+            def rangeErr = thermostatSettingError(ac, thermostatTempUnit(dev))
+            if (rangeErr) return rangeErr
+        }
     } else if (target == "hubMode") {
         if (!ac?.mode?.toString()?.trim()) return "pick a hub mode"
     }
@@ -9608,10 +9771,7 @@ def schedulesNormalizePayload(body) {
         }
     } else if (ac.target == "thermostats") {
         ac.devices = scheduleThermostatIds(body?.action?.devices)
-        if (body?.action?.mode != null) ac.mode = body.action.mode.toString()
-        if (body?.action?.heat != null) ac.heat = body.action.heat
-        if (body?.action?.cool != null) ac.cool = body.action.cool
-        if (body?.action?.fanMode != null) ac.fanMode = body.action.fanMode.toString()
+        ac.putAll(thermostatSettingNormalized(body?.action))
     } else if (ac.target == "hubMode") {
         ac.mode = body?.action?.mode?.toString()?.trim() ?: ""
     }

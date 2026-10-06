@@ -1,5 +1,5 @@
 // mDash Shabbat and Holidays — optional child app.
-// Calendar and time rules match lib/holiday-core.mjs (HOLIDAY_API_VERSION 1).
+// Calendar and time rules match lib/holiday-core.mjs (HOLIDAY_API_VERSION 2).
 // Occasions: shabbat; Tishrei 1,2 roshHashana; 10 yomKippur; 15,16 sukkot; 22,23 shemini;
 // Nisan 15,16 pesachFirst; 21,22 pesachLast; Sivan 6,7 shavuot.
 
@@ -7,7 +7,7 @@ definition(
     name: "mDash Shabbat and Holidays",
     namespace: "mDash",
     author: "Ephrayim (evdev)",
-    description: "Optional Shabbat and Yom Tov schedules for Modern Dashboard. Lights, outlets, and hub mode from HebCal candle-lighting and havdalah times.",
+    description: "Optional Shabbat and Yom Tov schedules for Modern Dashboard. Lights, outlets, blinds, ceiling fans, locks, thermostats, and hub mode from HebCal candle-lighting and havdalah times.",
     category: "My Apps",
     parent: "mDash:Modern Dashboard",
     iconUrl: "",
@@ -146,7 +146,8 @@ def holidaysStatus() {
     def built = holidayBuild(nowMs)
     return [
         ok: true,
-        apiVersion: 1,
+        apiVersion: 2,
+        deviceKinds: holidayDeviceKinds(),
         tz: holidayTzId(),
         now: nowMs,
         revision: state.runtime.revision ?: 0,
@@ -183,7 +184,7 @@ def holidaysPreview(body) {
         span = built.spans.find { s -> holidaySpanHasOccasion(s, body.occasion.toString()) }
     }
     if (!span && built.spans) span = built.spans[0]
-    return [ok: errors.size() == 0, errors: errors, warnings: span?.warnings ?: [], span: span, apiVersion: 1, tz: holidayTzId()]
+    return [ok: errors.size() == 0, errors: errors, warnings: span?.warnings ?: [], span: span, apiVersion: 2, tz: holidayTzId()]
 }
 
 def holidaysSave(body) {
@@ -191,6 +192,10 @@ def holidaysSave(body) {
     def rev = body?.revision
     if (rev != null && rev.toString() != (state.runtime.revision ?: 0).toString()) {
         return [ok: false, error: "Changed on another device — reload.", revision: state.runtime.revision ?: 0]
+    }
+    if (body?.template) {
+        def errs = holidayTemplateErrors(body.template)
+        if (errs) return [ok: false, error: holidayErrorMessage(errs), errors: errs, revision: state.runtime.revision ?: 0]
     }
     if (body?.settings) state.config.settings = holidayMergeSettings(state.config.settings, body.settings)
     if (body?.pauseOccasion) holidayTogglePause(body.pauseOccasion.toString())
@@ -200,10 +205,6 @@ def holidaysSave(body) {
         if (body.template) state.config.templates[id] = body.template
     }
     state.runtime.revision = (state.runtime.revision ?: 0) + 1
-    def errs = holidayTemplateErrors(body?.template)
-    if (errs) {
-        return [ok: false, error: "A light is in both the on list and the off list.", errors: errs, revision: state.runtime.revision]
-    }
     holidayMarkPassedDone()
     if (holidayQueryChanged()) holidayFetch(true)
     else holidayArm()
@@ -240,15 +241,11 @@ def holidaysTest(body) {
     def which = body?.which?.toString()
     def occasion = body?.occasion?.toString() ?: "shabbat"
     def template = holidayResolveTemplate(occasion, state.config) ?: state.config.templates?.shabbat
-    def states = []
-    if (which == "end") {
-        if (template?.end?.states instanceof List) states.addAll(template.end.states)
-    } else {
-        if (template?.start?.states instanceof List) states.addAll(template.start.states)
-    }
+    def raw = which == "end" ? template?.end?.states : template?.start?.states
+    def states = holidayCloneStates(raw)
     def result = parent.holidayRunAction(states)
     log.info "mDash Holidays: test ${which ?: 'start'} — ${result}"
-    return [ok: true, lastResult: result, apiVersion: 1]
+    return [ok: true, lastResult: result, apiVersion: 2]
 }
 
 // --- state ---
@@ -835,38 +832,125 @@ def holidaySun(String date) {
     } catch (e) { return null }
 }
 
+def holidayDeviceKinds() {
+    try {
+        def kinds = parent.holidaySupportedKinds()
+        if (kinds instanceof List && kinds) return kinds.collect { it?.toString() }.findAll { it }
+    } catch (e) {}
+    return ["light", "outlet"]
+}
+
+def holidayWhole(v, int min, int max) {
+    if (v == null) return null
+    def text = v.toString().trim()
+    if (!text) return null
+    try {
+        int n = Math.round(Double.parseDouble(text)) as int
+        if (n < min) n = min
+        if (n > max) n = max
+        return n
+    } catch (e) { return null }
+}
+
+def holidayThermostatFields(s) {
+    try {
+        def n = parent.thermostatSettingNormalized(s)
+        if (n instanceof Map) return n
+    } catch (e) {}
+    def mode = s?.mode?.toString()?.trim()
+    def fan = s?.fanMode?.toString()?.trim()
+    return [mode: mode ?: null, heat: s?.heat, cool: s?.cool, fanMode: fan ?: null]
+}
+
 def holidayCloneStates(raw) {
     def out = []
     if (!(raw instanceof List)) return out
     for (s in raw) {
         def id = s?.id?.toString()
         if (!id) continue
-        out << [
-            id: id,
-            kind: s?.kind?.toString() == "outlet" ? "outlet" : "light",
-            on: s?.on == true,
-            level: s?.level,
-            ct: s?.ct
-        ]
+        def kind = s?.kind?.toString()
+        if (kind == "blind") {
+            out << [id: id, kind: "blind", open: s?.open == true, position: s?.open == true ? holidayWhole(s?.position, 1, 100) : null]
+        } else if (kind == "fan") {
+            def speed = s?.speed?.toString()?.trim()
+            out << [id: id, kind: "fan", on: s?.on == true, speed: (s?.on == true && speed) ? speed : null]
+        } else if (kind == "lock") {
+            out << [id: id, kind: "lock", locked: s?.locked != false]
+        } else if (kind == "thermostat") {
+            def n = holidayThermostatFields(s)
+            out << [id: id, kind: "thermostat", mode: n?.mode, heat: n?.heat, cool: n?.cool, fanMode: n?.fanMode]
+        } else if (!kind || kind == "light" || kind == "outlet") {
+            out << [id: id, kind: kind == "outlet" ? "outlet" : "light", on: s?.on == true, level: s?.level, ct: s?.ct]
+        }
     }
     return out
+}
+
+def holidayCommandSig(s) {
+    def kind = s?.kind?.toString() ?: "light"
+    if (kind == "blind") return "blind|${s.open == true}|${s.position}"
+    if (kind == "fan") return "fan|${s.on == true}|${s.speed}"
+    if (kind == "lock") return "lock|${s.locked != false}"
+    if (kind == "thermostat") return "tstat|${s.mode}|${s.heat}|${s.cool}|${s.fanMode}"
+    return "${kind}|${s.on == true}|${s.level}|${s.ct}"
+}
+
+def holidayTemplateSlots(template) {
+    def slots = []
+    if (!(template instanceof Map)) return slots
+    slots << [label: "start", states: template?.start?.states]
+    for (bucket in ["night", "morning", "afternoon", "evening"]) {
+        def groups = template[bucket]
+        if (!(groups instanceof List)) continue
+        int i = 0
+        for (g in groups) {
+            i++
+            slots << [label: "${bucket} ${i}", states: g?.states]
+        }
+    }
+    slots << [label: "end", states: template?.end?.states]
+    def custom = template?.custom
+    if (custom instanceof List) {
+        int i = 0
+        for (c in custom) {
+            i++
+            slots << [label: "custom ${i}", states: c?.states]
+        }
+    }
+    return slots
+}
+
+def holidayErrorMessage(errs) {
+    for (err in (errs ?: [])) {
+        if (err?.error) return err.error.toString()
+    }
+    return "A device is listed twice with different commands."
 }
 
 def holidayTemplateErrors(template) {
     if (!(template instanceof Map)) return []
     def errors = []
-    def check = { label, states ->
-        def on = new HashSet()
-        def off = new HashSet()
-        for (s in holidayCloneStates(states)) {
-            if (s.on) on.add(s.id) else off.add(s.id)
-        }
+    def allowed = new HashSet(holidayDeviceKinds())
+    for (slot in holidayTemplateSlots(template)) {
+        def seen = [:]
         def both = []
-        for (id in on) if (off.contains(id)) both << id
-        if (both) errors << [label: label, ids: both]
+        def states = holidayCloneStates(slot.states)
+        for (s in states) {
+            def sig = holidayCommandSig(s)
+            if (seen.containsKey(s.id)) {
+                if (seen[s.id] != sig && !both.contains(s.id)) both << s.id
+            } else seen[s.id] = sig
+            if (!allowed.contains(s.kind?.toString() ?: "light")) {
+                errors << [label: slot.label, ids: [s.id], error: "Update Modern Dashboard to schedule this device."]
+            }
+            if (s.kind?.toString() == "thermostat") {
+                def err = null
+                try { err = parent.thermostatSettingError(s) } catch (e) { err = null }
+                if (err) errors << [label: slot.label, ids: [s.id], error: err]
+            }
+        }
+        if (both) errors << [label: slot.label, ids: both]
     }
-    check("start", template?.start?.states)
-    check("end", template?.end?.states)
     return errors
 }
 
@@ -875,15 +959,15 @@ def holidaySameMinute(actions) {
     for (a in actions) {
         if (a.kind != "devices" || a.skipped == true || a.at == null) continue
         long minute = ((a.at as long) / 60000L) as long
-        for (s in (a.states ?: [])) {
+        for (s in holidayCloneStates(a.states ?: [])) {
             def key = "${minute}|${s.id}"
             if (!buckets[key]) buckets[key] = new HashSet()
-            buckets[key].add(s.on == true ? "on" : "off")
+            buckets[key].add(holidayCommandSig(s))
         }
     }
     def ids = []
     buckets.each { key, set ->
-        if (set.contains("on") && set.contains("off")) ids << key.toString().split("\\|")[1]
+        if (set.size() > 1) ids << key.toString().split("\\|")[1]
     }
     return ids.unique()
 }
@@ -1023,12 +1107,19 @@ def holidayReconcile(boolean fromBoot) {
     holidayFixMode(built, nowMs)
     def replay = []
     def ran = new HashSet()
-    latest.values().sort { a, b -> (a.at as long) <=> (b.at as long) }.each { row ->
-        replay << row.state
-        ran.add(row.id.toString())
+    for (row in latest.values().sort { a, b -> (a.at as long) <=> (b.at as long) }) {
+        if (row.state?.kind?.toString() == "lock" && row.state?.locked == false) {
+            log.info "mDash Holidays: skipped a late unlock for ${row.state?.id}"
+        } else {
+            replay << row.state
+            ran.add(row.id.toString())
+        }
     }
     for (a in missed) {
-        if (!ran.contains(a.id?.toString())) holidayMarkDone(a.id?.toString(), nowMs, "collapsed")
+        if (ran.contains(a.id?.toString())) continue
+        def states = a.states ?: []
+        def onlyUnlocks = states && states.every { it?.kind?.toString() == "lock" && it?.locked == false }
+        holidayMarkDone(a.id?.toString(), nowMs, onlyUnlocks ? "skipped" : "collapsed")
     }
     boolean held = state.runtime.activeSpan?.held == true
     if (replay && !held && holidayCurrentMode() == state.config.settings.holidayMode?.toString()) {
@@ -1212,6 +1303,9 @@ def holidayConflicts() {
                 def devices = []
                 if (s?.action?.states instanceof List) {
                     for (st in s.action.states) if (st?.id != null) devices << st.id.toString()
+                }
+                if (s?.action?.target?.toString() == "thermostats" && s?.action?.devices instanceof List) {
+                    for (devId in s.action.devices) if (devId != null && !devices.contains(devId.toString())) devices << devId.toString()
                 }
                 out << [id: id.toString(), name: s?.name?.toString() ?: "Untitled schedule", devices: devices]
             }
