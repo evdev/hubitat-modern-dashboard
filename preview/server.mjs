@@ -143,6 +143,7 @@ state.holiday.settings.endMode = "Day";
 state.holiday.settings.doNotStartModes = ["Away"];
 state.holiday.revision = 1;
 state.holiday.skipped = [];
+state.holiday.pausedOccasions = [];
 state.holiday.showMissed = false;
 state.holiday.templates.shabbat = {
   start: { states: [{ id: "1", kind: "light", on: true, level: 80 }, { id: "2", kind: "light", on: false }], repeatLaterNights: false },
@@ -959,7 +960,24 @@ function holidayFixtureItems(now = Date.now()) {
     { category: "candles", date: holidayIso(wed, "18:19", tz) },
     { category: "holiday", date: thu, hdate: "16 Nisan 5787", yomtov: true },
     { category: "havdalah", date: holidayIso(thu, "19:30", tz) },
+    ...holidayBlock(tz, addDays(today, 45), ["1 Tishrei 5788", "2 Tishrei 5788"]),
+    ...holidayBlock(tz, addDays(today, 55), ["10 Tishrei 5788"]),
+    ...holidayBlock(tz, addDays(today, 65), ["15 Tishrei 5788", "16 Tishrei 5788"]),
+    ...holidayBlock(tz, addDays(today, 78), ["22 Tishrei 5788", "23 Tishrei 5788"]),
+    ...holidayBlock(tz, addDays(today, 95), ["21 Nisan 5788", "22 Nisan 5788"]),
+    ...holidayBlock(tz, addDays(today, 115), ["6 Sivan 5788", "7 Sivan 5788"]),
   ];
+}
+
+function holidayBlock(tz, firstDate, hdates) {
+  const items = [{ category: "candles", date: holidayIso(addDays(firstDate, -1), "18:05", tz) }];
+  hdates.forEach((hdate, i) => {
+    const date = addDays(firstDate, i);
+    items.push({ category: "holiday", date, hdate, yomtov: true });
+    if (i < hdates.length - 1) items.push({ category: "candles", date: holidayIso(date, "18:10", tz) });
+    else items.push({ category: "havdalah", date: holidayIso(date, "19:15", tz) });
+  });
+  return items;
 }
 
 function holidayPreviewPayload(draft) {
@@ -987,6 +1005,7 @@ function holidayPreviewPayload(draft) {
     end: span.end,
     occasion: span.occasion,
     skipped: span.skipped,
+    paused: (state.holiday.pausedOccasions || []).includes(span.occasion),
     badge: span.skipped ? "skipped" : templateBadge(span.days?.[0]?.occasion || span.occasion, config),
     inProgress: !span.skipped && span.start <= now && span.end > now,
     warning: index === 0 && state.holiday.showMissed ? "Missed while the hub was offline" : "",
@@ -2459,7 +2478,12 @@ const server = createServer(async (req, res) => {
         return res.end(JSON.stringify({ ok: false, error: "Changed on another device — reload.", revision: state.holiday.revision }));
       }
       if (body.settings) state.holiday.settings = { ...state.holiday.settings, ...body.settings };
-      if (body.occasion) {
+      if (body.pauseOccasion) {
+        const id = String(body.pauseOccasion);
+        const list = state.holiday.pausedOccasions || [];
+        state.holiday.pausedOccasions = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+      }
+      if (body.occasion && body.choice) {
         state.holiday.occasions[body.occasion] = body.choice || "own";
         if (body.template) state.holiday.templates[body.occasion] = body.template;
       }

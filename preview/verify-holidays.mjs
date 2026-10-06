@@ -259,7 +259,7 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
   const start = actions.find((a) => a.question === "start");
   assert(start.states.some((s) => s.id === "dining" && s.on) && start.states.some((s) => s.id === "bed" && !s.on), "start can turn one on and one off");
   const end = actions.find((a) => a.question === "end");
-  assert(end.states.some((s) => s.id === "hall" && !s.on), "turn off what is still on");
+  assert(!end.states.some((s) => s.id === "hall"), "havdalah does not turn off lights that were left on");
   assert(end.states.some((s) => s.id === "path" && s.on), "havdalah can also turn a light on");
   assert(actions.find((a) => a.kind === "modeEnter").at <= start.at, "mode enter is not after the start actions");
   assert(actions.find((a) => a.kind === "modeExit").at >= end.at, "mode exit is not before the end actions");
@@ -466,6 +466,37 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
   ];
   const { spans, actions } = expandUpcoming(items, cfg(), TZ, Date.parse("2026-06-01T12:00:00-04:00"));
   assert(spans.length >= 2, "several Shabbatot");
+  const later = expandUpcoming([
+    candles("2026-06-05T19:30:00-04:00"),
+    havdalah("2026-06-06T20:40:00-04:00"),
+    candles("2026-07-20T19:10:00-04:00"),
+    hol("2026-07-21", "10 Tishrei 5787"),
+    havdalah("2026-07-21T20:20:00-04:00"),
+  ], cfg(), TZ, Date.parse("2026-06-01T12:00:00-04:00"));
+  assert(later.spans.some((s) => s.occasion === "shabbat"), "near shabbat stays on the list");
+  assert(later.spans.some((s) => (s.days || []).some((d) => d.occasion === "yomKippur")), "a scheduled holiday shows even when it is more than two weeks away");
+  const many = expandUpcoming([
+    candles("2026-06-05T19:30:00-04:00"),
+    havdalah("2026-06-06T20:40:00-04:00"),
+    candles("2026-07-20T19:10:00-04:00"),
+    hol("2026-07-21", "10 Tishrei 5787"),
+    havdalah("2026-07-21T20:20:00-04:00"),
+    candles("2026-08-10T19:10:00-04:00"),
+    hol("2026-08-11", "6 Sivan 5787"),
+    candles("2026-08-11T19:12:00-04:00"),
+    hol("2026-08-12", "7 Sivan 5787"),
+    havdalah("2026-08-12T20:20:00-04:00"),
+  ], cfg(), TZ, Date.parse("2026-06-01T12:00:00-04:00"));
+  assert(many.spans.some((s) => (s.days || []).some((d) => d.occasion === "yomKippur")), "yom kippur is listed");
+  assert(many.spans.some((s) => (s.days || []).some((d) => d.occasion === "shavuot")), "shavuot is listed too");
+  const hidden = expandUpcoming([
+    candles("2026-06-05T19:30:00-04:00"),
+    havdalah("2026-06-06T20:40:00-04:00"),
+    candles("2026-07-20T19:10:00-04:00"),
+    hol("2026-07-21", "10 Tishrei 5787"),
+    havdalah("2026-07-21T20:20:00-04:00"),
+  ], cfg({ occasions: { yomKippur: "skip" } }), TZ, Date.parse("2026-06-01T12:00:00-04:00"));
+  assert(!hidden.spans.some((s) => (s.days || []).some((d) => d.occasion === "yomKippur")), "a holiday without a schedule stays off the list");
   const bars = spans.map((s) => buildDeviceTimeline(s, actions, "dining")).filter((t) => t.changes.length);
   assert(bars.length >= 2, "by-light view has a bar per occasion");
 }

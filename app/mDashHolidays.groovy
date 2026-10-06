@@ -193,6 +193,7 @@ def holidaysSave(body) {
         return [ok: false, error: "Changed on another device — reload.", revision: state.runtime.revision ?: 0]
     }
     if (body?.settings) state.config.settings = holidayMergeSettings(state.config.settings, body.settings)
+    if (body?.pauseOccasion) holidayTogglePause(body.pauseOccasion.toString())
     if (body?.occasion) {
         def id = body.occasion.toString()
         if (body.choice) state.config.occasions[id] = body.choice.toString()
@@ -263,6 +264,7 @@ def holidayEnsureState() {
     if (!(state.config.settings instanceof Map)) state.config.settings = holidayDefaultSettings()
     if (!(state.config.templates instanceof Map)) state.config.templates = [shabbat: holidayEmptyTemplate()]
     if (!(state.config.occasions instanceof Map)) state.config.occasions = holidayDefaultOccasions()
+    if (!(state.config.pausedOccasions instanceof List)) state.config.pausedOccasions = []
     if (!(state.calendar instanceof Map)) state.calendar = [boundaries: [], holidays: [], query: "", fetchedAt: 0, error: ""]
     if (!(state.runtime instanceof Map)) {
         state.runtime = [revision: 0, doneIds: [:], skippedSpanIds: [], history: [], activeSpan: null, parentHidden: false, changingMode: false, testSpan: null]
@@ -287,7 +289,7 @@ def holidayEmptyTemplate() {
     return [
         start: [states: [], repeatLaterNights: false],
         night: [], morning: [], afternoon: [], evening: [],
-        end: [states: [], offStillOn: true], custom: []
+        end: [states: []], custom: []
     ]
 }
 
@@ -304,6 +306,20 @@ def holidayMergeSettings(current, incoming) {
 
 def holidayPaused() {
     return state.config?.settings?.paused == true || state.runtime?.parentHidden == true
+}
+
+def holidayTogglePause(String occasion) {
+    if (!occasion) return
+    def list = (state.config.pausedOccasions ?: []).collect { it?.toString() }.findAll { it }
+    if (list.contains(occasion)) list = list.findAll { it != occasion }
+    else list << occasion
+    state.config.pausedOccasions = list
+}
+
+def holidaySpanPaused(span, config) {
+    def id = span?.occasion?.toString()
+    if (!id) return false
+    return ((config?.pausedOccasions ?: []).collect { it?.toString() }).contains(id)
 }
 
 def holidayIsAvailable() {
@@ -491,7 +507,8 @@ def holidayResolveTemplate(String occasionId, config, Set seen = null) {
     if (seen == null) seen = new HashSet()
     if (seen.contains(occasionId)) return null
     seen.add(occasionId)
-    def choice = occasionId == "shabbat" ? "own" : (config?.occasions?.get(occasionId)?.toString() ?: "skip")
+    def stored = config?.occasions?.get(occasionId)?.toString()
+    def choice = stored ? stored : (occasionId == "shabbat" ? "own" : "skip")
     if (choice == "skip") return null
     if (choice == "shabbat") return config?.templates?.shabbat ?: holidayEmptyTemplate()
     if (choice == "pesachFirst") return holidayResolveTemplate("pesachFirst", config, seen)
@@ -505,8 +522,19 @@ def holidayBuild(long nowMs) {
 def holidayBuildFrom(config, long nowMs) {
     def days = holidayObservedDays(config)
     def spans = holidaySpans(days)
-    long horizon = nowMs + 17L * 24 * 60 * 60 * 1000
-    def kept = spans.findAll { s -> (s.end as long) > nowMs && (s.start as long) < horizon }
+    long nearCut = nowMs + 17L * 24 * 60 * 60 * 1000
+    def future = spans.findAll { s -> (s.end as long) > nowMs }.sort { a, b -> (a.start as long) <=> (b.start as long) }
+    def nearSpans = future.findAll { s -> (s.start as long) < nearCut }
+    def shown = new HashSet()
+    for (s in nearSpans) holidaySpanOccasions(s).each { shown.add(it) }
+    def extra = []
+    for (span in future) {
+        def ids = holidaySpanOccasions(span).findAll { it != "shabbat" }
+        if (!ids || ids.every { shown.contains(it) }) continue
+        extra << span
+        ids.each { shown.add(it) }
+    }
+    def kept = (nearSpans + extra).sort { a, b -> (a.start as long) <=> (b.start as long) }
     def test = state.runtime?.testSpan
     if (test?.start && (test.end as long) > nowMs) {
         kept = [[id: "test", name: "Test span", start: test.start as long, end: test.end as long, occasion: "shabbat", days: [[date: "test", occasion: "shabbat", index: 0, isFirst: true, isLast: true, start: test.start as long, end: test.end as long]]]] + kept
@@ -516,6 +544,7 @@ def holidayBuildFrom(config, long nowMs) {
     def outSpans = []
     for (span in kept) {
         boolean isSkipped = skipped.contains(span.id?.toString())
+        boolean isPaused = span.id?.toString() != "test" && holidaySpanPaused(span, config)
         def actions = (span.id == "test") ? holidayTestActions(span, config) : holidayExpandSpan(span, config)
         def warning = ""
         if (state.calendar?.error && span.id != "test") warning = state.calendar.error.toString()
@@ -525,11 +554,12 @@ def holidayBuildFrom(config, long nowMs) {
         rows << [
             spanId: span.id, name: span.name, start: span.start, end: span.end,
             occasion: span.occasion, badge: isSkipped ? "skipped" : holidayBadge(span, config),
-            inProgress: inProgress, warning: warning, skipped: isSkipped
+            inProgress: inProgress, warning: warning, skipped: isSkipped, paused: isPaused
         ]
         outSpans << [
             id: span.id, name: span.name, start: span.start, end: span.end, occasion: span.occasion,
-            days: span.days, actions: actions, warnings: holidaySameMinute(actions), skipped: isSkipped
+            days: span.days, actions: actions, warnings: holidaySameMinute(actions),
+            skipped: isSkipped, paused: isPaused
         ]
     }
     rows.sort { a, b -> (a.start as long) <=> (b.start as long) }
@@ -545,6 +575,17 @@ def holidayBadge(span, config) {
     if (choice == "pesachFirst") return "uses Pesach first days"
     if (choice == "own") return "own schedule"
     return "skipped"
+}
+
+def holidaySpanOccasions(span) {
+    def ids = []
+    for (d in (span?.days ?: [])) {
+        def id = d?.occasion?.toString()
+        if (id && !ids.contains(id)) ids << id
+    }
+    def top = span?.occasion?.toString()
+    if (top && !ids.contains(top)) ids << top
+    return ids
 }
 
 def holidaySpanHasOccasion(span, String occasion) {
@@ -692,16 +733,6 @@ def holidayExpandSpan(span, config) {
     def last = span.days[-1]
     def endTemplate = holidayResolveTemplate(last.occasion?.toString(), config) ?: holidayEmptyTemplate()
     def endStates = holidayCloneStates(endTemplate?.end?.states)
-    if (endTemplate?.end?.offStillOn != false) {
-        def explicitOff = new HashSet()
-        for (s in endStates) if (s.on != true) explicitOff.add(s.id.toString())
-        for (id in holidayStillOn(actions)) {
-            if (explicitOff.contains(id)) continue
-            def sample = null
-            for (a in actions) for (s in (a.states ?: [])) if (s.id?.toString() == id) sample = s
-            endStates << [id: id, kind: sample?.kind ?: "light", on: false, level: null, ct: null]
-        }
-    }
     if (endStates) {
         long endAt = span.end as long
         if (frozen?.id?.toString() == span.id?.toString() && frozen.startRan == true && frozen.end) endAt = frozen.end as long
@@ -802,17 +833,6 @@ def holidaySun(String date) {
             sunset: parent.scheduleSunMs("sunset", 0, when)
         ]
     } catch (e) { return null }
-}
-
-def holidayStillOn(actions) {
-    def last = [:]
-    for (a in actions) {
-        if (a.kind != "devices" || a.skipped == true || a.question == "end") continue
-        for (s in (a.states ?: [])) last[s.id.toString()] = s.on == true
-    }
-    def ids = []
-    last.each { id, on -> if (on) ids << id }
-    return ids
 }
 
 def holidayCloneStates(raw) {
@@ -922,7 +942,7 @@ def holidayZonedMs(String date, String hhmm, TimeZone tz) {
 def holidayActiveSpan(long nowMs) {
     def built = holidayBuild(nowMs)
     for (span in built.spans) {
-        if (span.skipped == true) continue
+        if (span.skipped == true || span.paused == true) continue
         if ((span.start as long) <= nowMs && (span.end as long) > nowMs) return span
     }
     return null
@@ -942,7 +962,7 @@ def holidayArm() {
     Long nextAt = null
     def done = state.runtime.doneIds ?: [:]
     for (span in built.spans) {
-        if (span.skipped == true) continue
+        if (span.skipped == true || span.paused == true) continue
         for (a in (span.actions ?: [])) {
             if (a.skipped == true) continue
             if (done[a.id?.toString()] != null) continue
@@ -974,7 +994,7 @@ def holidayReconcile(boolean fromBoot) {
     def done = state.runtime.doneIds ?: [:]
     def due = []
     for (span in built.spans) {
-        if (span.skipped == true) continue
+        if (span.skipped == true || span.paused == true) continue
         due.addAll(span.actions ?: [])
     }
     due = due.findAll { a -> a.skipped != true && a.at != null && done[a.id?.toString()] == null }
@@ -1067,6 +1087,7 @@ def holidayFixMode(built, long nowMs) {
     def current = holidayCurrentMode()
     def span = null
     for (s in built.spans) {
+        if (s.paused == true || s.skipped == true) continue
         if ((s.start as long) <= nowMs && (s.end as long) > nowMs) { span = s; break }
     }
     if (active?.held == true) return
@@ -1085,6 +1106,7 @@ def holidayFixMode(built, long nowMs) {
         return
     }
     for (s in built.spans) {
+        if (s.paused == true || s.skipped == true) continue
         if ((s.end as long) <= nowMs && (s.end as long) > nowMs - 36L * 60 * 60 * 1000) {
             if (current == holidayMode && active?.id?.toString() == s.id?.toString() && active?.ended != true && active?.held != true && active?.overridden != true) {
                 holidaySetMode(settings.endMode?.toString())

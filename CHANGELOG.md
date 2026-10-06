@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.4.38
+
+- **Shabbat & holidays:** screens have more space between the text and the
+  edges of the screen.
+
+## 0.4.37
+
+- **Scheduling:** deleting a schedule asks you to confirm first.
+
+## 0.4.36
+
+- **Shabbat & holidays:** Other Holidays lists every holiday that has a
+  schedule and falls after the next two weeks.
+
+## 0.4.35
+
+- **Shabbat & holidays:** each schedule on the list can be paused. A paused
+  schedule stays listed and does not turn lights on or change the hub mode
+  until you resume it.
+
+## 0.4.34
+
+- **Shabbat & holidays:** holidays after the next two weeks stay on the list,
+  folded under Later until you open them.
+
+## 0.4.33
+
+- **Shabbat & holidays:** the list shows the next time for every holiday that
+  has a schedule, not only the ones in the next two weeks.
+
+## 0.4.32
+
+- **Shabbat & holidays:** the one-line timeline marks the time each light changes.
+
+## 0.4.31
+
+- **Shabbat & holidays:** each time step has a Next button at the top as well
+  as the bottom, so a long light list does not have to be scrolled past.
+
+## 0.4.30
+
+- **Shabbat & holidays:** the expanded timeline marks the time each light
+  changes, the same way it marks midnight.
+
+## 0.4.29
+
+- **Shabbat & holidays:** an On button is gold only when that choice is selected.
+
+## 0.4.28
+
+- **Shabbat & holidays:** schedule rows, the light timeline, and the setup
+  questions are easier to scan. On, off, and skip are distinct, and each step
+  shows how far along you are.
+
+## 0.4.27
+
+- **Shabbat & holidays:** each light’s timeline fits on one line. Expand opens
+  a closer view split across several lines. Night and morning questions note
+  that a light can also go the other way.
+
+## 0.4.26
+
+- **Shabbat & holidays:** brightness and white balance use the same drag tracks
+  as the rest of the dashboard.
+
+## 0.4.25
+
+- **Shabbat & holidays:** havdalah only turns off the lights you choose. The
+  “turn off what is still on” option is gone.
+
+## 0.4.24
+
+- **Shabbat & holidays:** a saved schedule can be removed. Extra times on a
+  night, morning, afternoon, or evening step can be removed too.
+
 ## 0.4.23
 
 - **Shabbat & holidays (optional):** a separate child app and dashboard script

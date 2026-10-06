@@ -17886,9 +17886,10 @@
     delBtn.disabled = rowBusy;
     delBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (!confirm("Delete this schedule?")) return;
-      if (!schedBeginRowOp(s.id)) return;
       hapticTap();
+      const ok = await confirmAction({ message: "Delete this schedule?", confirmLabel: "Delete", danger: true });
+      if (!ok) return;
+      if (!schedBeginRowOp(s.id)) return;
       renderSchedulerActive();
       try {
         const res = await schedMutationApi("delete", { id: s.id });

@@ -21,7 +21,6 @@ for (const piece of [
   "21,22 pesachLast",
   "Sivan 6,7 shavuot",
   "repeatLaterNights",
-  "offStillOn",
   "2L * 60 * 60 * 1000",
   "mDash Holidays:",
   "holidayParentPause",

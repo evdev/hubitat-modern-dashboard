@@ -39,6 +39,8 @@ function catalog() {
   };
 }
 
+const NEAR_MS = 17 * 24 * 60 * 60 * 1000;
+let laterOpen = false;
 let model = null;
 let view = "list";
 let detailId = null;
@@ -110,6 +112,11 @@ function fridaySwitch() {
   row.appendChild(check);
   row.appendChild(document.createTextNode(" This Friday: regular candle-lighting time"));
   return row;
+}
+
+function nearHolidaySpans() {
+  const now = Number(model?.now) || Date.now();
+  return (model?.spans || []).filter((span) => Number(span.start) < now + NEAR_MS);
 }
 
 function spanById(id) {
@@ -206,54 +213,115 @@ function renderList() {
     wrap.appendChild(empty);
     return wrap;
   }
+  const now = Number(model?.now) || Date.now();
+  const near = [];
+  const later = [];
+  for (const row of rows) {
+    if (Number(row.start) < now + NEAR_MS) near.push(row);
+    else later.push(row);
+  }
   const list = ce("div", "sched-list");
-  for (const row of rows) list.appendChild(renderRow(row));
+  for (const row of near) list.appendChild(renderRow(row));
+  if (!near.length) {
+    const empty = ce("p", "sched-empty");
+    empty.textContent = "Nothing in the next two weeks.";
+    list.appendChild(empty);
+  }
+  if (later.length) list.appendChild(renderLater(later));
   wrap.appendChild(list);
   return wrap;
 }
 
+function renderLater(rows) {
+  const box = ce("div", "holiday-later");
+  const toggle = ce("button", "holiday-room-toggle");
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", laterOpen ? "true" : "false");
+  toggle.textContent = (laterOpen ? "▾ " : "▸ ") + "Other Holidays";
+  toggle.addEventListener("click", () => {
+    laterOpen = !laterOpen;
+    render();
+  });
+  box.appendChild(toggle);
+  if (!laterOpen) {
+    const hint = ce("p", "holiday-when");
+    hint.textContent = "After the next two weeks";
+    box.appendChild(hint);
+    return box;
+  }
+  const list = ce("div", "sched-list");
+  for (const row of rows) list.appendChild(renderRow(row));
+  box.appendChild(list);
+  return box;
+}
+
 function renderRow(row) {
-  const el = ce("div", "sched-row" + (row.skipped ? " is-off" : ""));
+  const el = ce("div", "sched-row holiday-list-row" + (row.skipped ? " is-off" : ""));
   el.dataset.name = `${row.name || ""} shabbat holiday`;
   const head = ce("div", "sched-row-head");
   const name = ce("div", "sched-row-name");
   name.textContent = row.name || "Holiday";
   head.appendChild(name);
-  const badge = ce("span", "holiday-badge");
-  badge.textContent = row.badge || "schedule set";
-  head.appendChild(badge);
+  head.appendChild(statusPill(row));
   el.appendChild(head);
-  const rule = ce("div", "sched-row-rule");
-  const when = ce("div");
+  const when = ce("div", "holiday-when");
   when.textContent = row.inProgress
     ? `In progress, ends ${fmt(row.end)}`
     : `${fmt(row.start)} – ${fmt(row.end)}`;
-  rule.appendChild(when);
-  const then = ce("div", "holiday-badge");
-  then.textContent = row.skipped ? "Skipped this time" : "Schedule is set";
-  rule.appendChild(then);
+  el.appendChild(when);
+  if (row.paused) {
+    const note = ce("div", "holiday-paused-note");
+    note.textContent = "schedule is paused. Will not activate.";
+    el.appendChild(note);
+  }
+  if (row.warning) {
+    const w = ce("div", "holiday-warn");
+    w.textContent = row.warning;
+    el.appendChild(w);
+  }
+  const foot = ce("div", "sched-row-foot");
+  const open = ce("span", "holiday-open");
+  open.textContent = "View schedule";
+  foot.appendChild(open);
   if (row.skipped) {
-    const undo = ce("button", "ghost-btn");
+    const undo = ce("button", "ghost-btn sched-icon-btn");
     undo.type = "button";
     undo.textContent = "Undo skip";
     undo.addEventListener("click", (e) => {
       e.stopPropagation();
       setSkip(row.spanId, true);
     });
-    el.appendChild(undo);
+    foot.appendChild(undo);
   }
-  el.appendChild(rule);
-  if (row.warning) {
-    const w = ce("div", "holiday-warn");
-    w.textContent = row.warning;
-    el.appendChild(w);
-  }
+  const pause = ce("button", "ghost-btn sched-icon-btn");
+  pause.type = "button";
+  pause.textContent = row.paused ? "Resume" : "Pause";
+  pause.addEventListener("click", (e) => {
+    e.stopPropagation();
+    togglePause(row.occasion);
+  });
+  foot.appendChild(pause);
+  el.appendChild(foot);
   el.addEventListener("click", () => {
     detailId = row.spanId;
     view = "detail";
     render();
   });
   return el;
+}
+
+function statusPill(row) {
+  const badge = ce("span", "holiday-pill");
+  if (row.skipped) {
+    badge.classList.add("is-skip");
+    badge.textContent = "Skipped this time";
+  } else {
+    const text = row.badge || "schedule set";
+    badge.textContent = text;
+    if (text.startsWith("uses") || text.startsWith("based")) badge.classList.add("is-link");
+    else badge.classList.add("is-own");
+  }
+  return badge;
 }
 
 function renderDetail() {
@@ -269,6 +337,11 @@ function renderDetail() {
   const title = ce("h3", "sched-section-title");
   title.textContent = span.name;
   wrap.appendChild(title);
+  const when = ce("p", "holiday-when");
+  when.textContent = span.skipped
+    ? `Skipped this time · ${fmt(span.start)} – ${fmt(span.end)}`
+    : `${fmt(span.start)} – ${fmt(span.end)}`;
+  wrap.appendChild(when);
   const known = new Set([...(catalog().lights || []), ...(catalog().outlets || [])].map((d) => String(d.i)));
   const missing = [];
   for (const a of span.actions || []) {
@@ -281,10 +354,10 @@ function renderDetail() {
     w.textContent = "A saved light is no longer in the dashboard: " + missing.map(deviceName).join(", ");
     wrap.appendChild(w);
   }
-  const tools = ce("div", "holiday-head");
-  const edit = ce("button", "ghost-btn");
+  const tools = ce("div", "holiday-tools");
+  const edit = ce("button", "ghost-btn sched-primary-btn");
   edit.type = "button";
-  edit.textContent = "Edit";
+  edit.textContent = "Edit schedule";
   edit.addEventListener("click", () => openWizard(span.occasion));
   tools.appendChild(edit);
   const skip = ce("button", "ghost-btn");
@@ -295,17 +368,33 @@ function renderDetail() {
     setSkip(span.id, !!span.skipped);
   });
   tools.appendChild(skip);
+  wrap.appendChild(tools);
+  const tryRow = ce("div", "holiday-tools holiday-tools-quiet");
+  const tryLabel = ce("span", "holiday-kicker");
+  tryLabel.textContent = "Try the lights";
+  tryRow.appendChild(tryLabel);
   const testStart = ce("button", "ghost-btn");
   testStart.type = "button";
-  testStart.textContent = "Run start actions now";
+  testStart.textContent = "Candle lighting";
   testStart.addEventListener("click", () => runHolidayTest(span.occasion, "start"));
-  tools.appendChild(testStart);
+  tryRow.appendChild(testStart);
   const testEnd = ce("button", "ghost-btn");
   testEnd.type = "button";
-  testEnd.textContent = "Run end actions now";
+  testEnd.textContent = "Havdalah";
   testEnd.addEventListener("click", () => runHolidayTest(span.occasion, "end"));
-  tools.appendChild(testEnd);
-  wrap.appendChild(tools);
+  tryRow.appendChild(testEnd);
+  const remove = ce("button", "ghost-btn sched-del-btn");
+  remove.type = "button";
+  remove.textContent = "Remove schedule";
+  remove.addEventListener("click", () => removeSchedule(span.occasion));
+  tryRow.appendChild(remove);
+  wrap.appendChild(tryRow);
+  const section = ce("div", "holiday-section-head");
+  const sectionTitle = ce("h4", "holiday-section");
+  sectionTitle.textContent = "Each light";
+  section.appendChild(sectionTitle);
+  section.appendChild(timelineLegend());
+  wrap.appendChild(section);
   wrap.appendChild(renderTimelines(span, span.actions || []));
   wrap.appendChild(renderEventList(span.actions || []));
   return wrap;
@@ -318,26 +407,31 @@ function renderByLight() {
   title.textContent = "Timeline by light";
   wrap.appendChild(title);
   const ids = new Map();
-  for (const span of model?.spans || []) {
+  for (const span of nearHolidaySpans()) {
     for (const d of devicesInActions(span.actions || [])) ids.set(d.id, d);
   }
   if (!lightId && ids.size) lightId = [...ids.keys()][0];
-  const picker = ce("div", "sched-segment");
+  const pickerLabel = ce("label", "holiday-kicker");
+  pickerLabel.textContent = "Light";
+  const picker = ce("select", "sched-input");
+  picker.setAttribute("aria-label", "Light");
   for (const id of ids.keys()) {
-    const b = ce("button", "sched-seg" + (id === lightId ? " is-active" : ""));
-    b.type = "button";
-    b.textContent = deviceName(id);
-    b.addEventListener("click", () => { lightId = id; render(); });
-    picker.appendChild(b);
+    const opt = ce("option");
+    opt.value = id;
+    opt.textContent = deviceName(id);
+    opt.selected = id === lightId;
+    picker.appendChild(opt);
   }
+  picker.addEventListener("change", () => { lightId = picker.value; render(); });
+  wrap.appendChild(pickerLabel);
   wrap.appendChild(picker);
   const note = alsoControlled(lightId);
   if (note) wrap.appendChild(note);
-  for (const span of (model?.spans || []).slice(0, 8)) {
+  for (const span of nearHolidaySpans().slice(0, 8)) {
     const label = ce("p", "holiday-badge");
     label.textContent = span.name;
     wrap.appendChild(label);
-    wrap.appendChild(renderOneBar(span, lightId));
+    wrap.appendChild(renderCompactBar(span, lightId));
   }
   return wrap;
 }
@@ -355,10 +449,9 @@ function renderTimelines(span, actions) {
     const row = ce("div", "holiday-bar-row");
     const name = ce("div", "holiday-bar-name");
     name.textContent = deviceName(d.id);
-    const note = alsoControlled(d.id);
-    if (note) name.appendChild(note);
+    name.title = deviceName(d.id);
     row.appendChild(name);
-    row.appendChild(renderOneBar(span, d.id, actions));
+    row.appendChild(renderCompactBar(span, d.id, actions));
     box.appendChild(row);
   }
   return box;
@@ -392,60 +485,286 @@ function timelineMarks(span) {
   return marks.sort((a, b) => a.at - b.at);
 }
 
-function renderOneBar(span, id, actions) {
+const ZOOM_MS = 8 * 3600000;
+
+function renderCompactBar(span, id, actions) {
+  const line = ce("div", "holiday-bar-line");
+  line.appendChild(renderSpanTrack(span, id, actions, { from: span.start, to: span.end, changes: true }));
+  const expand = ce("button", "ghost-btn holiday-expand");
+  expand.type = "button";
+  expand.textContent = "Expand";
+  expand.setAttribute("aria-label", "Expand " + deviceName(id) + " timeline");
+  expand.addEventListener("click", () => openTimelinePopup(span, id, actions || span.actions || []));
+  line.appendChild(expand);
+  return line;
+}
+
+function renderSpanTrack(span, id, actions, opts) {
+  const from = opts?.from ?? span.start;
+  const to = opts?.to ?? span.end;
+  const scale = Math.max(opts?.scale ?? (to - from), 1);
   const list = actions || span.actions || [];
-  const tl = buildDeviceTimeline(span, list, id);
-  const scroll = ce("div", "holiday-bar-scroll");
+  const tl = opts?.timeline || buildDeviceTimeline(span, list, id);
   const track = ce("div", "holiday-track");
   const bar = ce("div", "holiday-bar");
-  const width = Math.max(span.end - span.start, 1);
-  const leftOf = (at) => `${((at - span.start) / width) * 100}%`;
+  const leftOf = (at) => `${((at - from) / scale) * 100}%`;
   for (const seg of tl.segments) {
+    const a = Math.max(seg.start, from);
+    const b = Math.min(seg.end, to);
+    if (b <= a) continue;
     const piece = ce("div", "holiday-seg is-" + seg.state);
-    piece.style.width = `${((seg.end - seg.start) / width) * 100}%`;
+    piece.style.left = leftOf(a);
+    piece.style.width = `${((b - a) / scale) * 100}%`;
     const bits = [fmt(seg.start), seg.state];
     if (seg.state === "on" && seg.level != null) bits.push(seg.level + "%");
     piece.title = bits.join(" ");
     bar.appendChild(piece);
   }
   const now = model?.now || Date.now();
-  if (now >= span.start && now <= span.end) {
+  if (now >= from && now <= to) {
     const mark = ce("div", "holiday-now");
     mark.style.left = leftOf(now);
     bar.appendChild(mark);
   }
+  if (to < from + scale - 1000) {
+    const cap = ce("div", "holiday-zoom-cap");
+    cap.style.left = leftOf(to);
+    bar.appendChild(cap);
+  }
+  if (opts?.marks || opts?.changes) {
+    for (const change of tl.changes) {
+      if (!markInSlice(change.at, from, to, span.end)) continue;
+      const pin = ce("div", "holiday-change");
+      pin.style.left = leftOf(change.at);
+      pin.title = fmtClock(change.at);
+      bar.appendChild(pin);
+    }
+  }
   track.appendChild(bar);
+  if (opts?.marks) track.appendChild(renderHourScale(span, from, to, scale, tl.changes));
+  else if (opts?.changes) track.appendChild(renderChangeTimes(from, to, scale, tl.changes, span.end));
+  return track;
+}
+
+function renderChangeTimes(from, to, scale, changes, spanEnd) {
+  const hours = ce("div", "holiday-hours holiday-compact-times");
+  const leftOf = (at) => `${((at - from) / scale) * 100}%`;
+  const place = (at) => {
+    const pct = (at - from) / scale;
+    if (pct < 0.08) return "none";
+    if (pct > 0.92) return "translateX(-100%)";
+    return "translateX(-50%)";
+  };
+  let lastPct = -1;
+  for (const change of changes || []) {
+    if (!markInSlice(change.at, from, to, spanEnd)) continue;
+    const pct = (change.at - from) / scale;
+    if (lastPct >= 0 && pct - lastPct < 0.12) continue;
+    lastPct = pct;
+    const label = ce("span", "holiday-mark holiday-mark-change");
+    label.style.left = leftOf(change.at);
+    label.style.transform = place(change.at);
+    label.textContent = fmtClock(change.at).replace(/\s*(AM|PM)$/i, "");
+    hours.appendChild(label);
+  }
+  return hours;
+}
+
+function markInSlice(at, from, to, spanEnd) {
+  if (at < from || at > to) return false;
+  const last = to >= spanEnd - 1000;
+  return last ? at <= to : at < to;
+}
+
+function renderHourScale(span, from, to, scale, changes) {
   const hours = ce("div", "holiday-hours");
-  for (let h = 0; h <= 72; h++) {
-    const at = span.start + h * 3600000;
-    if (at > span.end) break;
+  const leftOf = (at) => `${((at - from) / scale) * 100}%`;
+  const place = (at) => {
+    const pct = (at - from) / scale;
+    if (pct < 0.12) return "none";
+    if (pct > 0.88) return "translateX(-100%)";
+    return "translateX(-50%)";
+  };
+  for (let at = Math.ceil(from / 3600000) * 3600000; at <= to; at += 3600000) {
     const tick = ce("span", "holiday-tick");
     tick.style.left = leftOf(at);
     hours.appendChild(tick);
   }
   for (const mark of timelineMarks(span)) {
+    if (!markInSlice(mark.at, from, to, span.end)) continue;
     const label = ce("span", "holiday-mark holiday-mark-" + mark.kind);
     label.style.left = leftOf(mark.at);
+    label.style.transform = place(mark.at);
     label.textContent = mark.label;
     hours.appendChild(label);
   }
-  track.appendChild(hours);
-  scroll.appendChild(track);
-  return scroll;
+  for (const change of changes || []) {
+    if (!markInSlice(change.at, from, to, span.end)) continue;
+    const label = ce("span", "holiday-mark holiday-mark-change");
+    label.style.left = leftOf(change.at);
+    label.style.transform = place(change.at);
+    label.textContent = fmtClock(change.at);
+    hours.appendChild(label);
+  }
+  return hours;
 }
 
-function renderEventList(actions) {
+function zoomSlices(span) {
+  const slices = [];
+  let at = span.start;
+  while (at < span.end - 1000) {
+    const scaleEnd = at + ZOOM_MS;
+    slices.push({ from: at, to: Math.min(span.end, scaleEnd), scale: ZOOM_MS });
+    at = scaleEnd;
+  }
+  return slices;
+}
+
+function fmtClock(ms) {
+  const tz = hubTz();
+  const use24 = catalog().use24 === true;
+  const opts = use24
+    ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: tz }
+    : { hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz };
+  return new Intl.DateTimeFormat("en-US", opts).format(new Date(ms));
+}
+
+function fmtDay(ms) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short", month: "short", day: "numeric", timeZone: hubTz(),
+  }).format(new Date(ms));
+}
+
+function openTimelinePopup(span, id, actions) {
+  closeTimelinePopup();
+  const list = actions || span.actions || [];
+  const timeline = buildDeviceTimeline(span, list, id);
+  const overlay = ce("div", "holiday-zoom");
+  overlay.id = "holiday-zoom";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", deviceName(id) + " timeline");
+  const panel = ce("div", "holiday-zoom-panel");
+  const head = ce("div", "holiday-zoom-head");
+  const title = ce("div", "holiday-zoom-title");
+  title.textContent = deviceName(id);
+  const done = ce("button", "holiday-zoom-done");
+  done.type = "button";
+  done.textContent = "Done";
+  done.addEventListener("click", closeTimelinePopup);
+  head.appendChild(title);
+  head.appendChild(done);
+  panel.appendChild(head);
+  const when = ce("p", "holiday-badge");
+  when.textContent = `${span.name} · ${fmt(span.start)} – ${fmt(span.end)}`;
+  panel.appendChild(when);
+  const note = alsoControlled(id);
+  if (note) panel.appendChild(note);
+  const lines = ce("div", "holiday-zoom-lines");
+  let lastDay = "";
+  for (const slice of zoomSlices(span)) {
+    const day = fmtDay(slice.from);
+    if (day !== lastDay) {
+      const heading = ce("div", "holiday-zoom-day");
+      heading.textContent = day;
+      lines.appendChild(heading);
+      lastDay = day;
+    }
+    const row = ce("div", "holiday-zoom-line");
+    const clock = ce("div", "holiday-zoom-clock");
+    clock.textContent = fmtClock(slice.from);
+    row.appendChild(clock);
+    row.appendChild(renderSpanTrack(span, id, list, {
+      from: slice.from,
+      to: slice.to,
+      scale: slice.scale,
+      marks: true,
+      timeline,
+    }));
+    lines.appendChild(row);
+  }
+  panel.appendChild(lines);
+  panel.appendChild(renderEventList(list.filter((a) => (a.states || []).some((s) => String(s.id) === String(id))), id));
+  overlay.appendChild(panel);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeTimelinePopup(); });
+  document.body.appendChild(overlay);
+  const onKey = (e) => { if (e.key === "Escape") closeTimelinePopup(); };
+  overlay._onKey = onKey;
+  document.addEventListener("keydown", onKey);
+  done.focus();
+}
+
+function closeTimelinePopup() {
+  const overlay = document.getElementById("holiday-zoom");
+  if (!overlay) return;
+  document.removeEventListener("keydown", overlay._onKey);
+  overlay.remove();
+}
+
+function renderEventList(actions, onlyId) {
   const list = ce("div", "holiday-events");
+  const title = ce("h4", "holiday-section");
+  title.textContent = "What happens";
+  list.appendChild(title);
+  let count = 0;
   for (const a of actions || []) {
     if (a.kind !== "devices") continue;
-    const line = ce("div");
-    const names = (a.states || []).map(stateText).join(", ");
-    line.textContent = a.skipped
-      ? `${a.question}: skipped this time (${names})`
-      : `${fmt(a.at)} ${a.question}: ${names}`;
-    list.appendChild(line);
+    const states = (a.states || []).filter((s) => !onlyId || String(s.id) === String(onlyId));
+    if (!states.length) continue;
+    list.appendChild(renderEventRow(a, states));
+    count += 1;
+  }
+  if (!count) {
+    const empty = ce("p", "sched-empty");
+    empty.textContent = "Nothing is scheduled yet.";
+    list.appendChild(empty);
   }
   return list;
+}
+
+function renderEventRow(action, states) {
+  const row = ce("div", "holiday-event");
+  const time = ce("div", "holiday-event-time");
+  time.textContent = action.skipped ? "Skipped" : fmt(action.at);
+  const body = ce("div", "holiday-event-body");
+  const label = ce("div", "holiday-event-label");
+  label.textContent = questionTitle(action.question);
+  body.appendChild(label);
+  const chips = ce("div", "holiday-chips");
+  for (const s of states) {
+    const chip = ce("span", "holiday-chip " + (s.on ? "is-on" : "is-off"));
+    let text = deviceName(s.id);
+    if (s.on && s.level != null && s.level !== "") text += " " + s.level + "%";
+    if (s.on && s.ct != null && s.ct !== "") text += " " + s.ct + "K";
+    chip.textContent = text;
+    chips.appendChild(chip);
+  }
+  body.appendChild(chips);
+  row.appendChild(time);
+  row.appendChild(body);
+  return row;
+}
+
+async function togglePause(occasion) {
+  const saved = await post("holidays/save", { revision: model.revision, pauseOccasion: occasion });
+  if (!saved?.ok) { flash(saved?.error || "Could not update", true); return; }
+  model = saved;
+  render();
+}
+
+async function removeSchedule(occasion) {
+  const label = occasionLabel(occasion);
+  if (!confirm(`Remove the ${label} schedule? It will not change lights or the hub mode. You can add it again from Set up.`)) return;
+  const saved = await post("holidays/save", {
+    revision: model.revision,
+    occasion,
+    choice: "skip",
+    template: emptyTemplate(),
+  });
+  if (!saved?.ok) { flash(saved?.error || "Could not remove", true); return; }
+  model = saved;
+  view = "list";
+  render();
 }
 
 async function setSkip(spanId, undo) {
@@ -498,13 +817,24 @@ function openWizard(occasion) {
 
 const QUESTIONS = ["start", "night", "morning", "afternoon", "evening", "end", "custom", "review"];
 
+const SETUP_STEPS = ["mode", "endmode", "where", "away", "timing", "warn"];
+
 function renderWizard() {
   const wrap = ce("div", "sched-workflow");
+  const head = ce("div", "sched-workflow-head");
   const title = ce("h3", "sched-section-title");
-  title.textContent = wizard.step === "mode" || wizard.step === "endmode" || wizard.step === "where" || wizard.step === "away" || wizard.step === "timing" || wizard.step === "warn"
+  title.textContent = SETUP_STEPS.includes(wizard.step) || wizard.step === "occasions"
     ? "Shabbat & holidays"
     : (OCCASIONS.find((o) => o.id === wizard.occasion)?.label || "Schedule");
-  wrap.appendChild(title);
+  head.appendChild(title);
+  const cancel = ce("button", "ghost-btn");
+  cancel.type = "button";
+  cancel.textContent = "Close";
+  cancel.addEventListener("click", () => { view = "list"; wizard = null; render(); });
+  head.appendChild(cancel);
+  wrap.appendChild(head);
+  const setupAt = SETUP_STEPS.indexOf(wizard.step);
+  if (setupAt >= 0) wrap.appendChild(progressBar(setupAt + 1, SETUP_STEPS.length, "Setup"));
   if (wizard.step === "mode") wrap.appendChild(modeStep("holidayMode", "Which mode should the house enter at candle lighting? Pick a mode you do not use for anything else.", "endmode"));
   else if (wizard.step === "endmode") wrap.appendChild(modeStep("endMode", "Which mode should the house return to when Shabbat or the holiday ends?", "where"));
   else if (wizard.step === "where") wrap.appendChild(whereStep());
@@ -514,12 +844,20 @@ function renderWizard() {
   else if (wizard.step === "occasions") wrap.appendChild(occasionList());
   else if (wizard.step === "choice") wrap.appendChild(choiceStep());
   else if (wizard.step === "questions") wrap.appendChild(questionStep());
-  const cancel = ce("button", "ghost-btn");
-  cancel.type = "button";
-  cancel.textContent = "Close";
-  cancel.addEventListener("click", () => { view = "list"; wizard = null; render(); });
-  wrap.appendChild(cancel);
   return wrap;
+}
+
+function progressBar(current, total, label) {
+  const box = ce("div", "holiday-progress");
+  const text = ce("span", "holiday-kicker");
+  text.textContent = `${label} · ${current} of ${total}`;
+  const track = ce("div", "holiday-progress-track");
+  const fill = ce("div", "holiday-progress-fill");
+  fill.style.width = `${Math.round((current / total) * 100)}%`;
+  track.appendChild(fill);
+  box.appendChild(text);
+  box.appendChild(track);
+  return box;
 }
 
 function modeStep(key, prompt, next) {
@@ -689,7 +1027,7 @@ function occasionList() {
   for (const o of OCCASIONS) {
     const b = ce("button", "sched-type-card");
     b.type = "button";
-    const choice = o.id === "shabbat" ? "own" : (model?.occasions?.[o.id] || "shabbat");
+    const choice = model?.occasions?.[o.id] || (o.id === "shabbat" ? "own" : "shabbat");
     b.textContent = `${o.label} — ${templateBadge(o.id, { occasions: { ...model?.occasions, [o.id]: choice } })}`;
     b.addEventListener("click", () => {
       wizard.occasion = o.id;
@@ -746,9 +1084,22 @@ function questionStep() {
   const key = QUESTIONS[wizard.q] || "review";
   if (key === "review") return reviewStep();
   const box = ce("div", "sched-step");
+  const stepNo = QUESTIONS.indexOf(key) + 1;
+  box.appendChild(progressBar(stepNo, QUESTIONS.length - 1, questionTitle(key)));
   const q = ce("p", "sched-question");
   q.textContent = questionPrompt(key);
   box.appendChild(q);
+  const goBack = () => {
+    wizard.q = Math.max(0, wizard.q - 1);
+    if (wizard.q === 0 && wizard.occasion !== "shabbat") wizard.step = "choice";
+    render();
+  };
+  const goNext = () => {
+    if (templateErrors(wizard.template).length) { flash("A device is in both lists", true); return; }
+    wizard.q += 1;
+    render();
+  };
+  box.appendChild(topNav(goBack, goNext));
   if (key === "start" || key === "end") {
     const states = key === "start" ? (wizard.template.start.states ||= []) : (wizard.template.end.states ||= []);
     box.appendChild(deviceLists(states));
@@ -762,36 +1113,30 @@ function questionStep() {
       row.appendChild(document.createTextNode(" Also do this at the start of each later night?"));
       box.appendChild(row);
     }
-    if (key === "end") {
-      const row = ce("label", "sched-hint");
-      const check = ce("input");
-      check.type = "checkbox";
-      check.checked = wizard.template.end.offStillOn !== false;
-      check.addEventListener("change", () => { wizard.template.end.offStillOn = check.checked; });
-      row.appendChild(check);
-      row.appendChild(document.createTextNode(" Turn off what is still on"));
-      box.appendChild(row);
-    }
   } else if (key === "custom") {
     box.appendChild(customEditor());
   } else {
     const groups = (wizard.template[key] ||= []);
-    if (!groups.length) groups.push({ time: "21:00", states: [] });
     groups.forEach((group, i) => {
+      const row = ce("div", "holiday-time-head");
       const time = ce("input", "sched-input");
       time.type = "time";
       time.value = group.time || "21:00";
       time.addEventListener("change", () => { group.time = time.value; });
-      box.appendChild(time);
+      row.appendChild(time);
+      const removeTime = ce("button", "ghost-btn");
+      removeTime.type = "button";
+      removeTime.textContent = "Remove";
+      removeTime.addEventListener("click", () => { groups.splice(i, 1); render(); });
+      row.appendChild(removeTime);
+      box.appendChild(row);
       box.appendChild(deviceLists(group.states ||= []));
-      if (i === groups.length - 1) {
-        const add = ce("button", "ghost-btn");
-        add.type = "button";
-        add.textContent = "Add another time";
-        add.addEventListener("click", () => { groups.push({ time: "21:00", states: [] }); render(); });
-        box.appendChild(add);
-      }
     });
+    const add = ce("button", "ghost-btn");
+    add.type = "button";
+    add.textContent = "Add another time";
+    add.addEventListener("click", () => { groups.push({ time: "21:00", states: [] }); render(); });
+    box.appendChild(add);
   }
   const errs = templateErrors(wizard.template);
   if (errs.length) {
@@ -799,23 +1144,28 @@ function questionStep() {
     w.textContent = "A device is in both the on list and the off list.";
     box.appendChild(w);
   }
-  box.appendChild(nav(() => {
-    wizard.q = Math.max(0, wizard.q - 1);
-    if (wizard.q === 0 && wizard.occasion !== "shabbat") wizard.step = "choice";
-    render();
-  }, () => {
-    if (templateErrors(wizard.template).length) { flash("A device is in both lists", true); return; }
-    wizard.q += 1;
-    render();
-  }));
+  box.appendChild(nav(goBack, goNext));
   return box;
+}
+
+function questionTitle(key) {
+  return {
+    start: "Candle lighting",
+    night: "Night",
+    morning: "Morning",
+    afternoon: "Afternoon",
+    evening: "Evening",
+    end: "Havdalah",
+    custom: "Custom time",
+    review: "Review",
+  }[key] || "Schedule";
 }
 
 function questionPrompt(key) {
   switch (key) {
     case "start": return "At candle lighting, what turns on, and what turns off?";
-    case "night": return "What turns off at night, and at what time? You can add another time.";
-    case "morning": return "What turns on in the morning, and at what time?";
+    case "night": return "What turns off (or on) at night, and at what time? You can add another time.";
+    case "morning": return "What turns on (or off) in the morning, and at what time?";
     case "afternoon": return "What should change in the afternoon, and at what time?";
     case "evening": return "What should change in the evening, before the day ends?";
     case "end": return "At havdalah, what turns off, and what turns on?";
@@ -892,7 +1242,7 @@ function roomStateSelector(devices, states) {
   const allOn = selected.length > 0 && selected.every((s) => s && s.on === true);
   const allOff = selected.length > 0 && selected.every((s) => s && s.on === false);
   for (const [on, label, active] of [[true, "On", allOn], [false, "Off", allOff], [null, "Skip", allSkip]]) {
-    const b = ce("button", "sched-seg" + (active ? " is-active" : ""));
+    const b = ce("button", stateButtonClass(on, active));
     b.type = "button";
     b.textContent = label;
     b.addEventListener("click", (e) => {
@@ -916,62 +1266,98 @@ function applyRoomState(devices, states, on) {
     if (idx >= 0) {
       states[idx].on = on;
       if (!on) { states[idx].level = null; states[idx].ct = null; }
+      else {
+        if (d.dim && states[idx].level == null) states[idx].level = 100;
+        if (d.ct && states[idx].ct == null) states[idx].ct = 3000;
+      }
     } else {
-      states.push({ id: d.id, kind: d.kind, on, level: null, ct: null });
+      states.push({ id: d.id, kind: d.kind, on, level: on && d.dim ? 100 : null, ct: on && d.ct ? 3000 : null });
     }
   }
 }
 
+function stateButtonClass(on, active) {
+  const kind = on == null ? "is-skip" : (on ? "is-on" : "is-off");
+  return "sched-seg holiday-state " + kind + (active ? " is-active" : "");
+}
+
+function timelineLegend() {
+  const row = ce("div", "holiday-legend");
+  for (const [cls, label] of [["is-on", "On"], ["is-off", "Off"], ["is-unchanged", "No change yet"]]) {
+    const item = ce("span", "holiday-legend-item");
+    const sw = ce("span", "holiday-legend-swatch " + cls);
+    item.appendChild(sw);
+    item.appendChild(document.createTextNode(label));
+    row.appendChild(item);
+  }
+  return row;
+}
+
+function holidaySliderField(label, valueText, makeTrack) {
+  const field = ce("div", "sched-field");
+  const fieldHead = ce("div", "sched-field-head");
+  const lbl = ce("label", "sched-field-label");
+  lbl.textContent = label;
+  const val = ce("span", "sched-slider-val");
+  val.textContent = valueText;
+  fieldHead.appendChild(lbl);
+  fieldHead.appendChild(val);
+  field.appendChild(fieldHead);
+  field.appendChild(makeTrack(val));
+  return field;
+}
+
 function appendHolidayDevice(box, d, states) {
     const row = ce("div", "holiday-device");
-    const name = ce("span");
+    const name = ce("span", "holiday-device-name");
     name.textContent = d.name;
     row.appendChild(name);
     const current = states.find((s) => String(s.id) === d.id);
-    const seg = ce("div", "sched-segment");
+    const seg = ce("div", "sched-segment holiday-state-seg");
     for (const [on, label] of [[true, "On"], [false, "Off"], [null, "Skip"]]) {
       const active = on == null ? !current : current && current.on === on;
-      const b = ce("button", "sched-seg" + (active ? " is-active" : ""));
+      const b = ce("button", stateButtonClass(on, active));
       b.type = "button";
       b.textContent = label;
       b.addEventListener("click", () => {
         const idx = states.findIndex((s) => String(s.id) === d.id);
         if (on == null) { if (idx >= 0) states.splice(idx, 1); }
-        else if (idx >= 0) { states[idx].on = on; if (!on) { states[idx].level = null; states[idx].ct = null; } }
-        else states.push({ id: d.id, kind: d.kind, on, level: null, ct: null });
+        else if (idx >= 0) {
+          states[idx].on = on;
+          if (!on) { states[idx].level = null; states[idx].ct = null; }
+          else {
+            if (d.dim && states[idx].level == null) states[idx].level = 100;
+            if (d.ct && states[idx].ct == null) states[idx].ct = 3000;
+          }
+        }
+        else states.push({ id: d.id, kind: d.kind, on, level: on && d.dim ? 100 : null, ct: on && d.ct ? 3000 : null });
         render();
       });
       seg.appendChild(b);
     }
     row.appendChild(seg);
     if (current?.on && d.kind === "light" && (d.dim || d.ct)) {
-      const extras = ce("div", "holiday-level");
-      if (d.dim) {
-        const level = ce("input", "sched-input");
-        level.type = "number";
-        level.min = "1";
-        level.max = "100";
-        level.placeholder = "Level %";
-        level.value = current.level == null ? "" : String(current.level);
-        level.addEventListener("change", () => {
-          current.level = level.value === "" ? null : Number(level.value);
-        });
-        extras.appendChild(level);
+      const api = M();
+      if (d.dim && typeof api.makeLevelTrackSlider === "function") {
+        if (current.level == null) current.level = 100;
+        row.appendChild(holidaySliderField("Brightness", (current.level ?? 100) + "%", (val) => {
+          return api.makeLevelTrackSlider({
+            value: current.level ?? 100,
+            min: 1,
+            max: 100,
+            onChange: (level) => { current.level = level; val.textContent = level + "%"; },
+          }).el;
+        }));
       }
-      if (d.ct) {
-        const ct = ce("input", "sched-input");
-        ct.type = "number";
-        ct.min = "2500";
-        ct.max = "6000";
-        ct.step = "100";
-        ct.placeholder = "Kelvin";
-        ct.value = current.ct == null ? "" : String(current.ct);
-        ct.addEventListener("change", () => {
-          current.ct = ct.value === "" ? null : Number(ct.value);
-        });
-        extras.appendChild(ct);
+      if (d.ct && typeof api.makeCtTrackSlider === "function") {
+        if (current.ct == null) current.ct = 3000;
+        row.appendChild(holidaySliderField("White balance (K)", (current.ct ?? 3000) + "K", (val) => {
+          return api.makeCtTrackSlider({
+            value: current.ct ?? 3000,
+            onChange: (k) => { current.ct = k; val.textContent = k + "K"; },
+          }).el;
+        }));
       }
-      row.appendChild(extras);
     }
     box.appendChild(row);
 }
@@ -1053,6 +1439,21 @@ function reviewStep() {
   const q = ce("p", "sched-question");
   q.textContent = "Review the next occurrence, then save.";
   box.appendChild(q);
+  const goBack = () => { wizard.q -= 1; render(); };
+  const goSave = async () => {
+    model = await post("holidays/save", {
+      revision: model.revision,
+      settings: wizard.settings,
+      occasion: wizard.occasion,
+      choice: wizard.occasion === "shabbat" ? "own" : (wizard.choice || "own"),
+      template: wizard.template,
+    });
+    if (!model?.ok) { flash(model?.error || "Could not save", true); return; }
+    flash("Saved");
+    wizard.step = "occasions";
+    render();
+  };
+  box.appendChild(topNav(goBack, goSave, "Save"));
   const holder = ce("div");
   holder.textContent = "Loading preview…";
   box.appendChild(holder);
@@ -1075,20 +1476,14 @@ function reviewStep() {
       holder.appendChild(w);
     }
   }).catch(() => { holder.textContent = "Could not preview."; });
-  box.appendChild(nav(() => { wizard.q -= 1; render(); }, async () => {
-    model = await post("holidays/save", {
-      revision: model.revision,
-      settings: wizard.settings,
-      occasion: wizard.occasion,
-      choice: wizard.occasion === "shabbat" ? "own" : (wizard.choice || "own"),
-      template: wizard.template,
-    });
-    if (!model?.ok) { flash(model?.error || "Could not save", true); return; }
-    flash("Saved");
-    wizard.step = "occasions";
-    render();
-  }, "Save"));
+  box.appendChild(nav(goBack, goSave, "Save"));
   return box;
+}
+
+function topNav(back, next, nextLabel) {
+  const row = nav(back, next, nextLabel);
+  row.classList.add("holiday-nav-top");
+  return row;
 }
 
 function nav(back, next, nextLabel) {
