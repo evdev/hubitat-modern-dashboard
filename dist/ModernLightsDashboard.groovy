@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.21
+// Modern Dashboard v0.4.22
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.21"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.22"
 
 definition(
     name: "Modern Dashboard",
@@ -69,7 +69,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.21 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.22 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -1658,6 +1658,8 @@ mappings {
     path("/hsm") { action: [GET: "setHsmGet", POST: "setHsm"] }
     path("/scene/activate") { action: [GET: "activateSceneGet", POST: "activateScene"] }
     path("/favorites") { action: [GET: "saveFavoritesGet", POST: "saveFavorites"] }
+    path("/device/label") { action: [GET: "saveDeviceLabel", POST: "saveDeviceLabel"] }
+    path("/room/name") { action: [GET: "saveRoomName", POST: "saveRoomName"] }
     path("/embed-cards") { action: [POST: "saveEmbedCards"] }
     path("/time-cards") { action: [POST: "saveTimeCards"] }
     path("/notification-cards") { action: [POST: "saveNotificationCards"] }
@@ -1700,7 +1702,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.21.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.22.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1785,7 +1787,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.21.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.22.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -3280,6 +3282,188 @@ def parseRequestJson() {
         } catch (e) {}
     }
     return body
+}
+
+def renameError(String message, int status) {
+    return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(message)}}", status)
+}
+
+def renameRequestValue(String key) {
+    def body = parseRequestJson()
+    if (body instanceof Map && body.containsKey(key)) return [present: true, value: body[key]]
+    try {
+        if (params instanceof Map && params.containsKey(key)) return [present: true, value: params[key]]
+    } catch (e) {}
+    return [present: false, value: null]
+}
+
+def sanitizeRenameText(value) {
+    def text = value == null ? "" : value.toString()
+    text = text.replaceAll("\\p{Cntrl}", " ").trim()
+    return text
+}
+
+def dashboardDeviceLists() {
+    def lists = [
+        lights, outletSwitches, thermostats, locks, garageDoors, ceilingFans, valves,
+        cameras, rtspCameras, htmlTileDevices, tempSensors, allWindowShades(), allAudioDevices()
+    ]
+    for (spec in sensorTypeInputs()) lists << spec.list
+    return lists
+}
+
+def findDashboardDevice(id) {
+    if (id == null) return null
+    def want = id.toString()
+    for (list in dashboardDeviceLists()) {
+        for (d in asDeviceList(list)) {
+            try {
+                if (d?.id?.toString() == want) return d
+            } catch (e) {}
+        }
+    }
+    return null
+}
+
+def selectedDeviceIdsInRoom(String roomName) {
+    def ids = new HashSet()
+    if (!roomName) return ids
+    for (list in dashboardDeviceLists()) {
+        for (d in asDeviceList(list)) {
+            if (d == null) continue
+            def rn = null
+            try { rn = d.getRoomName()?.toString() } catch (e) { rn = null }
+            if (rn != roomName) continue
+            try { ids.add(d.id.toString()) } catch (e) {}
+        }
+    }
+    return ids
+}
+
+def roomMembershipIds(room) {
+    if (room == null) return null
+    def raw = null
+    try { raw = room.deviceIds } catch (e) { return null }
+    if (raw == null) return null
+    def items = (raw instanceof Collection) ? raw : [raw]
+    def ids = []
+    for (item in items) {
+        if (item == null) continue
+        try { ids << (item as Long) } catch (e) { return null }
+    }
+    return ids
+}
+
+def postHubRoomSave(Map bodyMap) {
+    if (hubSecurity && !hubAuthCookie()) {
+        return [ok: false, error: "Hub Login Security is on. Enter hub admin credentials under Hub file access, then try again."]
+    }
+    def json = new groovy.json.JsonBuilder(bodyMap).toString()
+    def params = [
+        uri: "http://127.0.0.1:8080",
+        path: "/room/save",
+        contentType: "application/json",
+        requestContentType: "application/json",
+        body: json,
+        textParser: true,
+        timeout: 20
+    ]
+    def headers = hubRequestHeaders()
+    if (headers) params.headers = headers
+    try {
+        def failed = null
+        httpPost(params) { resp ->
+            def code = resp?.status ?: resp?.statusCode ?: 200
+            def text = ""
+            try { text = readHttpBody(resp?.data) } catch (e) { text = "" }
+            if ((code as int) >= 400) failed = "room save failed"
+            else if (text?.contains("<html") || text?.contains("<HTML")) {
+                failed = hubSecurity
+                    ? "Hub Login Security is on. Enter hub admin credentials under Hub file access, then try again."
+                    : "room save failed"
+            }
+        }
+        if (failed) return [ok: false, error: failed]
+        return [ok: true]
+    } catch (e) {
+        def msg = e?.message?.toString() ?: "room save failed"
+        log.warn "Modern Dashboard: room save failed — ${msg}"
+        if (msg.contains("'<',") || msg.toLowerCase().contains("login")) {
+            return [ok: false, error: "Hub Login Security is on. Enter hub admin credentials under Hub file access, then try again."]
+        }
+        return [ok: false, error: "room save failed"]
+    }
+}
+
+def saveDeviceLabel() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def idField = renameRequestValue("id")
+    def labelField = renameRequestValue("label")
+    if (!idField.present || !labelField.present) return renameError("missing params", 400)
+    def dev = findDashboardDevice(idField.value)
+    if (dev == null) return renameError("device not found", 404)
+    def next = sanitizeRenameText(labelField.value)
+    if (next.length() > 255) return renameError("label too long", 400)
+    try {
+        dev.setLabel(next)
+    } catch (e) {
+        def msg = e?.message?.toString() ?: "could not rename device"
+        log.warn "Modern Dashboard: device label failed — id=${dev.id} ${msg}"
+        return renameError(msg, 500)
+    }
+    def labelAfter = null
+    try { labelAfter = dev.getLabel()?.toString()?.trim() } catch (e) { labelAfter = null }
+    if (!next && labelAfter) return renameError("could not clear device label", 500)
+    def shown = dev.displayName?.toString() ?: ""
+    log.info "Modern Dashboard: renamed device ${dev.id} to ${shown}"
+    return renderJsonNoStore(withAuthJson("{\"ok\":true,\"id\":${dev.id},\"n\":${jsonStr(shown)}}"), 200)
+}
+
+def saveRoomName() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def idField = renameRequestValue("id")
+    def nameField = renameRequestValue("name")
+    if (!idField.present || !nameField.present) return renameError("missing params", 400)
+    def idStr = idField.value?.toString()?.trim()
+    if (!idStr) return renameError("missing params", 400)
+    if (idStr == "-1") return renameError("unassigned is not a room", 400)
+    def next = sanitizeRenameText(nameField.value)
+    if (!next) return renameError("room name required", 400)
+    if (next.length() > 255) return renameError("room name too long", 400)
+    def rooms = app.getRooms() ?: []
+    def room = rooms.find { it?.id?.toString() == idStr }
+    if (!room) return renameError("room not found", 404)
+    def currentName = room.name?.toString()?.trim() ?: ""
+    def dup = rooms.find {
+        it?.id?.toString() != idStr && it?.name?.toString()?.trim()?.equalsIgnoreCase(next)
+    }
+    if (dup) return renameError("a room with that name already exists", 400)
+    if (currentName == next) {
+        return renderJsonNoStore(withAuthJson("{\"ok\":true,\"id\":${room.id},\"name\":${jsonStr(currentName)}}"), 200)
+    }
+    def membership = roomMembershipIds(room)
+    if (membership == null) return renameError("room membership unavailable", 400)
+    def beforeSet = new HashSet(membership.collect { it.toString() })
+    for (sid in selectedDeviceIdsInRoom(currentName)) {
+        if (!beforeSet.contains(sid)) return renameError("room membership snapshot is incomplete", 400)
+    }
+    def posted = postHubRoomSave([roomId: (room.id as Long), name: next, deviceIds: membership])
+    if (!posted.ok) return renameError(posted.error ?: "room save failed", 500)
+    def afterRooms = app.getRooms() ?: []
+    def saved = afterRooms.find { it?.id?.toString() == idStr }
+    if (!saved || saved.name?.toString()?.trim() != next) {
+        log.warn "Modern Dashboard: room rename did not stick — id=${idStr}"
+        return renameError("room name did not update", 500)
+    }
+    def afterMembership = roomMembershipIds(saved)
+    if (afterMembership == null) return renameError("room membership changed unexpectedly", 500)
+    def afterSet = new HashSet(afterMembership.collect { it.toString() })
+    if (beforeSet != afterSet) {
+        log.warn "Modern Dashboard: room membership changed during rename — id=${idStr}"
+        return renameError("room membership changed unexpectedly", 500)
+    }
+    log.info "Modern Dashboard: renamed room ${saved.id} to ${next}"
+    return renderJsonNoStore(withAuthJson("{\"ok\":true,\"id\":${saved.id},\"name\":${jsonStr(next)}}"), 200)
 }
 
 def lightControlMeterDelayMsValue() {

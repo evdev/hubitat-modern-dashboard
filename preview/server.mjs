@@ -728,6 +728,48 @@ function applyCmd(id, c, v, pin) {
   return { ok: false, error: "device not found" };
 }
 
+const mockHardwareNames = new Map();
+let mockHardwareSeeded = false;
+
+function mockDeviceLists() {
+  return [
+    state.devices, state.outlets, state.thermostats, state.tempSensors, state.sensors,
+    state.locks, state.garageDoors, state.windowShades, state.ceilingFans, state.music,
+    state.cameras, state.valves,
+  ];
+}
+
+function seedMockHardwareNames() {
+  if (mockHardwareSeeded) return;
+  mockHardwareSeeded = true;
+  for (const list of mockDeviceLists()) {
+    for (const dev of list || []) {
+      if (dev?.i == null || mockHardwareNames.has(dev.i)) continue;
+      mockHardwareNames.set(dev.i, String(dev.n || ("Device " + dev.i)));
+    }
+  }
+}
+
+function findMockNamedDevice(id) {
+  seedMockHardwareNames();
+  const nid = Number(id);
+  for (const list of mockDeviceLists()) {
+    const dev = (list || []).find((d) => Number(d.i) === nid);
+    if (dev) return dev;
+  }
+  return null;
+}
+
+function mockRoomMemberIds(roomId) {
+  const ids = [];
+  for (const list of mockDeviceLists()) {
+    for (const dev of list || []) {
+      if (Number(dev.r) === Number(roomId)) ids.push(Number(dev.i));
+    }
+  }
+  return ids.sort((a, b) => a - b);
+}
+
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -1695,6 +1737,88 @@ const server = createServer(async (req, res) => {
     state.tileNotifications = [...(state.tileNotifications || []), entry].slice(-20);
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ ok: true, tileNotifications: state.tileNotifications }));
+  }
+  if (p === "/device/label") {
+    let body = null;
+    if (req.method === "POST") {
+      try { body = await readJsonBody(req); } catch {
+        res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+      }
+    }
+    const hasLabel = body && Object.prototype.hasOwnProperty.call(body, "label")
+      || url.searchParams.has("label");
+    const id = body?.id ?? url.searchParams.get("id");
+    if (id == null || !hasLabel) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "missing params" }));
+    }
+    const dev = findMockNamedDevice(id);
+    if (!dev) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "device not found" }));
+    }
+    const label = String((body && Object.prototype.hasOwnProperty.call(body, "label") ? body.label : url.searchParams.get("label")) ?? "")
+      .replace(/[\u0000-\u001F\u007F]/g, " ")
+      .trim();
+    if (label.length > 255) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "label too long" }));
+    }
+    dev.n = label || mockHardwareNames.get(dev.i) || ("Device " + dev.i);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ ok: true, id: dev.i, n: dev.n }));
+  }
+  if (p === "/room/name") {
+    let body = null;
+    if (req.method === "POST") {
+      try { body = await readJsonBody(req); } catch {
+        res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+      }
+    }
+    const hasName = body && Object.prototype.hasOwnProperty.call(body, "name")
+      || url.searchParams.has("name");
+    const idRaw = body?.id ?? url.searchParams.get("id");
+    if (idRaw == null || !hasName) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "missing params" }));
+    }
+    const id = Number(idRaw);
+    if (id === -1) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "unassigned is not a room" }));
+    }
+    const name = String((body && Object.prototype.hasOwnProperty.call(body, "name") ? body.name : url.searchParams.get("name")) ?? "")
+      .replace(/[\u0000-\u001F\u007F]/g, " ")
+      .trim();
+    if (!name) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "room name required" }));
+    }
+    if (name.length > 255) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "room name too long" }));
+    }
+    const room = (state.rooms || []).find((r) => Number(r.id) === id);
+    if (!room) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "room not found" }));
+    }
+    const dup = (state.rooms || []).find((r) => Number(r.id) !== id && String(r.name || "").trim().toLowerCase() === name.toLowerCase());
+    if (dup) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "a room with that name already exists" }));
+    }
+    const before = mockRoomMemberIds(id);
+    if (String(room.name || "").trim() !== name) room.name = name;
+    const after = mockRoomMemberIds(id);
+    if (before.join(",") !== after.join(",")) {
+      res.writeHead(500, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "room membership changed unexpectedly" }));
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ ok: true, id: room.id, name: room.name }));
   }
   if (p === "/favorites") {
     ensureEmbedConfig();

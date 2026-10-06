@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.22
+
+- **Rename:** on Lights, Favorites, Blinds, Fans, Sensors, Thermostats, or Music,
+  **More options → Rename**, then tap a name. Lights and Sensors can also rename
+  a room title. Device renames write Hubitat’s Device Label. Room renames write
+  the hub room name and keep that room’s devices. **Done** leaves the mode.
+  **Unassigned** cannot be renamed.
+
 ## 0.4.21
 
 - **Thermostats:** Fan / Dry / Dehumidify cards use the green accent (including

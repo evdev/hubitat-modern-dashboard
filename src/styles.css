@@ -1927,6 +1927,55 @@ body.fav-embed-expanded-open{overflow:hidden}
 .fav-notif-empty{font-size:.84rem;font-weight:600;color:var(--muted);padding:8px 2px}
 
 /* __MLD_CSS_SPLIT__ */
+.rename-mode .topbar-overflow { display: none; }
+.rename-mode #all-on-track,
+.rename-mode #all-off-track { display: none !important; }
+.rename-mode .tile-bulb,
+.rename-mode .tile-socket,
+.rename-mode .slider,
+.rename-mode .tile-fav,
+.rename-mode .room-slide-track,
+.rename-mode .shade-actions,
+.rename-mode .fan-controls,
+.rename-mode .music-transport,
+.rename-mode .music-volume,
+.rename-mode .quick-fav-tstat-controls,
+.rename-mode .sensor-card-controls { pointer-events: none; }
+.rename-mode #rooms .room:not([data-room-id="-1"]) .room-name,
+.rename-mode .sensor-room:not([data-room-id="-1"]) .room-name,
+.rename-mode #rooms .tile-name,
+.rename-mode .quick-fav-grid .tile.dimmer .tile-name,
+.rename-mode .quick-fav-grid .tile.switch .tile-name,
+.rename-mode .shade-tile .quick-fav-name,
+.rename-mode .fan-tile .quick-fav-name,
+.rename-mode .music-name,
+.rename-mode .sensor-card-name,
+.rename-mode .quick-fav-tstat-name {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.rename-mode #rooms .room:not([data-room-id="-1"]) .room-name::after,
+.rename-mode .sensor-room:not([data-room-id="-1"]) .room-name::after,
+.rename-mode #rooms .tile-name::after,
+.rename-mode .quick-fav-grid .tile.dimmer .tile-name::after,
+.rename-mode .quick-fav-grid .tile.switch .tile-name::after,
+.rename-mode .shade-tile .quick-fav-name::after,
+.rename-mode .fan-tile .quick-fav-name::after,
+.rename-mode .music-name::after,
+.rename-mode .sensor-card-name::after,
+.rename-mode .quick-fav-tstat-name::after {
+  content: " ✎";
+  font-size: 0.85em;
+  color: var(--accent);
+}
+.rename-preview {
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
 .sched-list-wrap { display: flex; flex-direction: column; gap: 14px; }
 .sched-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 4px; }
 .sched-section-title { margin: 0; font-size: 1.125rem; font-weight: 700; }

@@ -94,6 +94,8 @@ room header shows as **Island**, not "Kitchen Island".
 | Room all on / all off | Use the **On** / **Off** buttons in the room header (lights only) |
 | Whole house all on / all off | Use **All on** / **All off** in the top bar (lights only) |
 
+**Rename:** On Lights, Favorites, Blinds, Fans, Sensors, Thermostats, or Music, open **More options → Rename**, then tap a name. Lights and Sensors can also rename a room title. **Done** leaves the mode. A device rename writes Hubitat’s Device Label (the name shown here and on the Devices page). The Device Name is left as-is. A room rename writes the Hubitat room name and keeps that room’s devices. **Unassigned** is not a room. Favorites show the full device label; room tiles still drop a leading room name.
+
 **Color popup:** RGB bulbs get white (color temperature) and/or color tabs as
 supported by the device. Changes apply live while you adjust; click outside the
 popup or press Escape to dismiss. Tap the tile body (not the name) to toggle

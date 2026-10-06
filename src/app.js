@@ -2051,6 +2051,7 @@
   }
 
   async function fetchData() {
+    const fetchSeq = postCall("beginDataFetch");
     const d = await getJson("data");
     if (d && typeof d.dashboardPasswordRequired === "boolean") {
       postCall("syncDashboardAuthState", !!d.dashboardPasswordRequired);
@@ -2088,6 +2089,8 @@
       const schedHook = globalThis.__MLD["applySchedules" + "FromData"];
       if (typeof schedHook === "function") schedHook(d);
     }
+    if (d && fetchSeq != null) d.__fetchSeq = fetchSeq;
+    postCall("applyRenameNameHolds", d);
     return d;
   }
 
@@ -2200,6 +2203,31 @@
   function syncRoomMap() {
     roomMap.clear();
     for (const r of rooms) roomMap.set(r.id, r.name);
+  }
+
+  function renameableDevice(id) {
+    const nid = Number(id);
+    for (const list of [devices, outlets, windowShades, ceilingFans, thermostats, music, sensors, tempSensors, valves]) {
+      const hit = list?.find?.((d) => Number(d.i) === nid);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function showRenamed(dev) {
+    const full = dev.n || "";
+    const id = String(dev.i);
+    document.querySelectorAll(`[data-id="${id}"], [data-tstat-id="${id}"]`).forEach((root) => {
+      root.dataset.name = full.toLowerCase();
+      const nameEl = root.querySelector(".tile-name, .quick-fav-name, .music-name, .sensor-card-name, .quick-fav-tstat-name");
+      if (!nameEl) return;
+      const strip = !!root.closest("#rooms") || (!!root.closest(".sensor-room, .quick-body-sensors") && !root.closest(".quick-fav-grid"));
+      const rid = normalizeRoomId(dev.r);
+      const shown = strip && rid !== -1 ? (stripRoomPrefix(full, roomMap.get(rid)) || full) : full;
+      nameEl.textContent = shown;
+      if (full && shown !== full) nameEl.title = full;
+      else nameEl.removeAttribute("title");
+    });
   }
 
   // ---------- render ----------
@@ -6290,8 +6318,6 @@
   }
 
 
-  // __MLD_SPLIT__
-
   function currentNavOrderFromDom() {
     const nav = document.querySelector(".quick-nav");
     if (!nav) return [];
@@ -6303,6 +6329,8 @@
   function updateNavDraftOrderFromDom() {
     navReorderDraftOrder = currentNavOrderFromDom();
   }
+
+  // __MLD_SPLIT__
 
   function showAllNavForReorder() {
     const nav = document.querySelector(".quick-nav");
@@ -7154,6 +7182,7 @@
   }
 
   function enterReorderMode() {
+    if (renameMode) exitRenameMode();
     if (tabMode && activeTab === "cameras" && cameras.length) {
       if (!isLocalOrigin()) {
         flash("Camera reorder requires the local dashboard URL", true);
@@ -7260,6 +7289,148 @@
     buildDom();
   }
 
+  let renameMode = false;
+  let dataFetchSeq = 0;
+  let renameNameFloor = 0;
+  const heldDeviceNames = new Map();
+  const heldRoomNames = new Map();
+  let renameDialogEl = null;
+  function cleanRename(raw) {
+    return String(raw ?? "").replace(/[\u0000-\u001F\u007F]/g, " ").trim();
+  }
+
+  function beginDataFetch() {
+    return ++dataFetchSeq;
+  }
+
+  function markRenameNamesFresh() {
+    renameNameFloor = dataFetchSeq;
+  }
+
+  function holdDeviceName(id, name) {
+    heldDeviceNames.set(Number(id), name == null ? "" : String(name));
+    markRenameNamesFresh();
+  }
+
+  function holdRoomName(id, name) {
+    heldRoomNames.set(normalizeRoomId(id), String(name));
+    markRenameNamesFresh();
+  }
+
+  function applyRenameNameHolds(d) {
+    if (!d || d.__fetchSeq == null) return;
+    if (d.__fetchSeq > renameNameFloor) {
+      heldDeviceNames.clear();
+      heldRoomNames.clear();
+      return;
+    }
+    for (const room of d.rooms || []) {
+      const id = normalizeRoomId(room.id);
+      if (heldRoomNames.has(id)) room.name = heldRoomNames.get(id);
+    }
+    for (const key of ["devices", "outlets", "windowShades", "ceilingFans", "thermostats", "music", "sensors", "tempSensors", "valves"]) {
+      for (const dev of d[key] || []) {
+        if (heldDeviceNames.has(Number(dev.i))) dev.n = heldDeviceNames.get(Number(dev.i));
+      }
+    }
+  }
+
+  function tileDisplayName(dev, el) {
+    const full = dev?.n || ("Device " + (dev?.i ?? ""));
+    if (!el?.closest?.("#rooms")) return full;
+    const rid = normalizeRoomId(dev?.r);
+    return (dev?.n && rid !== -1 ? stripRoomPrefix(dev.n, roomMap.get(rid)) : null) || full;
+  }
+
+  function syncVisibleRoomNames() {
+    document.querySelectorAll(".room[data-room-id]").forEach((card) => {
+      const id = normalizeRoomId(card.dataset.roomId);
+      if (id === -1) return;
+      const name = roomMap.get(id) || "Room";
+      card.dataset.roomName = String(name).toLowerCase();
+      const nameEl = card.querySelector(".room-name");
+      if (nameEl && nameEl.textContent !== name) nameEl.textContent = name;
+    });
+  }
+
+  function renameSurface() {
+    if (reorderMode) return null;
+    const key = (quickPopupOpenType && quickPopupOpenType !== "lights")
+      ? quickPopupOpenType
+      : ((tabMode && activeTab) || "lights");
+    return "lights,favorites,blinds,fans,sensors,thermostats,music".split(",").includes(key) ? key : null;
+  }
+
+  function isRenameMode() {
+    return renameMode;
+  }
+
+  function updateRenameMenuVisibility() {
+    const btn = document.getElementById("menu-rename");
+    if (!btn) return;
+    btn.hidden = renameSurface() == null;
+  }
+
+  function refreshDeviceTiles(id) {
+    const nid = Number(id);
+    for (const rec of [devMap.get(nid), outletMap.get(nid), favDevMap.get(nid)]) {
+      if (rec?.data) syncTileState(rec, rec.data);
+    }
+  }
+
+  function applyDeviceLabel(id, name) {
+    const nid = Number(id);
+    const next = name == null ? "" : String(name);
+    holdDeviceName(nid, next);
+    for (const list of [devices, outlets, windowShades, ceilingFans, thermostats, music, sensors, tempSensors, valves]) {
+      for (const dev of list || []) if (Number(dev.i) === nid) dev.n = next;
+    }
+    for (const rec of [devMap.get(nid), outletMap.get(nid), favDevMap.get(nid)]) {
+      if (rec?.data) rec.data.n = next;
+    }
+    refreshDeviceTiles(nid);
+  }
+
+  function applyRoomName(id, name) {
+    const nid = normalizeRoomId(id);
+    const next = String(name);
+    holdRoomName(nid, next);
+    const room = rooms.find((r) => normalizeRoomId(r.id) === nid);
+    if (room) room.name = next;
+    roomMap.set(nid, next);
+    syncVisibleRoomNames();
+    for (const dev of devices) if (normalizeRoomId(dev.r) === nid) refreshDeviceTiles(dev.i);
+    for (const dev of outlets) if (normalizeRoomId(dev.r) === nid) refreshDeviceTiles(dev.i);
+    for (const dev of sensors.concat(tempSensors, valves)) if (normalizeRoomId(dev.r) === nid) showRenamed(dev);
+    applySearch();
+  }
+
+  function closeRenameDialog() {
+    if (renameDialogEl) renameDialogEl.remove();
+    renameDialogEl = null;
+  }
+
+  function setRenameDialog(el) {
+    renameDialogEl = el;
+  }
+
+  function setRenameMode(on) {
+    renameMode = !!on;
+  }
+
+  function exitRenameMode() {
+    if (!renameMode) return;
+    renameMode = false;
+    APP_EL?.classList.remove("rename-mode");
+    closeRenameDialog();
+    if (REORDER_DONE_BTN && !reorderMode) {
+      REORDER_DONE_BTN.hidden = true;
+      REORDER_DONE_BTN.textContent = "Done";
+      REORDER_DONE_BTN.setAttribute("aria-label", "Save order");
+      REORDER_DONE_BTN.title = "Save order";
+    }
+  }
+
   let topbarOverflowDismiss = null;
 
   function closeTopbarOverflowMenu() {
@@ -7274,12 +7445,13 @@
   }
 
   function openTopbarOverflowMenu() {
-    if (!OVERFLOW_MENU || !OVERFLOW_BTN || reorderMode) return;
+    if (!OVERFLOW_MENU || !OVERFLOW_BTN || reorderMode || renameMode) return;
     updateLocalModeMenuUI();
     updateCamerasLayoutMenuVisibility();
     updateSensorsOrgMenuVisibility();
     updateAddEmbedMenuVisibility();
     updateReorderMenuLabel();
+    updateRenameMenuVisibility();
     OVERFLOW_MENU.hidden = false;
     OVERFLOW_BTN.setAttribute("aria-expanded", "true");
     const onClick = (e) => {
@@ -7714,6 +7886,7 @@
     if (fullRerender && !reorderMode) buildDom();
     updateRoomSnapshotUi();
     updateStates();
+    syncVisibleRoomNames();
     updateClimateWidgets();
     applySearch();
     refreshQuickPopupIfOpen();
@@ -8146,11 +8319,26 @@
     rec.el.classList.toggle("off", !on);
     rec.stateEl.textContent = on ? "On" : "Off";
     const bulb = qs(".tile-bulb", rec.el);
-    if (bulb) bulb.setAttribute("aria-pressed", on ? "true" : "false");
+    if (bulb) {
+      bulb.setAttribute("aria-pressed", on ? "true" : "false");
+      const display = tileDisplayName(dev, rec.el);
+      bulb.setAttribute("aria-label", "Toggle " + display);
+    }
     const socket = qs(".tile-socket", rec.el);
-    if (socket) socket.setAttribute("aria-pressed", on ? "true" : "false");
+    if (socket) {
+      socket.setAttribute("aria-pressed", on ? "true" : "false");
+      const display = tileDisplayName(dev, rec.el);
+      socket.setAttribute("aria-label", "Toggle " + display);
+    }
     const nameEl = qs(".tile-name", rec.el);
-    if (nameEl) nameEl.classList.toggle("color-capable", rec.isDim);
+    if (nameEl) {
+      nameEl.classList.toggle("color-capable", rec.isDim);
+      const display = tileDisplayName(dev, rec.el);
+      if (nameEl.textContent !== display) nameEl.textContent = display;
+      if (dev.n && display !== dev.n) nameEl.title = dev.n;
+      else nameEl.removeAttribute("title");
+      rec.el.dataset.name = String(dev.n || "").toLowerCase();
+    }
     if (rec.isOutlet) {
       rec.levelEl.textContent = outletsSeparateTab ? roomLabel(dev.r) : "Outlet";
     } else {
@@ -10596,6 +10784,10 @@
 
 
 
+  function isFullFavoriteSize(size) {
+    return size === "full" || size === "tall" || size === "large" || size === "viewport";
+  }
+
   // __MLD_SPLIT2__
 
   function favoritesPopupSignature() {
@@ -10679,10 +10871,6 @@
     clearFavoriteSizeClasses(el);
     el.classList.add("fav-size-" + size);
     el.dataset.favSize = size;
-  }
-
-  function isFullFavoriteSize(size) {
-    return size === "full" || size === "tall" || size === "large" || size === "viewport";
   }
 
   function makeFavoriteEntryElement(entry) {
@@ -12890,7 +13078,9 @@
     updateSensorsOrgMenuVisibility();
     updateAddEmbedMenuVisibility();
     updateReorderMenuLabel();
+    updateRenameMenuVisibility();
     updateTabActiveStates();
+    if (isRenameMode() && !"lights,favorites,blinds,fans,sensors,thermostats,music".split(",").includes(id)) exitRenameMode();
     if (nonLights) {
       switch (id) {
         case "favorites": showFavoritesPanel(); break;
@@ -13376,7 +13566,13 @@
   }
 
   if (REORDER_DONE_BTN) {
-    REORDER_DONE_BTN.addEventListener("click", finishReorderMode);
+    REORDER_DONE_BTN.addEventListener("click", () => {
+      if (isRenameMode()) {
+        exitRenameMode();
+        return;
+      }
+      finishReorderMode();
+    });
   }
 
   if (REORDER_CANCEL_BTN) {
@@ -13395,6 +13591,14 @@
     MENU_REORDER_BTN.addEventListener("click", () => {
       closeTopbarOverflowMenu();
       enterReorderMode();
+    });
+  }
+
+  const MENU_RENAME_BTN = document.getElementById("menu-rename");
+  if (MENU_RENAME_BTN) {
+    MENU_RENAME_BTN.addEventListener("click", () => {
+      closeTopbarOverflowMenu();
+      enterRenameMode();
     });
   }
 
@@ -14626,12 +14830,171 @@
     });
   }
 
+  async function postRename(path, body) {
+    let result = await postJsonSilent(path, body);
+    if (result.ok || result.error !== "missing params") return result;
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(body)) q.set(k, v == null ? "" : String(v));
+    try {
+      const r = await fetch(withToken(path + "?" + q), { cache: "no-store", headers: { Accept: "application/json" } });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      applyDashSessionFromResponse(data);
+      return { ok: r.ok, data, error: data?.error };
+    } catch {
+      return { ok: false, error: "Request failed" };
+    }
+  }
+
   // __MLD_SPLIT3__
+
+  function enterRenameMode() {
+    if (reorderMode) { flash("Finish reordering first", true); return; }
+    const surface = renameSurface();
+    if (!surface) { flash("Open a device tab to rename", true); return; }
+    setRenameMode(true);
+    APP_EL?.classList.add("rename-mode");
+    closeTopbarOverflowMenu();
+    if (REORDER_CANCEL_BTN) REORDER_CANCEL_BTN.hidden = true;
+    if (REORDER_DONE_BTN) {
+      REORDER_DONE_BTN.hidden = false;
+      REORDER_DONE_BTN.setAttribute("aria-label", "Done renaming");
+    }
+    flash(surface === "lights" || surface === "sensors" ? "Tap a room or device name to rename" : "Tap a device name to rename");
+  }
+
+  document.addEventListener("click", (e) => {
+    if (!isRenameMode() || e.target?.closest?.(".confirm-popup")) return;
+    const surface = renameSurface();
+    if (!surface) return;
+    const roomNameEl = e.target?.closest?.(".room-name");
+    if (roomNameEl && (surface === "lights" || surface === "sensors")) {
+      const card = roomNameEl.closest(".room");
+      if (surface === "lights" && !card?.closest("#rooms")) return;
+      if (surface === "sensors" && !card?.classList.contains("sensor-room")) return;
+      const id = normalizeRoomId(card?.dataset.roomId);
+      if (id === -1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openRoomRenameDialog(id);
+      return;
+    }
+    const nameEl = e.target?.closest?.(".tile-name, .quick-fav-name, .music-name, .sensor-card-name, .quick-fav-tstat-name");
+    if (!nameEl) return;
+    const host = nameEl.closest("[data-id], [data-tstat-id]");
+    const rawId = host?.dataset.id || host?.dataset.tstatId;
+    if (!rawId) return;
+    if (surface === "favorites" ? !nameEl.closest(".quick-fav-grid") : !!nameEl.closest("[hidden]")) return;
+    if (surface === "lights" && !nameEl.closest("#rooms")) return;
+    const dev = renameableDevice(rawId);
+    if (!dev) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openDeviceRenameDialog(dev);
+  }, true);
+
+  function openRenameDialog(opts) {
+    closeRenameDialog();
+    const popup = ce("div", "confirm-popup open");
+    popup.setAttribute("role", "dialog");
+    popup.setAttribute("aria-modal", "true");
+    popup.setAttribute("aria-labelledby", "rename-dialog-heading");
+    popup.innerHTML = '<div class="confirm-panel fav-embed-editor-panel"><h2 class="fav-embed-editor-heading" id="rename-dialog-heading"></h2><p class="fav-embed-editor-help"></p><label class="fav-embed-field"><span>Name</span><input class="topbar-overflow-input fav-embed-title-input" type="text" maxlength="255"></label><p class="rename-preview" hidden></p><div class="fav-embed-editor-error" hidden></div><div class="confirm-actions"><button type="button" class="ghost-btn confirm-cancel">Cancel</button><button type="button" class="confirm-btn">Save</button></div></div>';
+    const panel = popup.firstElementChild;
+    popup.querySelector("h2").textContent = opts.title;
+    popup.querySelector(".fav-embed-editor-help").textContent = opts.help;
+    const input = popup.querySelector("input");
+    input.value = opts.value || "";
+    const preview = popup.querySelector(".rename-preview");
+    const err = popup.querySelector(".fav-embed-editor-error");
+    const save = popup.querySelector(".confirm-btn");
+    const paint = () => {
+      if (!opts.previewFor) return;
+      preview.hidden = false;
+      preview.textContent = opts.previewFor(cleanRename(input.value));
+    };
+    paint();
+    input.addEventListener("input", paint);
+    const close = () => closeRenameDialog();
+    popup.querySelector(".confirm-cancel").onclick = close;
+    bindPopupDismiss(popup, panel, null, close);
+    save.addEventListener("click", async () => {
+      const next = cleanRename(input.value);
+      if (opts.emptyInvalid && !next) {
+        err.hidden = false;
+        err.textContent = "Enter a name";
+        return;
+      }
+      err.hidden = true;
+      save.disabled = true;
+      const ok = await opts.onSave(next, err);
+      save.disabled = false;
+      if (ok) close();
+    });
+    appendPopup(popup);
+    setRenameDialog(popup);
+    requestAnimationFrame(() => { input.focus(); input.select(); });
+  }
+
+  function openDeviceRenameDialog(dev) {
+    const rid = normalizeRoomId(dev.r);
+    const roomName = rid === -1 ? null : (roomMap.get(rid) ?? null);
+    openRenameDialog({
+      title: "Rename device",
+      help: "Updates the Hubitat device label. Empty clears it.",
+      value: dev.n || "",
+      previewFor: renameSurface() === "lights" || renameSurface() === "sensors" ? ((label) => (
+        "Room tiles: " + (stripRoomPrefix(label, roomName) || label || "device name")
+      )) : null,
+      onSave: async (label, err) => {
+        const result = await postRename("device/label", { id: dev.i, label });
+        if (!result.ok) {
+          err.hidden = false;
+          err.textContent = result.error || "Could not rename device";
+          return false;
+        }
+        applyDeviceLabel(dev.i, result.data?.n != null ? String(result.data.n) : label);
+        showRenamed(dev);
+        flash("Device renamed");
+        return true;
+      },
+    });
+  }
+
+  function openRoomRenameDialog(roomId) {
+    const id = normalizeRoomId(roomId);
+    if (id === -1) return;
+    openRenameDialog({
+      title: "Rename room",
+      help: "This changes the room name in Hubitat. Devices stay in the room. Device labels are not changed.",
+      value: roomMap.get(id) || "",
+      emptyInvalid: true,
+      onSave: async (name, err) => {
+        const dup = rooms.some((r) => normalizeRoomId(r.id) !== id && String(r.name || "").trim().toLowerCase() === name.toLowerCase());
+        if (dup) {
+          err.hidden = false;
+          err.textContent = "A room with that name already exists";
+          return false;
+        }
+        const result = await postRename("room/name", { id, name });
+        if (!result.ok) {
+          err.hidden = false;
+          err.textContent = result.error || "Could not rename room";
+          return false;
+        }
+        applyRoomName(id, result.data?.name != null ? String(result.data.name) : name);
+        flash("Room renamed");
+        return true;
+      },
+    });
+  }
+
 
   // ---------- shades / fans / music / sensors / scenes (post3; keeps post2 under cloud MQTT limit) ----------
   function makeShadeTile(shade, context) {
     const inFav = context === "favorites";
     const tile = ce("div", "shade-tile" + (inFav ? " quick-fav-span" : ""));
+    tile.dataset.id = shade.i;
     tile.dataset.name = String(shade.n || "").toLowerCase();
     const head = ce("div", "quick-fav-row-head");
     const info = ce("div", "shade-info");
@@ -14809,6 +15172,7 @@
     const speeds = ceilingFanSpeeds(fan);
     const idx = speeds.indexOf(sp);
     const tile = ce("div", "fan-tile" + (on ? " is-on" : "") + (inFav ? " quick-fav-span" : ""));
+    tile.dataset.id = fan.i;
     tile.dataset.name = String(fan.n || "").toLowerCase();
     tile.dataset.speed = on ? sp : "off";
 
@@ -15007,6 +15371,7 @@
     const canPlayPause = ctrl.play || ctrl.pause;
 
     const row = ce("div", "music-row" + (playing ? " is-playing" : "") + (inFav ? " quick-fav-span" : ""));
+    row.dataset.id = dev.i;
     row.dataset.name = String(dev.n || "").toLowerCase();
 
     const art = ce("div", "music-art" + (playing ? " playing" : ""));
@@ -15871,6 +16236,7 @@
     const meta = SENSOR_TYPE_META[dev.t] || SENSOR_TYPE_META.generic;
     const card = ce("div", "sensor-card sensor-card--" + (dev.t || "generic"));
     card.style.setProperty("--sensor-accent", meta.accent);
+    card.dataset.id = dev.i;
     card.dataset.name = String(dev.n || "").toLowerCase();
     const top = ce("div", "sensor-card-top");
     const icon = ce("span", "sensor-card-icon");
