@@ -46,6 +46,9 @@ assert(/holidayTemplateSlots[\s\S]*"night"[\s\S]*"evening"[\s\S]*template\?\.cus
 assert(groovy.includes("holidayModeThisRun"), "device commands in the same run must not reread a stale location.mode");
 assert(groovy.includes("def holidayPlain"), "JSON saved into state must be copied into plain maps");
 assert(groovy.includes("def holidayPutCalendar"), "calendar fetches must replace state.calendar");
+assert(groovy.includes("singleThreaded: true"), "mode changes and the schedule must not run at the same time");
+assert(groovy.includes("config.pausedOccasions = list"), "pausing one occasion must be written back onto state.config");
+assert(groovy.includes("afterEnd ? at < (day.end as long)"), "a custom time after the end is outside the day when it lands early");
 
 assert(parent.includes('path("/holidays")'), "parent must expose /holidays");
 assert(parent.includes("def holidayRunAction"), "parent must run holiday device actions");

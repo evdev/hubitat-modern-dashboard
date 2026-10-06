@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.51
+
+- **Shabbat & holidays:** if the hub does not enter the holiday mode, the change
+  is retried and device commands wait. A custom time set for after the end stays
+  after the end, and pausing one occasion is saved. Update mDash Shabbat and
+  Holidays.
+
 ## 0.4.50
 
 - **Shabbat & holidays:** saving a schedule, pausing, and refreshing the calendar
