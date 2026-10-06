@@ -65,7 +65,9 @@ def initialize() {
 
 def holidayParentPause(boolean hidden) {
     holidayEnsureState()
-    state.runtime.parentHidden = hidden
+    def rt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    rt.parentHidden = hidden
+    state.runtime = rt
     if (hidden) {
         try { unschedule("holidayFire") } catch (e) {}
         log.info "mDash Holidays: paused because the scheduler is hidden. The hub mode was left as it is."
@@ -78,8 +80,14 @@ def holidayParentPause(boolean hidden) {
 def holidayTogglePause() {
     holidayEnsureState()
     boolean next = !(state.config.settings.paused == true)
-    state.config.settings.paused = next
-    state.runtime.revision = (state.runtime.revision ?: 0) + 1
+    def config = new LinkedHashMap(state.config)
+    def settings = config.settings instanceof Map ? new LinkedHashMap(config.settings) : holidayDefaultSettings()
+    settings.paused = next
+    config.settings = settings
+    state.config = config
+    def rt = new LinkedHashMap(state.runtime)
+    rt.revision = (rt.revision ?: 0) + 1
+    state.runtime = rt
     if (next) {
         try { unschedule("holidayFire") } catch (e) {}
         log.info "mDash Holidays: paused. The hub mode was left as it is."
@@ -93,7 +101,9 @@ def holidayTogglePause() {
 def holidayStartTestSpan() {
     holidayEnsureState()
     long start = now() + 2 * 60 * 1000
-    state.runtime.testSpan = [id: "test", start: start, end: start + 10 * 60 * 1000]
+    def rt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    rt.testSpan = [id: "test", start: start, end: start + 10 * 60 * 1000]
+    state.runtime = rt
     holidayArm()
     log.info "mDash Holidays: test span armed for 2 minutes from now"
 }
@@ -118,22 +128,23 @@ def holidayModeChanged(evt) {
     holidayEnsureState()
     def span = holidayActiveSpan(now())
     if (!span) return
-    def rt = state.runtime
-    def active = rt.activeSpan
+    def active = state.runtime?.activeSpan
     if (!active || active.id?.toString() != span.id?.toString()) return
     def holidayMode = state.config.settings.holidayMode?.toString()
     if (active.held == true && mode == holidayMode) {
+        active = new LinkedHashMap(active)
         active.held = false
         active.startRan = true
-        state.runtime.activeSpan = active
+        holidayPutRuntime([activeSpan: active])
         log.info "mDash Holidays: holiday mode set manually — continuing this span"
         holidayCatchUp()
         return
     }
     if (active.held == true) return
     if (active.startRan == true && active.ended != true && mode != holidayMode) {
+        active = new LinkedHashMap(active)
         active.overridden = true
-        state.runtime.activeSpan = active
+        holidayPutRuntime([activeSpan: active])
         log.info "mDash Holidays: mode left the holiday mode — this span will not be forced back"
     }
 }
@@ -197,14 +208,26 @@ def holidaysSave(body) {
         def errs = holidayTemplateErrors(body.template)
         if (errs) return [ok: false, error: holidayErrorMessage(errs), errors: errs, revision: state.runtime.revision ?: 0]
     }
-    if (body?.settings) state.config.settings = holidayMergeSettings(state.config.settings, body.settings)
+    if (body?.settings) {
+        def config = state.config instanceof Map ? new LinkedHashMap(state.config) : [:]
+        config.settings = holidayMergeSettings(config.settings, body.settings)
+        state.config = config
+    }
     if (body?.pauseOccasion) holidayTogglePause(body.pauseOccasion.toString())
     if (body?.occasion) {
         def id = body.occasion.toString()
-        if (body.choice) state.config.occasions[id] = body.choice.toString()
-        if (body.template) state.config.templates[id] = body.template
+        def config = state.config instanceof Map ? new LinkedHashMap(state.config) : [:]
+        def occasions = config.occasions instanceof Map ? new LinkedHashMap(config.occasions) : [:]
+        def templates = config.templates instanceof Map ? new LinkedHashMap(config.templates) : [:]
+        if (body.choice) occasions[id] = body.choice.toString()
+        if (body.template) templates[id] = holidayPlain(body.template)
+        config.occasions = occasions
+        config.templates = templates
+        state.config = config
     }
-    state.runtime.revision = (state.runtime.revision ?: 0) + 1
+    def savedRt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    savedRt.revision = (savedRt.revision ?: 0) + 1
+    state.runtime = savedRt
     holidayMarkPassedDone()
     if (holidayQueryChanged()) holidayFetch(true)
     else holidayArm()
@@ -217,19 +240,22 @@ def holidaysSkip(body) {
     holidayEnsureState()
     def id = body?.spanId?.toString()
     if (!id) return [ok: false, error: "missing span"]
-    def list = state.runtime.skippedSpanIds ?: []
+    def rt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    def list = rt.skippedSpanIds instanceof List ? new ArrayList(rt.skippedSpanIds) : []
     if (body?.undo == true) list = list.findAll { it?.toString() != id }
     else if (!list.contains(id)) list << id
-    state.runtime.skippedSpanIds = list
-    def active = state.runtime.activeSpan
+    rt.skippedSpanIds = list
+    def active = rt.activeSpan
     if (body?.undo != true && active?.id?.toString() == id) {
+        active = active instanceof Map ? new LinkedHashMap(active) : [:]
         active.ended = true
         active.held = true
-        state.runtime.activeSpan = active
+        rt.activeSpan = active
         try { unschedule("holidayFire") } catch (e) {}
         log.info "mDash Holidays: skipped the rest of this span. The hub mode was left as it is."
     }
-    state.runtime.revision = (state.runtime.revision ?: 0) + 1
+    rt.revision = (rt.revision ?: 0) + 1
+    state.runtime = rt
     holidayArm()
     def status = holidaysStatus()
     status.ok = true
@@ -297,8 +323,37 @@ def holidayConfigCopy() {
 
 def holidayMergeSettings(current, incoming) {
     def next = current instanceof Map ? new LinkedHashMap(current) : holidayDefaultSettings()
-    incoming.each { k, v -> next[k] = v }
+    incoming.each { k, v -> next[k?.toString()] = holidayPlain(v) }
     return next
+}
+
+// Hubitat state cannot store JsonSlurper LazyMaps or GStrings.
+def holidayPlain(value) {
+    if (value instanceof Map) {
+        def out = [:]
+        value.each { k, v -> out[k == null ? "null" : k.toString()] = holidayPlain(v) }
+        return out
+    }
+    if (value instanceof Collection) {
+        def out = []
+        value.each { v -> out << holidayPlain(v) }
+        return out
+    }
+    if (value instanceof GString || value instanceof CharSequence) return value.toString()
+    if (value instanceof Number || value instanceof Boolean || value == null) return value
+    return value.toString()
+}
+
+def holidayPutCalendar(Map patch) {
+    def cal = state.calendar instanceof Map ? new LinkedHashMap(state.calendar) : [:]
+    patch.each { k, v -> cal[k] = v }
+    state.calendar = cal
+}
+
+def holidayPutRuntime(Map patch) {
+    def rt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    patch.each { k, v -> rt[k] = v }
+    state.runtime = rt
 }
 
 def holidayPaused() {
@@ -380,7 +435,7 @@ def holidayQueryKey() {
     def lat = ""
     def lon = ""
     try { lat = location?.latitude?.toString() ?: ""; lon = location?.longitude?.toString() ?: "" } catch (e) {}
-    return "${s.israel == true ? 'il' : 'diaspora'}|${s.candleMin ?: 18}|${hav.type ?: 'nightfall'}|${hav.minutes ?: ''}|${lat}|${lon}|${holidayTzId()}"
+    return "${s.israel == true ? 'il' : 'diaspora'}|${s.candleMin ?: 18}|${hav.type ?: 'nightfall'}|${hav.minutes ?: ''}|${lat}|${lon}|${holidayTzId()}".toString()
 }
 
 def holidayQueryChanged() {
@@ -402,7 +457,7 @@ def holidayFetch(boolean force) {
         zip = location?.zipCode
     } catch (e) {}
     if ((lat == null || lon == null || !tz) && !zip) {
-        state.calendar.error = "Hub location is not set."
+        holidayPutCalendar([error: "Hub location is not set."])
         return
     }
     def s = state.config.settings
@@ -418,27 +473,31 @@ def holidayFetch(boolean force) {
     try {
         httpGet([uri: url, timeout: 30]) { resp ->
             if (resp.status != 200) {
-                state.calendar.error = "HebCal returned ${resp.status}."
+                holidayPutCalendar([error: "HebCal returned ${resp.status}.".toString()])
                 runIn(6 * 60 * 60, holidayFetchRetry)
                 return
             }
             def data = resp.data
             def items = data?.items
             if (!(items instanceof List)) {
-                state.calendar.error = "HebCal response had no items."
+                holidayPutCalendar([error: "HebCal response had no items."])
                 runIn(6 * 60 * 60, holidayFetchRetry)
                 return
             }
-            state.calendar.boundaries = holidayBoundaries(items)
-            state.calendar.holidays = holidayHolidayRows(items)
-            state.calendar.query = holidayQueryKey()
-            state.calendar.fetchedAt = now()
-            state.calendar.error = ""
-            log.info "mDash Holidays: calendar updated (${state.calendar.holidays.size()} holiday days)"
+            def boundaries = holidayBoundaries(items)
+            def holidays = holidayHolidayRows(items)
+            holidayPutCalendar([
+                boundaries: boundaries,
+                holidays: holidays,
+                query: holidayQueryKey(),
+                fetchedAt: now(),
+                error: ""
+            ])
+            log.info "mDash Holidays: calendar updated (${holidays.size()} holiday days)"
             holidayArm()
         }
     } catch (e) {
-        state.calendar.error = "Could not reach HebCal."
+        holidayPutCalendar([error: "Could not reach HebCal."])
         log.warn "mDash Holidays: fetch failed — ${e}"
         try { runIn(6 * 60 * 60, holidayFetchRetry) } catch (ignored) {}
     }
@@ -1138,20 +1197,25 @@ def holidayExecute(a, long nowMs) {
     def active = state.runtime.activeSpan ?: [:]
     if (a.kind == "modeEnter") {
         if (holidayDoNotStart(current)) {
-            state.runtime.activeSpan = [id: a.spanId, start: a.at, end: holidaySpanEnd(a.spanId), held: true, overridden: false, startRan: false, ended: false]
+            holidayPutRuntime([activeSpan: [id: a.spanId, start: a.at, end: holidaySpanEnd(a.spanId), held: true, overridden: false, startRan: false, ended: false]])
             holidayMarkDone(a.id?.toString(), nowMs, "held")
             log.info "mDash Holidays: held — hub is ${current}"
             return
         }
         holidaySetMode(holidayMode)
-        state.runtime.activeSpan = [id: a.spanId, start: a.at, end: holidaySpanEnd(a.spanId), held: false, overridden: false, startRan: true, ended: false]
+        holidayPutRuntime([activeSpan: [id: a.spanId, start: a.at, end: holidaySpanEnd(a.spanId), held: false, overridden: false, startRan: true, ended: false]])
         holidayMarkDone(a.id?.toString(), nowMs, "mode")
         return
     }
     if (a.kind == "modeExit") {
         if (active.held != true && active.overridden != true && holidayCurrentMode() == holidayMode) holidaySetMode(endMode)
-        if (active instanceof Map) { active.ended = true; state.runtime.activeSpan = active }
-        if (a.spanId?.toString() == "test") state.runtime.testSpan = null
+        if (active instanceof Map) {
+            active = new LinkedHashMap(active)
+            active.ended = true
+        }
+        def patch = [activeSpan: active]
+        if (a.spanId?.toString() == "test") patch.testSpan = null
+        holidayPutRuntime(patch)
         holidayMarkDone(a.id?.toString(), nowMs, "mode")
         holidayRemember(a.spanId?.toString(), "ended")
         return
@@ -1168,7 +1232,7 @@ def holidayExecute(a, long nowMs) {
     def result = parent.holidayRunAction(a.states ?: [])
     holidayMarkDone(a.id?.toString(), nowMs, "ran")
     log.info "mDash Holidays: ran ${a.question} — ${result}"
-    holidayRemember(a.spanId?.toString(), "ran ${a.question}")
+    holidayRemember(a.spanId?.toString(), "ran ${a.question}".toString())
 }
 
 def holidayFixMode(built, long nowMs) {
@@ -1185,11 +1249,11 @@ def holidayFixMode(built, long nowMs) {
     if (active?.overridden == true) return
     if (span && (active == null || active.id?.toString() != span.id?.toString() || active.startRan != true)) {
         if (holidayDoNotStart(current)) {
-            state.runtime.activeSpan = [id: span.id, start: span.start, end: span.end, held: true, overridden: false, startRan: false, ended: false]
+            holidayPutRuntime([activeSpan: [id: span.id, start: span.start, end: span.end, held: true, overridden: false, startRan: false, ended: false]])
             return
         }
         holidaySetMode(holidayMode)
-        state.runtime.activeSpan = [id: span.id, start: span.start, end: span.end, held: false, overridden: false, startRan: true, ended: false]
+        holidayPutRuntime([activeSpan: [id: span.id, start: span.start, end: span.end, held: false, overridden: false, startRan: true, ended: false]])
         return
     }
     if (active?.startRan == true && span && active.id?.toString() == span.id?.toString() && current != holidayMode) {
@@ -1201,8 +1265,9 @@ def holidayFixMode(built, long nowMs) {
         if ((s.end as long) <= nowMs && (s.end as long) > nowMs - 36L * 60 * 60 * 1000) {
             if (current == holidayMode && active?.id?.toString() == s.id?.toString() && active?.ended != true && active?.held != true && active?.overridden != true) {
                 holidaySetMode(settings.endMode?.toString())
+                active = new LinkedHashMap(active)
                 active.ended = true
-                state.runtime.activeSpan = active
+                holidayPutRuntime([activeSpan: active])
             }
         }
     }
@@ -1221,28 +1286,42 @@ def holidaySpanEnd(spanId) {
     return null
 }
 
+// location.mode stays at the old value for the rest of this execution after setMode.
+def holidayModeThisRun = null
+
 def holidaySetMode(String mode) {
     if (!mode) return
-    if (holidayCurrentMode() == mode) return
+    if (holidayCurrentMode() == mode) {
+        holidayModeThisRun = mode
+        return
+    }
+    def rt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
     try {
-        state.runtime.changingMode = true
+        rt.changingMode = true
+        state.runtime = rt
         location.setMode(mode)
+        holidayModeThisRun = mode
         log.info "mDash Holidays: mode → ${mode}"
     } catch (e) {
         log.warn "mDash Holidays: mode change failed — ${e}"
     } finally {
-        state.runtime.changingMode = false
+        rt.changingMode = false
+        state.runtime = rt
     }
 }
 
 def holidayCurrentMode() {
+    if (holidayModeThisRun != null) return holidayModeThisRun
     try { return location?.mode?.toString() ?: "" } catch (e) { return "" }
 }
 
 def holidayMarkDone(String id, long ts, String how) {
     if (!id) return
-    if (!(state.runtime.doneIds instanceof Map)) state.runtime.doneIds = [:]
-    state.runtime.doneIds[id] = ts
+    def rt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    def done = rt.doneIds instanceof Map ? new LinkedHashMap(rt.doneIds) : [:]
+    done[id.toString()] = ts
+    rt.doneIds = done
+    state.runtime = rt
 }
 
 def holidayMarkPassedDone() {
@@ -1261,20 +1340,24 @@ def holidayMarkPassedDone() {
 }
 
 def holidayPruneDone(long nowMs) {
+    def rt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
     def next = [:]
-    (state.runtime.doneIds ?: [:]).each { id, ts ->
+    (rt.doneIds ?: [:]).each { id, ts ->
         long t = 0
         try { t = ts as long } catch (e) { t = 0 }
-        if (nowMs - t < 4L * 24 * 60 * 60 * 1000) next[id] = ts
+        if (nowMs - t < 4L * 24 * 60 * 60 * 1000) next[id.toString()] = ts
     }
-    state.runtime.doneIds = next
+    rt.doneIds = next
+    state.runtime = rt
 }
 
 def holidayRemember(String spanId, String note) {
-    def hist = state.runtime.history instanceof List ? state.runtime.history : []
-    hist << [spanId: spanId, note: note, ts: now()]
+    def rt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    def hist = rt.history instanceof List ? new ArrayList(rt.history) : []
+    hist << [spanId: spanId?.toString() ?: "", note: note?.toString() ?: "", ts: now()]
     if (hist.size() > 10) hist = hist[-10..-1]
-    state.runtime.history = hist
+    rt.history = hist
+    state.runtime = rt
 }
 
 def holidayMissedNote(String spanId) {

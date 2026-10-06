@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.50
+
+- **Shabbat & holidays:** saving a schedule, pausing, and refreshing the calendar
+  no longer fail when Hubitat rejects the stored state. Update mDash Shabbat
+  and Holidays.
+
 ## 0.4.49
 
 - **Shabbat & holidays:** the upcoming list covers the next two weeks. The timing

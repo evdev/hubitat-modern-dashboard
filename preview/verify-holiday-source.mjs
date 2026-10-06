@@ -40,9 +40,12 @@ assert(/holidayTemplateSlots[\s\S]*"night"[\s\S]*"evening"[\s\S]*template\?\.cus
 {
   const save = groovy.slice(groovy.indexOf("def holidaysSave"), groovy.indexOf("def holidaysSkip"));
   const checked = save.indexOf("holidayTemplateErrors");
-  const stored = save.indexOf("state.config.templates[id] = body.template");
+  const stored = save.indexOf("templates[id] = holidayPlain(body.template)");
   assert(checked >= 0 && stored > checked, "a rejected schedule must not be stored");
 }
+assert(groovy.includes("holidayModeThisRun"), "device commands in the same run must not reread a stale location.mode");
+assert(groovy.includes("def holidayPlain"), "JSON saved into state must be copied into plain maps");
+assert(groovy.includes("def holidayPutCalendar"), "calendar fetches must replace state.calendar");
 
 assert(parent.includes('path("/holidays")'), "parent must expose /holidays");
 assert(parent.includes("def holidayRunAction"), "parent must run holiday device actions");
