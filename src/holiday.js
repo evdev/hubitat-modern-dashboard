@@ -45,13 +45,16 @@ function catalog() {
   };
 }
 
-const NEAR_MS = 17 * 24 * 60 * 60 * 1000;
 let laterOpen = false;
+let settingsAdvancedOpen = false;
+let setupOffered = false;
 let model = null;
 let view = "list";
 let detailId = null;
 let lightId = null;
 let wizard = null;
+let settingsDraft = null;
+let settingsSavedFingerprint = "";
 let hostEl = null;
 
 function injectCss() {
@@ -113,10 +116,28 @@ function parentUpdateNote() {
   return "Reload the dashboard to schedule thermostats.";
 }
 
-function holidayErrorText(errs) {
-  const detailed = (errs || []).find((e) => e.error);
-  if (detailed?.error) return String(detailed.error).replace(/^./, (c) => c.toUpperCase());
-  return "A device is listed twice with different commands.";
+function errorStepKey(label) {
+  return String(label || "").split(" ")[0];
+}
+
+function namedErrorText(errs) {
+  const lines = [];
+  const seen = new Set();
+  for (const err of errs || []) {
+    const step = questionTitle(errorStepKey(err.label));
+    const detail = err.error
+      ? String(err.error).replace(/^./, (c) => c.toUpperCase())
+      : "A device is listed twice with different commands.";
+    const line = `${step}: ${detail}`;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines.join(" ");
+}
+
+function errorsForStep(errs, key) {
+  return (errs || []).filter((err) => errorStepKey(err.label) === key);
 }
 
 function stateIsOn(s) {
@@ -174,9 +195,15 @@ function fridaySwitch() {
   return row;
 }
 
-function nearHolidaySpans() {
+function isWithinTwoWeeks(start) {
+  const at = Number(start);
+  if (!Number.isFinite(at)) return false;
   const now = Number(model?.now) || Date.now();
-  return (model?.spans || []).filter((span) => Number(span.start) < now + NEAR_MS);
+  return dayDistance(now, at) < 14;
+}
+
+function nearHolidaySpans() {
+  return (model?.spans || []).filter((span) => isWithinTwoWeeks(span.start));
 }
 
 function spanById(id) {
@@ -211,7 +238,7 @@ function mount(host) {
   if (globalThis.mldHolidayMissing) {
     host.innerHTML = "";
     const p = ce("p", "sched-empty");
-    p.textContent = "Upload mld-holiday.js to File Manager.";
+    p.textContent = "Shabbat & holidays did not load. Install mDash Shabbat and Holidays from Hubitat Package Manager, then reload this page.";
     host.appendChild(p);
     return;
   }
@@ -230,19 +257,49 @@ function renderShell(text) {
 
 function render() {
   if (!hostEl) return;
+  clearDetailLabelObservers();
   hostEl.innerHTML = "";
   if (!model?.ok && model?.error) {
     renderShell(model.error);
-    return;
-  }
-  if (model?.apiVersion !== HOLIDAY_API_VERSION) {
+  } else if (model?.apiVersion !== HOLIDAY_API_VERSION) {
     renderShell("Update the Shabbat & holidays files so the dashboard and hub app match.");
-    return;
-  }
-  if (view === "wizard") hostEl.appendChild(renderWizard());
+  }   else if (view === "wizard") hostEl.appendChild(renderWizard());
   else if (view === "detail") hostEl.appendChild(renderDetail());
+  else if (view === "settings") hostEl.appendChild(renderSettings());
   else if (view === "light") hostEl.appendChild(renderByLight());
   else hostEl.appendChild(renderList());
+  markPressedButtons(hostEl);
+  syncSchedulerChrome();
+  if (view === "list" && !setupOffered && needsFirstRun()) {
+    setupOffered = true;
+    setTimeout(() => { if (view === "list") openWizard(null); }, 0);
+  }
+}
+
+let scheduleChromeHidden = false;
+let refreshingScheduler = false;
+
+function syncSchedulerChrome() {
+  const cover = view !== "list";
+  if (cover === scheduleChromeHidden || refreshingScheduler) return;
+  scheduleChromeHidden = cover;
+  const refresh = M()?.renderSchedulerView;
+  if (typeof refresh !== "function") return;
+  refreshingScheduler = true;
+  try { refresh(); }
+  finally { refreshingScheduler = false; }
+}
+
+function needsFirstRun() {
+  const s = model?.settings;
+  if (!s) return false;
+  return !String(s.holidayMode || "").trim() || !String(s.endMode || "").trim();
+}
+
+function hubModeNames() {
+  const live = catalog().hubModes || [];
+  if (live.length) return live;
+  return Array.isArray(model?.modes) ? model.modes.map(String) : [];
 }
 
 function renderList() {
@@ -254,18 +311,16 @@ function renderList() {
   const actions = ce("div", "holiday-head");
   const setup = ce("button", "ghost-btn");
   setup.type = "button";
-  setup.textContent = "Set up Shabbat & holidays";
-  setup.addEventListener("click", () => openWizard(null));
+  const firstRun = needsFirstRun();
+  setup.textContent = firstRun ? "Set up" : "Settings";
+  setup.addEventListener("click", () => { if (firstRun) openWizard(null); else openSettings(); });
   actions.appendChild(setup);
   const byLight = ce("button", "ghost-btn");
   byLight.type = "button";
-  byLight.textContent = "Timeline by device";
+  byLight.textContent = "By device";
   byLight.addEventListener("click", () => { view = "light"; lightId = null; render(); });
   actions.appendChild(byLight);
   head.appendChild(actions);
-  if (model?.settings?.earlyFriday?.type && model.settings.earlyFriday.type !== "off") {
-    wrap.appendChild(fridaySwitch());
-  }
   wrap.appendChild(head);
   if (model?.calendar?.error) {
     const w = ce("p", "holiday-warn");
@@ -284,11 +339,10 @@ function renderList() {
     wrap.appendChild(empty);
     return wrap;
   }
-  const now = Number(model?.now) || Date.now();
   const near = [];
   const later = [];
   for (const row of rows) {
-    if (Number(row.start) < now + NEAR_MS) near.push(row);
+    if (isWithinTwoWeeks(row.start)) near.push(row);
     else later.push(row);
   }
   const list = ce("div", "sched-list");
@@ -303,23 +357,44 @@ function renderList() {
   return wrap;
 }
 
-function renderLater(rows) {
-  const box = ce("div", "holiday-later");
+function markPressedButtons(root) {
+  if (!root) return;
+  const groups = new Map();
+  for (const b of root.querySelectorAll("button.sched-seg, button.sched-type-card")) {
+    const parent = b.parentElement;
+    if (!parent) continue;
+    if (!groups.has(parent)) groups.set(parent, []);
+    groups.get(parent).push(b);
+  }
+  for (const group of groups.values()) {
+    const selectable = group[0].classList.contains("sched-seg")
+      || group[0].parentElement.classList.contains("sched-mode-grid")
+      || group.some((b) => b.classList.contains("is-active"));
+    if (!selectable) continue;
+    for (const b of group) b.setAttribute("aria-pressed", b.classList.contains("is-active") ? "true" : "false");
+  }
+}
+
+function disclosureButton(open, label) {
   const toggle = ce("button", "holiday-room-toggle");
   toggle.type = "button";
-  toggle.setAttribute("aria-expanded", laterOpen ? "true" : "false");
-  toggle.textContent = (laterOpen ? "▾ " : "▸ ") + "Other Holidays";
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  toggle.innerHTML = '<svg class="holiday-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+  const text = ce("span");
+  text.textContent = label;
+  toggle.appendChild(text);
+  return toggle;
+}
+
+function renderLater(rows) {
+  const box = ce("div", "holiday-later");
+  const toggle = disclosureButton(laterOpen, `Later, after the next two weeks (${rows.length})`);
   toggle.addEventListener("click", () => {
     laterOpen = !laterOpen;
     render();
   });
   box.appendChild(toggle);
-  if (!laterOpen) {
-    const hint = ce("p", "holiday-when");
-    hint.textContent = "After the next two weeks";
-    box.appendChild(hint);
-    return box;
-  }
+  if (!laterOpen) return box;
   const list = ce("div", "sched-list");
   for (const row of rows) list.appendChild(renderRow(row));
   box.appendChild(list);
@@ -330,30 +405,27 @@ function renderRow(row) {
   const el = ce("div", "sched-row holiday-list-row" + (row.skipped ? " is-off" : ""));
   el.dataset.name = `${row.name || ""} shabbat holiday`;
   const head = ce("div", "sched-row-head");
-  const name = ce("div", "sched-row-name");
+  const open = ce("button", "holiday-open-btn");
+  open.type = "button";
+  const name = ce("span", "sched-row-name");
   name.textContent = row.name || "Holiday";
-  head.appendChild(name);
-  head.appendChild(statusPill(row));
+  const when = whenLine(row);
+  const meta = ce("span", "holiday-row-meta");
+  meta.textContent = relationshipLine(row);
+  open.appendChild(name);
+  open.appendChild(when);
+  open.appendChild(meta);
+  open.setAttribute("aria-label", `${name.textContent}. ${when.textContent}. ${meta.textContent}`);
+  open.addEventListener("click", () => openDetail(row));
+  head.appendChild(open);
+  head.appendChild(pauseToggle(row));
   el.appendChild(head);
-  const when = ce("div", "holiday-when");
-  when.textContent = row.inProgress
-    ? `In progress, ends ${fmt(row.end)}`
-    : `${fmt(row.start)} – ${fmt(row.end)}`;
-  el.appendChild(when);
-  if (row.paused) {
-    const note = ce("div", "holiday-paused-note");
-    note.textContent = "schedule is paused. Will not activate.";
-    el.appendChild(note);
-  }
+  if (isThisFridayShabbat(row)) el.appendChild(fridaySwitch());
   if (row.warning) {
     const w = ce("div", "holiday-warn");
     w.textContent = row.warning;
     el.appendChild(w);
   }
-  const foot = ce("div", "sched-row-foot");
-  const open = ce("span", "holiday-open");
-  open.textContent = "View schedule";
-  foot.appendChild(open);
   if (row.skipped) {
     const undo = ce("button", "ghost-btn sched-icon-btn");
     undo.type = "button";
@@ -362,37 +434,109 @@ function renderRow(row) {
       e.stopPropagation();
       setSkip(row.spanId, true);
     });
-    foot.appendChild(undo);
+    el.appendChild(undo);
   }
-  const pause = ce("button", "ghost-btn sched-icon-btn");
-  pause.type = "button";
-  pause.textContent = row.paused ? "Resume" : "Pause";
-  pause.addEventListener("click", (e) => {
-    e.stopPropagation();
-    togglePause(row.occasion);
-  });
-  foot.appendChild(pause);
-  el.appendChild(foot);
-  el.addEventListener("click", () => {
-    detailId = row.spanId;
-    view = "detail";
-    render();
-  });
   return el;
 }
 
-function statusPill(row) {
-  const badge = ce("span", "holiday-pill");
-  if (row.skipped) {
-    badge.classList.add("is-skip");
-    badge.textContent = "Skipped this time";
+function openDetail(row) {
+  detailId = row.spanId;
+  view = "detail";
+  render();
+}
+
+function pauseToggle(row) {
+  const active = !row.paused;
+  const toggle = ce("button", "sched-toggle " + (active ? "is-on" : "is-off"));
+  toggle.type = "button";
+  toggle.setAttribute("aria-pressed", active ? "true" : "false");
+  toggle.textContent = active ? "Active" : "Paused";
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    togglePause(row.occasion);
+  });
+  return toggle;
+}
+
+function whenLine(row) {
+  const line = ce("span", "holiday-when");
+  const now = Number(model?.now) || Date.now();
+  let tone = "";
+  let prefix = "";
+  let at = row.start;
+  if (row.paused) {
+    tone = "is-paused";
+    prefix = "Nothing will run. Would start ";
+  } else if (row.skipped) {
+    tone = "is-skip";
+    prefix = "Skipped this time. ";
+  } else if (row.inProgress) {
+    tone = "is-now";
+    prefix = "In progress, ends ";
+    at = row.end;
   } else {
-    const text = row.badge || "schedule set";
-    badge.textContent = text;
-    if (text.startsWith("uses") || text.startsWith("based")) badge.classList.add("is-link");
-    else badge.classList.add("is-own");
+    const days = dayDistance(now, Number(row.start));
+    const rel = days <= 0 ? "Today" : days === 1 ? "Tomorrow" : days < 14 ? `In ${days} days` : `In ${Math.round(days / 7)} weeks`;
+    prefix = `${rel}, `;
   }
-  return badge;
+  if (tone) {
+    line.classList.add(tone);
+    const dot = ce("span", "holiday-dot " + tone);
+    dot.setAttribute("aria-hidden", "true");
+    line.appendChild(dot);
+  }
+  line.appendChild(document.createTextNode(prefix));
+  line.appendChild(document.createTextNode(`${fmtDay(at)}, `));
+  const clock = ce("span", "holiday-when-clock");
+  clock.textContent = fmtClock(at);
+  line.appendChild(clock);
+  return line;
+}
+
+function fmtOccasion(ms) {
+  return `${fmtDay(ms)}, ${fmtClock(ms)}`;
+}
+
+function dayDistance(fromMs, toMs) {
+  const tz = hubTz();
+  const a = zonedParts(fromMs, tz).date.split("-").map(Number);
+  const b = zonedParts(toMs, tz).date.split("-").map(Number);
+  const utcA = Date.UTC(a[0], a[1] - 1, a[2]);
+  const utcB = Date.UTC(b[0], b[1] - 1, b[2]);
+  return Math.round((utcB - utcA) / 86400000);
+}
+
+function rowOccasionId(row) {
+  const span = spanById(row.spanId);
+  return span?.days?.[0]?.occasion || row.occasion;
+}
+
+function deviceCountForRow(row) {
+  const span = spanById(row.spanId);
+  if (!span) return 0;
+  return devicesInActions(span.actions || []).length;
+}
+
+function relationshipLine(row) {
+  const badge = templateBadge(rowOccasionId(row), model);
+  const rel = {
+    "own schedule": "Its own schedule",
+    "uses Shabbat": "Follows the Shabbat schedule",
+    "based on Shabbat": "Based on the Shabbat schedule",
+    "uses Pesach first days": "Follows the Pesach first-days schedule",
+    skipped: "No schedule",
+  }[badge] || "Schedule set";
+  if (badge === "skipped") return rel;
+  const count = deviceCountForRow(row);
+  const devices = count === 1 ? "1 device" : count ? `${count} devices` : "No devices";
+  return `${rel}. ${devices}.`;
+}
+
+function isThisFridayShabbat(row) {
+  const early = model?.settings?.earlyFriday;
+  if (!early?.type || early.type === "off") return false;
+  if (rowOccasionId(row) !== "shabbat") return false;
+  return zonedParts(Number(row.start), hubTz()).date === upcomingFriday();
 }
 
 function renderDetail() {
@@ -428,7 +572,7 @@ function renderDetail() {
   const tools = ce("div", "holiday-tools");
   const edit = ce("button", "ghost-btn sched-primary-btn");
   edit.type = "button";
-  edit.textContent = "Edit schedule";
+  edit.textContent = "Edit";
   edit.addEventListener("click", () => openWizard(span.occasion));
   tools.appendChild(edit);
   const skip = ce("button", "ghost-btn");
@@ -442,24 +586,30 @@ function renderDetail() {
   wrap.appendChild(tools);
   const tryRow = ce("div", "holiday-tools holiday-tools-quiet");
   const tryLabel = ce("span", "holiday-kicker");
-  tryLabel.textContent = "Try now";
+  tryLabel.textContent = "Try on devices";
   tryRow.appendChild(tryLabel);
   const testStart = ce("button", "ghost-btn");
   testStart.type = "button";
-  testStart.textContent = "Candle lighting";
+  testStart.textContent = "Run candle-lighting actions";
   testStart.addEventListener("click", () => runHolidayTest(span.occasion, "start"));
   tryRow.appendChild(testStart);
   const testEnd = ce("button", "ghost-btn");
   testEnd.type = "button";
-  testEnd.textContent = "Havdalah";
+  testEnd.textContent = "Run havdalah actions";
   testEnd.addEventListener("click", () => runHolidayTest(span.occasion, "end"));
   tryRow.appendChild(testEnd);
+  wrap.appendChild(tryRow);
+  const tryNote = ce("p", "holiday-when");
+  tryNote.textContent = "Runs those actions now. The hub mode stays as it is.";
+  wrap.appendChild(tryNote);
+  const removeRow = ce("div", "holiday-tools holiday-remove");
   const remove = ce("button", "ghost-btn sched-del-btn");
   remove.type = "button";
   remove.textContent = "Remove schedule";
   remove.addEventListener("click", () => removeSchedule(span.occasion));
-  tryRow.appendChild(remove);
-  wrap.appendChild(tryRow);
+  removeRow.appendChild(remove);
+  wrap.appendChild(removeRow);
+  wrap.appendChild(renderEventList(span.actions || []));
   const section = ce("div", "holiday-section-head");
   const sectionTitle = ce("h4", "holiday-section");
   sectionTitle.textContent = "Each device";
@@ -467,7 +617,6 @@ function renderDetail() {
   section.appendChild(timelineLegend(span.actions || []));
   wrap.appendChild(section);
   wrap.appendChild(renderTimelines(span, span.actions || []));
-  wrap.appendChild(renderEventList(span.actions || []));
   return wrap;
 }
 
@@ -475,10 +624,15 @@ function renderByLight() {
   const wrap = ce("div", "holiday-slot");
   wrap.appendChild(backRow("Shabbat & holidays", () => { view = "list"; render(); }));
   const title = ce("h3", "sched-section-title");
-  title.textContent = "Timeline by device";
+  title.textContent = "By device";
   wrap.appendChild(title);
+  const scale = ce("p", "holiday-when");
+  const spans = nearHolidaySpans().slice(0, 8);
+  const longest = spans.reduce((max, span) => Math.max(max, Number(span.end) - Number(span.start)), 1);
+  scale.textContent = "A longer holiday is drawn longer, so the bars can be compared.";
+  wrap.appendChild(scale);
   const ids = new Map();
-  for (const span of nearHolidaySpans()) {
+  for (const span of spans) {
     for (const d of devicesInActions(span.actions || [])) ids.set(d.id, d);
   }
   if (!lightId && ids.size) lightId = [...ids.keys()][0];
@@ -498,11 +652,11 @@ function renderByLight() {
   wrap.appendChild(picker);
   const note = alsoControlled(lightId);
   if (note) wrap.appendChild(note);
-  for (const span of nearHolidaySpans().slice(0, 8)) {
+  for (const span of spans) {
     const label = ce("p", "holiday-badge");
     label.textContent = span.name;
     wrap.appendChild(label);
-    wrap.appendChild(renderCompactBar(span, lightId));
+    wrap.appendChild(renderCompactBar(span, lightId, null, { scale: longest }));
   }
   return wrap;
 }
@@ -522,7 +676,7 @@ function renderTimelines(span, actions) {
     name.textContent = deviceName(d.id);
     name.title = deviceName(d.id);
     row.appendChild(name);
-    row.appendChild(renderCompactBar(span, d.id, actions));
+    row.appendChild(renderCompactBar(span, d.id, actions, { detail: true }));
     box.appendChild(row);
   }
   return box;
@@ -558,13 +712,23 @@ function timelineMarks(span) {
 
 const ZOOM_MS = 8 * 3600000;
 
-function renderCompactBar(span, id, actions) {
+function renderCompactBar(span, id, actions, opts) {
   const line = ce("div", "holiday-bar-line");
-  line.appendChild(renderSpanTrack(span, id, actions, { from: span.start, to: span.end, changes: true }));
+  const track = renderSpanTrack(span, id, actions, {
+    from: span.start, to: span.end, changes: true, detail: !!opts?.detail,
+  });
+  const duration = Math.max(Number(span.end) - Number(span.start), 1);
+  if (opts?.scale && opts.scale > duration + 1000) {
+    const ratio = Math.max(0.18, duration / opts.scale);
+    line.classList.add("is-scaled");
+    line.style.width = `calc((100% - var(--holiday-bar-end, 26px)) * ${ratio.toFixed(4)} + var(--holiday-bar-end, 26px))`;
+  }
+  line.appendChild(track);
   const expand = ce("button", "ghost-btn holiday-expand");
   expand.type = "button";
-  expand.textContent = "Expand";
+  expand.title = "Expand";
   expand.setAttribute("aria-label", "Expand " + deviceName(id) + " timeline");
+  expand.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6"/><path d="M21 3 14 10"/><path d="M9 21H3v-6"/><path d="M3 21l7-7"/></svg>';
   expand.addEventListener("click", () => openTimelinePopup(span, id, actions || span.actions || []));
   line.appendChild(expand);
   return line;
@@ -576,7 +740,7 @@ function renderSpanTrack(span, id, actions, opts) {
   const scale = Math.max(opts?.scale ?? (to - from), 1);
   const list = actions || span.actions || [];
   const tl = opts?.timeline || buildDeviceTimeline(span, list, id);
-  const track = ce("div", "holiday-track");
+  const track = ce("div", "holiday-track" + (opts?.detail ? " holiday-track-detail" : ""));
   const bar = ce("div", "holiday-bar");
   const leftOf = (at) => `${((at - from) / scale) * 100}%`;
   for (const seg of tl.segments) {
@@ -627,9 +791,98 @@ function renderSpanTrack(span, id, actions, opts) {
     }
   }
   track.appendChild(bar);
+  const outside = opts?.detail ? ce("div", "holiday-outside") : null;
+  if (outside) track.appendChild(outside);
   if (opts?.marks) track.appendChild(renderHourScale(span, from, to, scale, tl.changes));
-  else if (opts?.changes) track.appendChild(renderChangeTimes(from, to, scale, tl.changes, span.end));
+  else if (opts?.changes) {
+    const hours = renderChangeTimes(from, to, scale, tl.changes, span.end);
+    track.appendChild(hours);
+    watchCompactTimes(hours);
+  }
+  if (outside) watchDetailLabels(track, bar, outside);
   return track;
+}
+
+const detailLabelObservers = [];
+
+function clearDetailLabelObservers() {
+  for (const ro of detailLabelObservers) ro.disconnect();
+  detailLabelObservers.length = 0;
+}
+
+function watchCompactTimes(hours) {
+  const place = () => spaceCompactTimes(hours);
+  const ro = new ResizeObserver(place);
+  ro.observe(hours);
+  detailLabelObservers.push(ro);
+  requestAnimationFrame(place);
+}
+
+function spaceCompactTimes(hours) {
+  if (!hours.isConnected) return;
+  const labels = [...hours.querySelectorAll(".holiday-mark")];
+  const width = hours.clientWidth;
+  if (width < 1) return;
+  for (const label of labels) {
+    label.hidden = false;
+    label.style.marginLeft = "0px";
+  }
+  const parent = hours.getBoundingClientRect();
+  let edge = 0;
+  for (const label of labels) {
+    const rect = label.getBoundingClientRect();
+    const left = rect.left - parent.left;
+    if (left < edge) {
+      const shift = edge - left;
+      if (left + shift + rect.width > width + 1) {
+        label.hidden = true;
+        continue;
+      }
+      label.style.marginLeft = `${Math.ceil(shift)}px`;
+      edge = left + shift + rect.width + 6;
+    } else {
+      edge = left + rect.width + 6;
+    }
+  }
+}
+
+function labelHosts(bar) {
+  const hosts = [];
+  for (const seg of bar.querySelectorAll(".holiday-seg")) {
+    if (seg.querySelector(":scope > .holiday-setpoint")) hosts.push(seg);
+    for (const half of seg.querySelectorAll(":scope > .holiday-seg-half")) {
+      if (half.querySelector(":scope > .holiday-setpoint")) hosts.push(half);
+    }
+  }
+  return hosts;
+}
+
+function watchDetailLabels(track, bar, layer) {
+  const place = () => {
+    if (!track.isConnected) return;
+    for (const host of bar.querySelectorAll(".holiday-seg, .holiday-seg-half")) host.classList.remove("is-label-out");
+    layer.replaceChildren();
+    const base = bar.getBoundingClientRect();
+    if (base.width < 1) return;
+    for (const host of labelHosts(bar)) {
+      const label = host.querySelector(":scope > .holiday-setpoint");
+      if (!label) continue;
+      const width = label.scrollWidth;
+      if (host.clientWidth >= width + 8) continue;
+      host.classList.add("is-label-out");
+      const pin = ce("span", "holiday-setpoint is-outside");
+      pin.textContent = label.textContent;
+      const rect = host.getBoundingClientRect();
+      let left = host.classList.contains("is-cool") ? rect.right - base.left - width : rect.left - base.left;
+      const maxLeft = Math.max(0, base.width - width);
+      pin.style.left = `${Math.max(0, Math.min(left, maxLeft))}px`;
+      layer.appendChild(pin);
+    }
+  };
+  const ro = new ResizeObserver(place);
+  ro.observe(bar);
+  detailLabelObservers.push(ro);
+  requestAnimationFrame(place);
 }
 
 function renderChangeTimes(from, to, scale, changes, spanEnd) {
@@ -866,7 +1119,8 @@ async function togglePause(occasion) {
 
 async function removeSchedule(occasion) {
   const label = occasionLabel(occasion);
-  if (!confirm(`Remove the ${label} schedule? It will not change devices or the hub mode. You can add it again from Set up.`)) return;
+  const again = needsFirstRun() ? "Set up" : "Holiday schedules in Settings";
+  if (!confirm(`Remove the ${label} schedule? It will not change devices or the hub mode. You can add it again from ${again}.`)) return;
   const saved = await post("holidays/save", {
     revision: model.revision,
     occasion,
@@ -929,7 +1183,35 @@ function openWizard(occasion) {
     q: 0,
   };
   if (!wizard.template.start) wizard.template = emptyTemplate();
+  normalizeWizardSettings(wizard.settings);
+  rememberWizardSaved();
   view = "wizard";
+  render();
+}
+
+function normalizeWizardSettings(settings) {
+  settings.havdalah = settings.havdalah || { type: "nightfall", minutes: 42 };
+  settings.earlyFriday = settings.earlyFriday || { type: "off", value: "" };
+}
+
+function wizardFingerprint() {
+  return JSON.stringify({
+    settings: wizard.settings,
+    template: wizard.template,
+    choice: wizard.choice,
+  });
+}
+
+function rememberWizardSaved() {
+  if (wizard) wizard.savedFingerprint = wizardFingerprint();
+}
+
+function closeWizard() {
+  if (wizard?.savedFingerprint && wizardFingerprint() !== wizard.savedFingerprint) {
+    if (!confirm("Close without saving your changes?")) return;
+  }
+  view = "list";
+  wizard = null;
   render();
 }
 
@@ -948,7 +1230,7 @@ function renderWizard() {
   const cancel = ce("button", "ghost-btn");
   cancel.type = "button";
   cancel.textContent = "Close";
-  cancel.addEventListener("click", () => { view = "list"; wizard = null; render(); });
+  cancel.addEventListener("click", closeWizard);
   head.appendChild(cancel);
   wrap.appendChild(head);
   const setupAt = SETUP_STEPS.indexOf(wizard.step);
@@ -967,7 +1249,13 @@ function renderWizard() {
 
 function progressBar(current, total, label) {
   const box = ce("div", "holiday-progress");
+  box.setAttribute("role", "progressbar");
+  box.setAttribute("aria-valuemin", "1");
+  box.setAttribute("aria-valuemax", String(total));
+  box.setAttribute("aria-valuenow", String(current));
+  box.setAttribute("aria-label", `${label}, step ${current} of ${total}`);
   const text = ce("span", "holiday-kicker");
+  text.setAttribute("aria-hidden", "true");
   text.textContent = `${label} · ${current} of ${total}`;
   const track = ce("div", "holiday-progress-track");
   const fill = ce("div", "holiday-progress-fill");
@@ -1039,22 +1327,41 @@ function awayStep() {
 
 function timingStep() {
   const box = ce("div", "sched-step");
-  const settings = wizard.settings;
-  settings.havdalah = settings.havdalah || { type: "nightfall", minutes: 42 };
-  settings.earlyFriday = settings.earlyFriday || { type: "off", value: "" };
   const q = ce("p", "sched-question");
-  q.textContent = "Candle lighting is this many minutes before sunset. 18 is usual. 40 is common in Jerusalem.";
+  q.textContent = "When should candle lighting and havdalah happen?";
   box.appendChild(q);
-  const input = ce("input", "sched-input");
-  input.type = "number";
-  input.min = "0";
-  input.value = String(settings.candleMin ?? 18);
-  input.addEventListener("change", () => { settings.candleMin = Number(input.value); });
-  box.appendChild(input);
+  appendTimingControls(box, wizard.settings);
+  box.appendChild(nav(() => { wizard.step = "away"; render(); }, async () => {
+    model = await post("holidays/save", { revision: model.revision, settings: wizard.settings });
+    if (!model.ok) { flash(model.error || "Could not save", true); return; }
+    rememberWizardSaved();
+    wizard.step = "warn";
+    render();
+  }));
+  return box;
+}
 
-  const havLabel = ce("p", "sched-hint");
-  havLabel.textContent = "Havdalah";
-  box.appendChild(havLabel);
+function appendTimingControls(parent, settings) {
+  normalizeWizardSettings(settings);
+  const sentence = ce("p", "holiday-timing-sentence");
+  const refreshSentence = () => { sentence.textContent = timingSentence(settings); };
+  refreshSentence();
+  parent.appendChild(sentence);
+
+  const candle = ce("input", "sched-input");
+  candle.type = "number";
+  candle.min = "0";
+  candle.value = String(settings.candleMin ?? 18);
+  candle.addEventListener("input", () => {
+    settings.candleMin = Number(candle.value);
+    refreshSentence();
+  });
+  parent.appendChild(labeledField("Candle lighting", "Minutes before sunset. 18 is usual. 40 is common in Jerusalem.", candle));
+
+  const havLabel = ce("div", "sched-field");
+  const havName = ce("div", "sched-field-label");
+  havName.textContent = "Havdalah";
+  havLabel.appendChild(havName);
   const hav = ce("div", "sched-segment");
   for (const [type, label] of [["nightfall", "Nightfall"], ["minutes", "Minutes after sunset"]]) {
     const b = ce("button", "sched-seg" + (settings.havdalah.type === type ? " is-active" : ""));
@@ -1063,29 +1370,37 @@ function timingStep() {
     b.addEventListener("click", () => { settings.havdalah.type = type; render(); });
     hav.appendChild(b);
   }
-  box.appendChild(hav);
+  havLabel.appendChild(hav);
+  parent.appendChild(havLabel);
   if (settings.havdalah.type === "minutes") {
     const mins = ce("input", "sched-input");
     mins.type = "number";
     mins.min = "0";
     mins.value = String(settings.havdalah.minutes ?? 42);
-    mins.addEventListener("change", () => { settings.havdalah.minutes = Number(mins.value); });
-    box.appendChild(mins);
+    mins.addEventListener("input", () => {
+      settings.havdalah.minutes = Number(mins.value);
+      refreshSentence();
+    });
+    parent.appendChild(labeledField("Minutes after sunset", "", mins));
   }
 
-  const earlyLabel = ce("p", "sched-hint");
-  earlyLabel.textContent = "Start the mode and the candle-lighting actions this many minutes early. 0 means at candle lighting.";
-  box.appendChild(earlyLabel);
   const early = ce("input", "sched-input");
   early.type = "number";
   early.min = "0";
   early.value = String(settings.startEarlyMin ?? 0);
-  early.addEventListener("change", () => { settings.startEarlyMin = Number(early.value); });
-  box.appendChild(early);
+  early.addEventListener("input", () => {
+    settings.startEarlyMin = Number(early.value);
+    refreshSentence();
+  });
+  parent.appendChild(labeledField("Start early", "Minutes before candle lighting. 0 starts at candle lighting.", early));
 
-  const friLabel = ce("p", "sched-hint");
-  friLabel.textContent = "Early Friday, only when that night is a plain Shabbat and the time is earlier than candle lighting.";
-  box.appendChild(friLabel);
+  const friLabel = ce("div", "sched-field");
+  const friName = ce("div", "sched-field-label");
+  friName.textContent = "Early Friday";
+  friLabel.appendChild(friName);
+  const friHint = ce("p", "sched-hint");
+  friHint.textContent = "Only when that night is a plain Shabbat, and only if the time is earlier than candle lighting.";
+  friLabel.appendChild(friHint);
   const fri = ce("div", "sched-segment");
   for (const [type, label] of [["off", "Off"], ["time", "Fixed time"], ["minutes", "Minutes early"]]) {
     const b = ce("button", "sched-seg" + (settings.earlyFriday.type === type ? " is-active" : ""));
@@ -1094,29 +1409,254 @@ function timingStep() {
     b.addEventListener("click", () => { settings.earlyFriday.type = type; render(); });
     fri.appendChild(b);
   }
-  box.appendChild(fri);
+  friLabel.appendChild(fri);
+  parent.appendChild(friLabel);
   if (settings.earlyFriday.type === "time") {
     const t = ce("input", "sched-input");
     t.type = "time";
     t.value = settings.earlyFriday.value || "18:00";
-    t.addEventListener("change", () => { settings.earlyFriday.value = t.value; });
-    box.appendChild(t);
-  } else   if (settings.earlyFriday.type === "minutes") {
+    t.addEventListener("change", () => {
+      settings.earlyFriday.value = t.value;
+      refreshSentence();
+    });
+    parent.appendChild(labeledField("Fixed time", "", t));
+  } else if (settings.earlyFriday.type === "minutes") {
     const n = ce("input", "sched-input");
     n.type = "number";
     n.min = "1";
     n.value = String(settings.earlyFriday.value || 60);
-    n.addEventListener("change", () => { settings.earlyFriday.value = Number(n.value); });
-    box.appendChild(n);
+    n.addEventListener("input", () => {
+      settings.earlyFriday.value = Number(n.value);
+      refreshSentence();
+    });
+    parent.appendChild(labeledField("Minutes early", "", n));
   }
-  if (settings.earlyFriday.type !== "off") box.appendChild(fridaySwitch());
-  box.appendChild(nav(() => { wizard.step = "away"; render(); }, async () => {
-    model = await post("holidays/save", { revision: model.revision, settings: wizard.settings });
-    if (!model.ok) { flash(model.error || "Could not save", true); return; }
-    wizard.step = "warn";
-    render();
-  }));
+  if (settings.earlyFriday.type !== "off" && settings === wizard?.settings) parent.appendChild(fridaySwitch());
+}
+
+function labeledField(label, hint, control) {
+  const field = ce("div", "sched-field");
+  const id = "mld-hf-" + Math.random().toString(36).slice(2, 8);
+  control.id = id;
+  const lbl = ce("label", "sched-field-label");
+  lbl.htmlFor = id;
+  lbl.textContent = label;
+  field.appendChild(lbl);
+  field.appendChild(control);
+  if (hint) {
+    const h = ce("p", "sched-hint");
+    h.textContent = hint;
+    field.appendChild(h);
+  }
+  return field;
+}
+
+function timingSentence(settings) {
+  const mins = Number(settings.candleMin ?? 18);
+  const early = Number(settings.startEarlyMin ?? 0);
+  const hav = settings.havdalah || {};
+  const saved = model?.settings || {};
+  const bits = [];
+  const next = nextCalendarStart();
+  if (next) bits.push(`Next on the calendar: ${next}.`);
+  bits.push(`Candle lighting is ${mins} minutes before sunset.`);
+  bits.push(early > 0 ? `The house starts ${early} minutes before that.` : "The house starts at candle lighting.");
+  bits.push(hav.type === "minutes"
+    ? `Havdalah is ${Number(hav.minutes ?? 42)} minutes after sunset.`
+    : "Havdalah is at nightfall.");
+  bits.push(earlyFridaySentence(settings));
+  const fri = settings.earlyFriday || {};
+  const savedFri = saved.earlyFriday || {};
+  const changed = Number(saved.candleMin ?? 18) !== mins
+    || Number(saved.startEarlyMin ?? 0) !== early
+    || (saved.havdalah?.type || "nightfall") !== (hav.type || "nightfall")
+    || Number(saved.havdalah?.minutes ?? 42) !== Number(hav.minutes ?? 42)
+    || (fri.type || "off") !== (savedFri.type || "off")
+    || String(fri.value ?? "") !== String(savedFri.value ?? "");
+  if (changed) bits.push("Saving updates the calendar.");
+  return bits.join(" ");
+}
+
+function earlyFridaySentence(settings) {
+  const fri = settings.earlyFriday || {};
+  const type = fri.type || "off";
+  if (type === "minutes") {
+    const count = Number(fri.value);
+    const n = Number.isFinite(count) ? count : 0;
+    return `On a plain Friday the house starts ${n} ${n === 1 ? "minute" : "minutes"} before candle lighting.`;
+  }
+  if (type === "time") {
+    const clock = fmtTimeValue(fri.value || "18:00");
+    return clock
+      ? `On a plain Friday the house starts at ${clock}, when that is earlier than candle lighting.`
+      : "On a plain Friday the house starts at a fixed time, when that is earlier than candle lighting.";
+  }
+  return "Early Friday is off.";
+}
+
+function fmtTimeValue(value) {
+  const match = String(value || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return "";
+  const hhmm = `${match[1].padStart(2, "0")}:${match[2]}`;
+  return fmtClock(zonedMs("2020-01-06", hhmm, hubTz()));
+}
+
+function nextCalendarStart() {
+  const row = (model?.rows || []).find((r) => !r.skipped && !r.paused);
+  return row ? fmtOccasion(row.start) : "";
+}
+
+function openSettings() {
+  settingsDraft = structuredClone(model?.settings || {});
+  normalizeWizardSettings(settingsDraft);
+  settingsSavedFingerprint = JSON.stringify(settingsDraft);
+  settingsAdvancedOpen = false;
+  view = "settings";
+  render();
+}
+
+function settingsDirty() {
+  return !!settingsDraft && JSON.stringify(settingsDraft) !== settingsSavedFingerprint;
+}
+
+function closeSettings() {
+  if (settingsDirty() && !confirm("Close without saving your changes?")) return;
+  settingsDraft = null;
+  view = "list";
+  render();
+}
+
+function renderSettings() {
+  const settings = settingsDraft || (settingsDraft = structuredClone(model?.settings || {}));
+  normalizeWizardSettings(settings);
+  const wrap = ce("div", "holiday-slot");
+  wrap.appendChild(backRow("Shabbat & holidays", closeSettings));
+  const title = ce("h3", "sched-section-title");
+  title.textContent = "Settings";
+  wrap.appendChild(title);
+  wrap.appendChild(modePicker(settings, "holidayMode", "Hub mode at candle lighting", "Pick a mode you do not use for anything else."));
+  wrap.appendChild(modePicker(settings, "endMode", "Hub mode when it ends", "The house returns to this mode at havdalah."));
+  wrap.appendChild(locationPicker(settings));
+  wrap.appendChild(advancedSettings(settings));
+  appendTimingControls(wrap, settings);
+  const conflicts = model?.conflicts || [];
+  if (conflicts.length) {
+    const note = ce("p", "sched-hint");
+    note.textContent = "These schedules can also run during the holiday: " + conflicts.map((c) => c.name).join(", ") + ".";
+    wrap.appendChild(note);
+  }
+  const holidays = ce("button", "ghost-btn");
+  holidays.type = "button";
+  holidays.textContent = "Holiday schedules";
+  holidays.addEventListener("click", () => {
+    if (settingsDirty() && !confirm("Close without saving your changes?")) return;
+    settingsDraft = null;
+    openOccasions();
+  });
+  wrap.appendChild(holidays);
+  wrap.appendChild(nav(closeSettings, saveSettings, "Save"));
+  return wrap;
+}
+
+function modePicker(settings, key, label, hint) {
+  const box = ce("div", "sched-field");
+  const lbl = ce("div", "sched-field-label");
+  lbl.textContent = label;
+  box.appendChild(lbl);
+  if (hint) {
+    const h = ce("p", "sched-hint");
+    h.textContent = hint;
+    box.appendChild(h);
+  }
+  const modes = hubModeNames();
+  if (!modes.length) {
+    const empty = ce("p", "sched-hint");
+    empty.textContent = "No hub modes found.";
+    box.appendChild(empty);
+    return box;
+  }
+  const grid = ce("div", "sched-mode-grid");
+  for (const mode of modes) {
+    const b = ce("button", "sched-type-card" + (settings[key] === mode ? " is-active" : ""));
+    b.type = "button";
+    b.textContent = mode;
+    b.addEventListener("click", () => { settings[key] = mode; render(); });
+    grid.appendChild(b);
+  }
+  box.appendChild(grid);
   return box;
+}
+
+function locationPicker(settings) {
+  const box = ce("div", "sched-field");
+  const lbl = ce("div", "sched-field-label");
+  lbl.textContent = "Location";
+  box.appendChild(lbl);
+  const hint = ce("p", "sched-hint");
+  hint.textContent = "Diaspora observes two days of Yom Tov. Israel observes one, except Rosh Hashana, which is two days in both places.";
+  box.appendChild(hint);
+  const seg = ce("div", "sched-segment");
+  for (const [val, label] of [[false, "Diaspora"], [true, "Israel"]]) {
+    const b = ce("button", "sched-seg" + (settings.israel === val ? " is-active" : ""));
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", () => { settings.israel = val; render(); });
+    seg.appendChild(b);
+  }
+  box.appendChild(seg);
+  return box;
+}
+
+function advancedSettings(settings) {
+  const box = ce("div", "sched-field");
+  const toggle = disclosureButton(settingsAdvancedOpen, "Advanced");
+  toggle.addEventListener("click", () => { settingsAdvancedOpen = !settingsAdvancedOpen; render(); });
+  box.appendChild(toggle);
+  if (!settingsAdvancedOpen) return box;
+  const hint = ce("p", "sched-hint");
+  hint.textContent = "Do not start Shabbat or a holiday if the hub is already in one of these modes.";
+  box.appendChild(hint);
+  const selected = new Set(settings.doNotStartModes || []);
+  const grid = ce("div", "sched-mode-grid");
+  for (const mode of hubModeNames()) {
+    const b = ce("button", "sched-type-card" + (selected.has(mode) ? " is-active" : ""));
+    b.type = "button";
+    b.textContent = mode;
+    b.addEventListener("click", () => {
+      if (selected.has(mode)) selected.delete(mode); else selected.add(mode);
+      settings.doNotStartModes = [...selected];
+      render();
+    });
+    grid.appendChild(b);
+  }
+  box.appendChild(grid);
+  return box;
+}
+
+async function saveSettings() {
+  const saved = await post("holidays/save", { revision: model.revision, settings: settingsDraft });
+  if (!saved?.ok) { flash(saved?.error || "Could not save", true); return; }
+  model = saved;
+  settingsDraft = null;
+  flash("Saved");
+  view = "list";
+  render();
+}
+
+function openOccasions() {
+  wizard = {
+    step: "occasions",
+    occasion: "shabbat",
+    settings: structuredClone(model?.settings || {}),
+    choice: model?.occasions?.shabbat || "own",
+    template: structuredClone(model?.templates?.shabbat || emptyTemplate()),
+    q: 0,
+  };
+  if (!wizard.template.start) wizard.template = emptyTemplate();
+  normalizeWizardSettings(wizard.settings);
+  rememberWizardSaved();
+  view = "wizard";
+  render();
 }
 
 function warnStep() {
@@ -1183,6 +1723,7 @@ function choiceStep() {
       if (id === "shabbat" || id === "skip" || id === "pesachFirst") {
         model = await post("holidays/save", { revision: model.revision, occasion: wizard.occasion, choice: id });
         if (!model.ok) { flash(model.error || "Could not save", true); return; }
+        rememberWizardSaved();
         wizard.step = "occasions";
         render();
         return;
@@ -1213,8 +1754,6 @@ function questionStep() {
     render();
   };
   const goNext = () => {
-    const stepErrs = templateErrors(wizard.template);
-    if (stepErrs.length) { flash(holidayErrorText(stepErrs), true); return; }
     wizard.q += 1;
     render();
   };
@@ -1240,7 +1779,7 @@ function questionStep() {
       const row = ce("div", "holiday-time-head");
       const time = ce("input", "sched-input");
       time.type = "time";
-      time.value = group.time || "21:00";
+      time.value = group.time || defaultDaypartTime(key);
       time.addEventListener("change", () => { group.time = time.value; });
       row.appendChild(time);
       const removeTime = ce("button", "ghost-btn");
@@ -1254,17 +1793,23 @@ function questionStep() {
     const add = ce("button", "ghost-btn");
     add.type = "button";
     add.textContent = "Add another time";
-    add.addEventListener("click", () => { groups.push({ time: "21:00", states: [] }); render(); });
+    add.addEventListener("click", () => { groups.push({ time: defaultDaypartTime(key), states: [] }); render(); });
     box.appendChild(add);
   }
-  const errs = templateErrors(wizard.template);
+  const errs = errorsForStep(templateErrors(wizard.template), key);
   if (errs.length) {
     const w = ce("p", "holiday-warn");
-    w.textContent = holidayErrorText(errs);
+    w.textContent = namedErrorText(errs);
     box.appendChild(w);
   }
-  box.appendChild(nav(goBack, goNext));
   return box;
+}
+
+function defaultDaypartTime(key) {
+  if (key === "morning") return "08:00";
+  if (key === "afternoon") return "15:00";
+  if (key === "evening") return "18:00";
+  return "21:00";
 }
 
 function questionTitle(key) {
@@ -1371,12 +1916,10 @@ function deviceLists(states) {
     const devices = byRoom.get(rid);
     const open = openHolidayRooms.has(String(rid));
     const heading = ce("div", "holiday-room");
-    const toggle = ce("button", "holiday-room-toggle");
-    toggle.type = "button";
-    toggle.setAttribute("aria-expanded", open ? "true" : "false");
     const room = (cat.rooms || []).find((r) => r.id === rid);
     const summary = roomStateSummary(devices, states);
-    toggle.textContent = (open ? "▾ " : "▸ ") + (rid === -1 ? "Unassigned" : (room?.name || "Room")) + (summary ? " · " + summary : "");
+    const roomName = rid === -1 ? "Unassigned" : (room?.name || "Room");
+    const toggle = disclosureButton(open, summary ? `${roomName} · ${summary}` : roomName);
     toggle.addEventListener("click", () => {
       const key = String(rid);
       if (openHolidayRooms.has(key)) openHolidayRooms.delete(key);
@@ -1393,19 +1936,19 @@ function deviceLists(states) {
 function renderRoomDevices(devices, states) {
   const body = ce("div", "holiday-room-body");
   const groups = [
-    ["Lights & outlets", devices.filter((d) => d.kind === "light" || d.kind === "outlet"), true],
-    ["Blinds", devices.filter((d) => d.kind === "blind"), false],
-    ["Fans", devices.filter((d) => d.kind === "fan"), false],
-    ["Locks", devices.filter((d) => d.kind === "lock"), false],
-    ["Thermostats", devices.filter((d) => d.kind === "thermostat"), false],
+    ["Lights & outlets", devices.filter((d) => d.kind === "light" || d.kind === "outlet"), "switch"],
+    ["Blinds", devices.filter((d) => d.kind === "blind"), "blind"],
+    ["Fans", devices.filter((d) => d.kind === "fan"), "fan"],
+    ["Locks", devices.filter((d) => d.kind === "lock"), "lock"],
+    ["Thermostats", devices.filter((d) => d.kind === "thermostat"), "thermostat"],
   ];
-  for (const [label, list, bulk] of groups) {
+  for (const [label, list, kind] of groups) {
     if (!list.length) continue;
     const head = ce("div", "holiday-group-head");
     const title = ce("div", "holiday-kicker");
     title.textContent = label;
     head.appendChild(title);
-    if (bulk) head.appendChild(roomStateSelector(list, states));
+    head.appendChild(groupBulk(list, states, kind));
     body.appendChild(head);
     for (const d of list) appendHolidayDevice(body, d, states);
   }
@@ -1441,19 +1984,32 @@ function roomStateSummary(devices, states) {
   return bits.join(", ");
 }
 
-function roomStateSelector(devices, states) {
+function groupBulkChoices(kind) {
+  if (kind === "blind") return [[true, "Open", true], [false, "Close", false], [null, "Leave as-is", null]];
+  if (kind === "lock") return [[true, "Lock", false], [false, "Unlock", true], [null, "Leave as-is", null]];
+  if (kind === "thermostat") return [[true, "Set", true], [null, "Leave as-is", null]];
+  return [[true, "On", true], [false, "Off", false], [null, "Leave as-is", null]];
+}
+
+function groupMatch(device, state, kind, value) {
+  if (value == null) return !state;
+  if (!state) return false;
+  if (kind === "blind") return state.open === value;
+  if (kind === "lock") return (state.locked !== false) === value;
+  if (kind === "thermostat") return state.kind === "thermostat";
+  return state.on === value;
+}
+
+function groupBulk(devices, states, kind) {
   const seg = ce("div", "sched-segment holiday-room-seg");
-  const selected = devices.map((d) => states.find((s) => String(s.id) === d.id));
-  const allSkip = selected.every((s) => !s);
-  const allOn = selected.length > 0 && selected.every((s) => s && s.on === true);
-  const allOff = selected.length > 0 && selected.every((s) => s && s.on === false);
-  for (const [on, label, active] of [[true, "On", allOn], [false, "Off", allOff], [null, "Skip", allSkip]]) {
-    const b = ce("button", stateButtonClass(on, active));
+  for (const [value, label, tone] of groupBulkChoices(kind)) {
+    const active = devices.length > 0 && devices.every((d) => groupMatch(d, states.find((s) => String(s.id) === d.id), kind, value));
+    const b = ce("button", stateButtonClass(tone, active));
     b.type = "button";
     b.textContent = label;
     b.addEventListener("click", (e) => {
       e.stopPropagation();
-      applyRoomState(devices, states, on);
+      applyGroupState(devices, states, kind, value);
       render();
     });
     seg.appendChild(b);
@@ -1461,23 +2017,45 @@ function roomStateSelector(devices, states) {
   return seg;
 }
 
-function applyRoomState(devices, states, on) {
+function applyGroupState(devices, states, kind, value) {
   for (const d of devices) {
-    if (d.kind !== "light" && d.kind !== "outlet") continue;
     const idx = states.findIndex((s) => String(s.id) === d.id);
-    if (on == null) {
+    if (value == null) {
       if (idx >= 0) states.splice(idx, 1);
       continue;
     }
-    if (idx >= 0) {
-      states[idx].on = on;
-      if (!on) { states[idx].level = null; states[idx].ct = null; }
+    if (kind === "blind") {
+      if (idx >= 0) {
+        states[idx].kind = "blind";
+        states[idx].open = value;
+        if (!value) states[idx].position = null;
+        else if (d.hasPos && states[idx].position == null) states[idx].position = 100;
+      } else states.push({ id: d.id, kind: "blind", open: value, position: value && d.hasPos ? 100 : null });
+    } else if (kind === "fan") {
+      const speeds = fanSpeedChoices(d.raw);
+      if (idx >= 0) {
+        states[idx].kind = "fan";
+        states[idx].on = value;
+        if (!value) states[idx].speed = null;
+        else if (!states[idx].speed) states[idx].speed = firstFanSpeed(d, speeds);
+      } else states.push({ id: d.id, kind: "fan", on: value, speed: value ? firstFanSpeed(d, speeds) : null });
+    } else if (kind === "lock") {
+      if (idx >= 0) { states[idx].kind = "lock"; states[idx].locked = value; }
+      else states.push({ id: d.id, kind: "lock", locked: value });
+    } else if (kind === "thermostat") {
+      if (idx >= 0) continue;
+      const state = { id: d.id, kind: "thermostat", mode: null, heat: null, cool: null, fanMode: null };
+      M().schedTstatNormalize(state, [d.raw]);
+      states.push(state);
+    } else if (idx >= 0) {
+      states[idx].on = value;
+      if (!value) { states[idx].level = null; states[idx].ct = null; }
       else {
         if (d.dim && states[idx].level == null) states[idx].level = 100;
         if (d.ct && states[idx].ct == null) states[idx].ct = 3000;
       }
     } else {
-      states.push({ id: d.id, kind: d.kind, on, level: on && d.dim ? 100 : null, ct: on && d.ct ? 3000 : null });
+      states.push({ id: d.id, kind: d.kind, on: value, level: value && d.dim ? 100 : null, ct: value && d.ct ? 3000 : null });
     }
   }
 }
@@ -1552,7 +2130,7 @@ function appendHolidayDevice(box, d, states) {
 
 function appendSwitchChoices(row, d, states, current) {
   row.appendChild(choiceRow(
-    [[true, "On", true], [false, "Off", false], [null, "Skip", null]],
+    [[true, "On", true], [false, "Off", false], [null, "Leave as-is", null]],
     (on) => (on == null ? !current : current && current.on === on),
     (on) => {
       const idx = findState(states, d.id);
@@ -1598,7 +2176,7 @@ function appendLightSliders(row, d, current) {
 function appendBlindChoices(row, d, states, current) {
   const open = current?.kind === "blind" ? current.open === true : null;
   row.appendChild(choiceRow(
-    [[true, "Open", true], [false, "Close", false], [null, "Skip", null]],
+    [[true, "Open", true], [false, "Close", false], [null, "Leave as-is", null]],
     (v) => (v == null ? !current : open === v),
     (v) => {
       const idx = findState(states, d.id);
@@ -1628,7 +2206,7 @@ function appendBlindChoices(row, d, states, current) {
 function appendFanChoices(row, d, states, current) {
   const speeds = fanSpeedChoices(d.raw);
   row.appendChild(choiceRow(
-    [[true, "On", true], [false, "Off", false], [null, "Skip", null]],
+    [[true, "On", true], [false, "Off", false], [null, "Leave as-is", null]],
     (v) => (v == null ? !current : current?.on === v),
     (v) => {
       const idx = findState(states, d.id);
@@ -1664,7 +2242,7 @@ function firstFanSpeed(d, speeds) {
 function appendLockChoices(row, d, states, current) {
   const locked = current?.kind === "lock" ? current.locked !== false : null;
   row.appendChild(choiceRow(
-    [[true, "Lock", false], [false, "Unlock", true], [null, "Skip", null]],
+    [[true, "Lock", false], [false, "Unlock", true], [null, "Leave as-is", null]],
     (v) => (v == null ? !current : locked === v),
     (v) => {
       const idx = findState(states, d.id);
@@ -1685,7 +2263,7 @@ function appendThermostatChoices(row, d, states, current) {
   const api = M();
   const t = d.raw;
   row.appendChild(choiceRow(
-    [[true, "Set", true], [null, "Skip", null]],
+    [[true, "Set", true], [null, "Leave as-is", null]],
     (v) => (v == null ? !current : !!current),
     (v) => {
       const idx = findState(states, d.id);
@@ -1759,16 +2337,76 @@ function setpointField(label, key, state, range, suffix) {
   return field;
 }
 
+const CUSTOM_DAYS = [["every", "Every day"], ["first", "On the first day"], ["last", "On the last day"]];
 const CUSTOM_ANCHORS = [
-  ["clock-night", "Clock, that night"],
-  ["clock-day", "Clock, that day"],
-  ["sunrise", "Minutes after sunrise"],
-  ["sunset", "Minutes after sunset"],
-  ["after-start", "Minutes after candle lighting"],
-  ["before-end", "Minutes before havdalah"],
-  ["after-end", "Minutes after havdalah"],
+  ["clock-day", "that day"],
+  ["clock-night", "that night"],
+  ["sunrise", "after sunrise"],
+  ["sunset", "after sunset"],
+  ["after-start", "after candle lighting"],
+  ["before-end", "before havdalah"],
+  ["after-end", "after havdalah"],
 ];
-const CUSTOM_DAYS = [["every", "Every day"], ["first", "First day"], ["last", "Last day"]];
+
+function customSelect(options, value, label, onChange) {
+  const select = ce("select", "sched-input");
+  select.setAttribute("aria-label", label);
+  for (const [id, text] of options) {
+    const opt = ce("option");
+    opt.value = id;
+    opt.textContent = text;
+    opt.selected = value === id;
+    select.appendChild(opt);
+  }
+  select.addEventListener("change", () => onChange(select.value));
+  return select;
+}
+
+function customValueInput(entry) {
+  const value = ce("input", "sched-input");
+  const clock = String(entry.anchor || "clock-day").startsWith("clock");
+  if (clock) {
+    value.type = "time";
+    value.setAttribute("aria-label", "Time");
+    value.value = entry.value || "15:00";
+  } else {
+    value.type = "number";
+    value.min = "0";
+    value.setAttribute("aria-label", "Minutes");
+    value.value = String(entry.value ?? 0);
+  }
+  value.addEventListener("change", () => {
+    entry.value = value.type === "number" ? Number(value.value) : value.value;
+  });
+  return value;
+}
+
+function customSentence(entry) {
+  const line = ce("p", "holiday-custom-sentence");
+  line.appendChild(customSelect(CUSTOM_DAYS, entry.days || "every", "Which days", (days) => { entry.days = days; }));
+  const clock = String(entry.anchor || "clock-day").startsWith("clock");
+  const chunk = ce("span", "holiday-custom-chunk");
+  if (clock) {
+    chunk.appendChild(document.createTextNode(" at "));
+    chunk.appendChild(customValueInput(entry));
+    chunk.appendChild(document.createTextNode(" "));
+  } else {
+    chunk.appendChild(document.createTextNode(", "));
+    chunk.appendChild(customValueInput(entry));
+    chunk.appendChild(document.createTextNode(" minutes "));
+  }
+  line.appendChild(chunk);
+  const end = ce("span", "holiday-custom-chunk");
+  end.appendChild(customSelect(CUSTOM_ANCHORS, entry.anchor || "clock-day", "Relative to", (anchor) => {
+    const wasClock = String(entry.anchor || "").startsWith("clock");
+    entry.anchor = anchor;
+    if (wasClock !== anchor.startsWith("clock")) entry.value = anchor.startsWith("clock") ? "15:00" : 0;
+    render();
+  }));
+  end.appendChild(document.createTextNode("."));
+  line.appendChild(end);
+  return line;
+}
 
 function customEditor() {
   const box = ce("div");
@@ -1783,48 +2421,14 @@ function customEditor() {
   box.appendChild(add);
   list.forEach((entry, index) => {
     const card = ce("div", "holiday-custom");
-    const anchor = ce("select", "sched-input");
-    for (const [id, label] of CUSTOM_ANCHORS) {
-      const opt = ce("option");
-      opt.value = id;
-      opt.textContent = label;
-      opt.selected = entry.anchor === id;
-      anchor.appendChild(opt);
-    }
-    anchor.addEventListener("change", () => {
-      entry.anchor = anchor.value;
-      entry.value = anchor.value.startsWith("clock") ? "15:00" : 0;
-      render();
-    });
-    card.appendChild(anchor);
-    const days = ce("select", "sched-input");
-    for (const [id, label] of CUSTOM_DAYS) {
-      const opt = ce("option");
-      opt.value = id;
-      opt.textContent = label;
-      opt.selected = (entry.days || "every") === id;
-      days.appendChild(opt);
-    }
-    days.addEventListener("change", () => { entry.days = days.value; });
-    card.appendChild(days);
-    const value = ce("input", "sched-input");
-    if (String(entry.anchor || "").startsWith("clock")) {
-      value.type = "time";
-      value.value = entry.value || "15:00";
-    } else {
-      value.type = "number";
-      value.min = "0";
-      value.value = String(entry.value ?? 0);
-    }
-    value.addEventListener("change", () => {
-      entry.value = value.type === "number" ? Number(value.value) : value.value;
-    });
-    card.appendChild(value);
+    const head = ce("div", "holiday-custom-head");
+    head.appendChild(customSentence(entry));
     const remove = ce("button", "ghost-btn");
     remove.type = "button";
     remove.textContent = "Remove";
     remove.addEventListener("click", () => { list.splice(index, 1); render(); });
-    card.appendChild(remove);
+    head.appendChild(remove);
+    card.appendChild(head);
     card.appendChild(deviceLists(entry.states ||= []));
     box.appendChild(card);
   });
@@ -1837,7 +2441,15 @@ function reviewStep() {
   q.textContent = "Review the next occurrence, then save.";
   box.appendChild(q);
   const goBack = () => { wizard.q -= 1; render(); };
+  const pending = templateErrors(wizard.template);
+  if (pending.length) {
+    const w = ce("p", "holiday-warn");
+    w.textContent = namedErrorText(pending);
+    box.appendChild(w);
+  }
   const goSave = async () => {
+    const stillPending = templateErrors(wizard.template);
+    if (stillPending.length) { flash(namedErrorText(stillPending), true); return; }
     model = await post("holidays/save", {
       revision: model.revision,
       settings: wizard.settings,
@@ -1847,12 +2459,13 @@ function reviewStep() {
     });
     if (!model?.ok) { flash(model?.error || "Could not save", true); return; }
     flash("Saved");
+    rememberWizardSaved();
     wizard.step = "occasions";
     render();
   };
   box.appendChild(topNav(goBack, goSave, "Save"));
   const holder = ce("div");
-  holder.textContent = "Loading preview…";
+  holder.textContent = "Generating preview…";
   box.appendChild(holder);
   post("holidays/preview", {
     occasion: wizard.occasion,
@@ -1862,8 +2475,8 @@ function reviewStep() {
   }).then((res) => {
     holder.innerHTML = "";
     if (res?.span) {
-      holder.appendChild(renderTimelines(res.span, res.span.actions || []));
       holder.appendChild(renderEventList(res.span.actions || []));
+      holder.appendChild(renderTimelines(res.span, res.span.actions || []));
     } else {
       holder.textContent = "No upcoming date for this occasion yet.";
     }
@@ -1873,7 +2486,6 @@ function reviewStep() {
       holder.appendChild(w);
     }
   }).catch(() => { holder.textContent = "Could not preview."; });
-  box.appendChild(nav(goBack, goSave, "Save"));
   return box;
 }
 
@@ -1900,4 +2512,12 @@ function nav(back, next, nextLabel) {
   return row;
 }
 
-globalThis.mldHoliday = { mount, apiVersion: HOLIDAY_API_VERSION };
+function shouldPreserve() {
+  return view === "wizard" || view === "detail" || view === "light" || view === "settings";
+}
+
+function reattach(host) {
+  hostEl = host;
+}
+
+globalThis.mldHoliday = { mount, reattach, shouldPreserve, apiVersion: HOLIDAY_API_VERSION };

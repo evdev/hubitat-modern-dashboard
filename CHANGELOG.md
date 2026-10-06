@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.4.49
+
+- **Shabbat & holidays:** the upcoming list covers the next two weeks. The timing
+  sentence states the Early Friday rule. Next moves on when another step still
+  has a problem, and Save names that step.
+
+- **Shabbat & holidays:** the later list and room lists use the same chevron as
+  the rest of the dashboard. On By device, a longer holiday is drawn longer,
+  and the times under a short bar stay apart.
+  A selected choice stays marked for assistive technology, and setup progress
+  reports the step.
+
+- **Shabbat & holidays:** opening a holiday lists what happens before the bars.
+  The bars are taller, and a short segment puts its label underneath. A custom
+  time reads as a sentence. On, Off, and Leave as-is work for blinds, fans, and
+  locks in a room, and Set works for thermostats.
+
+- **Shabbat & holidays:** the list leads with when the next one starts, and each
+  card says whether it follows Shabbat and how many devices it changes. Settings
+  is its own screen. The setup wizard runs when the hub modes have not been chosen.
+
+- **Shabbat & holidays:** morning, afternoon, and evening times no longer start
+  at 9:00 PM. Close asks before discarding unsaved setup. Remove schedule sits
+  apart from the try-now actions, and a device you are not changing says
+  Leave as-is. Opening one holiday hides the regular schedules underneath.
+
+- **Shabbat & holidays:** cool, heat, and fan labels in the schedule use dark
+  or light text that stays readable on the colored chip.
+
+## 0.4.48
+
+- **Shabbat & holidays:** the timeline expand control is an icon, so the bar
+  keeps more of the row.
+
+## 0.4.47
+
+- **Shabbat & holidays:** the schedule preview stays on screen. A dashboard
+  refresh no longer restarts it.
+
+## 0.4.46
+
+- **Shabbat & holidays:** setpoints, speeds, positions, and lock labels sit
+  inset from the time ticks on each timeline section.
+
 ## 0.4.45
 
 - **Shabbat & holidays:** lock timelines show Locked and Unlocked on each

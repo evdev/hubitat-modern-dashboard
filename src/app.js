@@ -16976,6 +16976,7 @@
   let holidaysAvailable = false;
   globalThis.__MLD.holidayBridge = () => ({ schedules, use24: schedUse24Hour, tz: hubTimeZone });
   let schedDraft = null;     // in-progress create/edit draft
+  let parkedHoliday = null;  // holiday view kept while a schedule editor is open
   let schedStep = 1;         // 1 | 2 | 3
   let schedEditingId = null;
   let schedNameCustom = false;
@@ -16996,6 +16997,7 @@
     if (hn > 0) hubNowMs = hn;
     if (!schedulerEnabled) {
       schedDraft = null;
+      parkedHoliday = null;
       schedEditingId = null;
       schedStep = 1;
       schedNameCustom = false;
@@ -17726,19 +17728,37 @@
     syncQuickPopupRef(popup);
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
+    const keepHoliday = holidaysAvailable && globalThis.mldHoliday?.shouldPreserve?.();
+    const keptHoliday = keepHoliday ? (body.querySelector(".holiday-slot") || parkedHoliday) : null;
+    if (!keepHoliday) parkedHoliday = null;
+    if (keptHoliday?.isConnected) keptHoliday.remove();
     setQuickBodyClass(body, "quick-body quick-body-scheduler");
     body.innerHTML = "";
     if (schedDraft) {
+      parkedHoliday = keptHoliday;
       body.appendChild(renderSchedWorkflow());
     } else {
-      body.appendChild(renderSchedList());
+      parkedHoliday = null;
+      body.appendChild(renderSchedList(keptHoliday));
     }
     applySearch();
   }
 
   // ---------- saved schedules list ----------
-  function renderSchedList() {
+  function renderSchedList(keptHoliday) {
     const wrap = ce("div", "sched-list-wrap");
+    if (holidaysAvailable) {
+      if (keptHoliday && globalThis.mldHoliday?.reattach) {
+        wrap.appendChild(keptHoliday);
+        globalThis.mldHoliday.reattach(keptHoliday);
+      } else {
+        const holidayHost = ce("div", "holiday-slot");
+        wrap.appendChild(holidayHost);
+        if (globalThis.mldHoliday) globalThis.mldHoliday.mount(holidayHost);
+        else holidayHost.textContent = "Shabbat & holidays did not load. Reload the page.";
+      }
+    }
+    if (holidaysAvailable && globalThis.mldHoliday?.shouldPreserve?.()) return wrap;
     const header = ce("div", "sched-section-head");
     const title = ce("h3", "sched-section-title");
     title.textContent = "Schedules";
@@ -17755,12 +17775,6 @@
     });
     header.appendChild(addBtn);
     wrap.appendChild(header);
-    if (holidaysAvailable) {
-      const holidayHost = ce("div", "holiday-slot");
-      wrap.insertBefore(holidayHost, header);
-      if (globalThis.mldHoliday) globalThis.mldHoliday.mount(holidayHost);
-      else holidayHost.textContent = "mld-holiday.js";
-    }
 
     if (schedulesLoadState === "loading" && !schedules.length) {
       const empty = ce("div", "empty");
