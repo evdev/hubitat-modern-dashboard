@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.38
+// Modern Dashboard v0.4.39
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.38"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.39"
 
 definition(
     name: "Modern Dashboard",
@@ -69,7 +69,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.38 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.39 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -314,9 +314,15 @@ def mainPage() {
             input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             paragraph "<small>Logs command traces to Hubitat Logs for troubleshooting. Auto-disables after 30 minutes. Failures are always logged regardless of this setting.</small>"
         }
-        section("Shabbat & holidays (optional)", hideable: true, hidden: true) {
-            paragraph "<small>Install the child app to schedule lights and outlets for Shabbat and Yom Tov, and to change hub mode at candle lighting and havdalah. Also upload <code>mld-holiday.js</code> to File Manager. If Shabbat and Holiday Scheduler is installed, turn off its mode switching so the hub is not switched twice.</small>"
-            app(name: "mDashHolidays", appName: "mDash Shabbat and Holidays", namespace: "mDash", title: "Shabbat & holidays", multiple: false)
+        section("Shabbat & holidays") {
+            def holidayFile = false
+            try { holidayFile = holidayFilePresent() } catch (e) { holidayFile = false }
+            if (holidayFile) {
+                paragraph "<small><b>Enabled.</b> <code>mld-holiday.js</code> is in File Manager, so Shabbat &amp; holidays is on. That file is optional in Hubitat Package Manager. The optional <b>mDash Shabbat and Holidays</b> app, also from Package Manager, runs the schedules. This page does not install either one.</small>"
+            } else {
+                paragraph "<small><b>Not enabled.</b> <code>mld-holiday.js</code> was not found in File Manager. Include that optional file in Hubitat Package Manager, or upload it yourself. This page does not install that file.</small>"
+            }
+            paragraph "<small>If Shabbat and Holiday Scheduler is also installed, turn off its mode switching so the hub is not switched twice.</small>"
         }
         section("Light control", hideable: true, hidden: true) {
             paragraph "<small>Applies to snapshot restore, All on/off, and room on/off. Metering is on by default.</small>"
@@ -707,6 +713,7 @@ def installed() {
     logInit()
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
+    try { holidayEnsureChild() } catch (e) { log.warn "Modern Dashboard: holiday setup failed: ${e}" }
     try { holidayNotifyChild() } catch (e) { log.warn "Modern Dashboard: holiday notify failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
@@ -720,6 +727,7 @@ def updated() {
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
     try { syncDashPasswordEpoch() } catch (e) { log.warn "Modern Dashboard: dash password sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
+    try { holidayEnsureChild() } catch (e) { log.warn "Modern Dashboard: holiday setup failed: ${e}" }
     try { holidayNotifyChild() } catch (e) { log.warn "Modern Dashboard: holiday notify failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
@@ -1719,7 +1727,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.38.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.39.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1811,7 +1819,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.38.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.39.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -6029,21 +6037,44 @@ def setHubModeFromName(modeName) {
     }
 }
 
+def holidayFilePresent() {
+    def names = []
+    try { names = listLocalFileNames() } catch (e) { names = [] }
+    if (names) {
+        def present = fileNamePresent(names, assetJsHolidayFile())
+        state.holidayFileSeen = present
+        return present
+    }
+    return state.holidayFileSeen == true
+}
+
+def holidayEnsureChild() {
+    if (!holidayFilePresent()) return
+    if (holidaysChild()) return
+    try {
+        addChildApp("mDash", "mDash Shabbat and Holidays", "Shabbat & holidays")
+        log.info "Modern Dashboard: Shabbat & holidays is on because mld-holiday.js is in File Manager."
+    } catch (e) {
+        log.info "Modern Dashboard: mld-holiday.js is in File Manager. Install the optional mDash Shabbat and Holidays app with Hubitat Package Manager so schedules can run."
+    }
+}
+
 def holidaysChild() {
     def kids = []
     try { kids = getChildApps() ?: [] } catch (e) { kids = [] }
     for (child in kids) {
         def name = ""
-        try { name = child?.getLabel() ?: child?.name ?: "" } catch (e) { name = "" }
-        if (!name || name.toString().contains("Holiday") || name.toString().contains("Shabbat")) return child
+        try { name = "${child?.getLabel() ?: ''} ${child?.name ?: ''}" } catch (e) { name = "" }
+        if (name.contains("Shabbat") || name.contains("Holiday")) return child
     }
-    return kids ? kids[0] : null
+    return null
 }
 
 def holidaysAvailable() {
     if (!schedulerIsEnabled()) return false
+    if (!holidayFilePresent()) return false
     def child = holidaysChild()
-    if (!child) return false
+    if (!child) return true
     try { return child.holidayIsAvailable() == true } catch (e) { return true }
 }
 
@@ -6058,7 +6089,7 @@ def holidayNotifyChild() {
 def holidaysRoute(String method) {
     if (!guardDashboardAccess()) return renderAuthRequired()
     def child = holidaysChild()
-    if (!child) return renderJsonNoStore('{"ok":false,"error":"module not installed"}', 404)
+    if (!child) return renderJsonNoStore('{"ok":false,"error":"Install the optional mDash Shabbat and Holidays app with Hubitat Package Manager."}', 404)
     def body = null
     if (method != "status") {
         body = request?.JSON

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.39
+
+- **Shabbat & holidays:** the dashboard app no longer tries to install the
+  module. `mld-holiday.js` is an optional Hubitat Package Manager file, and
+  the feature turns on when that file is in File Manager.
+
 ## 0.4.38
 
 - **Shabbat & holidays:** screens have more space between the text and the

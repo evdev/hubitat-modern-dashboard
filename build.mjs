@@ -813,11 +813,16 @@ const hpmManifest = {
       required: true,
     },
   ],
-  files: FILE_MANAGER_ASSETS.map(({ id, name }) => ({
-    id,
-    name,
-    location: `${HPM_BASE_URL}/upload/${name}`,
-  })),
+  files: FILE_MANAGER_ASSETS.map(({ id, name }) => {
+    const file = {
+      id,
+      name,
+      location: `${HPM_BASE_URL}/upload/${name}`,
+    };
+    // HPM installs required files with the package. Holiday UI is opt-in.
+    if (name === "mld-holiday.js") file.required = false;
+    return file;
+  }),
 };
 
 const hpmManifestJson = JSON.stringify(hpmManifest, null, "\t") + "\n";

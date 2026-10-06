@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const groovy = readFileSync(join(root, "app/mDashHolidays.groovy"), "utf8");
 const parent = readFileSync(join(root, "app/ModernLightsDashboard.groovy.template"), "utf8");
+const build = readFileSync(join(root, "build.mjs"), "utf8");
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -31,8 +32,10 @@ for (const piece of [
 
 assert(parent.includes('path("/holidays")'), "parent must expose /holidays");
 assert(parent.includes("def holidayRunAction"), "parent must run holiday device actions");
+assert(parent.includes("holidayFilePresent"), "parent enables holidays when mld-holiday.js is present");
 assert(parent.includes("holidaysAvailable"), "parent must report holidaysAvailable");
-assert(parent.includes('appName: "mDash Shabbat and Holidays"'), "parent must link the child app");
+assert(!parent.includes('app(name: "mDashHolidays"'), "parent must not offer a child-app install button");
 assert(!parent.includes("mld-holiday.js</code></li><li><code>mld-manifest"), "holiday file stays off the required twelve");
+assert(build.includes('if (name === "mld-holiday.js") file.required = false'), "mld-holiday.js must be an optional HPM file");
 
 console.log("holiday source ok");
