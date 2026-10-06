@@ -318,9 +318,9 @@ def mainPage() {
             def holidayFile = false
             try { holidayFile = holidayFilePresent() } catch (e) { holidayFile = false }
             if (holidayFile) {
-                paragraph "<small><b>Enabled.</b> <code>mld-holiday.js</code> is in File Manager, so Shabbat &amp; holidays is on. That file is optional in Hubitat Package Manager. The optional <b>mDash Shabbat and Holidays</b> app, also from Package Manager, runs the schedules. This page does not install either one.</small>"
+                paragraph "<small><b>Enabled.</b> <code>mld-holiday.js</code> is in File Manager, so Shabbat &amp; holidays is on. That file comes from the separate <b>mDash Shabbat and Holidays</b> package in Hubitat Package Manager. This page does not install it.</small>"
             } else {
-                paragraph "<small><b>Not enabled.</b> <code>mld-holiday.js</code> was not found in File Manager. Include that optional file in Hubitat Package Manager, or upload it yourself. This page does not install that file.</small>"
+                paragraph "<small><b>Not enabled.</b> <code>mld-holiday.js</code> was not found in File Manager. Install the <b>mDash Shabbat and Holidays</b> package in Hubitat Package Manager if you want Shabbat &amp; holidays. Modern Dashboard does not install that file.</small>"
             }
             paragraph "<small>If Shabbat and Holiday Scheduler is also installed, turn off its mode switching so the hub is not switched twice.</small>"
         }
@@ -6055,7 +6055,7 @@ def holidayEnsureChild() {
         addChildApp("mDash", "mDash Shabbat and Holidays", "Shabbat & holidays")
         log.info "Modern Dashboard: Shabbat & holidays is on because mld-holiday.js is in File Manager."
     } catch (e) {
-        log.info "Modern Dashboard: mld-holiday.js is in File Manager. Install the optional mDash Shabbat and Holidays app with Hubitat Package Manager so schedules can run."
+        log.info "Modern Dashboard: mld-holiday.js is in File Manager. Install the mDash Shabbat and Holidays package with Hubitat Package Manager so schedules can run."
     }
 }
 

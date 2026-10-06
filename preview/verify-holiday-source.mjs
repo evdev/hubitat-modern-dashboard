@@ -36,6 +36,7 @@ assert(parent.includes("holidayFilePresent"), "parent enables holidays when mld-
 assert(parent.includes("holidaysAvailable"), "parent must report holidaysAvailable");
 assert(!parent.includes('app(name: "mDashHolidays"'), "parent must not offer a child-app install button");
 assert(!parent.includes("mld-holiday.js</code></li><li><code>mld-manifest"), "holiday file stays off the required twelve");
-assert(build.includes('if (name === "mld-holiday.js") file.required = false'), "mld-holiday.js must be an optional HPM file");
+assert(build.includes('asset.name !== "mld-holiday.js"'), "Modern Dashboard package must not ship mld-holiday.js");
+assert(build.includes("holidayPackageManifest.json"), "holiday file must be its own HPM package");
 
 console.log("holiday source ok");

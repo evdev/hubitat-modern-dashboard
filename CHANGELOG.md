@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.40
+
+- **Shabbat & holidays:** `mld-holiday.js` is its own Hubitat Package Manager
+  package, **mDash Shabbat and Holidays**. It is not part of Modern Dashboard.
+  Install that package only if you want the feature. A Modern Dashboard install
+  does not include the file.
+
 ## 0.4.39
 
 - **Shabbat & holidays:** the dashboard app no longer tries to install the

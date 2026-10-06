@@ -479,11 +479,12 @@ Scheduler if needed.
 
 ### Shabbat & holidays
 
-Optional. In Hubitat Package Manager, `mld-holiday.js` is an optional file,
-separate from the dashboard files that always install. When that file is in
-File Manager, Shabbat & holidays turns on by itself. Package Manager also has an optional **mDash Shabbat and
-Holidays** app, which runs the schedules. Do not add it from the Modern
-Dashboard app page. Hiding the scheduler also pauses this module.
+Optional separate package. In Hubitat Package Manager, install **mDash Shabbat
+and Holidays** only if you want this feature. That package installs
+`mld-holiday.js`. Modern Dashboard does not install the file. When the file is
+in File Manager, Shabbat & holidays turns on by itself. Do not add the holiday
+app from the Modern Dashboard app page. Hiding the scheduler also pauses this
+module.
 
 The wizard asks where you are (diaspora or Israel), which hub mode to enter at
 candle lighting, and which mode to return to at the end. Shabbat is set up

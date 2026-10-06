@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.39
+// Modern Dashboard v0.4.40
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.39"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.40"
 
 definition(
     name: "Modern Dashboard",
@@ -69,7 +69,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.39 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.40 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -318,9 +318,9 @@ def mainPage() {
             def holidayFile = false
             try { holidayFile = holidayFilePresent() } catch (e) { holidayFile = false }
             if (holidayFile) {
-                paragraph "<small><b>Enabled.</b> <code>mld-holiday.js</code> is in File Manager, so Shabbat &amp; holidays is on. That file is optional in Hubitat Package Manager. The optional <b>mDash Shabbat and Holidays</b> app, also from Package Manager, runs the schedules. This page does not install either one.</small>"
+                paragraph "<small><b>Enabled.</b> <code>mld-holiday.js</code> is in File Manager, so Shabbat &amp; holidays is on. That file comes from the separate <b>mDash Shabbat and Holidays</b> package in Hubitat Package Manager. This page does not install it.</small>"
             } else {
-                paragraph "<small><b>Not enabled.</b> <code>mld-holiday.js</code> was not found in File Manager. Include that optional file in Hubitat Package Manager, or upload it yourself. This page does not install that file.</small>"
+                paragraph "<small><b>Not enabled.</b> <code>mld-holiday.js</code> was not found in File Manager. Install the <b>mDash Shabbat and Holidays</b> package in Hubitat Package Manager if you want Shabbat &amp; holidays. Modern Dashboard does not install that file.</small>"
             }
             paragraph "<small>If Shabbat and Holiday Scheduler is also installed, turn off its mode switching so the hub is not switched twice.</small>"
         }
@@ -1727,7 +1727,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.39.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.40.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1819,7 +1819,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.39.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.40.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -6055,7 +6055,7 @@ def holidayEnsureChild() {
         addChildApp("mDash", "mDash Shabbat and Holidays", "Shabbat & holidays")
         log.info "Modern Dashboard: Shabbat & holidays is on because mld-holiday.js is in File Manager."
     } catch (e) {
-        log.info "Modern Dashboard: mld-holiday.js is in File Manager. Install the optional mDash Shabbat and Holidays app with Hubitat Package Manager so schedules can run."
+        log.info "Modern Dashboard: mld-holiday.js is in File Manager. Install the mDash Shabbat and Holidays package with Hubitat Package Manager so schedules can run."
     }
 }
 

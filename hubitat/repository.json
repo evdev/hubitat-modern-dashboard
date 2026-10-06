@@ -16,6 +16,17 @@
 				"Temperature & Humidity",
 				"Multimedia"
 			]
+		},
+		{
+			"id": "d4e5f6a7-b8c9-4012-9abc-def123456789",
+			"name": "mDash Shabbat and Holidays",
+			"category": "Convenience",
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/hubitat/holidayPackageManifest.json",
+			"description": "Optional Shabbat and Yom Tov schedules for Modern Dashboard. Installs mld-holiday.js. Leave this uninstalled unless you want that feature.",
+			"tags": [
+				"Dashboards",
+				"Climate Control"
+			]
 		}
 	]
 }

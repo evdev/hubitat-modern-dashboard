@@ -66,6 +66,8 @@ const PACKAGE_MANIFEST_URL =
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";
 const HPM_HOLIDAY_APP_ID = "c1d2e3f4-a5b6-4789-8abc-def012345678";
+const HPM_HOLIDAY_PACKAGE_ID = "d4e5f6a7-b8c9-4012-9abc-def123456789";
+const HOLIDAY_PACKAGE_NAME = "mDash Shabbat and Holidays";
 // New UUID (0.3.46): namespace/name change cannot be applied via HPM upgradeDriver on the
 // old heID — fresh installDriver is required. Keep stable from here for main channel.
 const HPM_DRIVER_ID = "e2f3a4b5-c6d7-8901-ef23-456789012bcd";
@@ -794,15 +796,6 @@ const hpmManifest = {
       oauth: true,
       primary: true,
     },
-    {
-      id: HPM_HOLIDAY_APP_ID,
-      name: "mDash Shabbat and Holidays",
-      namespace: NS,
-      location: `${HPM_BASE_URL}/mDashHolidays.groovy`,
-      required: false,
-      oauth: false,
-      primary: false,
-    },
   ],
   drivers: [
     {
@@ -813,22 +806,65 @@ const hpmManifest = {
       required: true,
     },
   ],
-  files: FILE_MANAGER_ASSETS.map(({ id, name }) => {
-    const file = {
-      id,
-      name,
-      location: `${HPM_BASE_URL}/upload/${name}`,
-    };
-    // HPM installs required files with the package. Holiday UI is opt-in.
-    if (name === "mld-holiday.js") file.required = false;
-    return file;
-  }),
+  files: FILE_MANAGER_ASSETS.filter((asset) => asset.name !== "mld-holiday.js").map(({ id, name }) => ({
+    id,
+    name,
+    location: `${HPM_BASE_URL}/upload/${name}`,
+  })),
+};
+
+const holidayFile = FILE_MANAGER_ASSETS.find((asset) => asset.name === "mld-holiday.js");
+const holidayManifest = {
+  packageName: HOLIDAY_PACKAGE_NAME,
+  minimumHEVersion: "2.3.0",
+  author: APP_AUTHOR,
+  version: pkg.version,
+  dateReleased: hpmManifest.dateReleased,
+  licenseFile: LICENSE_URL,
+  releaseNotes: "Optional Shabbat and Yom Tov schedules for Modern Dashboard. Installs mld-holiday.js. Modern Dashboard turns the feature on when that file is in File Manager.",
+  documentationLink: `${GITHUB_URL}#readme`,
+  communityLink: COMMUNITY_LINK,
+  gitHubUrl: GITHUB_URL,
+  apps: [
+    {
+      id: HPM_HOLIDAY_APP_ID,
+      name: HOLIDAY_PACKAGE_NAME,
+      namespace: NS,
+      location: `${HPM_BASE_URL}/mDashHolidays.groovy`,
+      required: true,
+      oauth: false,
+      primary: true,
+    },
+  ],
+  drivers: [],
+  files: [
+    {
+      id: holidayFile.id,
+      name: holidayFile.name,
+      location: `${HPM_BASE_URL}/upload/${holidayFile.name}`,
+    },
+  ],
 };
 
 const hpmManifestJson = JSON.stringify(hpmManifest, null, "\t") + "\n";
+const holidayManifestJson = JSON.stringify(holidayManifest, null, "\t") + "\n";
 mkdirSync(hubitat, { recursive: true });
 writeFileSync(join(hubitat, "packageManifest.json"), hpmManifestJson);
 writeFileSync(join(dist, "packageManifest.json"), hpmManifestJson);
+writeFileSync(join(hubitat, "holidayPackageManifest.json"), holidayManifestJson);
+
+const holidayManifestUrl = PACKAGE_MANIFEST_URL.replace(
+  /packageManifest\.json$/,
+  "holidayPackageManifest.json"
+);
+const holidayRepositoryPackage = {
+  id: HPM_HOLIDAY_PACKAGE_ID,
+  name: HOLIDAY_PACKAGE_NAME,
+  category: "Convenience",
+  location: holidayManifestUrl,
+  description: "Optional Shabbat and Yom Tov schedules for Modern Dashboard. Installs mld-holiday.js. Leave this uninstalled unless you want that feature.",
+  tags: ["Dashboards", "Climate Control"],
+};
 
 const repositoryPath = join(hubitat, "repository.json");
 let existingRepository = {};
@@ -858,6 +894,11 @@ const repositoryPackageIndex = repositoryPackages.findIndex(
 );
 if (repositoryPackageIndex >= 0) repositoryPackages[repositoryPackageIndex] = currentRepositoryPackage;
 else repositoryPackages.push(currentRepositoryPackage);
+const holidayPackageIndex = repositoryPackages.findIndex(
+  (entry) => entry?.id === HPM_HOLIDAY_PACKAGE_ID
+);
+if (holidayPackageIndex >= 0) repositoryPackages[holidayPackageIndex] = holidayRepositoryPackage;
+else repositoryPackages.push(holidayRepositoryPackage);
 const hpmRepository = {
   ...existingRepository,
   author: existingRepository.author || APP_AUTHOR,
