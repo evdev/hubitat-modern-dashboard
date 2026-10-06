@@ -49,6 +49,10 @@ assert(groovy.includes("def holidayPutCalendar"), "calendar fetches must replace
 assert(groovy.includes("singleThreaded: true"), "mode changes and the schedule must not run at the same time");
 assert(groovy.includes("config.pausedOccasions = list"), "pausing one occasion must be written back onto state.config");
 assert(groovy.includes("afterEnd ? at < (day.end as long)"), "a custom time after the end is outside the day when it lands early");
+assert(groovy.includes("holidayWatch"), "a lost one-shot fire is picked up on the hourly watch");
+assert(/holidayReconcile[\s\S]*finally \{[\s\S]*holidayArm\(\)/.test(groovy), "a failed run still re-arms the next fire");
+assert(groovy.includes("replayHeld"), "devices held for Do not start stay pending until that mode is set");
+assert(groovy.includes('a.kind == "modeEnter" && spanOpen'), "an early mode change still runs when the job is a minute late");
 
 assert(parent.includes('path("/holidays")'), "parent must expose /holidays");
 assert(parent.includes("def holidayRunAction"), "parent must run holiday device actions");

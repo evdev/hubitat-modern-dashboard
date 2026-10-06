@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.52
+
+- **Scheduler:** a daily or weekly clock time the hub missed still runs if it is
+  less than ten minutes late, and it is not run twice. A sunrise or sunset
+  schedule keeps its next run when saving the last result fails. Update Modern
+  Dashboard.
+
+- **Shabbat & holidays:** a missed start is picked up within the hour, and a
+  mode change that arrives a minute late still starts the holiday. Devices held
+  for Do not start stay pending until that mode is set. Update mDash Shabbat
+  and Holidays.
+
 ## 0.4.51
 
 - **Shabbat & holidays:** if the hub does not enter the holiday mode, the change

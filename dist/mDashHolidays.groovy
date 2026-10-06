@@ -61,6 +61,8 @@ def initialize() {
     subscribe(location, "mode", holidayModeChanged)
     subscribe(location, "systemStart", holidaySystemStart)
     schedule("0 15 0 * * ?", holidayMidnight, [overwrite: true])
+    // If a one-shot fire is lost, this still runs due actions and arms the next one.
+    schedule("0 5 * * * ?", holidayWatch, [overwrite: true])
     holidayArm()
 }
 
@@ -114,8 +116,12 @@ def holidayRefresh() {
 }
 
 def holidaySystemStart(evt) {
-    runIn(60, holidayCatchUp)
+    try { runIn(60, holidayRetrySoon, [overwrite: true]) } catch (e) {}
 }
+
+def holidayWatch() { holidayCatchUp() }
+
+def holidayRetrySoon() { holidayCatchUp() }
 
 def holidayMidnight() {
     holidayFetch(false)
@@ -137,7 +143,7 @@ def holidayModeChanged(evt) {
         active = new LinkedHashMap(active)
         active.held = false
         active.startRan = true
-        holidayPutRuntime([activeSpan: active])
+        holidayPutRuntime([activeSpan: active, replayHeld: active.id?.toString()])
         log.info "mDash Holidays: holiday mode set manually — continuing this span"
         holidayCatchUp()
         return
@@ -1121,8 +1127,17 @@ def holidayArm() {
         }
     }
     if (nextAt != null) {
-        runOnce(new Date(nextAt), holidayFire)
-        if (debugLogging) log.debug "mDash Holidays: next action ${new Date(nextAt)}"
+        // Hubitat drops a runOnce that is already due. A few seconds ahead still
+        // falls inside the on-time window, so the action runs when the job fires.
+        long fireAt = nextAt
+        if (fireAt < nowMs + 3000L) fireAt = nowMs + 3000L
+        try {
+            runOnce(new Date(fireAt), holidayFire)
+            if (debugLogging) log.debug "mDash Holidays: next action ${new Date(nextAt)}"
+        } catch (e) {
+            log.warn "mDash Holidays: could not arm the next action — ${e}"
+            try { runIn(60, holidayRetrySoon, [overwrite: true]) } catch (ignored) {}
+        }
     }
 }
 
@@ -1137,6 +1152,8 @@ def holidayCatchUp() {
 def holidayReconcile(boolean fromBoot) {
     holidayModeThisRun = null
     holidayModeFailed = false
+    boolean needsRetry = false
+    try {
     holidayEnsureState()
     if (holidayPaused()) return
     long nowMs = now()
@@ -1155,16 +1172,30 @@ def holidayReconcile(boolean fromBoot) {
         return holidayQuestionOrder(a.question?.toString()) <=> holidayQuestionOrder(b.question?.toString())
     }
     long twoHours = 2L * 60 * 60 * 1000
+    boolean heldNow = state.runtime?.activeSpan?.held == true
+    def heldSpanId = state.runtime?.activeSpan?.id?.toString()
+    def replayHeldId = state.runtime?.replayHeld?.toString()
     def onTime = []
     def missed = []
     for (a in due) {
         long at = a.at as long
+        boolean spanOpen = holidaySpanOpen(built.spans, a.spanId, nowMs)
+        boolean waitingOnHold = heldNow && spanOpen && heldSpanId == a.spanId?.toString()
+        boolean releasingHold = replayHeldId && replayHeldId == a.spanId?.toString()
         if (at > nowMs + 15000L) continue
         if (at >= nowMs - 20000L) onTime << a
-        else if (a.kind == "devices" && (nowMs - at) <= twoHours) missed << a
+        else if (a.kind == "modeEnter" && spanOpen) onTime << a
+        else if (a.kind == "devices" && ((nowMs - at) <= twoHours || waitingOnHold || releasingHold)) missed << a
         else holidayMarkDone(a.id?.toString(), nowMs, "skipped")
     }
-    for (a in onTime) holidayExecute(a, nowMs)
+    for (a in onTime) {
+        try {
+            holidayExecute(a, nowMs)
+        } catch (e) {
+            needsRetry = true
+            log.warn "mDash Holidays: action ${a?.id} failed — ${e}"
+        }
+    }
     def doneNow = state.runtime.doneIds ?: [:]
     def latest = [:]
     for (a in missed) {
@@ -1182,19 +1213,42 @@ def holidayReconcile(boolean fromBoot) {
             ran.add(row.id.toString())
         }
     }
-    for (a in missed) {
-        if (ran.contains(a.id?.toString())) continue
-        def states = a.states ?: []
-        def onlyUnlocks = states && states.every { it?.kind?.toString() == "lock" && it?.locked == false }
-        holidayMarkDone(a.id?.toString(), nowMs, onlyUnlocks ? "skipped" : "collapsed")
-    }
     boolean held = state.runtime.activeSpan?.held == true
-    if (replay && !held && holidayCurrentMode() == state.config.settings.holidayMode?.toString()) {
-        parent.holidayRunAction(replay)
-        for (id in ran) holidayMarkDone(id, nowMs, "replayed")
-        holidayRemember("", fromBoot ? "replayed after restart" : "replayed after delay")
+    if (!held) {
+        for (a in missed) {
+            if (ran.contains(a.id?.toString())) continue
+            if (replayHeldId && replayHeldId == a.spanId?.toString()) continue
+            def states = a.states ?: []
+            def onlyUnlocks = states && states.every { it?.kind?.toString() == "lock" && it?.locked == false }
+            holidayMarkDone(a.id?.toString(), nowMs, onlyUnlocks ? "skipped" : "collapsed")
+        }
     }
-    holidayArm()
+    if (replay && !held && holidayCurrentMode() == state.config.settings.holidayMode?.toString()) {
+        try {
+            parent.holidayRunAction(replay)
+            for (id in ran) holidayMarkDone(id, nowMs, "replayed")
+            if (replayHeldId) holidayPutRuntime([replayHeld: null])
+            holidayRemember("", fromBoot ? "replayed after restart" : "replayed after delay")
+        } catch (e) {
+            needsRetry = true
+            log.warn "mDash Holidays: replay failed — ${e}"
+        }
+    } else if (replayHeldId && !held && !replay) {
+        holidayPutRuntime([replayHeld: null])
+    }
+    } catch (e) {
+        needsRetry = true
+        log.warn "mDash Holidays: reconcile failed — ${e}"
+    } finally {
+        if (needsRetry) {
+            try { runIn(60, holidayRetrySoon, [overwrite: true]) } catch (e2) {}
+        }
+        try {
+            if (!holidayPaused()) holidayArm()
+        } catch (e2) {
+            log.warn "mDash Holidays: re-arm failed — ${e2}"
+        }
+    }
 }
 
 def holidayExecute(a, long nowMs) {
@@ -1212,7 +1266,7 @@ def holidayExecute(a, long nowMs) {
         }
         if (!holidaySetMode(holidayMode)) {
             if (holidayModeFailed) {
-                try { runIn(60, holidayCatchUp) } catch (e) {}
+                try { runIn(60, holidayRetrySoon, [overwrite: true]) } catch (e) {}
                 log.info "mDash Holidays: mode change failed — will retry"
             } else {
                 holidayMarkDone(a.id?.toString(), nowMs, "skipped")
@@ -1225,7 +1279,13 @@ def holidayExecute(a, long nowMs) {
         return
     }
     if (a.kind == "modeExit") {
-        if (active.held != true && active.overridden != true && holidayCurrentMode() == holidayMode) holidaySetMode(endMode)
+        if (active.held != true && active.overridden != true && holidayCurrentMode() == holidayMode) {
+            if (!holidaySetMode(endMode) && holidayModeFailed) {
+                try { runIn(60, holidayRetrySoon, [overwrite: true]) } catch (e) {}
+                log.info "mDash Holidays: end mode failed — will retry"
+                return
+            }
+        }
         if (active instanceof Map) {
             active = new LinkedHashMap(active)
             active.ended = true
@@ -1237,10 +1297,7 @@ def holidayExecute(a, long nowMs) {
         holidayRemember(a.spanId?.toString(), "ended")
         return
     }
-    if (state.runtime.activeSpan?.held == true) {
-        holidayMarkDone(a.id?.toString(), nowMs, "held")
-        return
-    }
+    if (state.runtime.activeSpan?.held == true) return
     if (holidayModeFailed) return
     if (holidayCurrentMode() != holidayMode) {
         holidayMarkDone(a.id?.toString(), nowMs, "skipped")
@@ -1295,6 +1352,14 @@ def holidayDoNotStart(String mode) {
     def list = state.config?.settings?.doNotStartModes
     if (!(list instanceof List)) return false
     for (m in list) if (m?.toString() == mode) return true
+    return false
+}
+
+def holidaySpanOpen(spans, spanId, long nowMs) {
+    for (span in (spans ?: [])) {
+        if (span?.id?.toString() != spanId?.toString()) continue
+        try { return (span.end as long) > nowMs } catch (e) { return false }
+    }
     return false
 }
 
