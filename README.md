@@ -477,6 +477,43 @@ the new schedules.
 (from→to), leave-mode `offMode` pairs, and Toggle. Create those manually in the
 Scheduler if needed.
 
+### Shabbat & holidays
+
+Optional. Install the **mDash Shabbat and Holidays** child app (Hubitat Package
+Manager marks it optional) and upload `mld-holiday.js` to File Manager. In the
+Modern Dashboard app, open **Shabbat & holidays** and add the child. Hiding the
+scheduler also pauses this module.
+
+The wizard asks where you are (diaspora or Israel), which hub mode to enter at
+candle lighting, and which mode to return to at the end. Shabbat is set up
+first. Each Yom Tov can use that schedule as-is, start from a copy, use a new
+schedule, or be skipped. Skipped holidays do not change the hub mode. A Shabbat
+that falls on or next to a skipped holiday still runs.
+
+Candle-lighting and havdalah times come from [HebCal](https://www.hebcal.com)
+for the hub’s latitude and longitude. A Jewish day runs from candle lighting
+until the next candle lighting or havdalah, so the second night of a holiday is
+after nightfall. Rosh Hashana is two days in Israel as well. Chol HaMoed,
+Chanukah, Purim, and fast days are not included.
+
+On the Schedules list, each upcoming occasion is one short row. Tap it for the
+full schedule: a timeline per light or outlet, in the hub’s time zone, with on
+and off labeled in text. **Timeline by light** shows one light across upcoming
+occasions.
+
+If the hub is in a mode you marked “do not start” (for example Away) at candle
+lighting, nothing starts. Switching the hub into the holiday mode during that
+span continues it. Switching to Home does not. If the hub was off, light and
+outlet actions from the last two hours that never ran are applied when it comes
+back (only the latest state for each device). Older missed light actions are
+not replayed. The holiday mode is still corrected for a span that already
+started, unless that span was held because the house was Away.
+
+If Shabbat and Holiday Scheduler is also installed, turn off its mode switching
+so the hub is not switched twice. Rule Machine and motion rules should be
+limited to modes other than the holiday mode. mDash schedules with no mode
+restriction still run during the holiday; the wizard lists them.
+
 ### Favorites
 
 Tap the star on a supported device tile (lights, shades, locks, garage doors, music, sensors,

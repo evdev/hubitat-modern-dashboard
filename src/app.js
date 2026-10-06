@@ -6330,6 +6330,37 @@
     navReorderDraftOrder = currentNavOrderFromDom();
   }
 
+  function effectivePollInterval() {
+    const base = Math.max(2000, cfg.pollIntervalMs || POLL_DEFAULT);
+    if (cfg.useWebSocket && wsConnected) return Math.max(base, POLL_WS_FALLBACK);
+    return base;
+  }
+
+  function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+  function inTabView() {
+    return tabMode && activeTab !== "lights";
+  }
+
+  function updateTabActiveStates() {
+    if (QUICK_LIGHTS_BTN) QUICK_LIGHTS_BTN.classList.toggle("is-tab-active", tabMode && activeTab === "lights");
+    for (const { popup } of QUICK_NAV) {
+      if (!TAB_CATEGORIES.has(popup)) continue;
+      const btn = document.getElementById("quick-" + popup);
+      if (btn) btn.classList.toggle("is-tab-active", tabMode && activeTab === popup);
+    }
+  }
+
+  function normalizeDefaultTabId(id) {
+    const s = String(id || "").trim();
+    if (s === "lights" || TAB_CATEGORIES.has(s)) return s;
+    return "lights";
+  }
+
+  function syncCamerasViewClass(on) {
+    APP_EL?.classList.toggle("cameras-view", !!on);
+  }
+
   // __MLD_SPLIT__
 
   function showAllNavForReorder() {
@@ -13005,35 +13036,12 @@
     if (CURRENT_CATEGORY_TITLE_EL) CURRENT_CATEGORY_TITLE_EL.textContent = currentCategoryLabel();
   }
 
-  function inTabView() {
-    return tabMode && activeTab !== "lights";
-  }
-
-  function updateTabActiveStates() {
-    if (QUICK_LIGHTS_BTN) QUICK_LIGHTS_BTN.classList.toggle("is-tab-active", tabMode && activeTab === "lights");
-    for (const { popup } of QUICK_NAV) {
-      if (!TAB_CATEGORIES.has(popup)) continue;
-      const btn = document.getElementById("quick-" + popup);
-      if (btn) btn.classList.toggle("is-tab-active", tabMode && activeTab === popup);
-    }
-  }
-
-  function normalizeDefaultTabId(id) {
-    const s = String(id || "").trim();
-    if (s === "lights" || TAB_CATEGORIES.has(s)) return s;
-    return "lights";
-  }
-
   function applyDefaultTabIfNeeded() {
     if (defaultTabApplied || !tabMode) return;
     defaultTabApplied = true;
     const id = normalizeDefaultTabId(cfg.defaultTab);
     if (id === "lights") return;
     if (quickNavPopupHasContent(id)) showTab(id);
-  }
-
-  function syncCamerasViewClass(on) {
-    APP_EL?.classList.toggle("cameras-view", !!on);
   }
 
   function showTab(id) {
@@ -13830,11 +13838,6 @@
       setStatus("Cannot reach hub", true);
     }
   }
-  function effectivePollInterval() {
-    const base = Math.max(2000, cfg.pollIntervalMs || POLL_DEFAULT);
-    if (cfg.useWebSocket && wsConnected) return Math.max(base, POLL_WS_FALLBACK);
-    return base;
-  }
 
   function startPolling() {
     stopPolling();
@@ -13844,7 +13847,6 @@
   function restartPolling() {
     if (!document.hidden && !reorderMode) startPolling();
   }
-  function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
   function clearWsReconnectTimer() {
     if (wsReconnectTimer) {
@@ -14846,8 +14848,6 @@
     }
   }
 
-  // __MLD_SPLIT3__
-
   function enterRenameMode() {
     if (reorderMode) { flash("Finish reordering first", true); return; }
     const surface = renameSurface();
@@ -14862,6 +14862,8 @@
     }
     flash(surface === "lights" || surface === "sensors" ? "Tap a room or device name to rename" : "Tap a device name to rename");
   }
+
+  // __MLD_SPLIT3__
 
   document.addEventListener("click", (e) => {
     if (!isRenameMode() || e.target?.closest?.(".confirm-popup")) return;
@@ -16971,6 +16973,8 @@
   let hubNowMs = 0;
   let sunTimes = { sunrise: null, sunset: null };
   let schedUse24Hour = false;
+  let holidaysAvailable = false;
+  globalThis.__MLD.holidayBridge = () => ({ schedules, use24: schedUse24Hour, tz: hubTimeZone });
   let schedDraft = null;     // in-progress create/edit draft
   let schedStep = 1;         // 1 | 2 | 3
   let schedEditingId = null;
@@ -17014,6 +17018,7 @@
       sunTimes = { sunrise: data.sunTimes.sunrise ?? null, sunset: data.sunTimes.sunset ?? null };
     }
     schedUse24Hour = data.schedUse24Hour === true;
+    holidaysAvailable = data.holidaysAvailable === true;
     if (schedulerViewIsActive() && schedulerEnabled) {
       if (schedulesCloudOmitted) void ensureSchedulesLoaded();
       renderSchedulerActive();
@@ -17749,6 +17754,12 @@
     });
     header.appendChild(addBtn);
     wrap.appendChild(header);
+    if (holidaysAvailable) {
+      const holidayHost = ce("div", "holiday-slot");
+      wrap.insertBefore(holidayHost, header);
+      if (globalThis.mldHoliday) globalThis.mldHoliday.mount(holidayHost);
+      else holidayHost.textContent = "mld-holiday.js";
+    }
 
     if (schedulesLoadState === "loading" && !schedules.length) {
       const empty = ce("div", "empty");

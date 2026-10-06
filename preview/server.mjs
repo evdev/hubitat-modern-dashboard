@@ -17,6 +17,17 @@ import {
   scheduleTriggerWhen,
   modeCycleError,
 } from "../lib/scheduler-core.mjs";
+import {
+  HOLIDAY_API_VERSION,
+  emptyConfig,
+  expandUpcoming,
+  preflight,
+  conflictingSchedules,
+  templateBadge,
+  zonedMs,
+  zonedParts,
+  addDays,
+} from "../lib/holiday-core.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -116,6 +127,32 @@ state.schedules = [{
   summary: "When mode is Away",
 }];
 for (const s of state.schedules) mockRecomputeNextFire(s);
+state.holidaysAvailable = true;
+state.holiday = emptyConfig();
+state.holiday.occasions = {
+  roshHashana: "shabbat",
+  yomKippur: "shabbat",
+  sukkot: "shabbat",
+  shemini: "shabbat",
+  pesachFirst: "shabbat",
+  pesachLast: "shabbat",
+  shavuot: "shabbat",
+};
+state.holiday.settings.holidayMode = "Night";
+state.holiday.settings.endMode = "Day";
+state.holiday.settings.doNotStartModes = ["Away"];
+state.holiday.revision = 1;
+state.holiday.skipped = [];
+state.holiday.showMissed = false;
+state.holiday.templates.shabbat = {
+  start: { states: [{ id: "1", kind: "light", on: true, level: 80 }, { id: "2", kind: "light", on: false }], repeatLaterNights: false },
+  night: [{ time: "23:00", states: [{ id: "1", kind: "light", on: false }] }],
+  morning: [{ time: "08:00", states: [{ id: "3", kind: "light", on: true }] }],
+  afternoon: [],
+  evening: [],
+  end: { states: [], offStillOn: true },
+  custom: [],
+};
 state.notifications = [{
   id: "n_demo_1",
   text: "Washer cycle finished — demo notification. Dismiss or Mark as Read clears it on every tablet.",
@@ -893,6 +930,86 @@ const mime = {
   "/app.js": "application/javascript",
 };
 
+function holidayNextWeekday(startDate, weekday, tz) {
+  let date = startDate;
+  for (let i = 0; i < 21; i++) {
+    if (zonedParts(zonedMs(date, "12:00", tz), tz).weekday === weekday) return date;
+    date = addDays(date, 1);
+  }
+  return startDate;
+}
+
+function holidayIso(date, hhmm, tz) {
+  return new Date(zonedMs(date, hhmm, tz)).toISOString();
+}
+
+function holidayFixtureItems(now = Date.now()) {
+  const tz = "America/New_York";
+  const today = zonedParts(now, tz).date;
+  const friday = holidayNextWeekday(today, "Fri", tz);
+  const saturday = addDays(friday, 1);
+  const wed = holidayNextWeekday(addDays(saturday, 1), "Wed", tz);
+  const thu = addDays(wed, 1);
+  const tue = addDays(wed, -1);
+  return [
+    { category: "candles", date: holidayIso(friday, "18:30", tz) },
+    { category: "havdalah", date: holidayIso(saturday, "19:40", tz) },
+    { category: "candles", date: holidayIso(tue, "18:20", tz) },
+    { category: "holiday", date: wed, hdate: "15 Nisan 5787", yomtov: true },
+    { category: "candles", date: holidayIso(wed, "18:19", tz) },
+    { category: "holiday", date: thu, hdate: "16 Nisan 5787", yomtov: true },
+    { category: "havdalah", date: holidayIso(thu, "19:30", tz) },
+  ];
+}
+
+function holidayPreviewPayload(draft) {
+  const tz = "America/New_York";
+  const config = {
+    settings: { ...state.holiday.settings, ...(draft?.settings || {}) },
+    templates: { ...state.holiday.templates },
+    occasions: { ...state.holiday.occasions },
+  };
+  if (draft?.occasion && draft?.choice) config.occasions[draft.occasion] = draft.choice;
+  if (draft?.occasion && draft?.template) config.templates[draft.occasion] = draft.template;
+  const now = Date.now();
+  const { spans, actions } = expandUpcoming(holidayFixtureItems(now), config, tz, now);
+  const skipped = new Set(state.holiday.skipped || []);
+  const packed = spans.map((span) => ({
+    ...span,
+    skipped: skipped.has(span.id),
+    actions: actions.filter((a) => a.spanId === span.id),
+    warnings: [],
+  }));
+  const rows = packed.map((span, index) => ({
+    spanId: span.id,
+    name: span.name,
+    start: span.start,
+    end: span.end,
+    occasion: span.occasion,
+    skipped: span.skipped,
+    badge: span.skipped ? "skipped" : templateBadge(span.days?.[0]?.occasion || span.occasion, config),
+    inProgress: !span.skipped && span.start <= now && span.end > now,
+    warning: index === 0 && state.holiday.showMissed ? "Missed while the hub was offline" : "",
+  }));
+  return {
+    ok: true,
+    apiVersion: HOLIDAY_API_VERSION,
+    tz,
+    now,
+    revision: state.holiday.revision,
+    paused: false,
+    preflight: preflight(config.settings, { lat: 40.7, lon: -74, tz }, ["Day", "Evening", "Night", "Away"]),
+    settings: state.holiday.settings,
+    occasions: state.holiday.occasions,
+    templates: state.holiday.templates,
+    calendar: { fetchedAt: now, error: "", query: "preview" },
+    rows,
+    spans: packed,
+    conflicts: conflictingSchedules(state.schedules, config.settings.holidayMode),
+    modes: ["Day", "Evening", "Night", "Away"],
+  };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
@@ -939,6 +1056,10 @@ const server = createServer(async (req, res) => {
   if (p === "/app-post3.js") {
     res.writeHead(200, { "Content-Type": "application/javascript" });
     return res.end(readDist("mld-app-post3.js"));
+  }
+  if (p === "/app-holiday.js") {
+    res.writeHead(200, { "Content-Type": "application/javascript" });
+    return res.end(readDist("mld-holiday.js"));
   }
   if (p === "/manifest.webmanifest") {
     res.writeHead(200, { "Content-Type": "application/manifest+json" });
@@ -2325,6 +2446,41 @@ const server = createServer(async (req, res) => {
       htmlTitles: state.config.htmlTitles || {},
       favoritesLayout: reconciled,
     }));
+  }
+  if (p.startsWith("/holidays")) {
+    const sub = p.replace(/^\/holidays\/?/, "");
+    let body = null;
+    if (req.method !== "GET") {
+      try { body = await readJsonBody(req); } catch { body = {}; }
+    }
+    if (sub === "save" && body) {
+      if (body.revision != null && Number(body.revision) !== state.holiday.revision) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "Changed on another device — reload.", revision: state.holiday.revision }));
+      }
+      if (body.settings) state.holiday.settings = { ...state.holiday.settings, ...body.settings };
+      if (body.occasion) {
+        state.holiday.occasions[body.occasion] = body.choice || "own";
+        if (body.template) state.holiday.templates[body.occasion] = body.template;
+      }
+      state.holiday.revision += 1;
+    }
+    if (sub === "skip" && body?.spanId) {
+      const id = String(body.spanId);
+      if (body.undo) state.holiday.skipped = state.holiday.skipped.filter((x) => x !== id);
+      else if (!state.holiday.skipped.includes(id)) state.holiday.skipped.push(id);
+      state.holiday.revision += 1;
+    }
+    if (url.searchParams.get("missed") === "1") state.holiday.showMissed = true;
+    const payload = holidayPreviewPayload(body && sub === "preview" ? body : null);
+    if (sub === "preview") {
+      const wanted = body?.occasion;
+      const span = payload.spans.find((s) => (s.days || []).some((d) => d.occasion === wanted)) || payload.spans[0] || null;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, apiVersion: HOLIDAY_API_VERSION, tz: "America/New_York", span, warnings: span?.warnings || [] }));
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify(payload));
   }
   // ---------- scheduler mock ----------
   if (p.startsWith("/schedules")) {

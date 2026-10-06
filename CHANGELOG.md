@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.23
+
+- **Shabbat & holidays (optional):** a separate child app and dashboard script
+  schedule lights and outlets for Shabbat and Yom Tov, and change hub mode at
+  candle lighting and havdalah. Times come from HebCal for the hub’s location.
+  Each holiday can reuse the Shabbat schedule, start from it, or be skipped.
+  Upcoming occasions appear on the Schedules list. A timeline shows each light
+  on and off across the whole span, including a two- or three-day holiday.
+  If the hub was off, light changes from the last two hours that never ran are
+  caught up. Install from Hubitat Package Manager as an optional app, and upload
+  `mld-holiday.js`.
+
 ## 0.4.22
 
 - **Rename:** on Lights, Favorites, Blinds, Fans, Sensors, Thermostats, or Music,

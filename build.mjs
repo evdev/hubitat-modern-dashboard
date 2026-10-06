@@ -65,6 +65,7 @@ const PACKAGE_MANIFEST_URL =
 
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";
+const HPM_HOLIDAY_APP_ID = "c1d2e3f4-a5b6-4789-8abc-def012345678";
 // New UUID (0.3.46): namespace/name change cannot be applied via HPM upgradeDriver on the
 // old heID — fresh installDriver is required. Keep stable from here for main channel.
 const HPM_DRIVER_ID = "e2f3a4b5-c6d7-8901-ef23-456789012bcd";
@@ -83,6 +84,7 @@ const FILE_MANAGER_ASSETS = [
   { id: "f5e6a7b8-c9d0-1234-ef01-345678901234", name: "mld-app-post.js" },
   { id: "e7f8a9b0-c1d2-3456-7890-abcdef123456", name: "mld-app-post2.js" },
   { id: "f8a9b0c1-d2e3-4567-8901-bcdef1234567", name: "mld-app-post3.js" },
+  { id: "a9b8c7d6-e5f4-4321-abcd-ef0987654321", name: "mld-holiday.js" },
   { id: "a6f7b8c9-d0e1-2345-f012-456789012345", name: "mld-manifest.webmanifest" },
   { id: "b7a8c9d0-e1f2-3456-0123-567890123456", name: "mld-sw.js" },
   { id: "c8b9d0e1-f2a3-4567-1234-678901234567", name: "mld-icon-192.b64" },
@@ -491,6 +493,34 @@ function assertUploadBlobLimits() {
 }
 
 /** Minify without renaming identifiers so split-chunk __MLD exports stay stable. */
+function bundleHolidayJs() {
+  const css = readFileSync(join(root, "src", "holiday.css"), "utf8");
+  const source = readFileSync(join(root, "src", "holiday.js"), "utf8")
+    .replace("__HOLIDAY_CSS__", JSON.stringify(css));
+  for (const name of ["flash", "holidayBridge", "getJson", "postJson"]) {
+    if (!source.includes(`.${name}`)) {
+      throw new Error(`holiday.js must call the dashboard helper ${name}`);
+    }
+  }
+  const result = esbuild.buildSync({
+    stdin: {
+      contents: source,
+      resolveDir: join(root, "src"),
+      sourcefile: "holiday.js",
+      loader: "js",
+    },
+    bundle: true,
+    format: "iife",
+    write: false,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    legalComments: "none",
+    target: ["es2018"],
+  });
+  return result.outputFiles[0].text;
+}
+
 function minifyJs(label, source) {
   const result = esbuild.transformSync(source, {
     loader: "js",
@@ -619,6 +649,7 @@ const jsOutputs = [
   ["mld-app-post.js", minifyJs("mld-app-post.js", part2Out)],
   ["mld-app-post2.js", minifyJs("mld-app-post2.js", part3Out)],
   ["mld-app-post3.js", minifyJs("mld-app-post3.js", part4Out)],
+  ["mld-holiday.js", bundleHolidayJs()],
 ];
 
 for (const [name, content] of jsOutputs) {
@@ -671,6 +702,7 @@ if (!groovy.includes(',"id":"/mDash"')) {
   throw new Error("Generated Groovy manifest is missing stable PWA id");
 }
 writeFileSync(join(dist, "ModernLightsDashboard.groovy"), groovy);
+copyFileSync(join(root, "app", "mDashHolidays.groovy"), join(dist, "mDashHolidays.groovy"));
 
 const driverSrc = join(root, "drivers", DRIVER_FILE);
 const driverOutDir = join(dist, "drivers");
@@ -761,6 +793,15 @@ const hpmManifest = {
       required: true,
       oauth: true,
       primary: true,
+    },
+    {
+      id: HPM_HOLIDAY_APP_ID,
+      name: "mDash Shabbat and Holidays",
+      namespace: NS,
+      location: `${HPM_BASE_URL}/mDashHolidays.groovy`,
+      required: false,
+      oauth: false,
+      primary: false,
     },
   ],
   drivers: [

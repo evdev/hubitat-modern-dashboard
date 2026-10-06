@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.22
+// Modern Dashboard v0.4.23
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.22"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.23"
 
 definition(
     name: "Modern Dashboard",
@@ -69,7 +69,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.22 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.23 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -89,6 +89,7 @@ def mainPage() {
                     "Upload these files via <b>Settings → File Manager</b> (root folder, exact names). " +
                     "Easiest: install/update via <b>Hubitat Package Manager</b>.")
                 paragraph "<ul><li><code>mld-index.html</code></li><li><code>mld-app.css</code></li><li><code>mld-app-post.css</code></li><li><code>mld-app.js</code></li><li><code>mld-app-core.js</code></li><li><code>mld-app-post.js</code></li><li><code>mld-app-post2.js</code></li><li><code>mld-app-post3.js</code></li><li><code>mld-manifest.webmanifest</code></li><li><code>mld-sw.js</code></li><li><code>mld-icon-192.b64</code></li><li><code>mld-icon-512.b64</code></li></ul>"
+                paragraph "<small><code>mld-holiday.js</code> and the mDash Shabbat and Holidays child app are needed only for Shabbat &amp; holidays.</small>"
                 if (names) {
                     def mld = names.findAll { it?.contains("mld-") }
                     paragraph "<small>Files seen on hub: ${mld ? mld.join(', ') : '(none matching mld-*)'}</small>"
@@ -309,9 +310,13 @@ def mainPage() {
                     description: "Paste a Hubitat App Export to create mDash schedules",
                     page: "schedImportPage"
             }
-            paragraph "<small>When scheduler is hidden, no schedules run. Saved schedules are kept if you turn it back on.</small>"
+            paragraph "<small>When scheduler is hidden, no schedules run, including Shabbat and holiday schedules. Saved schedules are kept if you turn it back on.</small>"
             input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             paragraph "<small>Logs command traces to Hubitat Logs for troubleshooting. Auto-disables after 30 minutes. Failures are always logged regardless of this setting.</small>"
+        }
+        section("Shabbat & holidays (optional)", hideable: true, hidden: true) {
+            paragraph "<small>Install the child app to schedule lights and outlets for Shabbat and Yom Tov, and to change hub mode at candle lighting and havdalah. Also upload <code>mld-holiday.js</code> to File Manager. If Shabbat and Holiday Scheduler is installed, turn off its mode switching so the hub is not switched twice.</small>"
+            app(name: "mDashHolidays", appName: "mDash Shabbat and Holidays", namespace: "mDash", title: "Shabbat & holidays", multiple: false)
         }
         section("Light control", hideable: true, hidden: true) {
             paragraph "<small>Applies to snapshot restore, All on/off, and room on/off. Metering is on by default.</small>"
@@ -702,6 +707,7 @@ def installed() {
     logInit()
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
+    try { holidayNotifyChild() } catch (e) { log.warn "Modern Dashboard: holiday notify failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
     try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
@@ -714,6 +720,7 @@ def updated() {
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
     try { syncDashPasswordEpoch() } catch (e) { log.warn "Modern Dashboard: dash password sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
+    try { holidayNotifyChild() } catch (e) { log.warn "Modern Dashboard: holiday notify failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
     try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
@@ -1383,7 +1390,9 @@ def rewriteDashboardAssetRefsToFileManager(String html) {
         ["src", "app-post.js", assetJsPostFile()],
         ["src", "app-post2.js", assetJsPost2File()],
         ["src", "app-post3.js", assetJsPost3File()],
+        ["src", "app-holiday.js", assetJsHolidayFile()],
         ["content", "app-post3.js", assetJsPost3File()],
+        ["content", "app-holiday.js", assetJsHolidayFile()],
     ].each { spec ->
         def attr = spec[0], assetPath = spec[1], fmFile = spec[2]
         def escaped = assetPath.replace(".", "\\.")
@@ -1403,6 +1412,7 @@ def assetJsCoreFile() { return "mld-app-core.js" }
 def assetJsPostFile() { return "mld-app-post.js" }
 def assetJsPost2File() { return "mld-app-post2.js" }
 def assetJsPost3File() { return "mld-app-post3.js" }
+def assetJsHolidayFile() { return "mld-holiday.js" }
 def assetManifestFile() { return "mld-manifest.webmanifest" }
 def assetSwFile() { return "mld-sw.js" }
 def assetIcon192File() { return "mld-icon-192.b64" }
@@ -1618,7 +1628,7 @@ def renderPngFromBase64Asset(String b64FileName, String missingMsg) {
 }
 
 def missingAssetHtml() {
-    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup</title></head><body style="font-family:system-ui;padding:24px;max-width:520px;margin:auto;line-height:1.5"><h1>Setup required</h1><p>Modern Dashboard serves its UI from File Manager on your hub. Upload these twelve files to <b>Settings &rarr; File Manager</b> (root folder, exact names):</p><ul><li>mld-index.html</li><li>mld-app.css</li><li>mld-app-post.css</li><li>mld-app.js</li><li>mld-app-core.js</li><li>mld-app-post.js</li><li>mld-app-post2.js</li><li>mld-app-post3.js</li><li>mld-manifest.webmanifest</li><li>mld-sw.js</li><li>mld-icon-192.b64</li><li>mld-icon-512.b64</li></ul><p><b>Easiest install:</b> use <a href="https://github.com/evdev/hubitat-modern-dashboard#readme">Hubitat Package Manager</a> — OAuth and File Manager files are deployed automatically.</p><p>Then reopen the Modern Dashboard app, select your devices, and open the dashboard link.</p></body></html>"""
+    return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup</title></head><body style="font-family:system-ui;padding:24px;max-width:520px;margin:auto;line-height:1.5"><h1>Setup required</h1><p>Modern Dashboard serves its UI from File Manager on your hub. Upload these twelve files to <b>Settings &rarr; File Manager</b> (root folder, exact names):</p><ul><li>mld-index.html</li><li>mld-app.css</li><li>mld-app-post.css</li><li>mld-app.js</li><li>mld-app-core.js</li><li>mld-app-post.js</li><li>mld-app-post2.js</li><li>mld-app-post3.js</li><li>mld-manifest.webmanifest</li><li>mld-sw.js</li><li>mld-icon-192.b64</li><li>mld-icon-512.b64</li></ul><p><code>mld-holiday.js</code> and the mDash Shabbat and Holidays child app are needed only for Shabbat &amp; holidays.</p><p><b>Easiest install:</b> use <a href="https://github.com/evdev/hubitat-modern-dashboard#readme">Hubitat Package Manager</a> — OAuth and File Manager files are deployed automatically.</p><p>Then reopen the Modern Dashboard app, select your devices, and open the dashboard link.</p></body></html>"""
 }
 
 // ---------------------------------------------------------------------------
@@ -1634,6 +1644,7 @@ mappings {
     path("/app-post.js") { action: [GET: "renderJsPost"] }
     path("/app-post2.js") { action: [GET: "renderJsPost2"] }
     path("/app-post3.js") { action: [GET: "renderJsPost3"] }
+    path("/app-holiday.js") { action: [GET: "renderJsHoliday"] }
     path("/manifest.webmanifest") { action: [GET: "renderManifest"] }
     path("/sw.js") { action: [GET: "renderSw"] }
     path("/icons/icon-192.png") { action: [GET: "renderIcon192"] }
@@ -1673,6 +1684,12 @@ mappings {
     path("/schedules/delete") { action: [POST: "schedulesDelete"] }
     path("/schedules/toggle") { action: [POST: "schedulesToggle"] }
     path("/schedules/test") { action: [POST: "schedulesTest"] }
+    path("/holidays") { action: [GET: "holidaysGet"] }
+    path("/holidays/save") { action: [POST: "holidaysSave"] }
+    path("/holidays/preview") { action: [POST: "holidaysPreview"] }
+    path("/holidays/test") { action: [POST: "holidaysTest"] }
+    path("/holidays/skip") { action: [POST: "holidaysSkip"] }
+    path("/holidays/refresh") { action: [POST: "holidaysRefresh"] }
     path("/notifications") { action: [GET: "notificationsGet"] }
     path("/notifications/ack") { action: [GET: "notificationsAckGet", POST: "notificationsAck"] }
     path("/tile-notifications") { action: [GET: "tileNotificationsGet"] }
@@ -1702,7 +1719,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.22.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.23.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1713,10 +1730,11 @@ def renderIndex() {
         html = appendAccessToken(html, "href", "app.css", token)
         html = appendAccessToken(html, "href", "app-post.css", token)
         html = html.replace('href="manifest.webmanifest"', "href=\"manifest.webmanifest${q}\"")
-        for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"]) {
+        for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js", "app-holiday.js"]) {
             html = appendAccessToken(html, "src", asset, token)
         }
         html = appendAccessToken(html, "content", "app-post3.js", token)
+        html = appendAccessToken(html, "content", "app-holiday.js", token)
     }
     html = rewriteDashboardAssetRefsToFileManager(html)
     renderNoStore("text/html", html, 200)
@@ -1764,6 +1782,12 @@ def renderJsPost3() {
     renderVersionedAsset("application/javascript", js)
 }
 
+def renderJsHoliday() {
+    def js = readLocalAsset(assetJsHolidayFile())
+    if (!js) { js = "globalThis.mldHolidayMissing=true;console.warn('Upload mld-holiday.js to File Manager');" }
+    renderVersionedAsset("application/javascript", js)
+}
+
 def renderManifest() {
     // Keep the manifest small, but do not proxy PNG bytes through Hubitat Cloud:
     // Hubitat's text-oriented render path corrupts binary image responses. Published
@@ -1787,7 +1811,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.22.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.23.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -2173,6 +2197,7 @@ def renderData() {
     out << ",\"scenesPopupEnabled\":" << (scenesPopupEnabled == null ? "true" : (scenesPopupEnabled == true ? "true" : "false"))
     out << ",\"roomClimateEnabled\":" << (roomClimateEnabled == null ? "true" : (roomClimateEnabled == true ? "true" : "false"))
     out << ",\"schedulerEnabled\":" << (schedulerIsEnabled() ? "true" : "false")
+    out << ",\"holidaysAvailable\":" << (holidaysAvailable() ? "true" : "false")
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
     out << ",\"hubTimeZone\":" << jsonStr(hubTimeZoneId())
     out << ",\"hubNow\":" << now().toString()
@@ -6002,6 +6027,98 @@ def setHubModeFromName(modeName) {
         log.warn "Modern Dashboard: hub mode failed — ${modeName}: ${e.message ?: e}"
         return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", 500)
     }
+}
+
+def holidaysChild() {
+    def kids = []
+    try { kids = getChildApps() ?: [] } catch (e) { kids = [] }
+    for (child in kids) {
+        def name = ""
+        try { name = child?.getLabel() ?: child?.name ?: "" } catch (e) { name = "" }
+        if (!name || name.toString().contains("Holiday") || name.toString().contains("Shabbat")) return child
+    }
+    return kids ? kids[0] : null
+}
+
+def holidaysAvailable() {
+    if (!schedulerIsEnabled()) return false
+    def child = holidaysChild()
+    if (!child) return false
+    try { return child.holidayIsAvailable() == true } catch (e) { return true }
+}
+
+def holidayNotifyChild() {
+    def child = holidaysChild()
+    if (!child) return
+    try { child.holidayParentPause(!schedulerIsEnabled()) } catch (e) {
+        log.warn "Modern Dashboard: holiday child pause failed: ${e}"
+    }
+}
+
+def holidaysRoute(String method) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def child = holidaysChild()
+    if (!child) return renderJsonNoStore('{"ok":false,"error":"module not installed"}', 404)
+    def body = null
+    if (method != "status") {
+        body = request?.JSON
+        if (body == null) {
+            try {
+                def raw = request?.postBody ?: request?.content
+                if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+            } catch (e) {}
+        }
+    }
+    def result = null
+    try {
+        if (method == "status") result = child.holidaysStatus()
+        else if (method == "save") result = child.holidaysSave(body)
+        else if (method == "preview") result = child.holidaysPreview(body)
+        else if (method == "test") result = child.holidaysTest(body)
+        else if (method == "skip") result = child.holidaysSkip(body)
+        else if (method == "refresh") {
+            child.holidayRefresh()
+            result = child.holidaysStatus()
+            result.ok = true
+        }
+    } catch (e) {
+        log.warn "Modern Dashboard: holiday ${method} failed: ${e}"
+        return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", 500)
+    }
+    def json = groovy.json.JsonOutput.toJson(result ?: [ok: false])
+    return renderJsonNoStore(withAuthJson(json), 200)
+}
+
+def holidaysGet() { return holidaysRoute("status") }
+def holidaysSave() { return holidaysRoute("save") }
+def holidaysPreview() { return holidaysRoute("preview") }
+def holidaysTest() { return holidaysRoute("test") }
+def holidaysSkip() { return holidaysRoute("skip") }
+def holidaysRefresh() { return holidaysRoute("refresh") }
+
+def holidayRunAction(states) {
+    def result = newScheduleActionResult()
+    if (!(states instanceof List)) return result
+    int delay = 0
+    try { delay = lightControlMeterDelayMsValue() as Integer } catch (e) { delay = 0 }
+    if (lightControlDisableMetering == true) delay = 0
+    boolean first = true
+    for (st in states) {
+        if (st == null) continue
+        if (!first && delay > 0) {
+            try { pauseExecution(delay) } catch (e) {}
+        }
+        first = false
+        def one = [states: [[id: st?.id, on: (st?.on == true), level: st?.level, ct: st?.ct]]]
+        if (st?.kind?.toString() == "outlet") runScheduleOnOffAction(one, outletSwitches, result)
+        else runScheduleLightAction(one, result)
+    }
+    return [
+        attempted: result.attempted,
+        succeeded: result.succeeded,
+        missing: result.missing,
+        failed: result.failed
+    ]
 }
 
 def pinsMatch(expected, provided) {

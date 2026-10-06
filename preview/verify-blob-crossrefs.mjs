@@ -234,7 +234,7 @@ function auditBuiltBlobs() {
   const html = readFileSync(join(upload, "mld-index.html"), "utf8");
   const srcHtml = readFileSync(join(root, "src", "index.html"), "utf8");
   const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1]);
-  const expected = ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"];
+  const expected = ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js", "app-holiday.js"];
   for (let i = 0; i < expected.length; i++) {
     if (!scripts[i] || !scripts[i].includes(expected[i])) {
       fail(`mld-index.html script[${i}] should be ${expected[i]} (got ${scripts[i] || "missing"})`);

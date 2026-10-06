@@ -1,6 +1,7 @@
 node_modules/
 dist/*
 !dist/ModernLightsDashboard.groovy
+!dist/mDashHolidays.groovy
 !dist/packageManifest.json
 !dist/drivers/
 dist/drivers/*
