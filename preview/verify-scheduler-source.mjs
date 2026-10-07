@@ -143,6 +143,9 @@ assert(src.includes('unschedule("schedulerSunRetry")'), "scheduler shutdown must
 assert(/runScheduleThermostatAction[\s\S]*?if \(runThermostatSetting\(dev, action\)\) result\.succeeded\+\+\s*else result\.failed/.test(src), "thermostat command failures must affect lastResult");
 assert(/def runThermostatSetting[\s\S]*?return !deviceFailed/.test(src), "runThermostatSetting must report command failures");
 assert(src.includes("def scheduleThermostatIds("), "must normalize scalar or list thermostat ids");
+assert(/def scheduleBoolIs[\s\S]*instanceof Boolean/.test(src), "lock unlock must require a real boolean, not Groovy's 0 == false");
+assert(src.includes("locked: !scheduleBoolIs(st?.locked, false)"), "normalize must unlock only for boolean false");
+assert(src.includes("def unlock = scheduleBoolIs(st?.locked, false)"), "run must unlock only for boolean false");
 assert(src.includes("ac.devices = scheduleThermostatIds(body?.action?.devices)"), "save must persist normalized thermostat ids");
 assert(/runScheduleThermostatAction[\s\S]*scheduleThermostatIds\(action\?\.devices\)/.test(src), "run must use normalized thermostat ids");
 assert(/setThermostatFanModeCmd[\s\S]*tstatHasComfortFanSpeed[\s\S]*return dispatched/.test(src), "fan dispatch accounting must support comfort-only thermostats");
@@ -160,6 +163,8 @@ assert(/def schedulesTest[\s\S]*\[ok: ok, lastResult: lastResult\]/.test(src), "
 }
 
 const js = readFileSync(join(root, "src/app.js"), "utf8");
+assert(js.includes("function schedEnsureStateList("), "editor must keep a one-device state object");
+assert(js.includes("schedEnsureStateList(schedDraft.action)"), "open and save must coerce an unwrapped state");
 assert(js.includes("schedulesLoadState"), "UI must track schedule load state");
 assert(js.includes("schedulesCloudOmitted"), "UI must refetch when cloud /data omits schedules");
 assert(!js.includes("schedulesLoadedFromHub"), "removed leftover schedulesLoadedFromHub global");
@@ -184,7 +189,7 @@ assert(js.includes("schedLastResultNote"), "list must surface missing/failed act
 assert(js.includes('lastResult?.skipped === "mode"'), "a mode skip must not look like the actions ran");
 assert(js.includes("Hub mode was not allowed"), "a mode skip must say the hub mode was not allowed");
 assert(js.includes("function schedIdList("), "Then line must normalize thermostat id lists");
-assert(js.includes("schedActionDescription(s.action, { thermostats })"), "Then line must resolve thermostat names");
+assert(js.includes("schedActionDescription(s.action, { thermostats, locks, windowShades, ceilingFans })"), "Then line must resolve thermostat names");
 assert(js.includes("new Set(schedIdList(schedDraft.action.devices))"), "thermostat picker must not iterate a string id");
 {
   const start = js.indexOf("function renderSchedThermostatAction(");

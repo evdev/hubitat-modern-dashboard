@@ -1030,6 +1030,33 @@ function autoScheduleName(draft, catalogs, formatters) {
     const ids = Array.isArray(raw) ? raw : (raw != null && raw !== "" ? [raw] : []);
     scope = scopeFrom(ids, catalogs?.thermostats || [], "Thermostat", "Thermostats");
     state = thermoState(ac);
+  } else if (target === "locks" || target === "blinds" || target === "fans") {
+    const states = (Array.isArray(ac.states) ? ac.states : (ac.states && typeof ac.states === "object" ? [ac.states] : []))
+      .filter((s) => s && s.id != null && s.id !== "");
+    if (target === "locks") {
+      scope = scopeFrom(states.map((s) => s.id), catalogs?.locks || [], "Lock", "Locks");
+      state = states.length && states.every((s) => s.locked === false) ? "Unlocked"
+        : states.length && states.every((s) => s.locked !== false) ? "Locked"
+        : states.length ? "Set" : "";
+    } else if (target === "blinds") {
+      scope = scopeFrom(states.map((s) => s.id), catalogs?.windowShades || [], "Blind", "Blinds");
+      state = states.length && states.every((s) => s.open === true) ? "Open"
+        : states.length && states.every((s) => s.open !== true) ? "Closed"
+        : states.length ? "Set" : "";
+    } else {
+      scope = scopeFrom(states.map((s) => s.id), catalogs?.ceilingFans || [], "Fan", "Fans");
+      const ons = states.filter((s) => s.on === true);
+      const speed = ons.length && String(ons[0].speed || "").trim();
+      const sameSpeed = ons.length === states.length && speed
+        && ons.every((s) => String(s.speed || "").trim().toLowerCase() === speed.toLowerCase());
+      if (states.length && states.every((s) => s.on !== true)) state = "Off";
+      else if (sameSpeed) {
+        const key = speed.toLowerCase();
+        const labels = { low: "Low", "medium-low": "Med-Low", medium: "Medium", "medium-high": "Med-High", high: "High" };
+        state = labels[key] || (key.charAt(0).toUpperCase() + key.slice(1));
+      } else if (states.length && states.every((s) => s.on === true)) state = "On";
+      else if (states.length) state = "Set";
+    }
   } else if (target === "hubMode") {
     scope = "Hub Mode";
     state = String(ac.mode || "").trim();

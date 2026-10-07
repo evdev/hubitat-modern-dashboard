@@ -17557,11 +17557,79 @@
       else scope = ids.length + " thermostats";
       return [scope].concat(schedThermoThenBits(ac)).filter(Boolean).join(" \u00b7 ");
     }
+    if (target === "locks" || target === "blinds" || target === "fans") {
+      const states = schedStateRows(ac.states);
+      const nouns = target === "locks" ? "locks" : target === "blinds" ? "blinds" : "fans";
+      const catalog = target === "locks"
+        ? (catalogs && catalogs.locks)
+        : target === "blinds"
+          ? (catalogs && catalogs.windowShades)
+          : (catalogs && catalogs.ceilingFans);
+      if (!states.length) return "No " + nouns + " selected";
+      const nameOf = (st) => schedCatalogName(catalog, st.id, target === "locks" ? "Lock" : target === "blinds" ? "Blind" : "Fan");
+      if (target === "locks") {
+        const locked = states.every((st) => st.locked !== false);
+        const unlocked = states.every((st) => st.locked === false);
+        if (states.length === 1) return (unlocked ? "Unlock " : "Lock ") + nameOf(states[0]);
+        if (locked) return "Lock " + states.length + " locks";
+        if (unlocked) return "Unlock " + states.length + " locks";
+        return "Set " + states.length + " locks";
+      }
+      if (target === "blinds") {
+        const open = states.every((st) => st.open === true);
+        const closed = states.every((st) => st.open !== true);
+        const pos = states[0] && states[0].position;
+        const samePos = open && pos != null && pos !== "" && states.every((st) => st.position === pos);
+        if (states.length === 1) {
+          const name = nameOf(states[0]);
+          if (states[0].open !== true) return "Close " + name;
+          return samePos ? ("Open " + name + " \u00b7 " + pos + "%") : ("Open " + name);
+        }
+        if (closed) return "Close " + states.length + " blinds";
+        if (open && samePos) return "Open " + states.length + " blinds \u00b7 " + pos + "%";
+        if (open) return "Open " + states.length + " blinds";
+        return "Set " + states.length + " blinds";
+      }
+      const on = states.every((st) => st.on === true);
+      const off = states.every((st) => st.on !== true);
+      const speed = states[0] && states[0].speed != null ? String(states[0].speed).trim() : "";
+      const sameSpeed = on && speed && states.every((st) => String(st.speed || "").trim().toLowerCase() === speed.toLowerCase());
+      if (states.length === 1) {
+        const name = nameOf(states[0]);
+        if (states[0].on !== true) return "Turn off " + name;
+        if (speed) return name + " \u00b7 " + schedFanSpeedWord(speed);
+        return "Turn on " + name;
+      }
+      if (off) return "Turn off " + states.length + " fans";
+      if (sameSpeed) return states.length + " fans \u00b7 " + schedFanSpeedWord(speed);
+      if (on) return "Turn on " + states.length + " fans";
+      return "Set " + states.length + " fans";
+    }
     if (target === "hubMode") {
       const mode = ac.mode ? String(ac.mode).trim() : "";
       return mode ? "Set hub mode to " + mode : "Change hub mode";
     }
     return "No action";
+  }
+
+  function schedStateRows(raw) {
+    if (raw == null || raw === "") return [];
+    const arr = Array.isArray(raw) ? raw : [raw];
+    return arr.filter((st) => st && typeof st === "object");
+  }
+
+  function schedCatalogName(list, id, fallback) {
+    const d = (list || []).find((x) => String(x.i) === String(id));
+    const nm = d && d.n ? String(d.n).trim() : "";
+    return nm || (fallback + " " + id);
+  }
+
+  function schedFanSpeedWord(sp) {
+    const key = String(sp || "").trim().toLowerCase();
+    const labels = { low: "Low", "medium-low": "Med-Low", medium: "Medium", "medium-high": "Med-High", high: "High" };
+    if (labels[key]) return labels[key];
+    if (!key) return "";
+    return key.charAt(0).toUpperCase() + key.slice(1);
   }
 
   function schedOnlyInModesList(s) {
@@ -17671,6 +17739,15 @@
       parts.push(fmtSchedRelativeFuture(s.nextFire));
     }
     if (s?.lastFired != null) parts.push(fmtSchedTime(s.lastFired));
+    parts.push(schedActionDescription(s.action, { thermostats, locks, windowShades, ceilingFans }));
+    const actionTarget = String(s?.action?.target || "");
+    const nameCatalog = actionTarget === "locks" ? locks
+      : actionTarget === "blinds" ? windowShades
+      : actionTarget === "fans" ? ceilingFans
+      : null;
+    if (nameCatalog) {
+      for (const st of schedStateRows(s?.action?.states)) parts.push(schedCatalogName(nameCatalog, st.id, ""));
+    }
     return parts.join(" ").trim().toLowerCase();
   }
 
@@ -17709,6 +17786,7 @@
     if (!schedDraft.trigger.mode) schedDraft.trigger.mode = "";
     schedDraft.onlyInModes = Array.isArray(schedDraft.onlyInModes) ? schedDraft.onlyInModes : [];
     schedDraft.action = schedDraft.action || { target: "lights", states: [] };
+    schedEnsureStateList(schedDraft.action);
     schedEditingId = s.id;
     schedStep = 1;
     schedNameCustom = !!(schedDraft.name && String(schedDraft.name).trim());
@@ -17723,6 +17801,22 @@
       onlyInModes: [],
       action: { target: "lights", states: [], "devices": [], mode: null, heat: null, cool: null, fanMode: null }
     };
+  }
+
+  function schedEnsureStateList(action) {
+    const ac = action || schedDraft?.action;
+    if (!ac) return;
+    const target = String(ac.target || "");
+    if (!["lights", "outlets", "locks", "blinds", "fans"].includes(target)) return;
+    if (Array.isArray(ac.states)) return;
+    if (ac.states && typeof ac.states === "object") ac.states = [ac.states];
+    else ac.states = [];
+  }
+
+  function schedBlankAction(target) {
+    if (target === "thermostats") return { target, devices: [], mode: null, heat: null, cool: null, fanMode: null };
+    if (target === "hubMode") return { target, mode: "" };
+    return { target, states: [] };
   }
 
   async function schedApi(path, body) {
@@ -17892,7 +17986,7 @@
 
     const rule = ce("div", "sched-row-rule");
     schedAppendRuleLine(rule, "When", s.summary || "");
-    schedAppendRuleLine(rule, "Then", schedActionDescription(s.action, { thermostats }));
+    schedAppendRuleLine(rule, "Then", schedActionDescription(s.action, { thermostats, locks, windowShades, ceilingFans }));
     row.appendChild(rule);
 
     const onlyModes = Array.isArray(s.onlyInModes) ? s.onlyInModes.filter(Boolean) : [];
@@ -18353,14 +18447,21 @@
     const q = ce("p", "sched-question");
     q.textContent = "What type of device would you like to control?";
     wrap.appendChild(q);
+    const currentTarget = String(schedDraft.action?.target || "");
+    const deviceOpts = [
+      { k: "locks", label: "Locks", list: locks },
+      { k: "blinds", label: "Blinds", list: windowShades },
+      { k: "fans", label: "Fans", list: ceilingFans },
+    ].filter((o) => o.list.length || currentTarget === o.k);
     const opts = [
       { k: "lights", label: "Lights" },
       ...(outlets.length ? [{ k: "outlets", label: "Outlets" }] : []),
       { k: "thermostats", label: "Thermostats" },
+      ...deviceOpts.map(({ k, label }) => ({ k, label })),
       { k: "hubMode", label: "Hub mode" }
     ];
-    if (!opts.some((o) => o.k === schedDraft.action.target)) {
-      schedDraft.action.target = "lights";
+    if (!opts.some((o) => o.k === currentTarget)) {
+      schedDraft.action = schedBlankAction("lights");
     }
     const grid = ce("div", "sched-type-grid");
     for (const { k, label } of opts) {
@@ -18368,15 +18469,7 @@
       b.type = "button";
       b.textContent = label;
       b.addEventListener("click", () => {
-        if (schedDraft.action.target !== k) {
-          schedDraft.action.mode = null;
-          schedDraft.action.heat = null;
-          schedDraft.action.cool = null;
-          schedDraft.action.fanMode = null;
-        }
-        schedDraft.action.target = k;
-        if ((k === "lights" || k === "outlets") && !schedDraft.action.states) schedDraft.action.states = [];
-        if (k === "thermostats" && !schedDraft.action.devices) schedDraft.action.devices = [];
+        if (schedDraft.action.target !== k) schedDraft.action = schedBlankAction(k);
         renderSchedulerActive();
       });
       grid.appendChild(b);
@@ -18415,6 +18508,9 @@
     const t = schedDraft.action.target;
     if (t === "lights") wrap.appendChild(renderSchedLightAction());
     else if (t === "outlets") wrap.appendChild(renderSchedOnOffDeviceAction(outlets, "Select outlets", "No outlets configured. Add outlets in the companion app device settings."));
+    else if (t === "locks") wrap.appendChild(renderSchedLockAction());
+    else if (t === "blinds") wrap.appendChild(renderSchedBlindAction());
+    else if (t === "fans") wrap.appendChild(renderSchedFanAction());
     else if (t === "thermostats") wrap.appendChild(renderSchedThermostatAction());
     else if (t === "hubMode") {
       const hubModeAction = renderSchedHubModeAction();
@@ -18424,7 +18520,11 @@
     return wrap;
   }
 
-  function renderSchedOnOffDeviceAction(devList, question, emptyMsg) {
+  function renderSchedOnOffDeviceAction(devList, question, emptyMsg, opts) {
+    const options = opts || {};
+    const makeState = options.makeState || ((d) => ({ id: d.i, on: true }));
+    const hintText = options.hint || "Choose on or off for every selected device below.";
+    schedEnsureStateList(schedDraft.action);
     const wrap = ce("div", "sched-action");
     const q = ce("p", "sched-question");
     q.textContent = question;
@@ -18475,6 +18575,13 @@
     }
 
     function refreshOnOffAction() {
+      selectedIds.clear();
+      for (const s of schedDraft.action.states || []) {
+        if (s && s.id != null && s.id !== "") selectedIds.add(String(s.id));
+      }
+      const paintRow = (d) => options.renderRow
+        ? options.renderRow(d, findState(d.i), refreshOnOffAction)
+        : renderRow(d);
       const oldPicker = wrap.querySelector(".sched-light-picker");
       const oldActions = wrap.querySelector(".sched-device-actions");
       const next = ce("div", "sched-light-picker");
@@ -18498,7 +18605,7 @@
           } else {
             for (const d of roomDevs) {
               selectedIds.add(String(d.i));
-              if (!findState(d.i)) schedDraft.action.states.push({ id: d.i, on: true });
+              if (!findState(d.i)) schedDraft.action.states.push(makeState(d));
             }
           }
           refreshOnOffAction();
@@ -18522,7 +18629,7 @@
               schedDraft.action.states = (schedDraft.action.states || []).filter((s) => String(s.id) !== String(d.i));
             } else {
               selectedIds.add(String(d.i));
-              schedDraft.action.states.push({ id: d.i, on: true });
+              schedDraft.action.states.push(makeState(d));
             }
             refreshOnOffAction();
           };
@@ -18555,7 +18662,7 @@
               schedDraft.action.states = (schedDraft.action.states || []).filter((s) => String(s.id) !== String(d.i));
             } else {
               selectedIds.add(String(d.i));
-              schedDraft.action.states.push({ id: d.i, on: true });
+              schedDraft.action.states.push(makeState(d));
             }
             refreshOnOffAction();
           };
@@ -18580,7 +18687,7 @@
         nm.textContent = r.name || "Room";
         hdr.appendChild(nm);
         selList.appendChild(hdr);
-        for (const d of selDevs) selList.appendChild(renderRow(d));
+        for (const d of selDevs) selList.appendChild(paintRow(d));
       }
       const unroomedSel = unroomed.filter((d) => selectedIds.has(String(d.i)));
       if (unroomedSel.length) {
@@ -18589,14 +18696,141 @@
         nm.textContent = "No room";
         hdr.appendChild(nm);
         selList.appendChild(hdr);
-        for (const d of unroomedSel) selList.appendChild(renderRow(d));
+        for (const d of unroomedSel) selList.appendChild(paintRow(d));
       }
-      schedMountDeviceActionsSection(wrap, oldActions, selList, "Choose on or off for every selected device below.");
+      schedMountDeviceActionsSection(wrap, oldActions, selList, hintText);
       schedSyncNameField();
     }
 
     refreshOnOffAction();
     return wrap;
+  }
+
+  function schedDeviceActionRow(d, redraw, paintBody) {
+    const row = ce("div", "sched-light-row");
+    const head = ce("div", "sched-light-row-head");
+    const nm = ce("div", "sched-light-name");
+    nm.textContent = d.n || ("Device " + d.i);
+    head.appendChild(nm);
+    const removeBtn = ce("button", "ghost-btn sched-mini-btn");
+    removeBtn.type = "button";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => {
+      schedDraft.action.states = (schedDraft.action.states || []).filter((s) => String(s.id) !== String(d.i));
+      redraw();
+    });
+    head.appendChild(removeBtn);
+    row.appendChild(head);
+    paintBody(row);
+    return row;
+  }
+
+  function schedTwoWay(row, leftOn, leftLabel, rightLabel, onLeft, onRight) {
+    const onOff = ce("div", "sched-onoff");
+    const left = ce("button", "sched-seg " + (leftOn ? "is-active" : ""));
+    left.type = "button";
+    left.textContent = leftLabel;
+    left.addEventListener("click", onLeft);
+    const right = ce("button", "sched-seg " + (!leftOn ? "is-active" : ""));
+    right.type = "button";
+    right.textContent = rightLabel;
+    right.addEventListener("click", onRight);
+    onOff.appendChild(left);
+    onOff.appendChild(right);
+    row.appendChild(onOff);
+  }
+
+  function schedDefaultFanSpeed(d) {
+    const speeds = ceilingFanSpeeds(d);
+    const cur = String(d.sp || "").trim().toLowerCase();
+    return speeds.find((sp) => String(sp).toLowerCase() === cur) || null;
+  }
+
+  function renderSchedLockAction() {
+    return renderSchedOnOffDeviceAction(locks, "Select locks", "No locks configured. Add locks in the companion app device settings.", {
+      hint: "Choose lock or unlock for every selected device below.",
+      makeState: (d) => ({ id: d.i, locked: true }),
+      renderRow: (d, st, redraw) => schedDeviceActionRow(d, redraw, (row) => {
+        const isLocked = st.locked !== false;
+        schedTwoWay(row, isLocked, "Lock", "Unlock", () => { st.locked = true; redraw(); }, () => { st.locked = false; redraw(); });
+        if (!isLocked) {
+          const hint = ce("p", "sched-hint");
+          hint.textContent = "A saved schedule unlocks this door without asking for the PIN.";
+          row.appendChild(hint);
+        }
+      }),
+    });
+  }
+
+  function renderSchedBlindAction() {
+    return renderSchedOnOffDeviceAction(windowShades, "Select blinds", "No blinds configured. Add shades and blinds in the companion app device settings.", {
+      hint: "Choose open or close for every selected blind below.",
+      makeState: (d) => ({ id: d.i, open: true, position: d.hasPos ? 100 : null }),
+      renderRow: (d, st, redraw) => schedDeviceActionRow(d, redraw, (row) => {
+        const isOpen = st.open === true;
+        schedTwoWay(row, isOpen, "Open", "Close", () => {
+          st.open = true;
+          if (d.hasPos && (st.position == null || st.position === "")) st.position = 100;
+          redraw();
+        }, () => {
+          st.open = false;
+          st.position = null;
+          redraw();
+        });
+        if (isOpen && d.hasPos) {
+          if (st.position == null || st.position === "") st.position = 100;
+          const field = ce("div", "sched-field");
+          const fieldHead = ce("div", "sched-field-head");
+          const lbl = ce("label", "sched-field-label");
+          lbl.textContent = "Position";
+          const val = ce("span", "sched-slider-val");
+          val.textContent = (st.position ?? 100) + "%";
+          fieldHead.appendChild(lbl);
+          fieldHead.appendChild(val);
+          field.appendChild(fieldHead);
+          const { el: levelTrack } = makeLevelTrackSlider({
+            value: st.position ?? 100,
+            min: 1,
+            max: 100,
+            onChange: (level) => { st.position = level; val.textContent = level + "%"; },
+          });
+          field.appendChild(levelTrack);
+          row.appendChild(field);
+        }
+      }),
+    });
+  }
+
+  function renderSchedFanAction() {
+    return renderSchedOnOffDeviceAction(ceilingFans, "Select fans", "No fans configured. Add ceiling fans in the companion app device settings.", {
+      hint: "Choose on or off for every selected fan below. Set a speed when the fan is on.",
+      makeState: (d) => ({ id: d.i, on: true, speed: schedDefaultFanSpeed(d) }),
+      renderRow: (d, st, redraw) => schedDeviceActionRow(d, redraw, (row) => {
+        const isOn = st.on === true;
+        schedTwoWay(row, isOn, "On", "Off", () => {
+          st.on = true;
+          if (!st.speed) st.speed = schedDefaultFanSpeed(d);
+          redraw();
+        }, () => {
+          st.on = false;
+          st.speed = null;
+          redraw();
+        });
+        const speeds = ceilingFanSpeeds(d);
+        if (isOn && speeds.length) {
+          const seg = ce("div", "sched-segment");
+          for (const sp of speeds) {
+            const active = String(st.speed || "").toLowerCase() === String(sp).toLowerCase();
+            const b = ce("button", "sched-seg" + (active ? " is-active" : ""));
+            b.type = "button";
+            b.textContent = ceilingFanSpeedLabel(sp);
+            b.addEventListener("click", () => { st.speed = sp; redraw(); });
+            seg.appendChild(b);
+          }
+          row.appendChild(seg);
+        }
+      }),
+    });
   }
 
   function renderSchedLightAction() {
@@ -19068,7 +19302,7 @@
   function autoSchedName() {
     const fn = globalThis.autoScheduleName;
     if (typeof fn !== "function") return "";
-    return fn(schedDraft, { rooms, devices, outlets, thermostats }, {
+    return fn(schedDraft, { rooms, devices, outlets, thermostats, locks, windowShades, ceilingFans }, {
       clockTime: schedFmtClockTime,
       dateTimeLocal: schedFmtDateTimeLocal,
     });
@@ -19120,9 +19354,13 @@
   async function saveSchedule(e) {
     if (schedSaveInFlight) return;
     if (!validateStep1()) { schedStep = 1; renderSchedulerActive(); return; }
+    schedEnsureStateList(schedDraft.action);
     const ac = schedDraft.action;
     if (ac.target === "lights" && (!ac.states || !ac.states.length)) { flash("Select at least one light", true); return; }
     if (ac.target === "outlets" && (!ac.states || !ac.states.length)) { flash("Select at least one outlet", true); return; }
+    if (ac.target === "locks" && (!ac.states || !ac.states.length)) { flash("Select at least one lock", true); return; }
+    if (ac.target === "blinds" && (!ac.states || !ac.states.length)) { flash("Select at least one blind", true); return; }
+    if (ac.target === "fans" && (!ac.states || !ac.states.length)) { flash("Select at least one fan", true); return; }
     if (ac.target === "thermostats") {
       ac.devices = schedIdList(ac.devices);
       if (!ac.devices.length) { flash("Select at least one thermostat", true); return; }

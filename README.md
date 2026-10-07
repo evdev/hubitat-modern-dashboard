@@ -444,6 +444,9 @@ triggers.
 | ------ | ------- |
 | Lights | Per-room or per-device; on/off; dim level; color temperature (CT devices) |
 | Outlets | Per-room or per-device; on/off only (devices from the **Outlets** picker) |
+| Locks | Per-room or per-device; lock or unlock. A scheduled unlock does not ask for the PIN |
+| Blinds | Per-room or per-device; open or close; position when that shade supports it |
+| Fans | Per-room or per-device; on or off; speed from the speeds that fan reports |
 | Thermostats | Mode, heat/cool setpoints, fan mode |
 | Hub mode | Set location mode |
 
@@ -456,6 +459,48 @@ as 24h for reliable firing).
 On the **cloud** URL, schedules load when you open the Scheduler (`GET /schedules`)
 instead of arriving with every `/data` poll, so the main payload stays under
 Hubitat Cloud's size limit. Local mode includes schedules in `/data` as usual.
+
+**Schedule files for an assistant**
+
+In the Hubitat app, open **Upload schedules…**. Copy the schema shown there, and
+download the device list. The list is the devices selected in the app and only
+the controls a schedule can set, plus hub mode names. Paste both into your
+assistant, then paste the JSON it returns on that same page. The schema file is
+[`lib/schedule-upload.schema.json`](lib/schedule-upload.schema.json).
+
+A schedule whose name already exists is replaced. Devices are matched by name to
+the lights, outlets, locks, blinds, fans, and thermostats selected in the app.
+
+```json
+{
+  "schedules": [
+    {
+      "name": "Porch at sunset",
+      "trigger": { "kind": "daily", "when": "sunset", "offsetMin": 0 },
+      "action": {
+        "target": "lights",
+        "states": [{ "name": "Porch", "on": true, "level": 40 }]
+      }
+    }
+  ]
+}
+```
+
+`trigger.kind` is `daily`, `weekly`, `once`, or `mode`. Clock times use
+`"when": "clock"` and `"time": "19:30"`. Weekly schedules add `"days": ["MON","FRI"]`.
+One-time schedules use `"at": "2026-10-09T19:30"` in hub local time. Omit
+`enabled` to leave the schedule on.
+
+**AI assistant (MCP)**
+
+In the Hubitat app, turn on **Allow an AI assistant to create schedules**. The
+page shows a link on your home network. Point the assistant at that link.
+It can list devices and create, change, and delete schedules. It does not ask
+for the dashboard password.
+
+There is no cloud assistant link. Away from home, open **Upload schedules…** in the
+Hubitat app, give your assistant the schema and device list, and paste the JSON
+it returns.
 
 **Import from Simple Automation Rules**
 

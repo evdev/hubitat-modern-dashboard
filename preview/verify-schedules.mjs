@@ -18,6 +18,7 @@ import {
   validateSchedulePayload,
   thermostatSettingError,
   thermostatSettingNormalized,
+  deviceStatesNormalized,
   onceScheduleDisposition,
   ONCE_CATCHUP_MS,
 } from "../lib/scheduler-core.mjs";
@@ -276,6 +277,35 @@ function futureOnceAt(hoursAhead = 2) {
 }
 
 {
+  const clock = { trigger: { kind: "daily", when: "clock", time: "07:00" } };
+  assert(validateSchedulePayload({ ...clock, action: { target: "locks", states: [] } }) === "select at least one device", "locks need a device");
+  assert(validateSchedulePayload({ ...clock, action: { target: "locks", states: { id: 3001, locked: false } } }) === null, "one lock state object is accepted");
+  const unlocked = deviceStatesNormalized("locks", [{ id: 1, locked: false }]);
+  assert(unlocked.states[0].locked === false, "explicit unlock is kept");
+  const locked = deviceStatesNormalized("locks", [{ id: 1 }]);
+  assert(locked.states[0].locked === true, "a missing lock value locks");
+  assert(deviceStatesNormalized("locks", [{ id: 1, locked: 0 }]).states[0].locked === true, "numeric 0 does not unlock");
+  assert(deviceStatesNormalized("locks", [{ id: 1, locked: "false" }]).states[0].locked === true, "the string false does not unlock");
+  assert(deviceStatesNormalized("blinds", [{ id: 1, open: 1 }]).states[0].open === false, "numeric 1 does not open a shade");
+  assert(deviceStatesNormalized("fans", [{ id: 1, on: 1, speed: "low" }]).states[0].on === false, "numeric 1 does not turn a fan on");
+  assert(
+    validateSchedulePayload({ ...clock, action: { target: "blinds", states: [{ id: 1, open: true, position: 0 }] } })
+      === "position must be between 1 and 100",
+    "shade position 0 is rejected",
+  );
+  assert(
+    validateSchedulePayload({ ...clock, action: { target: "blinds", states: [{ id: 1, open: true, position: 40 }] } }) === null,
+    "shade position 40 is accepted",
+  );
+  const closed = deviceStatesNormalized("blinds", [{ id: 1, open: false, position: 0 }]);
+  assert(closed.error == null && closed.states[0].position == null, "a closed shade drops position");
+  const fanOff = deviceStatesNormalized("fans", [{ id: 1, on: true, speed: "off" }]);
+  assert(fanOff.states[0].on === false && fanOff.states[0].speed == null, "fan speed off is off");
+  assert(validateSchedulePayload({ ...clock, action: { target: "sensors", states: [{ id: 1 }] } }) === "unsupported action type", "sensors stay unsupported");
+  console.log("ok unit: lock, blind, and fan schedule states");
+}
+
+{
   const now = 1_700_000_000_000;
   assert(onceScheduleDisposition(now + 1000, now) === "schedule", "future once schedules");
   assert(onceScheduleDisposition(now - 60 * 1000, now) === "catchup", "one minute late still runs");
@@ -513,6 +543,64 @@ try {
     const missing = await postJson("/schedules/test", { id: "sc-demo-1", simulateResult: "missing" });
     assert(missing.res.status === 200 && missing.json.ok === false, "missing target must not report top-level success");
     assert(missing.json.lastResult?.missing?.length === 1, "missing action result must include target");
+  }
+
+  {
+    const lock = await postJson("/schedules/save", {
+      name: "Verify unlock",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "07:00" },
+      action: { target: "locks", states: [{ id: 3001, locked: false }] },
+    });
+    assert(lock.res.status === 200 && lock.json.ok, `lock save failed: ${JSON.stringify(lock.json)}`);
+    const lockRow = lock.json.schedules.find((s) => s.id === lock.json.id);
+    assert(lockRow.action.states[0].locked === false, "unlock is stored");
+
+    const badPos = await postJson("/schedules/save", {
+      name: "Verify bad position",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "08:00" },
+      action: { target: "blinds", states: [{ id: 5001, open: true, position: 0 }] },
+    });
+    assert(badPos.res.status === 422, `position 0 should 422: ${JSON.stringify(badPos.json)}`);
+
+    const shade = await postJson("/schedules/save", {
+      name: "Verify shade",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "08:00" },
+      action: { target: "blinds", states: [{ id: 5001, open: true, position: 40 }] },
+    });
+    assert(shade.res.status === 200 && shade.json.ok, `shade save failed: ${JSON.stringify(shade.json)}`);
+    const shadeRow = shade.json.schedules.find((s) => s.id === shade.json.id);
+    assert(shadeRow.action.states[0].position === 40, "position is stored");
+
+    const noPos = await postJson("/schedules/save", {
+      name: "Verify shade without position",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "08:15" },
+      action: { target: "blinds", states: [{ id: 5003, open: true, position: 40 }] },
+    });
+    assert(noPos.res.status === 200 && noPos.json.ok, `shade without position failed: ${JSON.stringify(noPos.json)}`);
+    const noPosRow = noPos.json.schedules.find((s) => s.id === noPos.json.id);
+    assert(noPosRow.action.states[0].position == null, "a shade that cannot take a level drops position");
+
+    const fan = await postJson("/schedules/save", {
+      name: "Verify fan",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "21:00" },
+      action: { target: "fans", states: [{ id: 5103, on: true, speed: "4" }] },
+    });
+    assert(fan.res.status === 200 && fan.json.ok, `fan save failed: ${JSON.stringify(fan.json)}`);
+    const fanRow = fan.json.schedules.find((s) => s.id === fan.json.id);
+    assert(fanRow.action.states[0].speed === "4", "numeric fan speed is stored");
+
+    const badSpeed = await postJson("/schedules/save", {
+      name: "Verify bad fan speed",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "21:15" },
+      action: { target: "fans", states: [{ id: 5103, on: true, speed: "turbo" }] },
+    });
+    assert(badSpeed.res.status === 422, `unsupported fan speed should 422: ${JSON.stringify(badSpeed.json)}`);
   }
 
   console.log("ok api: scheduler CRUD / nextFire / validation");

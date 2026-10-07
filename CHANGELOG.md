@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.54
+
+- **Scheduler:** schedules can lock or unlock, open or close blinds, and turn
+  fans on or off at a speed that fan reports. A scheduled unlock does not ask
+  for the PIN. Update Modern Dashboard.
+
+- **Scheduler:** an assistant on your home network can create schedules. Away
+  from home, **Upload schedules…** in the Hubitat app has the schema and a
+  device list to give the assistant. Paste the JSON it returns there.
+
 ## 0.4.53
 
 - **Shabbat & holidays:** saving a schedule, pausing one occasion, or changing

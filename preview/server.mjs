@@ -17,6 +17,9 @@ import {
   scheduleTriggerWhen,
   modeCycleError,
   thermostatSettingNormalized,
+  deviceStatesNormalized,
+  scheduleStateList,
+  scheduleFanSpeedMatch,
 } from "../lib/scheduler-core.mjs";
 import {
   HOLIDAY_API_VERSION,
@@ -2597,6 +2600,64 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ ok: true, id, enabled: s.enabled, schedules: mockSchedulesList() }));
     }
+    if (sub === "upload") {
+      const items = mockBundleItems(body);
+      if (!items) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "expected a schedules array" }));
+      }
+      const skipped = [];
+      const importedIds = new Set();
+      for (const raw of items) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          skipped.push({ name: "", error: "each schedule must be an object" });
+          continue;
+        }
+        const named = mockApplyDeviceNames(raw);
+        if (named.error) {
+          skipped.push({ name: String(raw.name || ""), error: named.error });
+          continue;
+        }
+        const name = String(raw.name || "").trim();
+        const same = name
+          ? state.schedules.filter((s) => String(s.name || "").trim().toLowerCase() === name.toLowerCase())
+          : [];
+        if (same.length > 1) {
+          skipped.push({ name, error: "more than one schedule is named " + name });
+          continue;
+        }
+        const id = (raw.id && String(raw.id).trim()) || (same.length === 1 ? same[0].id : ("sc-" + Date.now() + "-" + Math.floor(Math.random() * 100000)));
+        const existing = state.schedules.find((s) => s.id === id);
+        const prepared = {
+          ...raw,
+          action: named.action,
+          enabled: raw.enabled == null ? true : (raw.enabled === true || String(raw.enabled).toLowerCase() === "true"),
+        };
+        const s = mockNormalizeSchedule(prepared, id, existing);
+        const validationError = validateSchedulePayload(s) || mockUnknownDeviceError(s) || modeCycleError(state.schedules, s);
+        if (validationError) {
+          skipped.push({ name: s.name, error: validationError });
+          continue;
+        }
+        mockRecomputeNextFire(s);
+        if (existing) Object.assign(existing, s);
+        else state.schedules.push(s);
+        importedIds.add(String(id));
+      }
+      const imported = importedIds.size;
+      if (!imported) {
+        res.writeHead(422, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({
+          ok: false,
+          error: skipped[0]?.error || "nothing to import",
+          imported: 0,
+          skipped,
+          schedules: mockSchedulesList(),
+        }));
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, imported, skipped, schedules: mockSchedulesList() }));
+    }
     if (sub === "test") {
       const forced = body?.simulateResult;
       const lastResult = forced === "missing"
@@ -2656,8 +2717,29 @@ function mockScheduleSummary(s) {
 
 function mockNormalizeAction(action) {
   if (!action) return { target: "lights", states: [] };
-  if (action.target !== "thermostats") return action;
-  return { target: "thermostats", devices: action.devices, ...thermostatSettingNormalized(action) };
+  const target = String(action.target || "lights");
+  if (target === "thermostats") return { target: "thermostats", devices: action.devices, ...thermostatSettingNormalized(action) };
+  if (target === "locks" || target === "blinds" || target === "fans") {
+    const normalized = deviceStatesNormalized(target, action.states);
+    if (normalized.error) return { target, states: scheduleStateList(action.states) };
+    if (target === "blinds") {
+      for (const st of normalized.states) {
+        const shade = (state.windowShades || []).find((s) => String(s.i) === String(st.id));
+        if (shade && !shade.hasPos) delete st.position;
+      }
+    }
+    if (target === "fans") {
+      for (const st of normalized.states) {
+        if (st.on !== true || !st.speed) continue;
+        const fan = (state.ceilingFans || []).find((f) => String(f.i) === String(st.id));
+        if (!fan) continue;
+        const match = scheduleFanSpeedMatch(fan.supSp, st.speed);
+        if (match) st.speed = match;
+      }
+    }
+    return { target, states: normalized.states };
+  }
+  return action;
 }
 
 function mockNormalizeSchedule(body, id, existing) {
@@ -2692,6 +2774,86 @@ function mockNormalizeSchedule(body, id, existing) {
   return s;
 }
 
+function mockBundleItems(body) {
+  if (Array.isArray(body)) return body;
+  if (body && Array.isArray(body.schedules)) return body.schedules;
+  if (body && (body.trigger || body.action)) return [body];
+  return null;
+}
+
+function mockResolveDeviceToken(token, devices) {
+  let id = null;
+  let name = null;
+  if (token && typeof token === "object") {
+    if (token.id != null && String(token.id).trim()) id = String(token.id).trim();
+    else name = String(token.name || token.label || "").trim();
+  } else {
+    const text = String(token ?? "").trim();
+    if (!text) return { error: "device needs a name or id" };
+    if (/^\d+$/.test(text)) id = text;
+    else name = text;
+  }
+  const list = devices || [];
+  if (id) {
+    const dev = list.find((d) => String(d.i) === id);
+    if (!dev) return { error: "device " + id + " is not selected in this app" };
+    return { id: dev.i };
+  }
+  if (!name) return { error: "device needs a name or id" };
+  const label = (d) => String(d.n || "");
+  const exact = list.filter((d) => label(d) === name);
+  if (exact.length === 1) return { id: exact[0].i };
+  const folded = list.filter((d) => label(d).toLowerCase() === name.toLowerCase());
+  if (folded.length === 1) return { id: folded[0].i };
+  const needle = name.toLowerCase();
+  const partial = list.filter((d) => label(d).toLowerCase().includes(needle));
+  if (partial.length === 1) return { id: partial[0].i };
+  const pool = partial.length ? partial : (folded.length ? folded : exact);
+  if (!pool.length) return { error: "no device named " + name };
+  return { error: "more than one device matches " + name + ": " + pool.slice(0, 8).map(label).join(", ") };
+}
+
+function mockApplyDeviceNames(raw) {
+  const action = raw?.action && typeof raw.action === "object" ? { ...raw.action } : {};
+  const target = String(action.target || "lights");
+  if (target === "lights" || target === "outlets") {
+    const devices = target === "lights" ? state.devices : state.outlets;
+    const states = Array.isArray(action.states) ? action.states.map((st) => ({ ...st })) : null;
+    if (!states) return { action };
+    const next = [];
+    for (const st of states) {
+      if (!st || typeof st !== "object") return { error: "each device state must be an object" };
+      const token = st.id != null && String(st.id).trim() ? st.id : (st.name || st.label);
+      const resolved = mockResolveDeviceToken(token, devices);
+      if (resolved.error) return { error: resolved.error };
+      next.push({ ...st, id: resolved.id });
+    }
+    action.states = next;
+  } else if (target === "thermostats") {
+    const list = Array.isArray(action.devices) ? action.devices : (action.devices != null && String(action.devices).trim() ? [action.devices] : []);
+    const ids = [];
+    for (const item of list) {
+      const resolved = mockResolveDeviceToken(item, state.thermostats);
+      if (resolved.error) return { error: resolved.error };
+      ids.push(String(resolved.id));
+    }
+    action.devices = ids;
+  } else if (target === "locks" || target === "blinds" || target === "fans") {
+    const devices = target === "locks" ? state.locks : target === "blinds" ? state.windowShades : state.ceilingFans;
+    const states = scheduleStateList(action.states).map((st) => ({ ...st }));
+    if (!states.length && action.states == null) return { action };
+    const next = [];
+    for (const st of states) {
+      const token = st.id != null && String(st.id).trim() ? st.id : (st.name || st.label);
+      const resolved = mockResolveDeviceToken(token, devices);
+      if (resolved.error) return { error: resolved.error };
+      next.push({ ...st, id: resolved.id });
+    }
+    action.states = next;
+  }
+  return { action };
+}
+
 function mockUnknownDeviceError(s) {
   const ac = s?.action || {};
   const target = String(ac.target || "");
@@ -2710,6 +2872,19 @@ function mockUnknownDeviceError(s) {
     const raw = Array.isArray(ac.devices) ? ac.devices : (ac.devices != null && ac.devices !== "" ? [ac.devices] : []);
     for (const id of raw) {
       if (id != null && !ids.has(String(id))) return "thermostat " + id + " is not available in the thermostats picker";
+    }
+  } else if (target === "locks" || target === "blinds" || target === "fans") {
+    const list = target === "locks" ? state.locks : target === "blinds" ? state.windowShades : state.ceilingFans;
+    const ids = new Set((list || []).map((d) => String(d.i)));
+    for (const st of scheduleStateList(ac.states)) {
+      if (st?.id != null && !ids.has(String(st.id))) return "device " + st.id + " is not available in the " + target + " picker";
+    }
+    if (target === "fans") {
+      for (const st of scheduleStateList(ac.states)) {
+        if (st?.on !== true || !st.speed) continue;
+        const fan = (list || []).find((d) => String(d.i) === String(st.id));
+        if (fan && !scheduleFanSpeedMatch(fan.supSp, st.speed)) return "fan speed " + st.speed + " is not supported";
+      }
     }
   }
   return null;
