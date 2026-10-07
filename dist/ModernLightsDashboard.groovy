@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.52
+// Modern Dashboard v0.4.53
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.52"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.53"
 
 definition(
     name: "Modern Dashboard",
@@ -69,7 +69,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.52 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.53 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -1726,7 +1726,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.52.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.53.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1818,7 +1818,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.52.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.53.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -9001,6 +9001,7 @@ def armEnabledSchedule(id, s, long nowMs, result) {
                 nextFire = catchAt
             } else if (how == "drop") {
                 nextFire = null
+                result.failures[id.toString()] = "one-time schedule must be in the future"
             } else {
                 result.failures[id.toString()] = "invalid one-time date"
             }
@@ -9170,8 +9171,9 @@ def scheduledJobHandler(data) {
             for (m in onlyInModes) { if (m?.toString() == cur) { ok = true; break } }
             if (!ok) {
                 log.info "Modern Dashboard: schedule skipped — ${scheduleLogName(id, s)} (hub mode ${cur ?: '(none)'} not allowed)"
-                // Trigger consumed without running — still advance nextFire / re-arm sun jobs.
-                scheduleAdvanceAfterTrigger(id, s, map, false)
+                // The slot is consumed. Catch-up must not run it if the mode changes later.
+                s.lastResult = [ok: true, skipped: "mode", ts: now()]
+                scheduleAdvanceAfterTrigger(id, s, map, true)
                 return
             }
         }
@@ -9570,6 +9572,41 @@ def scheduleRecentClockMs(s, long nowMs) {
     return at
 }
 
+// Sunrise or sunset if it already passed and is still inside the catch-up window.
+// Yesterday is included because a positive offset can land after midnight.
+def scheduleRecentSunMs(s, long nowMs) {
+    def tr = s?.trigger
+    def kind = tr?.kind?.toString()
+    if (!(kind in ["daily", "weekly"])) return null
+    def when = scheduleTriggerWhen(tr)
+    if (!(when in ["sunrise", "sunset"])) return null
+    def tz = null
+    try { tz = location?.timeZone } catch (e) {}
+    def cal = Calendar.getInstance()
+    if (tz) cal.setTimeZone(tz)
+    cal.setTimeInMillis(nowMs)
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    cal.add(Calendar.DATE, -1)
+    Long best = null
+    def offsetMin = scheduleOffsetMin(tr)
+    for (int i = 0; i < 3; i++) {
+        if (scheduleDayMatchesWeekly(tr, cal)) {
+            def sunMs = scheduleSunMs(when, offsetMin, cal.getTime())
+            if (sunMs != null) {
+                long at = sunMs as long
+                if (at <= nowMs && nowMs - at <= scheduleOnceCatchUpMs()) {
+                    if (best == null || at > best) best = at
+                }
+            }
+        }
+        cal.add(Calendar.DATE, 1)
+    }
+    return best
+}
+
 def cleanupSchedules() {
     if (!schedulerIsEnabled()) return
     def parsed = parseSchedulesMapResult()
@@ -9589,6 +9626,7 @@ def cleanupSchedules() {
         if (kind == "daily" || kind == "weekly") {
             if (s?.enabled == true) {
                 def recent = scheduleRecentClockMs(s, now as long)
+                if (recent == null) recent = scheduleRecentSunMs(s, now as long)
                 long last = 0L
                 try { if (s.lastFired != null) last = s.lastFired as long } catch (e) {}
                 if (recent != null && last < (recent as long)) clockCatchUp << id.toString()
@@ -9597,7 +9635,7 @@ def cleanupSchedules() {
         }
         if (kind != "once") continue
         def how = onceScheduleDisposition(scheduleOnceToMs(s?.trigger?.at), now as long)
-        if (how == "drop") {
+        if (how == "drop" && s?.enabled == true) {
             map.remove(id)
             changed = true
         } else if (how == "catchup" && s?.enabled == true) {

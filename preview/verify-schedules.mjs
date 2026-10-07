@@ -14,6 +14,7 @@ import {
   dueScheduleIds,
   nextDispatcherAt,
   scheduleSunNextFire,
+  scheduleRecentSunMs,
   validateSchedulePayload,
   thermostatSettingError,
   thermostatSettingNormalized,
@@ -148,6 +149,44 @@ function futureOnceAt(hoursAhead = 2) {
   );
   const expectedCrossed = new Date(2026, 8, 15, 1, 0, 0, 0).getTime();
   assert(crossed === expectedCrossed, `cross-midnight sunset offset: ${new Date(crossed)}`);
+
+  const sunAt = (hour, minute, day) => {
+    const sunset = new Date(day);
+    sunset.setHours(hour, minute, 0, 0);
+    return sunset.getTime();
+  };
+  const sunProvider = (_which, offsetMin, day) => sunAt(18, 0, day) + offsetMin * 60 * 1000;
+  const fiveLate = sunAt(18, 5, new Date(2026, 8, 15));
+  const recentSun = scheduleRecentSunMs(
+    { kind: "daily", when: "sunset", offsetMin: 0 },
+    fiveLate,
+    sunProvider,
+  );
+  assert(recentSun === sunAt(18, 0, new Date(2026, 8, 15)), "a sunset five minutes late is still due");
+  const elevenLate = sunAt(18, 11, new Date(2026, 8, 15));
+  assert(
+    scheduleRecentSunMs({ kind: "daily", when: "sunset", offsetMin: 0 }, elevenLate, sunProvider) == null,
+    "a sunset older than ten minutes is not caught up",
+  );
+  assert(
+    scheduleRecentSunMs({ kind: "daily", when: "clock", time: "18:00" }, fiveLate, sunProvider) == null,
+    "a clock schedule is not a sun catch-up",
+  );
+  const afterMidnight = sunAt(1, 5, new Date(2026, 8, 16));
+  const crossedRecent = scheduleRecentSunMs(
+    { kind: "daily", when: "sunset", offsetMin: 420 },
+    afterMidnight,
+    sunProvider,
+  );
+  assert(crossedRecent === sunAt(1, 0, new Date(2026, 8, 16)), "a sunset offset past midnight is still caught up");
+  assert(
+    scheduleRecentSunMs(
+      { kind: "weekly", when: "sunset", offsetMin: 0, days: ["MON"] },
+      fiveLate,
+      sunProvider,
+    ) == null,
+    "a weekly sunset catch-up skips other days",
+  );
 
   const staleOnce = {
     enabled: true,

@@ -236,7 +236,8 @@ def holidaysSave(body) {
     def savedRt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
     savedRt.revision = (savedRt.revision ?: 0) + 1
     state.runtime = savedRt
-    holidayMarkPassedDone()
+    // A save must not cancel a Do-not-start hold or a catch-up that can still run.
+    holidayMarkPassedDone(true)
     if (holidayQueryChanged()) holidayFetch(true)
     else holidayArm()
     def status = holidaysStatus()
@@ -1409,19 +1410,40 @@ def holidayMarkDone(String id, long ts, String how) {
     state.runtime = rt
 }
 
-def holidayMarkPassedDone() {
+// keepPending is for a dashboard save. Resume-from-pause passes false and marks
+// every past action, so unpausing does not replay the holiday that already happened.
+// Matches saveKeepsPending in lib/holiday-core.mjs.
+def holidayMarkPassedDone(boolean keepPending = false) {
     long nowMs = now()
     try {
         def built = holidayBuild(nowMs)
+        boolean heldNow = state.runtime?.activeSpan?.held == true
+        def heldSpanId = state.runtime?.activeSpan?.id?.toString()
+        def replayHeldId = state.runtime?.replayHeld?.toString()
         for (span in built.spans) {
             for (a in (span.actions ?: [])) {
                 if (a.skipped == true || a.at == null) continue
-                if ((a.at as long) <= nowMs) holidayMarkDone(a.id?.toString(), nowMs, "passed")
+                if ((a.at as long) > nowMs) continue
+                if (keepPending && holidayActionStillPending(a, span, nowMs, heldNow, heldSpanId, replayHeldId)) continue
+                holidayMarkDone(a.id?.toString(), nowMs, "passed")
             }
         }
     } catch (e) {
         log.warn "mDash Holidays: could not mark past actions — ${e}"
     }
+}
+
+def holidayActionStillPending(a, span, long nowMs, boolean heldNow, String heldSpanId, String replayHeldId) {
+    long at = a.at as long
+    boolean spanOpen = false
+    try { spanOpen = (span?.end as long) > nowMs } catch (e) {}
+    def spanId = a.spanId?.toString()
+    boolean waitingOnHold = heldNow && spanOpen && heldSpanId && heldSpanId == spanId
+    boolean releasingHold = replayHeldId && replayHeldId == spanId
+    if (at >= nowMs - 20000L) return true
+    if (a.kind == "modeEnter" && spanOpen) return true
+    if (a.kind == "devices" && ((nowMs - at) <= (2L * 60 * 60 * 1000) || waitingOnHold || releasingHold)) return true
+    return false
 }
 
 def holidayPruneDone(long nowMs) {

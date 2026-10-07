@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.53
+
+- **Shabbat & holidays:** saving a schedule, pausing one occasion, or changing
+  settings no longer cancels lights that are still waiting on Do not start, or
+  scenes the hub can still catch up. Update mDash Shabbat and Holidays.
+
+- **Scheduler:** a sunrise or sunset time the hub missed still runs if it is
+  less than ten minutes late, and it is not run twice. Update Modern Dashboard.
+
+- **Security:** when the dashboard password session is no longer accepted,
+  tapping a device asks for the password again.
+
+- **Shabbat & holidays:** a save the hub rejects shows the hub's message.
+
+- **Dashboard:** a refresh that arrives late no longer replaces a newer device state.
+
+- **Scheduler:** a schedule skipped because the hub is in the wrong mode is not
+  run later in the catch-up window. Update Modern Dashboard.
+
+- **Scheduler:** turning an expired one-time schedule back on is rejected, and a
+  disabled one is kept so its time can be changed. Update Modern Dashboard.
+
 ## 0.4.52
 
 - **Scheduler:** a daily or weekly clock time the hub missed still runs if it is

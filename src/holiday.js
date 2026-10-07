@@ -71,8 +71,13 @@ async function load() {
 }
 
 async function post(path, body) {
-  const res = await M().postJson(path, body);
-  if (!res?.ok) return { ok: false, error: "Could not save" };
+  const res = await M().postJsonSilent(path, body);
+  if (!res?.ok) {
+    // The password dialog is the recovery. Callers supply their own fallback.
+    if (res?.status === 401) return { ok: false };
+    const message = res?.error || res?.data?.error || "Could not save";
+    return { ok: false, error: String(message) };
+  }
   return res.data || { ok: true };
 }
 
@@ -1162,7 +1167,7 @@ async function runHolidayTest(occasion, which) {
   if (unlocks.length) msg += " This will unlock " + unlocks.map((s) => deviceName(s.id)).join(", ") + ".";
   if (!confirm(msg)) return;
   const res = await post("holidays/test", { which, occasion });
-  flash(res?.ok ? "Ran actions now" : "Actions did not complete", !res?.ok);
+  flash(res?.ok ? "Ran actions now" : (res?.error || "Actions did not complete"), !res?.ok);
 }
 
 function backRow(label, fn) {
@@ -2474,6 +2479,10 @@ function reviewStep() {
     settings: wizard.settings,
   }).then((res) => {
     holder.innerHTML = "";
+    if (res?.ok === false && !res?.span) {
+      holder.textContent = res?.error || "Could not preview.";
+      return;
+    }
     if (res?.span) {
       holder.appendChild(renderEventList(res.span.actions || []));
       holder.appendChild(renderTimelines(res.span, res.span.actions || []));

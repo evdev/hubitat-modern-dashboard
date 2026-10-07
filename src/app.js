@@ -2020,15 +2020,7 @@
       throw err;
     }
     if (r.status === 401) {
-      // First 401: reload any just-saved session and retry before prompting again.
-      // Clearing first caused a second password prompt when /data raced unlock.
-      if (pass === 0) {
-        loadDashSession();
-        if (isDashSessionFresh()) return getJson(url, 1);
-      }
-      clearDashSession();
-      await postCall("ensureDashboardAccess");
-      if (pass < 2) return getJson(url, pass + 1);
+      if (await continueAfterDashboard401(pass)) return getJson(url, pass + 1);
       const err = new Error("auth required");
       err.code = "auth_required";
       throw err;
@@ -2053,6 +2045,8 @@
   async function fetchData() {
     const fetchSeq = postCall("beginDataFetch");
     const d = await getJson("data");
+    if (d && fetchSeq != null) d.__fetchSeq = fetchSeq;
+    if (postCall("isCurrentDataFetch", d) === false) return d;
     if (d && typeof d.dashboardPasswordRequired === "boolean") {
       postCall("syncDashboardAuthState", !!d.dashboardPasswordRequired);
     }
@@ -2089,17 +2083,35 @@
       const schedHook = globalThis.__MLD["applySchedules" + "FromData"];
       if (typeof schedHook === "function") schedHook(d);
     }
-    if (d && fetchSeq != null) d.__fetchSeq = fetchSeq;
     postCall("applyRenameNameHolds", d);
     return d;
   }
 
-  async function sendCmd(id, cmd, val, pin) {
+  // True when the caller should send the request again. A rejected session
+  // reloads once, then asks for the password. The command itself must not flash
+  // "auth required" — the password dialog is the recovery.
+  async function continueAfterDashboard401(pass) {
+    const n = pass || 0;
+    if (n >= 2) return false;
+    if (n === 0) {
+      loadDashSession();
+      if (isDashSessionFresh()) return true;
+    }
+    clearDashSession();
+    await postCall("ensureDashboardAccess");
+    return isDashSessionFresh();
+  }
+
+  async function sendCmd(id, cmd, val, pin, authPass) {
     let url = "cmd?id=" + id + "&c=" + encodeURIComponent(cmd);
     if (val != null) url += "&v=" + encodeURIComponent(val);
     if (pin != null && pin !== "") url += "&pin=" + encodeURIComponent(pin);
     try {
       const r = await fetch(withToken(url), { cache: "no-store" });
+      if (r.status === 401) {
+        if (await continueAfterDashboard401(authPass)) return sendCmd(id, cmd, val, pin, (authPass || 0) + 1);
+        return { ok: false, status: 401, error: "auth required" };
+      }
       if (!r.ok) {
         let msg = "Command failed";
         try {
@@ -6428,7 +6440,7 @@
     return false;
   }
 
-  async function postJson(path, body) {
+  async function postJson(path, body, authPass) {
     try {
       const r = await fetch(withToken(path), {
         method: "POST",
@@ -6436,6 +6448,10 @@
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         body: JSON.stringify(body),
       });
+      if (r.status === 401) {
+        if (await continueAfterDashboard401(authPass)) return postJson(path, body, (authPass || 0) + 1);
+        return { ok: false, status: 401, error: "auth required" };
+      }
       if (!r.ok) {
         let msg = "Request failed";
         try {
@@ -6443,7 +6459,7 @@
           if (j?.error) msg = String(j.error);
         } catch {}
         flash(msg, true);
-        return { ok: false };
+        return { ok: false, status: r.status };
       }
       let data = {};
       try { data = await r.json(); } catch {}
@@ -6455,7 +6471,7 @@
     }
   }
 
-  async function postJsonSilent(path, body) {
+  async function postJsonSilent(path, body, authPass) {
     try {
       const r = await fetch(withToken(path), {
         method: "POST",
@@ -6463,6 +6479,9 @@
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(body),
       });
+      if (r.status === 401 && await continueAfterDashboard401(authPass)) {
+        return postJsonSilent(path, body, (authPass || 0) + 1);
+      }
       let data = {};
       try { data = await r.json(); } catch {}
       applyDashSessionFromResponse(data);
@@ -6506,6 +6525,10 @@
         padApi?.shake();
         return false;
       }
+      if (result.status === 401) {
+        padApi?.close();
+        return false;
+      }
       if (result.error) flash(String(result.error), true);
       else flash("Could not change security status", true);
       padApi?.close();
@@ -6528,6 +6551,7 @@
     // postJson would flash a false error before the fallback succeeds.
     let result = await postJsonSilent("hub-mode", { mode });
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       const r = await fetch(withToken("hub-mode?mode=" + encodeURIComponent(mode)), {
         method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
@@ -6545,6 +6569,7 @@
   async function activateSceneApi(id) {
     let result = await postJson("scene/activate", { id });
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       const r = await fetch(withToken("scene/activate?id=" + encodeURIComponent(id)), {
         method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
@@ -6564,6 +6589,7 @@
     if (scope === "room") body.roomId = roomId;
     let result = await postJson("lights/bulk", body);
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       let url = "lights/bulk?cmd=" + encodeURIComponent(cmd) + "&scope=" + encodeURIComponent(scope);
       if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
@@ -6585,6 +6611,7 @@
     if (scope === "room") body.roomId = roomId;
     let result = await postJson("snapshot/save", body);
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       let url = "snapshot/save?scope=" + encodeURIComponent(scope);
       if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
@@ -6606,6 +6633,7 @@
     if (scope === "room") body.roomId = roomId;
     let result = await postJson("snapshot/restore", body);
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       let url = "snapshot/restore?scope=" + encodeURIComponent(scope);
       if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
@@ -7334,6 +7362,11 @@
     return ++dataFetchSeq;
   }
 
+  function isCurrentDataFetch(d) {
+    if (!d || d.__fetchSeq == null) return true;
+    return d.__fetchSeq === dataFetchSeq;
+  }
+
   function markRenameNamesFresh() {
     renameNameFloor = dataFetchSeq;
   }
@@ -7816,6 +7849,7 @@
   }
 
   function render(d) {
+    if (!isCurrentDataFetch(d)) return;
     replaceList(hubModes, d.hubModes);
     if (!hubModeLocked()) currentHubMode = d.currentHubMode || "";
     if (!hsmLocked()) {
@@ -13829,6 +13863,7 @@
     const schedulerEpoch = postCall("schedulerResponseEpoch");
     try {
       const d = await fetchData();
+      if (!isCurrentDataFetch(d)) return;
       refreshLocalUrlFromConfig();
       updateLocalModeMenuUI();
       render(d);
@@ -14818,7 +14853,7 @@
       close();
       try {
         const data = await fetchData();
-        render(data);
+        if (isCurrentDataFetch(data)) render(data);
       } catch {
         if (currentCategory() === "favorites") renderFavoritesPopup();
       }
@@ -17597,6 +17632,16 @@
   }
 
   function schedLastRunText(s) {
+    if (s?.lastResult?.skipped === "mode" && s.lastFired != null) {
+      const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
+      const when = fmtSchedTime(s.lastFired);
+      return {
+        primary: "Skipped",
+        secondary: [rel || when, rel ? when : "", "Hub mode was not allowed"].filter(Boolean).join(" \u00b7 "),
+        muted: true,
+        skipped: true,
+      };
+    }
     if (s.lastFired == null) return { primary: "Not yet run", secondary: "", muted: false };
     const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
     const note = schedLastResultNote(s);
@@ -17859,7 +17904,8 @@
 
     const status = ce("div", "sched-row-status");
     schedAppendStatusItem(status, onlyModes.length ? "Next trigger" : "Next run", schedNextRunText(s));
-    schedAppendStatusItem(status, "Last ran", schedLastRunText(s));
+    const lastRun = schedLastRunText(s);
+    schedAppendStatusItem(status, lastRun.skipped ? "Last trigger" : "Last ran", lastRun);
     row.appendChild(status);
 
     const foot = ce("div", "sched-row-foot");

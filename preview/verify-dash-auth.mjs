@@ -2,11 +2,22 @@
 // Password-disabled dashboards must load /data without a session; enabled
 // dashboards still 401 until unlock. Run: node preview/verify-dash-auth.mjs
 
+import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+{
+  const appJs = readFileSync(join(root, "src/app.js"), "utf8");
+  assert(appJs.includes("async function continueAfterDashboard401"), "a rejected session must be able to ask for the password");
+  const send = appJs.slice(appJs.indexOf("async function sendCmd("), appJs.indexOf("async function sendCmdBatch("));
+  const denied = send.indexOf("r.status === 401");
+  const flashed = send.indexOf('postCall("flash"');
+  assert(denied >= 0 && flashed > denied, "a device tap must ask for the password instead of flashing auth required");
+  assert(appJs.includes("if (await continueAfterDashboard401(authPass)) return postJson("), "posts must ask for the password after a rejected session");
+  assert((appJs.match(/if \(result\.status === 401\) return false;/g) || []).length >= 4, "a rejected session must not fall through to a second request");
+}
 const PORT = String(18000 + Math.floor(Math.random() * 2000));
 const MOCK_DASH_PASSWORD = "dashpass";
 

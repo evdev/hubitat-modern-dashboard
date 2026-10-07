@@ -18,6 +18,7 @@ import {
   occasionForHdate,
   passedActionIds,
   planCatchUp,
+  saveKeepsPending,
   preflight,
   resolveTemplate,
   sameMinuteWarnings,
@@ -427,7 +428,19 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
     { id: "past", at: now - 1000, skipped: false },
     { id: "future", at: now + 60000, skipped: false },
   ], now);
-  assert(ids.includes("past") && !ids.includes("future"), "saves mark only past actions done");
+  assert(ids.includes("past") && !ids.includes("future"), "resume marks past actions done");
+  const spanId = "span";
+  const heldLight = { id: "held", kind: "devices", spanId, at: now - 3 * 60 * 60 * 1000, skipped: false };
+  assert(saveKeepsPending(heldLight, now, { spanOpen: true, held: true, heldSpanId: spanId }), "a save keeps lights waiting on Do not start");
+  const recent = { id: "recent", kind: "devices", spanId, at: now - 30 * 60 * 1000, skipped: false };
+  assert(saveKeepsPending(recent, now, { spanOpen: true, held: false }), "a save keeps a scene inside the two-hour catch-up");
+  const stale = { id: "stale", kind: "devices", spanId, at: now - 3 * 60 * 60 * 1000, skipped: false };
+  assert(!saveKeepsPending(stale, now, { spanOpen: true, held: false }), "a save marks a scene older than the catch-up");
+  const mode = { id: "mode", kind: "modeEnter", spanId, at: now - 3 * 60 * 60 * 1000, skipped: false };
+  assert(saveKeepsPending(mode, now, { spanOpen: true, held: false }), "a save keeps a missed mode change while the span is open");
+  assert(!saveKeepsPending(mode, now, { spanOpen: false, held: false }), "a missed mode change after the span is marked done");
+  const future = { id: "future", kind: "devices", spanId, at: now + 60000, skipped: false };
+  assert(!saveKeepsPending(future, now, { spanOpen: true, held: true, heldSpanId: spanId }), "a future action is not a pending past action");
 }
 
 {

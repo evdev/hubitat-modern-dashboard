@@ -8,6 +8,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const groovy = readFileSync(join(root, "app/mDashHolidays.groovy"), "utf8");
 const parent = readFileSync(join(root, "app/ModernLightsDashboard.groovy.template"), "utf8");
 const build = readFileSync(join(root, "build.mjs"), "utf8");
+const holidayJs = readFileSync(join(root, "src/holiday.js"), "utf8");
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -52,6 +53,13 @@ assert(groovy.includes("afterEnd ? at < (day.end as long)"), "a custom time afte
 assert(groovy.includes("holidayWatch"), "a lost one-shot fire is picked up on the hourly watch");
 assert(/holidayReconcile[\s\S]*finally \{[\s\S]*holidayArm\(\)/.test(groovy), "a failed run still re-arms the next fire");
 assert(groovy.includes("replayHeld"), "devices held for Do not start stay pending until that mode is set");
+assert(groovy.includes("holidayMarkPassedDone(true)"), "a save must leave held and catch-up actions pending");
+assert(groovy.includes("def holidayActionStillPending"), "save must tell a still-due action from one that already passed");
+{
+  const resume = groovy.slice(groovy.indexOf("def holidayTogglePause"), groovy.indexOf("def holidayStartTestSpan"));
+  assert(resume.includes("holidayMarkPassedDone()"), "resuming still marks past actions so they are not replayed");
+  assert(!resume.includes("holidayMarkPassedDone(true)"), "resume does not keep the catch-up window");
+}
 assert(groovy.includes('a.kind == "modeEnter" && spanOpen'), "an early mode change still runs when the job is a minute late");
 
 assert(parent.includes('path("/holidays")'), "parent must expose /holidays");
@@ -69,5 +77,13 @@ assert(!parent.includes('app(name: "mDashHolidays"'), "parent must not offer a c
 assert(!parent.includes("mld-holiday.js</code></li><li><code>mld-manifest"), "holiday file stays off the required twelve");
 assert(build.includes('asset.name !== "mld-holiday.js"'), "Modern Dashboard package must not ship mld-holiday.js");
 assert(build.includes("holidayPackageManifest.json"), "holiday file must be its own HPM package");
+{
+  const postFn = holidayJs.match(/async function post\(path, body\) \{[\s\S]*?\n\}/);
+  assert(postFn, "holiday post helper parseable");
+  assert(postFn[0].includes("postJsonSilent"), "holiday save must not flash before the caller");
+  assert(!postFn[0].includes('error: "Could not save" }'), "holiday post must not replace the hub error");
+  assert(postFn[0].includes("res?.error"), "holiday post keeps the hub error");
+  assert(postFn[0].includes("status === 401"), "a rejected password session stays on the password dialog");
+}
 
 console.log("holiday source ok");

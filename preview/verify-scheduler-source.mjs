@@ -100,17 +100,29 @@ assert(!/runOnce\([^)]*scheduledJobHandler[^)]*\[data:\s*\[id:[^\]]+\]\]\s*\)/.t
   assert(adv[0].includes("armSunScheduleNext"), "sun advance must re-arm only that schedule");
 }
 {
+  const handler = src.match(/def scheduledJobHandler\(data\)[\s\S]*?\ndef scheduleLogName/);
+  assert(handler, "scheduledJobHandler block parseable");
+  const skip = handler[0].match(/not allowed\)"[\s\S]*?return/);
+  assert(skip, "mode skip block parseable");
+  assert(skip[0].includes('skipped: "mode"'), "a mode skip must record that the slot was skipped");
+  assert(skip[0].includes("scheduleAdvanceAfterTrigger(id, s, map, true)"), "a mode skip must consume the slot so catch-up does not run it");
+  assert(!skip[0].includes("scheduleAdvanceAfterTrigger(id, s, map, false)"), "a mode skip must not leave the slot looking missed");
+}
+{
   const clean = src.match(/def cleanupSchedules\(\)[\s\S]*?\n\/\/ --- endpoints/);
   assert(clean, "cleanupSchedules block parseable");
   assert(/if \(changed \|\| needsArm\) rebuildScheduledJobs\(\)/.test(clean[0]), "cleanup rebuilds after a drop or a late catch-up");
   assert(!/if \(changed\) saveSchedulesMap\(map\)\s+rebuildScheduledJobs\(\)/.test(clean[0]), "cleanup must not rebuild unconditionally");
+  assert(clean[0].includes("scheduleRecentSunMs"), "cleanup must catch up a recent sunrise or sunset");
   assert(clean[0].includes("onceScheduleDisposition"), "cleanup must use the one-time catch-up window");
-  assert(clean[0].includes('how == "drop"'), "cleanup drops one-time schedules only after the catch-up window");
+  assert(clean[0].includes('how == "drop" && s?.enabled == true'), "cleanup drops an expired one-time schedule only when it is enabled");
   assert(clean[0].includes('how == "catchup" && s?.enabled == true'), "paused one-time schedules stay through the catch-up window");
 }
 assert(src.includes("def onceScheduleDisposition("), "one-time arming must classify future, catch-up, and drop");
 assert(src.includes("return 10L * 60L * 1000L"), "one-time catch-up window is 10 minutes");
+assert(src.includes("def scheduleRecentSunMs("), "sunrise and sunset use the same catch-up window");
 assert(/how == "catchup"[\s\S]*nowMs \+ 2000L/.test(src), "a late one-time schedule is armed a couple of seconds ahead");
+assert(/how == "drop"[\s\S]{0,160}one-time schedule must be in the future/.test(src), "enabling an expired one-time schedule must fail like save");
 assert(src.includes("thermostatSettingError(ac, thermostatTempUnit(dev))"), "save must reject setpoints outside that thermostat's dial");
 assert(src.includes('schedule("0 1 0 * * ?", "schedulerMidnightRearm")'), "midnight re-arm must run at 00:01");
 assert(!src.includes('schedule("0 0 0 * * ?", "schedulerMidnightRearm")'), "midnight re-arm must not run at 00:00");
@@ -169,6 +181,8 @@ assert(js.includes("hubTimeZone"), "UI must consume hub timezone");
 assert(js.includes("Times use hub time"), "clock/once pickers must label hub time when TZ differs");
 assert(js.includes("applySchedulesResponse"), "mutations must apply returned schedules even on error");
 assert(js.includes("schedLastResultNote"), "list must surface missing/failed action results");
+assert(js.includes('lastResult?.skipped === "mode"'), "a mode skip must not look like the actions ran");
+assert(js.includes("Hub mode was not allowed"), "a mode skip must say the hub mode was not allowed");
 assert(js.includes("function schedIdList("), "Then line must normalize thermostat id lists");
 assert(js.includes("schedActionDescription(s.action, { thermostats })"), "Then line must resolve thermostat names");
 assert(js.includes("new Set(schedIdList(schedDraft.action.devices))"), "thermostat picker must not iterate a string id");

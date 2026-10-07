@@ -32,6 +32,18 @@ const MISSING_POST3_RE =
   /is not a function|Cannot read propert(?:y|ies) of undefined/i;
 
 let failures = 0;
+{
+  const appJs = readFileSync(join(root, "src/app.js"), "utf8");
+  const fetchData = appJs.slice(appJs.indexOf("async function fetchData("), appJs.indexOf("async function continueAfterDashboard401"));
+  const refresh = appJs.slice(appJs.indexOf("async function refresh("), appJs.indexOf("function startPolling("));
+  const render = appJs.slice(appJs.indexOf("\n  function render(d)"), appJs.indexOf("\n  function render(d)") + 180);
+  const addHtml = appJs.slice(appJs.lastIndexOf("const data = await fetchData();"), appJs.indexOf("HTML tile added"));
+  if (!appJs.includes("function isCurrentDataFetch(d)")) fail("a /data response must be comparable to the latest fetch");
+  if (!fetchData.includes('postCall("isCurrentDataFetch"')) fail("a slow /data response must not apply older settings");
+  if (!refresh.includes("isCurrentDataFetch")) fail("a slow poll must not paint older device state");
+  if (!render.includes("isCurrentDataFetch")) fail("render must ignore an older /data payload");
+  if (!addHtml.includes("isCurrentDataFetch")) fail("adding an HTML favorite must ignore an older /data payload");
+}
 function fail(msg) {
   failures++;
   console.error("FAIL:", msg);
