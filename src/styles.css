@@ -2013,6 +2013,7 @@ body.fav-embed-expanded-open{overflow:hidden}
   background: rgba(0,0,0,0.15); border: 1px solid var(--stroke);
 }
 .sched-status-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sched-status-item.is-end { text-align: right; }
 .sched-status-lbl {
   font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--text-faint);
@@ -2042,7 +2043,6 @@ body.fav-embed-expanded-open{overflow:hidden}
 .sched-toggle.is-off { background: rgba(255,255,255,0.06); color: var(--muted); border-color: rgba(255,255,255,0.12); }
 .sched-toggle:disabled { opacity: 0.5; }
 @media (max-width: 480px) {
-  .sched-row-status { grid-template-columns: 1fr; }
   .sched-row-foot .sched-icon-btn { flex: 1; text-align: center; }
 }
 

@@ -17762,8 +17762,8 @@
     parent.appendChild(line);
   }
 
-  function schedAppendStatusItem(parent, label, text) {
-    const item = ce("div", "sched-status-item" + (text.muted ? " is-muted" : ""));
+  function schedAppendStatusItem(parent, label, text, alignEnd) {
+    const item = ce("div", "sched-status-item" + (text.muted ? " is-muted" : "") + (alignEnd ? " is-end" : ""));
     const lbl = ce("span", "sched-status-lbl");
     lbl.textContent = label;
     const val = ce("span", "sched-status-val");
@@ -17997,9 +17997,9 @@
     }
 
     const status = ce("div", "sched-row-status");
-    schedAppendStatusItem(status, onlyModes.length ? "Next trigger" : "Next run", schedNextRunText(s));
     const lastRun = schedLastRunText(s);
     schedAppendStatusItem(status, lastRun.skipped ? "Last trigger" : "Last ran", lastRun);
+    schedAppendStatusItem(status, onlyModes.length ? "Next trigger" : "Next run", schedNextRunText(s), true);
     row.appendChild(status);
 
     const foot = ce("div", "sched-row-foot");

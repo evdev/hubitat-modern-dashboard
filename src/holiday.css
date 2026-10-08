@@ -267,6 +267,7 @@
 .holiday-later { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .holiday-open { flex: 1; font-size: 0.85rem; font-weight: 600; color: var(--text-faint); }
 .holiday-list-row .sched-row-foot { align-items: center; }
+.holiday-list-row .sched-toggle { white-space: nowrap; }
 .holiday-nav-top { margin-top: 0; margin-bottom: 4px; padding: 0; }
 .holiday-kicker {
   font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;

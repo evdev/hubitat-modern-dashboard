@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.58
+
+- **Shabbat & holidays:** a Shabbat week or a holiday can be changed once.
+  The usual schedule stays as it is. Update mDash Shabbat and Holidays.
+
+- **Shabbat & holidays:** turning a skipped Shabbat week back on while it is
+  in progress lets the rest of the week run. Update mDash Shabbat and Holidays.
+
+- **Scheduler:** Last ran sits on the left and Next run on the right, including
+  on a phone. Update Modern Dashboard.
+
 ## 0.4.57
 
 - **Shabbat & holidays:** the Active button on a Shabbat week skips only that

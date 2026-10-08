@@ -631,10 +631,16 @@ function fillRelationship(meta, row) {
   const phrase = ce("span", "holiday-rel " + relationshipTone(badge));
   phrase.textContent = relationshipPhrase(badge);
   meta.appendChild(phrase);
-  if (badge === "skipped") return;
-  const count = deviceCountForRow(row);
-  const devices = count === 1 ? "1 device" : count ? `${count} devices` : "No devices";
-  meta.appendChild(document.createTextNode(`. ${devices}.`));
+  if (badge !== "skipped") {
+    const count = deviceCountForRow(row);
+    const devices = count === 1 ? "1 device" : count ? `${count} devices` : "No devices";
+    meta.appendChild(document.createTextNode(`. ${devices}.`));
+  }
+  if (row.once) {
+    const once = ce("span", "holiday-rel is-own");
+    once.textContent = " Changed this time.";
+    meta.appendChild(once);
+  }
 }
 
 function isThisFridayShabbat(row) {
@@ -685,17 +691,40 @@ function renderDetail() {
   const tools = ce("div", "holiday-tools");
   const edit = ce("button", "ghost-btn sched-primary-btn");
   edit.type = "button";
-  edit.textContent = "Edit";
+  edit.textContent = "Edit usual schedule";
+  edit.title = span.once
+    ? "Changes every other time. This time keeps its own schedule."
+    : "Changes the schedule for every time";
   edit.addEventListener("click", () => openWizard(span.occasion));
   tools.appendChild(edit);
+  const once = ce("button", "ghost-btn");
+  once.type = "button";
+  once.textContent = "Change this time only";
+  once.addEventListener("click", () => openOnceWizard(span));
+  tools.appendChild(once);
+  if (span.once) {
+    const note = ce("p", "holiday-when");
+    note.textContent = "This time has its own schedule. The usual schedule is unchanged.";
+    wrap.appendChild(note);
+    const clear = ce("button", "ghost-btn");
+    clear.type = "button";
+    clear.textContent = "Use the usual schedule";
+    clear.addEventListener("click", () => {
+      if (!confirm("Use the usual schedule for this time? The one-time change will be removed.")) return;
+      clearOnce(span.id);
+    });
+    tools.appendChild(clear);
+  }
   const skip = ce("button", "ghost-btn");
   skip.type = "button";
   skip.textContent = span.skipped ? "Undo skip" : (shabbat ? "Skip this week" : "Skip this time");
   skip.addEventListener("click", () => {
     if (!span.skipped) {
+      const now = Number(model?.now) || Date.now();
+      const live = Number(span.start) <= now && Number(span.end) > now;
       const ask = shabbat
-        ? "Skip this week? The hub mode will be left as it is."
-        : "Skip this occurrence? The hub mode will be left as it is.";
+        ? (live ? "Skip this week? The hub mode will be left as it is." : "Skip this week?")
+        : (live ? "Skip this occurrence? The hub mode will be left as it is." : "Skip this occurrence?");
       if (!confirm(ask)) return;
     }
     setSkip(span.id, !!span.skipped);
@@ -716,12 +745,12 @@ function renderDetail() {
   const testStart = ce("button", "ghost-btn");
   testStart.type = "button";
   testStart.textContent = "Run candle-lighting actions";
-  testStart.addEventListener("click", () => runHolidayTest(span.occasion, "start"));
+  testStart.addEventListener("click", () => runHolidayTest(span, "start"));
   tryRow.appendChild(testStart);
   const testEnd = ce("button", "ghost-btn");
   testEnd.type = "button";
   testEnd.textContent = "Run havdalah actions";
-  testEnd.addEventListener("click", () => runHolidayTest(span.occasion, "end"));
+  testEnd.addEventListener("click", () => runHolidayTest(span, "end"));
   tryRow.appendChild(testEnd);
   wrap.appendChild(tryRow);
   const tryNote = ce("p", "holiday-when");
@@ -1317,7 +1346,7 @@ async function setSkip(spanId, undo) {
       flash(saved?.error || "Could not update", true);
       return;
     }
-    acceptStatus(saved);
+    rememberRevision(saved.revision);
     skipPending.delete(id);
     reapplyPendingSkips();
     render();
@@ -1342,16 +1371,20 @@ function alsoControlled(deviceId) {
   return note;
 }
 
-async function runHolidayTest(occasion, which) {
+async function runHolidayTest(span, which) {
+  const occasion = span?.occasion || "shabbat";
   const noun = which === "end" ? "havdalah" : "candle lighting";
-  const template = resolveTemplate(occasion, model);
+  const template = span?.onceTemplate || resolveTemplate(occasion, model);
   if (!template) { flash("This holiday has no schedule", true); return; }
   const states = which === "end" ? template.end?.states : template.start?.states;
   const unlocks = (states || []).filter((s) => s?.kind === "lock" && s.locked === false);
   let msg = `Run the ${noun} actions now? This does not change the hub mode.`;
+  if (span?.once) msg = `Run this time's ${noun} actions now? This does not change the hub mode.`;
   if (unlocks.length) msg += " This will unlock " + unlocks.map((s) => deviceName(s.id)).join(", ") + ".";
   if (!confirm(msg)) return;
-  const res = await post("holidays/test", { which, occasion });
+  const body = { which, occasion };
+  if (span?.once && span.id) body.spanId = span.id;
+  const res = await post("holidays/test", body);
   flash(res?.ok ? "Ran actions now" : (res?.error || "Actions did not complete"), !res?.ok);
 }
 
@@ -1361,6 +1394,51 @@ function backRow(label, fn) {
   b.textContent = "Back to " + label;
   b.addEventListener("click", fn);
   return b;
+}
+
+function templateForOnceEdit(span) {
+  const days = span?.days?.length ? span.days : [{ occasion: span?.occasion }];
+  const firstId = days[0]?.occasion || span?.occasion;
+  const lastId = days[days.length - 1]?.occasion || firstId;
+  const base = span?.onceTemplate || resolveTemplate(firstId, model) || emptyTemplate();
+  const template = structuredClone(base);
+  if (!template.start) template.start = { states: [], repeatLaterNights: false };
+  if (!span?.onceTemplate && lastId !== firstId) {
+    const last = resolveTemplate(lastId, model) || emptyTemplate();
+    template.end = structuredClone(last.end || { states: [] });
+  }
+  const occasions = [];
+  for (const day of days) {
+    if (day?.occasion && !occasions.includes(day.occasion)) occasions.push(day.occasion);
+  }
+  return { template, mixed: occasions.length > 1 };
+}
+
+function openOnceWizard(span) {
+  const seeded = templateForOnceEdit(span);
+  wizard = {
+    step: "questions",
+    occasion: span?.occasion || "shabbat",
+    spanId: span?.id,
+    once: true,
+    mixedOnce: seeded.mixed,
+    settings: structuredClone(model?.settings || {}),
+    choice: "own",
+    template: seeded.template,
+    q: 0,
+  };
+  if (!wizard.template.start) wizard.template = emptyTemplate();
+  normalizeWizardSettings(wizard.settings);
+  rememberWizardSaved();
+  view = "wizard";
+  render();
+}
+
+async function clearOnce(spanId) {
+  const saved = await post("holidays/save", { revision: model.revision, spanId, clearOnce: true });
+  if (!saved?.ok) { flash(saved?.error || "Could not update", true); return; }
+  acceptStatus(saved);
+  render();
 }
 
 function openWizard(occasion) {
@@ -1400,7 +1478,7 @@ function closeWizard() {
   if (wizard?.savedFingerprint && wizardFingerprint() !== wizard.savedFingerprint) {
     if (!confirm("Close without saving your changes?")) return;
   }
-  view = "list";
+  view = wizard?.once && detailId ? "detail" : "list";
   wizard = null;
   render();
 }
@@ -1413,9 +1491,11 @@ function renderWizard() {
   const wrap = ce("div", "sched-workflow");
   const head = ce("div", "sched-workflow-head");
   const title = ce("h3", "sched-section-title");
-  title.textContent = SETUP_STEPS.includes(wizard.step) || wizard.step === "occasions"
-    ? "Shabbat & holidays"
-    : (OCCASIONS.find((o) => o.id === wizard.occasion)?.label || "Schedule");
+  title.textContent = wizard.once
+    ? "This time only"
+    : SETUP_STEPS.includes(wizard.step) || wizard.step === "occasions"
+      ? "Shabbat & holidays"
+      : (OCCASIONS.find((o) => o.id === wizard.occasion)?.label || "Schedule");
   head.appendChild(title);
   const cancel = ce("button", "ghost-btn");
   cancel.type = "button";
@@ -1945,9 +2025,16 @@ function questionStep() {
   const q = ce("p", "sched-question");
   q.textContent = questionPrompt(key);
   box.appendChild(q);
+  if (wizard.once && wizard.q === 0) {
+    const note = ce("p", "sched-hint");
+    note.textContent = wizard.mixedOnce
+      ? "This changes only this time, for the whole stretch. The usual schedules stay as they are."
+      : "This changes only this time. The usual schedule stays as it is.";
+    box.appendChild(note);
+  }
   const goBack = () => {
     wizard.q = Math.max(0, wizard.q - 1);
-    if (wizard.q === 0 && wizard.occasion !== "shabbat") wizard.step = "choice";
+    if (wizard.q === 0 && wizard.occasion !== "shabbat" && !wizard.once) wizard.step = "choice";
     render();
   };
   const goNext = () => {
@@ -2635,7 +2722,11 @@ function customEditor() {
 function reviewStep() {
   const box = ce("div", "sched-step");
   const q = ce("p", "sched-question");
-  q.textContent = "Review the next occurrence, then save.";
+  q.textContent = wizard.once
+    ? (wizard.mixedOnce
+      ? "This changes only this time, for the whole stretch. The usual schedules stay as they are."
+      : "This changes only this time. The usual schedule stays as it is.")
+    : "Review the next occurrence, then save.";
   box.appendChild(q);
   const goBack = () => { wizard.q -= 1; render(); };
   const pending = templateErrors(wizard.template);
@@ -2647,7 +2738,12 @@ function reviewStep() {
   const goSave = async () => {
     const stillPending = templateErrors(wizard.template);
     if (stillPending.length) { flash(namedErrorText(stillPending), true); return; }
-    const saved = await post("holidays/save", {
+    const saved = await post("holidays/save", wizard.once ? {
+      revision: model.revision,
+      spanId: wizard.spanId,
+      once: true,
+      template: wizard.template,
+    } : {
       revision: model.revision,
       settings: wizard.settings,
       occasion: wizard.occasion,
@@ -2657,6 +2753,12 @@ function reviewStep() {
     if (!saved?.ok) { flash(saved?.error || "Could not save", true); return; }
     acceptStatus(saved);
     flash("Saved");
+    if (wizard.once) {
+      wizard = null;
+      view = "detail";
+      render();
+      return;
+    }
     rememberWizardSaved();
     wizard.step = "occasions";
     render();
@@ -2665,7 +2767,11 @@ function reviewStep() {
   const holder = ce("div");
   holder.textContent = "Generating preview…";
   box.appendChild(holder);
-  post("holidays/preview", {
+  post("holidays/preview", wizard.once ? {
+    spanId: wizard.spanId,
+    template: wizard.template,
+    settings: wizard.settings,
+  } : {
     occasion: wizard.occasion,
     choice: wizard.occasion === "shabbat" ? "own" : wizard.choice,
     template: wizard.template,

@@ -213,10 +213,17 @@ def holidaysPreview(body) {
         if (body.choice) draft.occasions[id] = body.choice.toString()
         if (body.template) draft.templates[id] = body.template
     }
+    if (body?.spanId && body?.template) {
+        if (!(draft.spanOverrides instanceof Map)) draft.spanOverrides = [:]
+        draft.spanOverrides[body.spanId.toString()] = body.template
+    }
     def errors = holidayTemplateErrors(body?.template)
     def built = holidayBuildFrom(draft, now())
     def span = null
-    if (body?.occasion) {
+    if (body?.spanId) {
+        span = built.spans.find { s -> s.id?.toString() == body.spanId.toString() }
+    }
+    if (!span && body?.occasion) {
         span = built.spans.find { s -> holidaySpanHasOccasion(s, body.occasion.toString()) }
     }
     if (!span && built.spans) span = built.spans[0]
@@ -232,10 +239,12 @@ def holidaysSave(body) {
     if (body?.pauseOccasion && body?.settings == null && body?.occasion == null && body?.template == null) {
         return holidaySavePause(body.pauseOccasion.toString())
     }
+    if (body?.spanId && body?.clearOnce == true) return holidaySaveOnce(body)
     if (body?.template) {
         def errs = holidayTemplateErrors(body.template)
         if (errs) return [ok: false, error: holidayErrorMessage(errs), errors: errs, revision: state.runtime.revision ?: 0]
     }
+    if (body?.spanId && body?.once == true) return holidaySaveOnce(body)
     if (body?.settings) {
         def config = state.config instanceof Map ? new LinkedHashMap(state.config) : [:]
         config.settings = holidayMergeSettings(config.settings, body.settings)
@@ -265,6 +274,25 @@ def holidaysSave(body) {
     return status
 }
 
+def holidaySaveOnce(body) {
+    def id = body?.spanId?.toString()
+    if (!id) return [ok: false, error: "missing span", revision: state.runtime.revision ?: 0]
+    def config = state.config instanceof Map ? new LinkedHashMap(state.config) : [:]
+    def overrides = config.spanOverrides instanceof Map ? new LinkedHashMap(config.spanOverrides) : [:]
+    if (body?.clearOnce == true) overrides.remove(id)
+    else overrides[id] = holidayPlain(body.template)
+    config.spanOverrides = overrides
+    state.config = config
+    def savedRt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    savedRt.revision = (savedRt.revision ?: 0) + 1
+    state.runtime = savedRt
+    holidayMarkPassedDone(true)
+    holidayArm()
+    def status = holidaysStatus()
+    status.ok = true
+    return status
+}
+
 def holidaysSkip(body) {
     holidayEnsureState()
     def id = body?.spanId?.toString()
@@ -275,7 +303,13 @@ def holidaysSkip(body) {
     else if (!list.contains(id)) list << id
     rt.skippedSpanIds = list
     def active = rt.activeSpan
-    if (body?.undo != true && active?.id?.toString() == id) {
+    if (body?.undo == true && active?.id?.toString() == id && active?.held == true && active?.ended == true) {
+        active = active instanceof Map ? new LinkedHashMap(active) : [:]
+        active.held = false
+        active.ended = false
+        rt.activeSpan = active
+        log.info "mDash Holidays: resumed this span. Later actions will run. The hub mode was left as it is."
+    } else if (body?.undo != true && active?.id?.toString() == id) {
         active = active instanceof Map ? new LinkedHashMap(active) : [:]
         active.ended = true
         active.held = true
@@ -295,7 +329,11 @@ def holidaysTest(body) {
     holidayEnsureState()
     def which = body?.which?.toString()
     def occasion = body?.occasion?.toString() ?: "shabbat"
-    def template = holidayResolveTemplate(occasion, state.config) ?: state.config.templates?.shabbat
+    def template = null
+    def onceId = body?.spanId?.toString()
+    def overrides = state.config?.spanOverrides
+    if (onceId && overrides instanceof Map && overrides[onceId] instanceof Map) template = overrides[onceId]
+    if (!(template instanceof Map)) template = holidayResolveTemplate(occasion, state.config) ?: state.config.templates?.shabbat
     def raw = which == "end" ? template?.end?.states : template?.start?.states
     def states = holidayCloneStates(raw)
     def result = parent.holidayRunAction(states)
@@ -312,7 +350,9 @@ def holidayEnsureState() {
     if (!(config.templates instanceof Map)) { config.templates = [shabbat: holidayEmptyTemplate()]; writeConfig = true }
     if (!(config.occasions instanceof Map)) { config.occasions = holidayDefaultOccasions(); writeConfig = true }
     if (!(config.pausedOccasions instanceof List)) { config.pausedOccasions = []; writeConfig = true }
+    if (!(config.spanOverrides instanceof Map)) { config.spanOverrides = [:]; writeConfig = true }
     if (writeConfig) state.config = config
+    holidayPruneOverrides()
     if (!(state.calendar instanceof Map)) state.calendar = [boundaries: [], holidays: [], query: "", fetchedAt: 0, error: ""]
     def rt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
     boolean writeRuntime = !(state.runtime instanceof Map)
@@ -322,6 +362,7 @@ def holidayEnsureState() {
     if (!(rt.doneIds instanceof Map)) { rt.doneIds = [:]; writeRuntime = true }
     if (!(rt.skippedSpanIds instanceof List)) { rt.skippedSpanIds = []; writeRuntime = true }
     if (writeRuntime) state.runtime = rt
+    holidayPruneSkipped()
 }
 
 def holidayDefaultSettings() {
@@ -653,6 +694,8 @@ def holidayBuildFrom(config, long nowMs, String scope = "all") {
     for (span in chosen) {
         boolean isSkipped = skipped.contains(span.id?.toString())
         boolean isPaused = span.id?.toString() != "test" && holidaySpanPaused(span, config)
+        def onceTemplate = holidayOnceTemplate(span, config)
+        boolean isOnce = onceTemplate != null
         def actions = (span.id == "test") ? holidayTestActions(span, config) : holidayExpandSpan(span, config)
         def warning = ""
         if (state.calendar?.error && span.id != "test") warning = state.calendar.error.toString()
@@ -662,12 +705,12 @@ def holidayBuildFrom(config, long nowMs, String scope = "all") {
         rows << [
             spanId: span.id, name: span.name, start: span.start, end: span.end,
             occasion: span.occasion, badge: isSkipped ? "skipped" : holidayBadge(span, config),
-            inProgress: inProgress, warning: warning, skipped: isSkipped, paused: isPaused
+            inProgress: inProgress, warning: warning, skipped: isSkipped, paused: isPaused, once: isOnce
         ]
         outSpans << [
             id: span.id, name: span.name, start: span.start, end: span.end, occasion: span.occasion,
             days: span.days, actions: actions, warnings: holidaySameMinute(actions),
-            skipped: isSkipped, paused: isPaused
+            skipped: isSkipped, paused: isPaused, once: isOnce, onceTemplate: onceTemplate
         ]
     }
     rows.sort { a, b -> (a.start as long) <=> (b.start as long) }
@@ -813,6 +856,57 @@ def holidayOccasionLabel(String id) {
     }
 }
 
+def holidayDateEnded(String id, String today) {
+    if (!id || !today) return false
+    int plus = id.lastIndexOf("+")
+    def last = plus >= 0 ? id.substring(plus + 1) : id
+    return last.length() == 10 && last < today
+}
+
+// Skipped weeks are keyed by the span's dates. Drop them after that date has passed.
+def holidayPruneSkipped() {
+    def rt = state.runtime instanceof Map ? state.runtime : null
+    def list = rt?.skippedSpanIds
+    if (!(list instanceof List) || !list) return
+    def today = holidayParts(now(), holidayTz()).date
+    def kept = list.findAll { id -> !holidayDateEnded(id?.toString(), today) }
+    if (kept.size() == list.size()) return
+    def copy = new LinkedHashMap(rt)
+    copy.skippedSpanIds = kept
+    state.runtime = copy
+}
+
+// A one-time schedule is keyed by the span's dates. Drop it after that date has passed.
+def holidayPruneOverrides() {
+    def config = state.config instanceof Map ? state.config : null
+    def overrides = config?.spanOverrides
+    if (!(overrides instanceof Map) || overrides.isEmpty()) return
+    def today = holidayParts(now(), holidayTz()).date
+    def remove = []
+    overrides.keySet().each { k ->
+        if (holidayDateEnded(k?.toString(), today)) remove << k
+    }
+    if (!remove) return
+    def next = new LinkedHashMap(overrides)
+    remove.each { next.remove(it) }
+    def copy = new LinkedHashMap(config)
+    copy.spanOverrides = next
+    state.config = copy
+}
+
+def holidayOnceTemplate(span, config) {
+    def overrides = config?.spanOverrides
+    if (!(overrides instanceof Map) || !span?.id) return null
+    def once = overrides[span.id.toString()]
+    return once instanceof Map ? once : null
+}
+
+def holidayTemplateFor(span, day, config) {
+    def once = holidayOnceTemplate(span, config)
+    if (once != null) return once
+    return holidayResolveTemplate(day?.occasion?.toString(), config) ?: holidayEmptyTemplate()
+}
+
 def holidayExpandSpan(span, config) {
     def tz = holidayTz()
     def settings = config?.settings ?: [:]
@@ -824,7 +918,7 @@ def holidayExpandSpan(span, config) {
     }
     actions << [id: "${span.id}|modeEnter", at: early, kind: "modeEnter", spanId: span.id, question: "modeEnter", groupIndex: 0, states: [], skipped: false, mode: settings.holidayMode?.toString() ?: ""]
     for (day in span.days) {
-        def template = holidayResolveTemplate(day.occasion?.toString(), config) ?: holidayEmptyTemplate()
+        def template = holidayTemplateFor(span, day, config)
         long startAt = holidayStartEarly(day.start as long, settings)
         if (day.isFirst == true || template?.start?.repeatLaterNights == true) {
             def states = holidayCloneStates(template?.start?.states)
@@ -862,7 +956,7 @@ def holidayExpandSpan(span, config) {
         }
     }
     def last = span.days[-1]
-    def endTemplate = holidayResolveTemplate(last.occasion?.toString(), config) ?: holidayEmptyTemplate()
+    def endTemplate = holidayTemplateFor(span, last, config)
     def endStates = holidayCloneStates(endTemplate?.end?.states)
     if (endStates) {
         long endAt = span.end as long

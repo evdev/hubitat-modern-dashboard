@@ -170,6 +170,25 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
   });
   const starts2 = expandSpan(spans[0], withRepeat, TZ).filter((a) => a.question === "start" && !a.skipped);
   eq(starts2.length, 3, "opt-in repeats the start each night");
+  const onceConfig = {
+    ...cfg(),
+    spanOverrides: {
+      [spans[0].id]: {
+        ...cfg().templates.shabbat,
+        start: { states: [light("porch", true)], repeatLaterNights: false },
+        end: { states: [light("porch", false)] },
+      },
+    },
+  };
+  const onceActions = expandSpan(spans[0], onceConfig, TZ);
+  const onceStart = onceActions.find((a) => a.question === "start" && !a.skipped);
+  eq(onceStart.states[0].id, "porch", "a one-time schedule replaces this span");
+  const onceEnd = onceActions.find((a) => a.question === "end" && !a.skipped);
+  eq(onceEnd.states[0].id, "porch", "a one-time havdalah replaces this span");
+  const usualActions = expandSpan({ ...spans[0], id: "other-week" }, onceConfig, TZ);
+  const usualStart = usualActions.find((a) => a.question === "start" && !a.skipped);
+  eq(usualStart.states[0].id, "dining", "another week keeps the usual schedule");
+  assert(!usualActions.some((a) => a.question === "end"), "another week keeps the usual havdalah");
 }
 
 {

@@ -69,11 +69,27 @@ assert(groovy.includes("holidayMarkPassedDone(true)"), "a save must leave held a
   assert(rowToggle.includes("setSkip(row.spanId"), "a Shabbat row skips that week");
   assert(rowToggle.includes("togglePause(row.occasion)"), "a holiday row still pauses that holiday");
   assert(rowToggle.includes("Week skipped"), "a skipped Shabbat week says so on the button");
+  const weekSkip = holidayJs.slice(holidayJs.indexOf("async function setSkip"), holidayJs.indexOf("function alsoControlled"));
+  assert(weekSkip.includes("applySkip"), "skipping one week updates before the hub answers");
+  assert(!weekSkip.includes("acceptStatus"), "skipping one week does not reload the holiday list");
+  assert(weekSkip.includes("rememberRevision"), "skipping one week keeps the loaded list");
+  const skipSave = groovy.slice(groovy.indexOf("def holidaysSkip"), groovy.indexOf("def holidaysTest"));
+  assert(skipSave.includes("active.held = false"), "undoing a skipped week releases the hold");
+  assert(skipSave.includes("active.ended = false"), "undoing a skipped week lets later actions run");
+  assert(groovy.includes("def holidayPruneSkipped"), "a skipped week is dropped after its date");
   const detail = holidayJs.slice(holidayJs.indexOf("function renderDetail"), holidayJs.indexOf("function renderByLight"));
   assert(detail.includes("Pause every week"), "Shabbat detail can pause every week");
   assert(detail.includes('togglePause("shabbat")'), "pause every week still pauses the Shabbat occasion");
   assert(detail.includes("Skip this week"), "Shabbat detail skips this week");
   assert(detail.includes("Skip this time"), "a holiday detail still skips this occurrence");
+  assert(detail.includes("Change this time only"), "a span can be changed once");
+  assert(detail.includes("Use the usual schedule"), "a one-time change can be removed");
+  assert(holidayJs.includes("once: true"), "a one-time change is saved apart from the usual schedule");
+  assert(groovy.includes("config.spanOverrides = overrides"), "a one-time schedule is stored on the occasion config");
+  assert(groovy.includes("holidayOnceTemplate"), "expansion uses a one-time schedule for that span");
+  assert(groovy.includes("def holidayPruneOverrides"), "a one-time schedule is dropped after its date");
+  const trial = groovy.slice(groovy.indexOf("def holidaysTest"), groovy.indexOf("// --- state ---"));
+  assert(trial.includes("spanOverrides"), "trying actions now uses a one-time schedule");
 }
 assert(groovy.includes("def holidayActionStillPending"), "save must tell a still-due action from one that already passed");
 {

@@ -150,6 +150,7 @@ state.holiday.settings.doNotStartModes = ["Away"];
 state.holiday.revision = 1;
 state.holiday.skipped = [];
 state.holiday.pausedOccasions = [];
+state.holiday.spanOverrides = {};
 state.holiday.showMissed = false;
 state.holiday.templates.shabbat = {
   start: {
@@ -1003,15 +1004,20 @@ function holidayPreviewPayload(draft) {
     settings: { ...state.holiday.settings, ...(draft?.settings || {}) },
     templates: { ...state.holiday.templates },
     occasions: { ...state.holiday.occasions },
+    spanOverrides: { ...(state.holiday.spanOverrides || {}) },
   };
+  if (draft?.spanId && draft?.template) config.spanOverrides[String(draft.spanId)] = draft.template;
   if (draft?.occasion && draft?.choice) config.occasions[draft.occasion] = draft.choice;
   if (draft?.occasion && draft?.template) config.templates[draft.occasion] = draft.template;
   const now = Date.now();
   const { spans, actions } = expandUpcoming(holidayFixtureItems(now), config, tz, now);
   const skipped = new Set(state.holiday.skipped || []);
+  const overrides = config.spanOverrides || {};
   const packed = spans.map((span) => ({
     ...span,
     skipped: skipped.has(span.id),
+    once: !!overrides[span.id],
+    onceTemplate: overrides[span.id] || null,
     actions: actions.filter((a) => a.spanId === span.id),
     warnings: sameMinuteWarnings((actions || []).filter((a) => a.spanId === span.id)),
   }));
@@ -1023,6 +1029,7 @@ function holidayPreviewPayload(draft) {
     occasion: span.occasion,
     skipped: span.skipped,
     paused: (state.holiday.pausedOccasions || []).includes(span.occasion),
+    once: span.once,
     badge: span.skipped ? "skipped" : templateBadge(span.days?.[0]?.occasion || span.occasion, config),
     inProgress: !span.skipped && span.start <= now && span.end > now,
     warning: index === 0 && state.holiday.showMissed ? "Missed while the hub was offline" : "",
@@ -2519,7 +2526,14 @@ const server = createServer(async (req, res) => {
         const list = state.holiday.pausedOccasions || [];
         state.holiday.pausedOccasions = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
       }
-      if (body.occasion && body.choice) {
+      if (body.spanId && body.clearOnce) {
+        const id = String(body.spanId);
+        state.holiday.spanOverrides = { ...(state.holiday.spanOverrides || {}) };
+        delete state.holiday.spanOverrides[id];
+      } else if (body.spanId && body.once && body.template) {
+        const id = String(body.spanId);
+        state.holiday.spanOverrides = { ...(state.holiday.spanOverrides || {}), [id]: body.template };
+      } else if (body.occasion && body.choice) {
         state.holiday.occasions[body.occasion] = body.choice || "own";
         if (body.template) state.holiday.templates[body.occasion] = body.template;
       }
@@ -2534,8 +2548,11 @@ const server = createServer(async (req, res) => {
     if (url.searchParams.get("missed") === "1") state.holiday.showMissed = true;
     const payload = holidayPreviewPayload(body && sub === "preview" ? body : null);
     if (sub === "preview") {
+      const wantedId = body?.spanId ? String(body.spanId) : "";
       const wanted = body?.occasion;
-      const span = payload.spans.find((s) => (s.days || []).some((d) => d.occasion === wanted)) || payload.spans[0] || null;
+      const span = wantedId
+        ? (payload.spans.find((s) => s.id === wantedId) || null)
+        : (payload.spans.find((s) => (s.days || []).some((d) => d.occasion === wanted)) || payload.spans[0] || null);
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ ok: true, apiVersion: HOLIDAY_API_VERSION, tz: "America/New_York", span, warnings: span?.warnings || [] }));
     }
