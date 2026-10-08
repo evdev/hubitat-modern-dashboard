@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.59
+// Modern Dashboard v0.4.60
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.59"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.60"
 
 definition(
     name: "Modern Dashboard",
@@ -70,7 +70,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.59 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.60 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -314,7 +314,7 @@ def mainPage() {
                     paragraph mldLinkCard("Local assistant", "On your home network", mcpUrl(), "info")
                 }
                 href "toSchedUpload", title: "Upload schedules…",
-                    description: "Paste schedule JSON. Works from the cloud dashboard too.",
+                    description: "Schema and device list for an assistant, then paste the JSON it returns",
                     page: "schedUploadPage"
                 href "toSchedImport", title: "Import Simple Automation Rules…",
                     description: "Paste a Hubitat App Export to create mDash schedules",
@@ -449,25 +449,36 @@ def schedImportPage() {
 
 def schedUploadPage() {
     dynamicPage(name: "schedUploadPage", title: "Upload schedules", install: false, uninstall: false) {
-        section("Schema for your assistant", hideable: true, hidden: true) {
-            paragraph "Copy this into your assistant with the device list below, then paste the JSON it returns here. Use only the device names from that list."
-            paragraph "<pre style='white-space:pre-wrap;max-height:280px;overflow:auto'>" + htmlEsc(schedUploadSchema()) + "</pre>"
+        if (state.schedUploadResult) {
+            section("Last upload") {
+                paragraph "<div id='mldSchedResult'>" + htmlEsc(state.schedUploadResult.toString()) + "</div>"
+                if (state.schedUploadSkipped) paragraph state.schedUploadSkipped.toString()
+            }
         }
-        section("Devices for your assistant", hideable: true, hidden: true) {
+        section("Devices for your assistant", hideable: true, hidden: false) {
+            // Hubitat keeps the previous page's scroll position, so this page opened at the bottom.
+            paragraph mldSchedScrollTop()
             paragraph "These are the devices selected in this app, and only the controls a schedule can set. Hub mode names are included. Sensors, music, cameras, and scenes are not."
             paragraph "<small>Each link includes your dashboard token. Treat it like the dashboard link.</small>"
             paragraph mldLinkCard("Download device list", "Opens from anywhere", scheduleDevicesUrl(false), "warm")
             paragraph mldLinkCard("Download on your network", "Same file, from the hub", scheduleDevicesUrl(true), "info")
         }
+        section("Schema for your assistant", hideable: true, hidden: false) {
+            paragraph "Give this schema to your assistant with the device list above. Use only the device names from that list. Download or Copy for the full file."
+            paragraph mldSchemaToolbar() +
+                "<pre id='mldSchedSchema' style='white-space:pre-wrap;max-height:48px;overflow:auto;margin:0'>" +
+                htmlEsc(schedUploadSchema().trim()) + "</pre>"
+        }
         section("Schedule JSON") {
-            paragraph "Paste JSON from an assistant, or the same file you upload in the dashboard Scheduler. This works when the assistant cannot keep a live connection to Hubitat Cloud."
-            paragraph "<small>A schedule name that already exists is replaced. A new name is added.</small>"
-            paragraph "<pre style='white-space:pre-wrap'>" + htmlEsc(schedUploadExample()) + "</pre>"
+            paragraph "Paste JSON or choose a file, then tap <b>Upload</b>. A schedule name that already exists is replaced."
+            paragraph "<details style='margin:4px 0 8px'><summary style='cursor:pointer'>Example</summary><pre style='white-space:pre-wrap;max-height:48px;overflow:auto'>" + htmlEsc(schedUploadExample()) + "</pre></details>"
             if (state.schedUploadHidePaste == true) {
                 paragraph "<small>Paste cleared. Tap <b>Paste another file</b> to upload again.</small>"
                 input name: "btnSchedUploadClear", type: "button", title: "Paste another file"
             } else {
-                input "schedUploadPaste", "textarea", title: "Schedule JSON", required: false, rows: 14, submitOnChange: true
+                input "schedUploadPaste", "textarea", title: "Schedule JSON", required: false, rows: 3
+                paragraph mldSchedUploadFilePicker()
+                input name: "btnSchedUploadRun", type: "button", title: "Upload"
                 input name: "btnSchedUploadClear", type: "button", title: "Clear paste"
             }
         }
@@ -498,17 +509,11 @@ def schedUploadPage() {
                 }
                 section("Import") {
                     if (preview.ok) {
-                        input name: "btnSchedUploadRun", type: "button", title: "Import ${preview.ok.size()} schedule(s)"
+                        paragraph "<small>Tap <b>Upload</b> above to import these.</small>"
                     } else {
                         paragraph "<b>No schedules can be imported.</b>"
                     }
                 }
-            }
-        }
-        if (state.schedUploadResult) {
-            section("Last upload") {
-                paragraph htmlEsc(state.schedUploadResult.toString())
-                if (state.schedUploadSkipped) paragraph state.schedUploadSkipped.toString()
             }
         }
         section("") {
@@ -1142,8 +1147,13 @@ def schedUploadClearPaste() {
 }
 
 def schedUploadRunFromUi() {
-    def text = schedUploadPaste?.toString()
-    def parsed = schedUploadParseText(text ?: "")
+    def text = schedUploadPaste?.toString()?.trim()
+    if (!text) {
+        state.schedUploadResult = "Upload failed: paste JSON or choose a file first."
+        state.schedUploadSkipped = null
+        return
+    }
+    def parsed = schedUploadParseText(text)
     if (parsed.error) {
         state.schedUploadResult = "Upload failed: ${parsed.error}"
         state.schedUploadSkipped = null
@@ -1728,6 +1738,11 @@ def scheduleDevicesUrl(boolean local) {
     return "${base}/schedules/devices?access_token=${state.accessToken}"
 }
 
+def scheduleSchemaUrl(boolean local) {
+    def base = local ? getFullLocalApiServerUrl() : getFullApiServerUrl()
+    return "${base}/schedules/schema?access_token=${state.accessToken}"
+}
+
 // ---------------------------------------------------------------------------
 // File Manager asset cache + HTTP cache headers
 // ---------------------------------------------------------------------------
@@ -2176,6 +2191,7 @@ mappings {
     path("/schedules/save") { action: [POST: "schedulesSave"] }
     path("/schedules/upload") { action: [POST: "schedulesUpload"] }
     path("/schedules/devices") { action: [GET: "schedulesDevicesGet"] }
+    path("/schedules/schema") { action: [GET: "schedulesSchemaGet"] }
     path("/schedules/delete") { action: [POST: "schedulesDelete"] }
     path("/schedules/toggle") { action: [POST: "schedulesToggle"] }
     path("/schedules/test") { action: [POST: "schedulesTest"] }
@@ -2216,7 +2232,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.59.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.60.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -2308,7 +2324,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.59.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.60.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -2989,6 +3005,43 @@ def mldLinkCard(label, subtitle, url, type) {
         "<div style='font-size:12px;opacity:0.85;margin:2px 0 8px'>${htmlEsc(subtitle)}</div>" +
         "<a href='${safeUrl}' target='_blank' style='word-break:break-all;color:${c.title}'>${safeUrl}</a>" +
         "</div>"
+}
+
+// Download and Copy sit on the schema. Copy reads the pre, so the JSON is not repeated in the button.
+def mldSchemaToolbar() {
+    def btn = "display:inline-block;margin:0 8px 8px 0;padding:8px 14px;border-radius:8px;" +
+        "font-weight:700;font-size:14px;line-height:1.2;cursor:pointer;vertical-align:middle;" +
+        "font-family:inherit;text-decoration:none;border:0"
+    def copyJs = 'var b=this,el=document.getElementById("mldSchedSchema");if(!el)return false;' +
+        'var v=el.textContent||el.innerText||"";' +
+        'var ok=function(){b.textContent="Copied";};' +
+        'var legacy=function(){try{var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");ok();}catch(e){b.textContent="Copy failed";}};' +
+        'if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(v).then(ok).catch(legacy);}else{legacy();}' +
+        'return false;'
+    def cloud = htmlEsc(scheduleSchemaUrl(false))
+    def local = htmlEsc(scheduleSchemaUrl(true))
+    return "<div style='margin:8px 0 4px'>" +
+        "<a href='${cloud}' target='_blank' download='mdash-schedule-schema.json' " +
+        "style='${btn};background:#3b6bff;color:#fff' title='Download schedule schema'>Download</a>" +
+        "<button type='button' style='${btn};background:#e8edf5;color:#1e293b' onclick='${copyJs}'>Copy</button>" +
+        "</div>" +
+        "<div style='font-size:12px;margin:0 0 8px'><a href='${local}' target='_blank' " +
+        "download='mdash-schedule-schema.json'>Download schema on your network</a></div>"
+}
+
+// Hubitat reopens this page at the previous scroll position. Reset scrollable parents.
+def mldSchedScrollTop() {
+    def js = 'var n=0,t=function(){n++;try{window.scrollTo(0,0);var roots=[document.scrollingElement,document.documentElement,document.body];for(var i=0;i<roots.length;i++){if(roots[i])roots[i].scrollTop=0;}var nodes=document.getElementsByTagName("div");for(var j=0;j<nodes.length;j++){if(nodes[j].scrollTop>20)nodes[j].scrollTop=0;}}catch(e){}if(n<10)setTimeout(t,80);};t();'
+    return "<img alt='' width='1' height='1' style='position:absolute;width:1px;height:1px;opacity:0' src='invalid:mld' onerror='${js}'>"
+}
+
+// Reads a JSON file into the Schedule JSON box. Upload then sends that text.
+def mldSchedUploadFilePicker() {
+    def js = 'var f=this.files&&this.files[0];if(!f)return;var r=new FileReader();r.onload=function(){var text=String(r.result||"");var areas=document.getElementsByTagName("textarea");var area=null;for(var i=0;i<areas.length;i++){var n=(areas[i].getAttribute("name")||"")+" "+(areas[i].id||"");if(n.indexOf("schedUploadPaste")>=0){area=areas[i];break;}}if(!area&&areas.length===1)area=areas[0];if(!area)return;var proto=window.HTMLTextAreaElement&&Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,"value");if(proto&&proto.set)proto.set.call(area,text);else area.value=text;area.dispatchEvent(new Event("input",{bubbles:true}));area.dispatchEvent(new Event("change",{bubbles:true}));area.focus();};r.readAsText(f);'
+    return "<label style='display:inline-block;margin:0 0 8px;padding:8px 14px;border-radius:8px;" +
+        "font-weight:700;font-size:14px;line-height:1.2;cursor:pointer;background:#e8edf5;color:#1e293b'>" +
+        "Choose file<input id='mldSchedFile' type='file' accept='.json,application/json' " +
+        "style='display:none' onchange='${js}'></label>"
 }
 
 def devicePickerCount(val) {
@@ -11146,6 +11199,11 @@ def schedulesDevicesGet() {
     def headers = noStoreHeaders() + ["Content-Disposition": "attachment; filename=\"mdash-devices.json\""]
     def body = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(scheduleDeviceCatalog()))
     render contentType: "application/json", data: body, status: 200, headers: headers
+}
+
+def schedulesSchemaGet() {
+    def headers = noStoreHeaders() + ["Content-Disposition": "attachment; filename=\"mdash-schedule-schema.json\""]
+    render contentType: "application/json", data: schedUploadSchema().trim(), status: 200, headers: headers
 }
 
 def mcpCreateSchedule(args) {

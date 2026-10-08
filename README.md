@@ -462,10 +462,11 @@ Hubitat Cloud's size limit. Local mode includes schedules in `/data` as usual.
 
 **Schedule files for an assistant**
 
-In the Hubitat app, open **Upload schedules…**. Copy the schema shown there, and
-download the device list. The list is the devices selected in the app and only
-the controls a schedule can set, plus hub mode names. Paste both into your
-assistant, then paste the JSON it returns on that same page. The schema file is
+In the Hubitat app, open **Dashboard options — advanced**, then **Upload schedules…**.
+That page shows the schema and a download for it, and a download of the device
+list. The list is the devices selected in the app and only the controls a
+schedule can set, plus hub mode names. Give both to your assistant, then paste
+the JSON it returns on that same page. The schema file is
 [`lib/schedule-upload.schema.json`](lib/schedule-upload.schema.json).
 
 A schedule whose name already exists is replaced. Devices are matched by name to

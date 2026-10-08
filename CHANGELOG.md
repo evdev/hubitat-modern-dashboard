@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.60
+
+- **Scheduler:** **Upload schedules…** shows the schema and device list open.
+  The schema can be downloaded or copied, and the paste box can take a JSON
+  file. Update Modern Dashboard.
+
 ## 0.4.59
 
 - **Shabbat & holidays:** the buttons on a week or holiday line up in two

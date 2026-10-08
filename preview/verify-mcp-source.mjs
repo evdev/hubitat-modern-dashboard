@@ -17,7 +17,9 @@ function assert(cond, msg) {
 assert(groovy.includes('path("/mcp")'), "MCP endpoint must be mapped");
 assert(groovy.includes('path("/schedules/upload")'), "schedule upload must be mapped");
 assert(groovy.includes('path("/schedules/devices")'), "device list download must be mapped");
+assert(groovy.includes('path("/schedules/schema")'), "schema download must be mapped");
 assert(groovy.includes("mdash-devices.json"), "device list must download as a file");
+assert(groovy.includes("mdash-schedule-schema.json"), "schema must download as a file");
 assert(groovy.includes('title: "Allow an AI assistant to create schedules"'), "assistant preference must be labeled");
 assert(groovy.includes("defaultValue: false, submitOnChange: true"), "assistant preference exists");
 assert(/mcpSchedulesEnabled[\s\S]{0,240}defaultValue: false/.test(groovy), "assistant must default off");
@@ -78,7 +80,20 @@ assert(!catalog[0].includes("fanAuto"), "fan modes must come from the device, no
 assert(!catalog[0].includes("musicPlayers"), "catalog must not include music");
 assert(!catalog[0].includes("cameras"), "catalog must not include cameras");
 assert(!catalog[0].includes("motionSensors"), "catalog must not include sensors");
-assert(groovy.includes('section("Schema for your assistant", hideable: true, hidden: true)'), "schema section starts collapsed");
-assert(groovy.includes('section("Devices for your assistant", hideable: true, hidden: true)'), "device list section starts collapsed");
+assert(groovy.includes('section("Schema for your assistant", hideable: true, hidden: false)'), "schema section starts open");
+assert(groovy.includes('section("Devices for your assistant", hideable: true, hidden: false)'), "device list section starts open");
+assert(groovy.includes("Download schedule schema"), "upload page offers a schema download");
+assert(groovy.includes("scheduleSchemaUrl(false)"), "schema download must include the cloud link");
+assert(groovy.includes("mldSchemaToolbar()"), "schema section uses the download and copy toolbar");
+assert(groovy.includes('id=\'mldSchedSchema\''), "schema text is the copy source");
+assert(groovy.includes(">Download<"), "schema has a download button");
+assert(groovy.includes(">Copy<"), "schema has a copy button");
+assert(groovy.includes("navigator.clipboard"), "copy button writes the schema to the clipboard");
+assert(groovy.includes('download=\'mdash-schedule-schema.json\''), "schema download keeps the schema filename");
+assert(groovy.includes("max-height:48px"), "schema preview stays short");
+assert(groovy.includes('title: "Upload"'), "upload page has an Upload button");
+assert(groovy.includes("rows: 3"), "schedule paste box stays short");
+assert(groovy.includes("mldSchedUploadFilePicker"), "upload page can read a JSON file into the paste box");
+assert(groovy.includes("mldSchedScrollTop"), "upload page scrolls to the top when opened");
 
 console.log("mcp source ok");
