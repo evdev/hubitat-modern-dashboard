@@ -229,6 +229,9 @@ def holidaysSave(body) {
     if (rev != null && rev.toString() != (state.runtime.revision ?: 0).toString()) {
         return [ok: false, error: "Changed on another device — reload.", revision: state.runtime.revision ?: 0]
     }
+    if (body?.pauseOccasion && body?.settings == null && body?.occasion == null && body?.template == null) {
+        return holidaySavePause(body.pauseOccasion.toString())
+    }
     if (body?.template) {
         def errs = holidayTemplateErrors(body.template)
         if (errs) return [ok: false, error: holidayErrorMessage(errs), errors: errs, revision: state.runtime.revision ?: 0]
@@ -383,6 +386,17 @@ def holidayPutRuntime(Map patch) {
 
 def holidayPaused() {
     return state.config?.settings?.paused == true || state.runtime?.parentHidden == true
+}
+
+// Pausing one occasion only flips that flag and re-arms. The dashboard already
+// updated the button, so this must not rebuild or return the holiday list.
+def holidaySavePause(String occasion) {
+    holidayTogglePause(occasion)
+    def savedRt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    savedRt.revision = (savedRt.revision ?: 0) + 1
+    state.runtime = savedRt
+    holidayArm()
+    return [ok: true, apiVersion: 2, revision: savedRt.revision, pauseOccasion: occasion]
 }
 
 def holidayTogglePause(String occasion) {

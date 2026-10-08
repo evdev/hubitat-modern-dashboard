@@ -47,6 +47,8 @@ function catalog() {
 }
 
 let laterOpen = false;
+const pauseBusy = new Set();
+const skipPending = new Map();
 let laterPack = null;
 let laterLoading = false;
 let laterError = "";
@@ -111,6 +113,11 @@ function startLaterLoad() {
       return;
     }
     laterPack = { revision, rows: data.rows, spans: data.spans || [] };
+    for (const occasion of pauseBusy) {
+      const row = (model?.rows || []).find((r) => r.occasion === occasion);
+      if (row) applyPause(occasion, row.paused === true);
+    }
+    reapplyPendingSkips();
     laterError = "";
   }).catch(() => {
     if (model?.revision === revision) laterError = "Couldn’t load later holidays.";
@@ -484,7 +491,7 @@ function renderRow(row) {
     w.textContent = row.warning;
     el.appendChild(w);
   }
-  if (row.skipped) {
+  if (row.skipped && !isShabbatWeek(row)) {
     const undo = ce("button", "ghost-btn sched-icon-btn");
     undo.type = "button";
     undo.textContent = "Undo skip";
@@ -503,7 +510,12 @@ function openDetail(row) {
   render();
 }
 
+function isShabbatWeek(item) {
+  return item?.occasion === "shabbat";
+}
+
 function pauseToggle(row) {
+  if (row.occasion === "shabbat") return shabbatWeekToggle(row);
   const active = !row.paused;
   const toggle = ce("button", "sched-toggle " + (active ? "is-on" : "is-off"));
   toggle.type = "button";
@@ -516,18 +528,40 @@ function pauseToggle(row) {
   return toggle;
 }
 
+function shabbatWeekToggle(row) {
+  const paused = row.paused === true;
+  const skipped = !paused && row.skipped === true;
+  const active = !paused && !skipped;
+  const toggle = ce("button", "sched-toggle " + (active ? "is-on" : "is-off"));
+  toggle.type = "button";
+  toggle.setAttribute("aria-pressed", active ? "true" : "false");
+  toggle.textContent = paused ? "Paused" : skipped ? "Week skipped" : "Active";
+  if (paused) toggle.title = "Shabbat is paused for every week. Open this week to resume.";
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (paused) {
+      flash("Shabbat is paused for every week. Open this week to resume.");
+      return;
+    }
+    if (!skipped && row.inProgress && !confirm("Skip this week? The hub mode will be left as it is.")) return;
+    setSkip(row.spanId, skipped);
+  });
+  return toggle;
+}
+
 function whenLine(row) {
   const line = ce("span", "holiday-when");
   const now = Number(model?.now) || Date.now();
   let tone = "";
   let prefix = "";
   let at = row.start;
+  const shabbat = isShabbatWeek(row);
   if (row.paused) {
     tone = "is-paused";
-    prefix = "Nothing will run. Would start ";
+    prefix = shabbat ? "Paused. " : "Nothing will run. Would start ";
   } else if (row.skipped) {
     tone = "is-skip";
-    prefix = "Skipped this time. ";
+    prefix = shabbat ? "Week skipped. " : "Skipped this time. ";
   } else if (row.inProgress) {
     tone = "is-now";
     prefix = "In progress, ends ";
@@ -627,10 +661,14 @@ function renderDetail() {
   const title = ce("h3", "sched-section-title");
   title.textContent = span.name;
   wrap.appendChild(title);
+  const shabbat = isShabbatWeek(span);
   const when = ce("p", "holiday-when");
-  when.textContent = span.skipped
-    ? `Skipped this time · ${fmt(span.start)} – ${fmt(span.end)}`
-    : `${fmt(span.start)} – ${fmt(span.end)}`;
+  const range = `${fmt(span.start)} – ${fmt(span.end)}`;
+  when.textContent = shabbat && span.paused
+    ? `Paused · ${range}`
+    : span.skipped
+      ? `${shabbat ? "Week skipped" : "Skipped this time"} · ${range}`
+      : range;
   wrap.appendChild(when);
   const known = knownDeviceIds();
   const missing = [];
@@ -652,12 +690,24 @@ function renderDetail() {
   tools.appendChild(edit);
   const skip = ce("button", "ghost-btn");
   skip.type = "button";
-  skip.textContent = span.skipped ? "Undo skip" : "Skip this time";
+  skip.textContent = span.skipped ? "Undo skip" : (shabbat ? "Skip this week" : "Skip this time");
   skip.addEventListener("click", () => {
-    if (!span.skipped && !confirm("Skip this occurrence? The hub mode will be left as it is.")) return;
+    if (!span.skipped) {
+      const ask = shabbat
+        ? "Skip this week? The hub mode will be left as it is."
+        : "Skip this occurrence? The hub mode will be left as it is.";
+      if (!confirm(ask)) return;
+    }
     setSkip(span.id, !!span.skipped);
   });
   tools.appendChild(skip);
+  if (shabbat) {
+    const every = ce("button", "ghost-btn");
+    every.type = "button";
+    every.textContent = span.paused ? "Resume" : "Pause every week";
+    every.addEventListener("click", () => togglePause("shabbat"));
+    tools.appendChild(every);
+  }
   wrap.appendChild(tools);
   const tryRow = ce("div", "holiday-tools holiday-tools-quiet");
   const tryLabel = ce("span", "holiday-kicker");
@@ -1185,11 +1235,55 @@ function renderEventRow(action, states) {
   return row;
 }
 
+function pauseTargets() {
+  return {
+    rows: [...(model?.rows || []), ...(laterPack?.rows || [])],
+    spans: [...(model?.spans || []), ...(laterPack?.spans || [])],
+  };
+}
+
+function applyPause(occasion, paused) {
+  const targets = pauseTargets();
+  for (const row of targets.rows) if (row.occasion === occasion) row.paused = paused;
+  for (const span of targets.spans) if (span.occasion === occasion) span.paused = paused;
+}
+
+function applySkip(spanId, skipped) {
+  const id = String(spanId);
+  const targets = pauseTargets();
+  for (const row of targets.rows) if (String(row.spanId) === id) row.skipped = skipped;
+  for (const span of targets.spans) if (String(span.id) === id) span.skipped = skipped;
+}
+
+function reapplyPendingSkips() {
+  for (const [id, skipped] of skipPending) applySkip(id, skipped);
+}
+
+function rememberRevision(revision) {
+  if (revision == null || !model) return;
+  model.revision = revision;
+  if (laterPack) laterPack.revision = revision;
+}
+
 async function togglePause(occasion) {
-  const saved = await post("holidays/save", { revision: model.revision, pauseOccasion: occasion });
-  if (!saved?.ok) { flash(saved?.error || "Could not update", true); return; }
-  acceptStatus(saved);
+  if (!occasion || pauseBusy.has(occasion)) return;
+  const current = pauseTargets().rows.find((row) => row.occasion === occasion);
+  const nextPaused = !(current?.paused === true);
+  applyPause(occasion, nextPaused);
   render();
+  pauseBusy.add(occasion);
+  try {
+    const saved = await post("holidays/save", { revision: model.revision, pauseOccasion: occasion });
+    if (!saved?.ok) {
+      applyPause(occasion, !nextPaused);
+      render();
+      flash(saved?.error || "Could not update", true);
+      return;
+    }
+    rememberRevision(saved.revision);
+  } finally {
+    pauseBusy.delete(occasion);
+  }
 }
 
 async function removeSchedule(occasion) {
@@ -1209,10 +1303,31 @@ async function removeSchedule(occasion) {
 }
 
 async function setSkip(spanId, undo) {
-  const saved = await post("holidays/skip", { spanId, undo: !!undo, revision: model.revision });
-  if (!saved?.ok) { flash(saved?.error || "Could not update", true); return; }
-  acceptStatus(saved);
+  const id = String(spanId || "");
+  if (!id || skipPending.has(id)) return;
+  const nextSkipped = !undo;
+  applySkip(id, nextSkipped);
   render();
+  skipPending.set(id, nextSkipped);
+  try {
+    const saved = await post("holidays/skip", { spanId: id, undo: !!undo, revision: model.revision });
+    if (!saved?.ok) {
+      applySkip(id, !nextSkipped);
+      render();
+      flash(saved?.error || "Could not update", true);
+      return;
+    }
+    acceptStatus(saved);
+    skipPending.delete(id);
+    reapplyPendingSkips();
+    render();
+  } catch (e) {
+    applySkip(id, !nextSkipped);
+    render();
+    flash("Could not update", true);
+  } finally {
+    skipPending.delete(id);
+  }
 }
 
 function alsoControlled(deviceId) {

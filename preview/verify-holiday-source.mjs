@@ -54,6 +54,27 @@ assert(groovy.includes("holidayWatch"), "a lost one-shot fire is picked up on th
 assert(/holidayReconcile[\s\S]*finally \{[\s\S]*holidayArm\(\)/.test(groovy), "a failed run still re-arms the next fire");
 assert(groovy.includes("replayHeld"), "devices held for Do not start stay pending until that mode is set");
 assert(groovy.includes("holidayMarkPassedDone(true)"), "a save must leave held and catch-up actions pending");
+{
+  const pauseSave = groovy.slice(groovy.indexOf("def holidaySavePause"), groovy.indexOf("def holidayTogglePause(String occasion)"));
+  assert(pauseSave.includes("holidayArm()"), "pausing one occasion still re-arms the next action");
+  assert(!pauseSave.includes("holidaysStatus"), "pausing one occasion does not rebuild the holiday list");
+  const toggle = holidayJs.slice(holidayJs.indexOf("async function togglePause"), holidayJs.indexOf("async function removeSchedule"));
+  assert(toggle.includes("applyPause"), "the Active button updates before the hub answers");
+  assert(!toggle.includes("acceptStatus"), "pausing does not replace the loaded holidays");
+  assert(toggle.indexOf("render()") < toggle.indexOf("post("), "the Active button paints before the save request");
+}
+{
+  const rowToggle = holidayJs.slice(holidayJs.indexOf("function pauseToggle"), holidayJs.indexOf("function whenLine"));
+  assert(rowToggle.includes('row.occasion === "shabbat"'), "a Shabbat row is handled apart from a holiday row");
+  assert(rowToggle.includes("setSkip(row.spanId"), "a Shabbat row skips that week");
+  assert(rowToggle.includes("togglePause(row.occasion)"), "a holiday row still pauses that holiday");
+  assert(rowToggle.includes("Week skipped"), "a skipped Shabbat week says so on the button");
+  const detail = holidayJs.slice(holidayJs.indexOf("function renderDetail"), holidayJs.indexOf("function renderByLight"));
+  assert(detail.includes("Pause every week"), "Shabbat detail can pause every week");
+  assert(detail.includes('togglePause("shabbat")'), "pause every week still pauses the Shabbat occasion");
+  assert(detail.includes("Skip this week"), "Shabbat detail skips this week");
+  assert(detail.includes("Skip this time"), "a holiday detail still skips this occurrence");
+}
 assert(groovy.includes("def holidayActionStillPending"), "save must tell a still-due action from one that already passed");
 {
   const resume = groovy.slice(groovy.indexOf("def holidayTogglePause"), groovy.indexOf("def holidayStartTestSpan"));

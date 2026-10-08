@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.57
+
+- **Shabbat & holidays:** the Active button on a Shabbat week skips only that
+  week. Pause every week is on that week's page. A holiday's Active button
+  still pauses that holiday. Update mDash Shabbat and Holidays.
+
+- **Shabbat & holidays:** Active and Paused update immediately. Pausing one
+  occasion no longer reloads the holiday list. Update mDash Shabbat and Holidays.
+
 ## 0.4.56
 
 - **Shabbat & holidays:** holidays more than two weeks away load when that
