@@ -2181,6 +2181,7 @@ mappings {
     path("/schedules/test") { action: [POST: "schedulesTest"] }
     path("/mcp") { action: [GET: "mcpGet", POST: "mcpPost"] }
     path("/holidays") { action: [GET: "holidaysGet"] }
+    path("/holidays/later") { action: [GET: "holidaysLaterGet"] }
     path("/holidays/save") { action: [POST: "holidaysSave"] }
     path("/holidays/preview") { action: [POST: "holidaysPreview"] }
     path("/holidays/test") { action: [POST: "holidaysTest"] }
@@ -6583,7 +6584,7 @@ def holidaysRoute(String method) {
     def child = holidaysChild()
     if (!child) return renderJsonNoStore('{"ok":false,"error":"Install the optional mDash Shabbat and Holidays app with Hubitat Package Manager."}', 404)
     def body = null
-    if (method != "status") {
+    if (method != "status" && method != "later") {
         body = request?.JSON
         if (body == null) {
             try {
@@ -6595,6 +6596,7 @@ def holidaysRoute(String method) {
     def result = null
     try {
         if (method == "status") result = child.holidaysStatus()
+        else if (method == "later") result = child.holidaysLater()
         else if (method == "save") result = child.holidaysSave(body)
         else if (method == "preview") result = child.holidaysPreview(body)
         else if (method == "test") result = child.holidaysTest(body)
@@ -6613,6 +6615,7 @@ def holidaysRoute(String method) {
 }
 
 def holidaysGet() { return holidaysRoute("status") }
+def holidaysLaterGet() { return holidaysRoute("later") }
 def holidaysSave() { return holidaysRoute("save") }
 def holidaysPreview() { return holidaysRoute("preview") }
 def holidaysTest() { return holidaysRoute("test") }

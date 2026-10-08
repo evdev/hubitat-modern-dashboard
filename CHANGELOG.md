@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.56
+
+- **Shabbat & holidays:** holidays more than two weeks away load when that
+  section is opened, so the first load stays smaller. Update Modern Dashboard
+  and mDash Shabbat and Holidays.
+
 ## 0.4.55
 
 - **Scheduler:** the schema on **Upload schedules…** is shown again. It had been

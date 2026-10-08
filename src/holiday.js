@@ -6,6 +6,7 @@ import {
   devicesInActions,
   emptyTemplate,
   formatHubTime,
+  isListedNear,
   occasionLabel,
   templateBadge,
   resolveTemplate,
@@ -46,6 +47,9 @@ function catalog() {
 }
 
 let laterOpen = false;
+let laterPack = null;
+let laterLoading = false;
+let laterError = "";
 let settingsAdvancedOpen = false;
 let setupOffered = false;
 let model = null;
@@ -66,8 +70,54 @@ function injectCss() {
 }
 
 async function load() {
-  model = await M().getJson("holidays");
-  return model;
+  const next = await M().getJson("holidays");
+  return acceptStatus(next);
+}
+
+function acceptStatus(next) {
+  if (!next || typeof next !== "object") return next;
+  if (laterPack && laterPack.revision !== next.revision) laterPack = null;
+  model = next;
+  return next;
+}
+
+function hubDefersLater() {
+  return Number.isFinite(Number(model?.laterCount));
+}
+
+function deferredLaterCount() {
+  if (hubDefersLater()) return Number(model.laterCount);
+  return (model?.rows || []).filter((row) => !isWithinTwoWeeks(row.start)).length;
+}
+
+function laterRows() {
+  if (laterPack && laterPack.revision === model?.revision) return laterPack.rows || [];
+  if (!hubDefersLater()) return (model?.rows || []).filter((row) => !isWithinTwoWeeks(row.start));
+  return [];
+}
+
+function laterReady() {
+  return !hubDefersLater() || (laterPack && laterPack.revision === model?.revision);
+}
+
+function startLaterLoad() {
+  if (laterLoading || !hubDefersLater()) return;
+  laterLoading = true;
+  const revision = model?.revision;
+  M().getJson("holidays/later").then((data) => {
+    if (model?.revision !== revision) return;
+    if (!data?.ok || !Array.isArray(data.rows)) {
+      laterError = "Couldn’t load later holidays.";
+      return;
+    }
+    laterPack = { revision, rows: data.rows, spans: data.spans || [] };
+    laterError = "";
+  }).catch(() => {
+    if (model?.revision === revision) laterError = "Couldn’t load later holidays.";
+  }).finally(() => {
+    laterLoading = false;
+    if (model?.revision === revision && (laterOpen || view === "detail")) render();
+  });
 }
 
 async function post(path, body) {
@@ -192,7 +242,7 @@ function fridaySwitch() {
     if (settings === model.settings) {
       const saved = await post("holidays/save", { revision: model.revision, settings: model.settings });
       if (!saved?.ok) flash(saved?.error || "Could not save", true);
-      else { model = saved; render(); }
+      else { acceptStatus(saved); render(); }
     }
   });
   row.appendChild(check);
@@ -203,8 +253,7 @@ function fridaySwitch() {
 function isWithinTwoWeeks(start) {
   const at = Number(start);
   if (!Number.isFinite(at)) return false;
-  const now = Number(model?.now) || Date.now();
-  return dayDistance(now, at) < 14;
+  return isListedNear(at, Number(model?.now) || Date.now(), hubTz());
 }
 
 function nearHolidaySpans() {
@@ -212,7 +261,8 @@ function nearHolidaySpans() {
 }
 
 function spanById(id) {
-  return (model?.spans || []).find((s) => s.id === id);
+  return (model?.spans || []).find((s) => s.id === id)
+    || (laterPack?.spans || []).find((s) => s.id === id);
 }
 
 function deviceName(id) {
@@ -337,18 +387,13 @@ function renderList() {
     w.textContent = (model.preflight.errors || []).join(" ");
     wrap.appendChild(w);
   }
-  const rows = model?.rows || [];
-  if (!rows.length) {
+  const near = (model?.rows || []).filter((row) => isWithinTwoWeeks(row.start));
+  const laterCount = deferredLaterCount();
+  if (!near.length && !laterCount) {
     const empty = ce("p", "sched-empty");
     empty.textContent = "No upcoming Shabbat or holiday yet. Set up a schedule to see it here.";
     wrap.appendChild(empty);
     return wrap;
-  }
-  const near = [];
-  const later = [];
-  for (const row of rows) {
-    if (isWithinTwoWeeks(row.start)) near.push(row);
-    else later.push(row);
   }
   const list = ce("div", "sched-list");
   for (const row of near) list.appendChild(renderRow(row));
@@ -357,7 +402,7 @@ function renderList() {
     empty.textContent = "Nothing in the next two weeks.";
     list.appendChild(empty);
   }
-  if (later.length) list.appendChild(renderLater(later));
+  if (laterCount) list.appendChild(renderLater(laterCount));
   wrap.appendChild(list);
   return wrap;
 }
@@ -391,17 +436,25 @@ function disclosureButton(open, label) {
   return toggle;
 }
 
-function renderLater(rows) {
+function renderLater(count) {
   const box = ce("div", "holiday-later");
-  const toggle = disclosureButton(laterOpen, `Later, after the next two weeks (${rows.length})`);
+  const toggle = disclosureButton(laterOpen, `Later, after the next two weeks (${count})`);
   toggle.addEventListener("click", () => {
     laterOpen = !laterOpen;
+    if (laterOpen) laterError = "";
     render();
   });
   box.appendChild(toggle);
   if (!laterOpen) return box;
+  if (!laterReady()) {
+    const note = ce("p", "sched-empty");
+    note.textContent = laterError || "Loading later holidays…";
+    box.appendChild(note);
+    if (!laterError) startLaterLoad();
+    return box;
+  }
   const list = ce("div", "sched-list");
-  for (const row of rows) list.appendChild(renderRow(row));
+  for (const row of laterRows()) list.appendChild(renderRow(row));
   box.appendChild(list);
   return box;
 }
@@ -416,7 +469,7 @@ function renderRow(row) {
   name.textContent = row.name || "Holiday";
   const when = whenLine(row);
   const meta = ce("span", "holiday-row-meta");
-  meta.textContent = relationshipLine(row);
+  fillRelationship(meta, row);
   open.appendChild(name);
   open.appendChild(when);
   open.appendChild(meta);
@@ -522,19 +575,32 @@ function deviceCountForRow(row) {
   return devicesInActions(span.actions || []).length;
 }
 
-function relationshipLine(row) {
-  const badge = templateBadge(rowOccasionId(row), model);
-  const rel = {
+function relationshipTone(badge) {
+  if (badge === "own schedule") return "is-own";
+  if (badge === "based on Shabbat") return "is-based";
+  if (badge === "uses Shabbat" || badge === "uses Pesach first days") return "is-link";
+  return "is-skip";
+}
+
+function relationshipPhrase(badge) {
+  return {
     "own schedule": "Its own schedule",
     "uses Shabbat": "Follows the Shabbat schedule",
     "based on Shabbat": "Based on the Shabbat schedule",
     "uses Pesach first days": "Follows the Pesach first-days schedule",
     skipped: "No schedule",
   }[badge] || "Schedule set";
-  if (badge === "skipped") return rel;
+}
+
+function fillRelationship(meta, row) {
+  const badge = templateBadge(rowOccasionId(row), model);
+  const phrase = ce("span", "holiday-rel " + relationshipTone(badge));
+  phrase.textContent = relationshipPhrase(badge);
+  meta.appendChild(phrase);
+  if (badge === "skipped") return;
   const count = deviceCountForRow(row);
   const devices = count === 1 ? "1 device" : count ? `${count} devices` : "No devices";
-  return `${rel}. ${devices}.`;
+  meta.appendChild(document.createTextNode(`. ${devices}.`));
 }
 
 function isThisFridayShabbat(row) {
@@ -549,9 +615,13 @@ function renderDetail() {
   const wrap = ce("div", "holiday-slot");
   wrap.appendChild(backRow("Shabbat & holidays", () => { view = "list"; render(); }));
   if (!span) {
+    const waiting = hubDefersLater() && deferredLaterCount() > 0 && !laterReady();
     const p = ce("p", "sched-empty");
-    p.textContent = "That holiday is no longer on the calendar.";
+    p.textContent = waiting
+      ? (laterError || "Loading later holidays…")
+      : "That holiday is no longer on the calendar.";
     wrap.appendChild(p);
+    if (waiting && !laterError) startLaterLoad();
     return wrap;
   }
   const title = ce("h3", "sched-section-title");
@@ -1118,7 +1188,7 @@ function renderEventRow(action, states) {
 async function togglePause(occasion) {
   const saved = await post("holidays/save", { revision: model.revision, pauseOccasion: occasion });
   if (!saved?.ok) { flash(saved?.error || "Could not update", true); return; }
-  model = saved;
+  acceptStatus(saved);
   render();
 }
 
@@ -1133,7 +1203,7 @@ async function removeSchedule(occasion) {
     template: emptyTemplate(),
   });
   if (!saved?.ok) { flash(saved?.error || "Could not remove", true); return; }
-  model = saved;
+  acceptStatus(saved);
   view = "list";
   render();
 }
@@ -1141,7 +1211,7 @@ async function removeSchedule(occasion) {
 async function setSkip(spanId, undo) {
   const saved = await post("holidays/skip", { spanId, undo: !!undo, revision: model.revision });
   if (!saved?.ok) { flash(saved?.error || "Could not update", true); return; }
-  model = saved;
+  acceptStatus(saved);
   render();
 }
 
@@ -1337,8 +1407,9 @@ function timingStep() {
   box.appendChild(q);
   appendTimingControls(box, wizard.settings);
   box.appendChild(nav(() => { wizard.step = "away"; render(); }, async () => {
-    model = await post("holidays/save", { revision: model.revision, settings: wizard.settings });
-    if (!model.ok) { flash(model.error || "Could not save", true); return; }
+    const saved = await post("holidays/save", { revision: model.revision, settings: wizard.settings });
+    if (!saved?.ok) { flash(saved?.error || "Could not save", true); return; }
+    acceptStatus(saved);
     rememberWizardSaved();
     wizard.step = "warn";
     render();
@@ -1641,7 +1712,7 @@ function advancedSettings(settings) {
 async function saveSettings() {
   const saved = await post("holidays/save", { revision: model.revision, settings: settingsDraft });
   if (!saved?.ok) { flash(saved?.error || "Could not save", true); return; }
-  model = saved;
+  acceptStatus(saved);
   settingsDraft = null;
   flash("Saved");
   view = "list";
@@ -1691,7 +1762,12 @@ function occasionList() {
     const b = ce("button", "sched-type-card");
     b.type = "button";
     const choice = model?.occasions?.[o.id] || (o.id === "shabbat" ? "own" : "shabbat");
-    b.textContent = `${o.label} — ${templateBadge(o.id, { occasions: { ...model?.occasions, [o.id]: choice } })}`;
+    const badge = templateBadge(o.id, { occasions: { ...model?.occasions, [o.id]: choice } });
+    const name = ce("span");
+    name.textContent = o.label;
+    const desc = ce("span", "holiday-rel " + relationshipTone(badge));
+    desc.textContent = relationshipPhrase(badge);
+    b.append(name, document.createTextNode(" — "), desc);
     b.addEventListener("click", () => {
       wizard.occasion = o.id;
       wizard.choice = choice;
@@ -1726,8 +1802,9 @@ function choiceStep() {
     b.addEventListener("click", async () => {
       wizard.choice = id;
       if (id === "shabbat" || id === "skip" || id === "pesachFirst") {
-        model = await post("holidays/save", { revision: model.revision, occasion: wizard.occasion, choice: id });
-        if (!model.ok) { flash(model.error || "Could not save", true); return; }
+        const saved = await post("holidays/save", { revision: model.revision, occasion: wizard.occasion, choice: id });
+        if (!saved?.ok) { flash(saved?.error || "Could not save", true); return; }
+        acceptStatus(saved);
         rememberWizardSaved();
         wizard.step = "occasions";
         render();
@@ -2455,14 +2532,15 @@ function reviewStep() {
   const goSave = async () => {
     const stillPending = templateErrors(wizard.template);
     if (stillPending.length) { flash(namedErrorText(stillPending), true); return; }
-    model = await post("holidays/save", {
+    const saved = await post("holidays/save", {
       revision: model.revision,
       settings: wizard.settings,
       occasion: wizard.occasion,
       choice: wizard.occasion === "shabbat" ? "own" : (wizard.choice || "own"),
       template: wizard.template,
     });
-    if (!model?.ok) { flash(model?.error || "Could not save", true); return; }
+    if (!saved?.ok) { flash(saved?.error || "Could not save", true); return; }
+    acceptStatus(saved);
     flash("Saved");
     rememberWizardSaved();
     wizard.step = "occasions";

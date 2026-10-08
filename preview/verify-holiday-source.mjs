@@ -63,6 +63,12 @@ assert(groovy.includes("def holidayActionStillPending"), "save must tell a still
 assert(groovy.includes('a.kind == "modeEnter" && spanOpen'), "an early mode change still runs when the job is a minute late");
 
 assert(parent.includes('path("/holidays")'), "parent must expose /holidays");
+assert(parent.includes('path("/holidays/later")'), "parent must expose /holidays/later");
+assert(parent.includes("child.holidaysLater()"), "parent must ask the child for later holidays");
+assert(groovy.includes('holidayBuildFrom(state.config, nowMs, "near")'), "the first holiday load skips later occasions");
+assert(groovy.includes("def holidaysLater"), "later holidays load on their own request");
+assert(groovy.includes("holidayListedNear"), "the child uses the same two-week cutoff as the dashboard");
+assert(holidayJs.includes('getJson("holidays/later")'), "the dashboard loads later holidays when that section opens");
 assert(parent.includes("def holidayRunAction"), "parent must run holiday device actions");
 assert(parent.includes("def holidaySupportedKinds()"), "parent must tell the child which device kinds it can run");
 assert(/def holidayRunKind[\s\S]*runShadeCmd\(dev,/.test(parent), "blinds go through runShadeCmd");

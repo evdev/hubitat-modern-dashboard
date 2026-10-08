@@ -25,6 +25,7 @@ import {
   HOLIDAY_API_VERSION,
   emptyConfig,
   expandUpcoming,
+  isListedNear,
   preflight,
   conflictingSchedules,
   sameMinuteWarnings,
@@ -1044,6 +1045,24 @@ function holidayPreviewPayload(draft) {
     deviceKinds: ["light", "outlet", "blind", "fan", "lock", "thermostat"],
     modes: ["Day", "Evening", "Night", "Away"],
   };
+}
+
+function partitionHolidayList(payload) {
+  const nearRows = [];
+  const laterRows = [];
+  const nearSpans = [];
+  const laterSpans = [];
+  (payload.spans || []).forEach((span, i) => {
+    const row = payload.rows?.[i];
+    if (isListedNear(span.start, payload.now, payload.tz)) {
+      nearSpans.push(span);
+      if (row) nearRows.push(row);
+    } else {
+      laterSpans.push(span);
+      if (row) laterRows.push(row);
+    }
+  });
+  return { nearRows, laterRows, nearSpans, laterSpans };
 }
 
 const server = createServer(async (req, res) => {
@@ -2520,6 +2539,23 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ ok: true, apiVersion: HOLIDAY_API_VERSION, tz: "America/New_York", span, warnings: span?.warnings || [] }));
     }
+    const split = partitionHolidayList(payload);
+    if (sub === "later") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({
+        ok: true,
+        apiVersion: payload.apiVersion,
+        tz: payload.tz,
+        now: payload.now,
+        revision: payload.revision,
+        rows: split.laterRows,
+        spans: split.laterSpans,
+        laterCount: split.laterRows.length,
+      }));
+    }
+    payload.rows = split.nearRows;
+    payload.spans = split.nearSpans;
+    payload.laterCount = split.laterRows.length;
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(payload));
   }

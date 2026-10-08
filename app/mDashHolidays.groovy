@@ -162,7 +162,7 @@ def holidayModeChanged(evt) {
 def holidaysStatus() {
     holidayEnsureState()
     def nowMs = now()
-    def built = holidayBuild(nowMs)
+    def built = holidayBuildFrom(state.config, nowMs, "near")
     return [
         ok: true,
         apiVersion: 2,
@@ -182,8 +182,25 @@ def holidaysStatus() {
         ],
         rows: built.rows,
         spans: built.spans,
+        laterCount: built.laterCount,
         conflicts: holidayConflicts(),
         modes: holidayModeNames()
+    ]
+}
+
+def holidaysLater() {
+    holidayEnsureState()
+    def nowMs = now()
+    def built = holidayBuildFrom(state.config, nowMs, "later")
+    return [
+        ok: true,
+        apiVersion: 2,
+        tz: holidayTzId(),
+        now: nowMs,
+        revision: state.runtime.revision ?: 0,
+        rows: built.rows,
+        spans: built.spans,
+        laterCount: built.laterCount
     ]
 }
 
@@ -587,7 +604,7 @@ def holidayBuild(long nowMs) {
     return holidayBuildFrom(state.config, nowMs)
 }
 
-def holidayBuildFrom(config, long nowMs) {
+def holidayBuildFrom(config, long nowMs, String scope = "all") {
     def days = holidayObservedDays(config)
     def spans = holidaySpans(days)
     long nearCut = nowMs + 17L * 24 * 60 * 60 * 1000
@@ -607,10 +624,19 @@ def holidayBuildFrom(config, long nowMs) {
     if (test?.start && (test.end as long) > nowMs) {
         kept = [[id: "test", name: "Test span", start: test.start as long, end: test.end as long, occasion: "shabbat", days: [[date: "test", occasion: "shabbat", index: 0, isFirst: true, isLast: true, start: test.start as long, end: test.end as long]]]] + kept
     }
+    def soon = []
+    def later = []
+    for (span in kept) {
+        if (span.id?.toString() == "test" || holidayListedNear(span.start as long, nowMs)) soon << span
+        else later << span
+    }
+    def chosen = kept
+    if (scope == "near") chosen = soon
+    else if (scope == "later") chosen = later
     def skipped = new HashSet((state.runtime?.skippedSpanIds ?: []).collect { it?.toString() })
     def rows = []
     def outSpans = []
-    for (span in kept) {
+    for (span in chosen) {
         boolean isSkipped = skipped.contains(span.id?.toString())
         boolean isPaused = span.id?.toString() != "test" && holidaySpanPaused(span, config)
         def actions = (span.id == "test") ? holidayTestActions(span, config) : holidayExpandSpan(span, config)
@@ -631,7 +657,29 @@ def holidayBuildFrom(config, long nowMs) {
         ]
     }
     rows.sort { a, b -> (a.start as long) <=> (b.start as long) }
-    return [rows: rows, spans: outSpans]
+    return [rows: rows, spans: outSpans, laterCount: later.size()]
+}
+
+// Same 14 calendar days as isListedNear / NEAR_LIST_DAYS in lib/holiday-core.mjs.
+def holidayListedNear(long startMs, long nowMs) {
+    return holidayDayDistance(nowMs, startMs) < 14
+}
+
+def holidayDayDistance(long fromMs, long toMs) {
+    def tz = holidayTz()
+    def a = holidayParts(fromMs, tz).date.split("-")
+    def b = holidayParts(toMs, tz).date.split("-")
+    Calendar ca = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+    ca.clear()
+    ca.set(Calendar.YEAR, a[0] as int)
+    ca.set(Calendar.MONTH, (a[1] as int) - 1)
+    ca.set(Calendar.DATE, a[2] as int)
+    Calendar cb = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+    cb.clear()
+    cb.set(Calendar.YEAR, b[0] as int)
+    cb.set(Calendar.MONTH, (b[1] as int) - 1)
+    cb.set(Calendar.DATE, b[2] as int)
+    return Math.round((cb.getTimeInMillis() - ca.getTimeInMillis()) / 86400000d) as int
 }
 
 def holidayBadge(span, config) {

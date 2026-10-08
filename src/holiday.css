@@ -231,6 +231,17 @@
 .holiday-when { margin: 0; font-size: 0.92rem; color: var(--text-dim, var(--text-faint)); line-height: 1.35; }
 .holiday-when-clock { white-space: nowrap; }
 .holiday-row-meta { font-size: 0.82rem; color: var(--text-faint); line-height: 1.35; }
+.holiday-rel { font-weight: 700; }
+.holiday-rel.is-own { color: var(--on, #ffb86b); }
+.holiday-rel.is-link { color: var(--accent, #5b8cff); }
+.holiday-rel.is-based { color: var(--holiday-rel-based, #5eead4); }
+.holiday-rel.is-skip { color: var(--text-faint); }
+:root { --holiday-rel-based: #5eead4; }
+@media (prefers-color-scheme: light) {
+  :root { --holiday-rel-based: #0f766e; }
+}
+[data-theme="dark"] { --holiday-rel-based: #5eead4; }
+[data-theme="light"] { --holiday-rel-based: #0f766e; }
 .holiday-open-btn {
   flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 4px;
   appearance: none; border: 0; background: transparent; color: inherit; font: inherit;

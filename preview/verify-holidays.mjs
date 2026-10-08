@@ -15,6 +15,8 @@ import {
   expandSpan,
   expandUpcoming,
   formatHubTime,
+  isListedNear,
+  NEAR_LIST_DAYS,
   occasionForHdate,
   passedActionIds,
   planCatchUp,
@@ -490,6 +492,11 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
   ], cfg(), TZ, Date.parse("2026-06-01T12:00:00-04:00"));
   assert(later.spans.some((s) => s.occasion === "shabbat"), "near shabbat stays on the list");
   assert(later.spans.some((s) => (s.days || []).some((d) => d.occasion === "yomKippur")), "a scheduled holiday shows even when it is more than two weeks away");
+  eq(NEAR_LIST_DAYS, 14, "the first load is two weeks");
+  const laterNow = Date.parse("2026-06-01T12:00:00-04:00");
+  const farKippur = later.spans.find((s) => (s.days || []).some((d) => d.occasion === "yomKippur"));
+  assert(farKippur && !isListedNear(farKippur.start, laterNow, TZ), "a holiday more than two weeks out waits for the later section");
+  assert(later.spans.filter((s) => s.occasion === "shabbat").every((s) => isListedNear(s.start, laterNow, TZ)), "shabbat inside two weeks stays on the first load");
   const many = expandUpcoming([
     candles("2026-06-05T19:30:00-04:00"),
     havdalah("2026-06-06T20:40:00-04:00"),
