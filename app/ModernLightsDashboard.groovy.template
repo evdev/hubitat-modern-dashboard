@@ -460,13 +460,11 @@ def schedUploadPage() {
             paragraph mldSchedScrollTop()
             paragraph "<small>Selected devices and the controls a schedule can set. Each link includes your dashboard token.</small>"
             paragraph mldSchedActionLink("Download device list", scheduleDevicesUrl(false), "mdash-devices.json") +
-                mldSchedActionLink("On your network", scheduleDevicesUrl(true), "mdash-devices.json")
+                mldSchedActionLink("Local Network Download", scheduleDevicesUrl(true), "mdash-devices.json")
         }
         section("Schema for your assistant", hideable: true, hidden: false) {
             paragraph "<small>Give this to your assistant with the device list. Download or Copy for the full file.</small>"
-            paragraph mldSchemaToolbar() +
-                "<pre id='mldSchedSchema' style='white-space:nowrap;max-height:1.35em;overflow:auto;margin:0;font-size:11px;line-height:1.35'>" +
-                htmlEsc(schedUploadSchema().trim()) + "</pre>"
+            paragraph mldSchemaToolbar()
         }
         section("Schedule JSON") {
             paragraph "Paste JSON or choose a file, then tap <b>Upload</b>. A schedule name that already exists is replaced."
@@ -3017,10 +3015,10 @@ def mldSchedActionLink(String label, String url, String downloadName) {
         "border:1px solid #111827;cursor:pointer'>${htmlEsc(label)}</a>"
 }
 
-// Download and Copy sit on the schema. Copy reads the pre, so the JSON is not repeated in the button.
+// Download and Copy sit on the schema. Copy reads the hidden textarea, so the JSON is not shown on the page.
 def mldSchemaToolbar() {
     def copyJs = 'var b=this,el=document.getElementById("mldSchedSchema");if(!el)return false;' +
-        'var v=el.textContent||el.innerText||"";' +
+        'var v=el.value||el.textContent||el.innerText||"";' +
         'var ok=function(){b.textContent="Copied";};' +
         'var legacy=function(){try{var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");ok();}catch(e){b.textContent="Copy failed";}};' +
         'if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(v).then(ok).catch(legacy);}else{legacy();}' +
@@ -3031,8 +3029,10 @@ def mldSchemaToolbar() {
     return "<div style='margin:0 0 4px'>" +
         mldSchedActionLink("Download", scheduleSchemaUrl(false), "mdash-schedule-schema.json") +
         "<button type='button' style='${copyBtn}' onclick='${copyJs}'>Copy</button>" +
-        mldSchedActionLink("On your network", scheduleSchemaUrl(true), "mdash-schedule-schema.json") +
-        "</div>"
+        mldSchedActionLink("Local Network Download", scheduleSchemaUrl(true), "mdash-schedule-schema.json") +
+        "</div>" +
+        "<textarea id='mldSchedSchema' readonly aria-hidden='true' style='display:none'>" +
+        htmlEsc(schedUploadSchema().trim()) + "</textarea>"
 }
 
 // Hubitat reopens this page at the previous scroll position. Reset scrollable parents.

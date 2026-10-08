@@ -2,7 +2,7 @@
 	"packageName": "mDash Shabbat and Holidays",
 	"minimumHEVersion": "2.3.0",
 	"author": "Ephrayim (evdev)",
-	"version": "0.4.61",
+	"version": "0.4.62",
 	"dateReleased": "2026-10-08",
 	"licenseFile": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/LICENSE",
 	"releaseNotes": "Optional Shabbat and Yom Tov schedules for Modern Dashboard. Installs mld-holiday.js. Modern Dashboard turns the feature on when that file is in File Manager.",

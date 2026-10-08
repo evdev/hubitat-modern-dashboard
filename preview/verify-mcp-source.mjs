@@ -85,12 +85,15 @@ assert(groovy.includes('section("Devices for your assistant", hideable: true, hi
 assert(groovy.includes("Download schedule schema"), "upload page offers a schema download");
 assert(groovy.includes("scheduleSchemaUrl(false)"), "schema download must include the cloud link");
 assert(groovy.includes("mldSchemaToolbar()"), "schema section uses the download and copy toolbar");
-assert(groovy.includes('id=\'mldSchedSchema\''), "schema text is the copy source");
+assert(groovy.includes("textarea id='mldSchedSchema'"), "schema text is the copy source");
+assert(groovy.includes("aria-hidden='true'"), "schema text is not shown on the page");
+assert(!groovy.includes("max-height:1.35em"), "schema preview window is gone");
+assert(groovy.includes("Local Network Download"), "local download is labeled Local Network Download");
+assert(!groovy.includes("On your network"), "old local download label is gone");
 assert(groovy.includes('mldSchedActionLink("Download"'), "schema has a download button");
 assert(groovy.includes(">Copy<"), "schema has a copy button");
 assert(groovy.includes("navigator.clipboard"), "copy button writes the schema to the clipboard");
 assert(groovy.includes('"mdash-schedule-schema.json"'), "schema download keeps the schema filename");
-assert(groovy.includes("max-height:1.35em"), "schema preview stays one line");
 assert(groovy.includes("background:#ffffff !important"), "download button stays readable on Hubitat link blue");
 assert(!groovy.includes("background:#3b6bff"), "download button must not use a blue fill");
 assert(groovy.includes('title: "Upload"'), "upload page has an Upload button");

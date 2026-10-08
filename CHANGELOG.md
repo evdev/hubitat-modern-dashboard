@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.62
+
+- **Scheduler:** the schema on **Upload schedules…** stays off the page. Download
+  and Copy still get the full file, and the local download is labeled Local
+  Network Download. Update Modern Dashboard.
+
 ## 0.4.61
 
 - **Scheduler:** Download and Copy on **Upload schedules…** stay readable, and
