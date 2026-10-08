@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.59
+
+- **Shabbat & holidays:** the buttons on a week or holiday line up in two
+  columns, and stay on one line when the page is narrow. Update mDash Shabbat
+  and Holidays.
+
 ## 0.4.58
 
 - **Shabbat & holidays:** a Shabbat week or a holiday can be changed once.

@@ -276,8 +276,88 @@
 .holiday-progress { display: flex; flex-direction: column; gap: 6px; }
 .holiday-progress-track { height: 4px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
 .holiday-progress-fill { height: 100%; border-radius: inherit; background: var(--accent, #7b5cff); }
+.holiday-action-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  container-type: inline-size;
+  container-name: holiday-actions;
+}
 .holiday-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.holiday-tools-quiet { padding-top: 4px; }
+.holiday-tools:not(.holiday-tools-quiet):not(.holiday-remove) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+.holiday-tools:not(.holiday-tools-quiet):not(.holiday-remove) > .ghost-btn {
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+  text-align: center;
+}
+.holiday-tools-quiet {
+  padding-top: 2px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  container-type: inline-size;
+}
+.holiday-try-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+}
+.holiday-try-actions .ghost-btn {
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+  text-align: center;
+  font-size: clamp(10px, 3.2cqi, 13px);
+  padding-left: clamp(6px, 1.8cqi, 12px);
+  padding-right: clamp(6px, 1.8cqi, 12px);
+}
+@container (max-width: 310px) {
+  .holiday-try-actions { gap: 6px; }
+  .holiday-try-actions .ghost-btn {
+    font-size: 9.5px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+}
+@container holiday-actions (max-width: 350px) {
+  .holiday-tools:not(.holiday-tools-quiet):not(.holiday-remove) > .ghost-btn {
+    font-size: 12px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+@container holiday-actions (max-width: 310px) {
+  .holiday-tools:not(.holiday-tools-quiet):not(.holiday-remove) > .ghost-btn {
+    font-size: 11px;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+}
+@container holiday-actions (min-width: 840px) {
+  .holiday-tools:not(.holiday-tools-quiet):not(.holiday-remove) {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .holiday-try-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    width: max-content;
+    max-width: 100%;
+  }
+  .holiday-try-actions .ghost-btn {
+    width: auto;
+    flex: 0 0 auto;
+    font-size: 13px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}
 .holiday-remove {
   padding-top: 10px;
   margin-top: 2px;
