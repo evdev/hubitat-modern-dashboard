@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.62
+// Modern Dashboard v0.4.63
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.62"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.63"
 
 definition(
     name: "Modern Dashboard",
@@ -70,7 +70,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.62 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.63 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -458,7 +458,11 @@ def schedUploadPage() {
         section("Devices for your assistant", hideable: true, hidden: false) {
             // Hubitat keeps the previous page's scroll position, so this page opened at the bottom.
             paragraph mldSchedScrollTop()
-            paragraph "<small>Selected devices and the controls a schedule can set. Each link includes your dashboard token.</small>"
+            if (holidayModuleInstalled()) {
+                paragraph "<small>Selected devices and the controls a schedule or a Shabbat and holidays file can set. Each link includes your dashboard token.</small>"
+            } else {
+                paragraph "<small>Selected devices and the controls a schedule can set. Each link includes your dashboard token.</small>"
+            }
             paragraph mldSchedActionLink("Download device list", scheduleDevicesUrl(false), "mdash-devices.json") +
                 mldSchedActionLink("Local Network Download", scheduleDevicesUrl(true), "mdash-devices.json")
         }
@@ -466,9 +470,22 @@ def schedUploadPage() {
             paragraph "<small>Give this to your assistant with the device list. Download or Copy for the full file.</small>"
             paragraph mldSchemaToolbar()
         }
+        if (holidayModuleInstalled()) {
+            section("Schema for Shabbat & holidays", hideable: true, hidden: false) {
+                paragraph "<small>Give this to your assistant with the device list. An occasion in the file replaces that occasion. Download or Copy for the full file.</small>"
+                paragraph holidaySchemaToolbar()
+            }
+        }
         section("Schedule JSON") {
-            paragraph "Paste JSON or choose a file, then tap <b>Upload</b>. A schedule name that already exists is replaced."
+            if (holidayModuleInstalled()) {
+                paragraph "Paste JSON or choose a file, then tap <b>Upload</b>. A schedule name that already exists is replaced. A Shabbat or holiday occasion in the file replaces that occasion."
+            } else {
+                paragraph "Paste JSON or choose a file, then tap <b>Upload</b>. A schedule name that already exists is replaced."
+            }
             paragraph "<details style='margin:4px 0 8px'><summary style='cursor:pointer'>Example</summary><pre style='white-space:pre-wrap;max-height:48px;overflow:auto'>" + htmlEsc(schedUploadExample()) + "</pre></details>"
+            if (holidayModuleInstalled()) {
+                paragraph "<details style='margin:4px 0 8px'><summary style='cursor:pointer'>Shabbat & holidays example</summary><pre style='white-space:pre-wrap;max-height:48px;overflow:auto'>" + htmlEsc(holidayUploadExample()) + "</pre></details>"
+            }
             if (state.schedUploadHidePaste == true) {
                 paragraph "<small>Paste cleared. Tap <b>Paste another file</b> to upload again.</small>"
                 input name: "btnSchedUploadClear", type: "button", title: "Paste another file"
@@ -507,6 +524,8 @@ def schedUploadPage() {
                 section("Import") {
                     if (preview.ok) {
                         paragraph "<small>Tap <b>Upload</b> above to import these.</small>"
+                    } else if (preview.kind == "holiday") {
+                        paragraph "<b>No holiday items can be imported.</b>"
                     } else {
                         paragraph "<b>No schedules can be imported.</b>"
                     }
@@ -1092,6 +1111,353 @@ def schedUploadSchema() {
 '''
 }
 
+def holidayUploadSchema() {
+    return '''
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/evdev/hubitat-modern-dashboard/blob/beta/lib/holiday-upload.schema.json",
+  "title": "Modern Dashboard Shabbat and holidays upload",
+  "description": "Write one JSON object for Modern Dashboard and nothing else. It must match this schema. Do not include a schedules array. Use only device names and hub mode names the user gives you. Do not invent devices, rooms, or hub modes. Occasions left out of the file stay as they are. An occasion in the file replaces that occasion's choice. A template slot you include replaces that slot. A slot you leave out stays as saved. An empty list clears that slot. Shabbat choice is own and needs a template. choice shabbat uses the Shabbat template as-is. choice skip does not change devices or the hub mode for that holiday. choice own is a new schedule and needs a template. choice copy is a schedule based on Shabbat and needs a template. choice pesachFirst is only for pesachLast and uses the Pesach first-days template. Clock times are 24-hour hub-local HH:mm. kind is light, outlet, lock, blind, fan, or thermostat. Prefer a device name over its id. If both are set and they are different devices, that occasion is skipped. If the name matches more than one device, the id chooses among those matches. The same device command twice in one slot is stored once. Two different commands for one device in one slot skip that occasion. Heat must be below cool. Fahrenheit setpoints are 50-90. Celsius setpoints are 10-32. Level is 0-100 and only for a light that can dim. ct is color temperature in Kelvin from 2000 to 6500, only for a bulb that supports it. A lock with locked false unlocks and does not ask for a PIN. Shade position is 1-100 and only applies when open is true and that shade supports position. Fan speed must be one that fan reports, such as low, medium, high, or a number like 4. Omit speed to turn the fan on. on false turns the fan off. Do not send paused or a one-time Friday date. Do not add fields that are not in this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "anyOf": [
+    { "required": ["occasions"] },
+    { "required": ["settings"] }
+  ],
+  "properties": {
+    "settings": { "$ref": "#/$defs/settings" },
+    "occasions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/occasion" }
+    }
+  },
+  "$defs": {
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "holidayMode": { "type": "string", "minLength": 1, "description": "Hub mode entered at candle lighting. Must differ from endMode." },
+        "endMode": { "type": "string", "minLength": 1, "description": "Hub mode restored at havdalah. Must differ from holidayMode." },
+        "israel": { "type": "boolean", "description": "true for Israel. Omit or false for the diaspora. Rosh Hashana is two days in both." },
+        "doNotStartModes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "If the hub is in one of these modes at candle lighting, nothing starts. Use [] for none."
+        },
+        "candleMin": { "type": "integer", "minimum": 0, "maximum": 120, "description": "Minutes before sunset for candle lighting. 0 means at sunset. 18 is usual." },
+        "havdalah": { "$ref": "#/$defs/havdalah" },
+        "startEarlyMin": { "type": "integer", "minimum": 0, "maximum": 180, "description": "Minutes before candle lighting to enter the holiday mode and run the start actions. 0 starts at candle lighting." },
+        "earlyFriday": { "$ref": "#/$defs/earlyFriday" }
+      }
+    },
+    "havdalah": {
+      "oneOf": [
+        {
+          "title": "Nightfall",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "nightfall" } }
+        },
+        {
+          "title": "Minutes after sunset",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "minutes"],
+          "properties": {
+            "type": { "const": "minutes" },
+            "minutes": { "type": "integer", "minimum": 0, "maximum": 120, "description": "Minutes after sunset. 0 means at sunset. 42 is common." }
+          }
+        }
+      ]
+    },
+    "earlyFriday": {
+      "description": "Moves candle lighting earlier on a plain Friday only, and only when that time is before candle lighting.",
+      "oneOf": [
+        {
+          "title": "Off",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "off" } }
+        },
+        {
+          "title": "Fixed time",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "time" },
+            "value": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time." }
+          }
+        },
+        {
+          "title": "Minutes early",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "minutes" },
+            "value": { "type": "integer", "minimum": 0, "maximum": 300, "description": "Minutes before that Friday's candle lighting." }
+          }
+        }
+      ]
+    },
+    "occasion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "choice"],
+      "properties": {
+        "id": {
+          "enum": ["shabbat", "roshHashana", "yomKippur", "sukkot", "shemini", "pesachFirst", "pesachLast", "shavuot"]
+        },
+        "choice": {
+          "enum": ["own", "copy", "shabbat", "skip", "pesachFirst"],
+          "description": "own and copy need a template. shabbat uses the Shabbat template. skip leaves that holiday alone. pesachFirst is only for pesachLast."
+        },
+        "template": { "$ref": "#/$defs/template" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "id": { "const": "shabbat" } }, "required": ["id"] },
+          "then": {
+            "properties": { "choice": { "const": "own" } },
+            "required": ["template"]
+          }
+        },
+        {
+          "if": { "properties": { "choice": { "enum": ["own", "copy"] } }, "required": ["choice"] },
+          "then": { "required": ["template"] }
+        },
+        {
+          "if": { "properties": { "choice": { "const": "pesachFirst" } }, "required": ["choice"] },
+          "then": { "properties": { "id": { "const": "pesachLast" } } }
+        },
+        {
+          "if": { "properties": { "choice": { "enum": ["shabbat", "skip", "pesachFirst"] } }, "required": ["choice"] },
+          "then": { "not": { "required": ["template"] } }
+        }
+      ]
+    },
+    "template": {
+      "description": "Slots you include replace those slots. Slots you leave out stay as saved. An empty list clears that slot.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start": { "$ref": "#/$defs/startSlot" },
+        "night": { "$ref": "#/$defs/timeGroups" },
+        "morning": { "$ref": "#/$defs/timeGroups" },
+        "afternoon": { "$ref": "#/$defs/timeGroups" },
+        "evening": { "$ref": "#/$defs/timeGroups" },
+        "end": { "$ref": "#/$defs/endSlot" },
+        "custom": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/customSlot" }
+        }
+      }
+    },
+    "startSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repeatLaterNights": { "type": "boolean", "description": "Also run these actions on later nights of a holiday. Omit or false to run them only on the first night." },
+        "states": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deviceState" }
+        }
+      }
+    },
+    "endSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "states": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deviceState" }
+        }
+      }
+    },
+    "timeGroups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["time", "states"],
+        "properties": {
+          "time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time on that Jewish day. Night times are after candle lighting." },
+          "states": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/deviceState" }
+          }
+        }
+      }
+    },
+    "customSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchor", "value", "states"],
+      "properties": {
+        "anchor": {
+          "enum": ["clock-day", "clock-night", "sunrise", "sunset", "after-start", "before-end", "after-end"],
+          "description": "clock-day and clock-night use an HH:mm value. The others use a number of minutes."
+        },
+        "value": {
+          "oneOf": [
+            { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+            { "type": "integer", "minimum": 0, "maximum": 720 }
+          ]
+        },
+        "days": { "enum": ["every", "first", "last"], "description": "Omit for every day of the occasion." },
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/deviceState" }
+        }
+      }
+    },
+    "deviceState": {
+      "oneOf": [
+        { "$ref": "#/$defs/lightState" },
+        { "$ref": "#/$defs/outletState" },
+        { "$ref": "#/$defs/lockState" },
+        { "$ref": "#/$defs/blindState" },
+        { "$ref": "#/$defs/fanState" },
+        { "$ref": "#/$defs/thermostatState" }
+      ]
+    },
+    "lightState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "light" },
+        "name": { "type": "string", "minLength": 1, "description": "Light name as selected in the app. Prefer name over id." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "on": { "type": "boolean" },
+        "level": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Dim level. Omit for a switch that cannot dim." },
+        "ct": { "type": "integer", "minimum": 2000, "maximum": 6500, "description": "Color temperature in Kelvin. Omit unless that bulb supports it." }
+      }
+    },
+    "outletState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "outlet" },
+        "name": { "type": "string", "minLength": 1, "description": "Outlet name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "on": { "type": "boolean" }
+      }
+    },
+    "lockState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "locked"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "lock" },
+        "name": { "type": "string", "minLength": 1, "description": "Lock name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "locked": { "type": "boolean", "description": "false unlocks. A scheduled unlock does not ask for the PIN." }
+      }
+    },
+    "blindState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "open"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "blind" },
+        "name": { "type": "string", "minLength": 1, "description": "Blind or shade name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "open": { "type": "boolean" },
+        "position": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Open position, 1-100. Only when open is true and that shade supports position. Omit to open without a level. Ignored when open is false." }
+      }
+    },
+    "fanState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "fan" },
+        "name": { "type": "string", "minLength": 1, "description": "Ceiling fan name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "on": { "type": "boolean" },
+        "speed": { "type": "string", "minLength": 1, "description": "A speed that fan reports, such as low, medium, high, or 4. Omit to turn on without a speed. on false turns the fan off." }
+      }
+    },
+    "thermostatState": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "thermostat" },
+        "name": { "type": "string", "minLength": 1, "description": "Thermostat name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "mode": { "type": "string", "description": "heat, cool, auto, off, emergency heat, or another mode that thermostat supports. Omit to change setpoints only. heat and emergency heat require heat. cool requires cool. auto requires both." },
+        "heat": { "type": "integer", "description": "Heat setpoint. 50-90 Fahrenheit or 10-32 Celsius." },
+        "cool": { "type": "integer", "description": "Cool setpoint. Must be above heat. 50-90 Fahrenheit or 10-32 Celsius." },
+        "fanMode": { "type": "string", "description": "auto, on, or circulate, when that thermostat has a fan mode." }
+      }
+    }
+  },
+  "examples": [
+    {
+      "settings": {
+        "holidayMode": "Shabbat",
+        "endMode": "Home",
+        "israel": false,
+        "doNotStartModes": ["Away"],
+        "candleMin": 18,
+        "havdalah": { "type": "minutes", "minutes": 42 },
+        "earlyFriday": { "type": "off" }
+      },
+      "occasions": [
+        {
+          "id": "shabbat",
+          "choice": "own",
+          "template": {
+            "start": {
+              "states": [{ "kind": "light", "name": "Dining", "on": true, "level": 40 }]
+            },
+            "night": [
+              { "time": "22:30", "states": [{ "kind": "light", "name": "Dining", "on": false }] }
+            ],
+            "end": {
+              "states": [{ "kind": "light", "name": "Dining", "on": false }]
+            }
+          }
+        },
+        { "id": "yomKippur", "choice": "shabbat" },
+        { "id": "pesachLast", "choice": "pesachFirst" }
+      ]
+    }
+  ]
+}
+'''
+}
+
+def holidayUploadExample() {
+    return '''{
+  "occasions": [
+    {
+      "id": "shabbat",
+      "choice": "own",
+      "template": {
+        "start": { "states": [{ "kind": "light", "name": "Dining", "on": true, "level": 40 }] },
+        "end": { "states": [{ "kind": "light", "name": "Dining", "on": false }] }
+      }
+    }
+  ]
+}'''
+}
+
 def schedUploadExample() {
     return """{
   "schedules": [
@@ -1112,9 +1478,16 @@ def schedUploadPreviewFromSettings() {
     def text = schedUploadPaste?.toString()
     if (!text?.trim()) return [hasPaste: false, ok: [], skipped: [], error: null]
     def parsed = schedUploadParseText(text)
-    if (parsed.error) return [hasPaste: true, ok: [], skipped: [], error: parsed.error]
+    if (parsed.error) return [hasPaste: true, ok: [], skipped: [], error: parsed.error, kind: parsed.kind]
+    if (parsed.kind == "holiday") {
+        def preview = holidayUploadPrepare(parsed.body)
+        preview.hasPaste = true
+        preview.kind = "holiday"
+        return preview
+    }
     def preview = schedulesPreviewBundle(parsed.items)
     preview.hasPaste = true
+    preview.kind = "schedules"
     return preview
 }
 
@@ -1123,9 +1496,22 @@ def schedUploadParseText(String text) {
     try { body = new groovy.json.JsonSlurper().parseText(text) } catch (e) {
         return [error: "That paste is not JSON"]
     }
+    boolean holidayShape = body instanceof Map && (body.containsKey("settings") || body.containsKey("occasions"))
+    boolean scheduleShape = body instanceof Map && (body.containsKey("schedules") || body.trigger instanceof Map || body.action instanceof Map)
+    if (holidayShape && scheduleShape) {
+        if (holidayModuleInstalled()) return [error: "Use one file for schedules or one file for Shabbat and holidays", kind: "holiday"]
+        holidayShape = false
+    }
+    if (holidayShape) {
+        if (!holidayModuleInstalled()) return [error: "Expected a schedules array, or one schedule object"]
+        return [kind: "holiday", body: body]
+    }
     def items = schedulesBundleItems(body)
-    if (items == null) return [error: "Expected a schedules array, or one schedule object"]
-    return [items: items]
+    if (items == null) {
+        if (holidayModuleInstalled()) return [error: "Expected a schedules array, or a Shabbat and holidays file", kind: "holiday"]
+        return [error: "Expected a schedules array, or one schedule object"]
+    }
+    return [kind: "schedules", items: items]
 }
 
 def schedUploadClearPaste() {
@@ -1156,6 +1542,10 @@ def schedUploadRunFromUi() {
         state.schedUploadSkipped = null
         return
     }
+    if (parsed.kind == "holiday") {
+        holidayUploadRun(parsed.body)
+        return
+    }
     def applied = schedulesCommitBundle(parsed.items)
     if (applied.ok != true) {
         state.schedUploadResult = "Upload failed: ${applied.error ?: "nothing imported"}"
@@ -1177,6 +1567,655 @@ def schedUploadFormatSkippedHtml(skipped) {
     return skipped.collect { row ->
         "• ${htmlEsc(row.name ?: "Untitled")}: ${htmlEsc(row.error)}"
     }.join("<br>")
+}
+
+def holidayUploadRun(body) {
+    def applied = holidayUploadCommit(body)
+    if (applied?.ok != true) {
+        state.schedUploadResult = "Upload failed: ${applied?.error ?: "nothing imported"}"
+        state.schedUploadSkipped = schedUploadFormatSkippedHtml(applied?.skipped)
+        return
+    }
+    def skippedN = applied.skipped ? applied.skipped.size() : 0
+    def msg = "Imported ${applied.imported} holiday item(s)." + (skippedN ? " Skipped ${skippedN}." : "")
+    if (applied.armed == false) {
+        def why = applied.note?.toString()?.trim()
+        msg += why ? " Saved, but not scheduled: ${why}" : " Saved, but not scheduled."
+    }
+    state.schedUploadResult = msg
+    state.schedUploadSkipped = schedUploadFormatSkippedHtml(applied.skipped)
+    try { log.info "Modern Dashboard: uploaded ${applied.imported} holiday item(s)" + (skippedN ? " (${skippedN} skipped)" : "") } catch (e) {}
+    state.schedUploadHidePaste = true
+    try { app.clearSetting("schedUploadPaste") } catch (e1) {
+        try { app.updateSetting("schedUploadPaste", [type: "textarea", value: ""]) } catch (e2) {}
+    }
+}
+
+def holidayUploadCommit(body) {
+    def prepared = holidayUploadPrepare(body)
+    if (prepared.error) return [ok: false, error: prepared.error, imported: 0, skipped: prepared.skipped ?: []]
+    if (!prepared.ok) {
+        def err = prepared.skipped ? prepared.skipped[0].error : "nothing to import"
+        return [ok: false, error: err, imported: 0, skipped: prepared.skipped ?: []]
+    }
+    def child = holidaysChild()
+    if (!child) return [ok: false, error: "Expected a schedules array, or one schedule object", imported: 0, skipped: prepared.skipped ?: []]
+    def payload = [occasions: prepared.occasions ?: []]
+    if (prepared.settings instanceof Map) payload.settings = prepared.settings
+    def result = null
+    try { result = child.holidaysImport(payload) } catch (e) {
+        return [ok: false, error: holidayUploadChildError(e, "Upload failed"), imported: 0, skipped: prepared.skipped ?: []]
+    }
+    if (result?.ok != true) return [ok: false, error: result?.error ?: "nothing imported", imported: 0, skipped: prepared.skipped ?: []]
+    return [ok: true, imported: prepared.ok.size(), skipped: prepared.skipped ?: [], armed: result?.armed != false, note: result?.note]
+}
+
+def holidayUploadChildError(e, String fallback) {
+    def text = "${e ?: ''} ${e?.cause ?: ''}"
+    if (text.contains("MissingMethodException")) return "Update the Shabbat and holidays app, then try again."
+    def msg = e?.message?.toString()?.trim()
+    return msg ?: fallback
+}
+
+def holidayUploadFileError(String message) {
+    return [error: message, ok: [], skipped: [], settings: null, occasions: []]
+}
+
+def holidayUploadPrepare(body) {
+    if (!holidayModuleInstalled()) return holidayUploadFileError("Expected a schedules array, or one schedule object")
+    if (!(body instanceof Map)) return holidayUploadFileError("Expected a schedules array, or a Shabbat and holidays file")
+    if (body.containsKey("settings") && !(body.settings instanceof Map)) return holidayUploadFileError("settings must be an object")
+    if (body.containsKey("occasions") && !(body.occasions instanceof List)) return holidayUploadFileError("occasions must be a list")
+    def child = holidaysChild()
+    def snap = null
+    try { snap = child?.holidayUploadSnapshot() } catch (e) {
+        return holidayUploadFileError(holidayUploadChildError(e, "Could not read the Shabbat and holidays setup"))
+    }
+    if (!(snap instanceof Map)) return holidayUploadFileError("Could not read the Shabbat and holidays setup")
+    def currentSettings = snap.settings instanceof Map ? snap.settings : [:]
+    def storedOccasions = snap.occasions instanceof Map ? snap.occasions : [:]
+    def storedTemplates = snap.templates instanceof Map ? snap.templates : [:]
+    def settingsResult = holidayUploadSettings(body, currentSettings)
+    if (settingsResult.error) return holidayUploadFileError(settingsResult.error)
+    def occasionResult = holidayUploadOccasions(body.occasions, storedOccasions, storedTemplates)
+    def ok = []
+    if (settingsResult.settings instanceof Map) ok << [name: "Settings", summary: settingsResult.summary ?: "settings"]
+    if (occasionResult.ok) ok.addAll(occasionResult.ok)
+    return [error: null, ok: ok, skipped: occasionResult.skipped ?: [], settings: settingsResult.settings, occasions: occasionResult.occasions ?: []]
+}
+
+def holidayUploadModeNames() {
+    def modes = []
+    try {
+        for (m in (location?.modes ?: [])) {
+            def n = (m?.name != null) ? m.name.toString() : m?.toString()
+            if (n) modes << n
+        }
+    } catch (e) {}
+    return modes
+}
+
+def holidayUploadWhole(value) {
+    if (value instanceof Boolean || value == null) return null
+    if (!(value instanceof Number)) return null
+    long n = value.longValue()
+    if (value.doubleValue() != (n as double)) return null
+    if (n > Integer.MAX_VALUE || n < Integer.MIN_VALUE) return null
+    return n as int
+}
+
+def holidayUploadBool(value) {
+    if (value == true || value == false) return value
+    return null
+}
+
+def holidayUploadClock(value) {
+    def text = value?.toString()?.trim()
+    if (!(text ==~ /^([01][0-9]|2[0-3]):[0-5][0-9]$/)) return null
+    return text
+}
+
+def holidayUploadKnownMode(String name, List modes) {
+    if (!name) return false
+    for (m in modes) if (m?.toString() == name) return true
+    return false
+}
+
+def holidayUploadSettings(body, current) {
+    if (!body.containsKey("settings")) return [settings: null]
+    def incoming = body.settings
+    def allowed = ["holidayMode", "endMode", "israel", "doNotStartModes", "candleMin", "havdalah", "startEarlyMin", "earlyFriday"] as Set
+    def ignored = ["paused", "fridayOverrideDate"] as Set
+    def next = [:]
+    def notes = []
+    for (k in incoming.keySet()) {
+        def key = k?.toString()
+        if (!key || ignored.contains(key)) continue
+        if (!allowed.contains(key)) return [error: "Unknown setting ${key}"]
+    }
+    def modes = holidayUploadModeNames()
+    boolean needsModes = incoming.containsKey("holidayMode") || incoming.containsKey("endMode") || incoming.containsKey("doNotStartModes")
+    if (needsModes && !modes) return [error: "The hub has no modes to match."]
+    if (incoming.containsKey("holidayMode")) {
+        def name = incoming.holidayMode?.toString()?.trim()
+        if (!name || !holidayUploadKnownMode(name, modes)) return [error: "Unknown hub mode ${incoming.holidayMode}"]
+        next.holidayMode = name
+        notes << "holiday mode ${name}"
+    }
+    if (incoming.containsKey("endMode")) {
+        def name = incoming.endMode?.toString()?.trim()
+        if (!name || !holidayUploadKnownMode(name, modes)) return [error: "Unknown hub mode ${incoming.endMode}"]
+        next.endMode = name
+        notes << "end mode ${name}"
+    }
+    def mergedHoliday = next.containsKey("holidayMode") ? next.holidayMode : current?.holidayMode?.toString()?.trim()
+    def mergedEnd = next.containsKey("endMode") ? next.endMode : current?.endMode?.toString()?.trim()
+    if (mergedHoliday && mergedEnd && mergedHoliday == mergedEnd) return [error: "The holiday mode and the end mode must be different."]
+    if (incoming.containsKey("israel")) {
+        def flag = holidayUploadBool(incoming.israel)
+        if (flag == null) return [error: "israel must be true or false"]
+        next.israel = flag
+        notes << (flag ? "Israel" : "diaspora")
+    }
+    if (incoming.containsKey("doNotStartModes")) {
+        def list = incoming.doNotStartModes
+        if (!(list instanceof List)) return [error: "doNotStartModes must be a list"]
+        def names = []
+        for (item in list) {
+            def name = item?.toString()?.trim()
+            if (!name || !holidayUploadKnownMode(name, modes)) return [error: "Unknown hub mode ${item}"]
+            if (!names.contains(name)) names << name
+        }
+        next.doNotStartModes = names
+        notes << (names ? "do not start in ${names.join(', ')}" : "do not start: none")
+    }
+    if (incoming.containsKey("candleMin")) {
+        def n = holidayUploadWhole(incoming.candleMin)
+        if (n == null || n < 0 || n > 120) return [error: "candleMin must be from 0 to 120"]
+        next.candleMin = n
+        notes << "candle lighting ${n} minutes before sunset"
+    }
+    if (incoming.containsKey("startEarlyMin")) {
+        def n = holidayUploadWhole(incoming.startEarlyMin)
+        if (n == null || n < 0 || n > 180) return [error: "startEarlyMin must be from 0 to 180"]
+        next.startEarlyMin = n
+        notes << "start ${n} minutes early"
+    }
+    if (incoming.containsKey("havdalah")) {
+        def hav = incoming.havdalah
+        if (!(hav instanceof Map)) return [error: "havdalah must be an object"]
+        def type = hav.type?.toString()
+        def kept = 42
+        if (current?.havdalah instanceof Map) {
+            def prev = holidayUploadWhole(current.havdalah.minutes)
+            if (prev != null && prev >= 0 && prev <= 120) kept = prev
+        }
+        if (type == "nightfall") {
+            def extra = holidayUploadExtraKey(hav, ["type"])
+            if (extra) return [error: "unknown field ${extra}"]
+            next.havdalah = [type: "nightfall", minutes: kept]
+            notes << "havdalah at nightfall"
+        } else if (type == "minutes") {
+            def extra = holidayUploadExtraKey(hav, ["type", "minutes"])
+            if (extra) return [error: "unknown field ${extra}"]
+            def n = holidayUploadWhole(hav.minutes)
+            if (n == null || n < 0 || n > 120) return [error: "havdalah minutes must be from 0 to 120"]
+            next.havdalah = [type: "minutes", minutes: n]
+            notes << "havdalah ${n} minutes after sunset"
+        } else return [error: "havdalah type must be nightfall or minutes"]
+    }
+    if (incoming.containsKey("earlyFriday")) {
+        def fri = incoming.earlyFriday
+        if (!(fri instanceof Map)) return [error: "earlyFriday must be an object"]
+        def type = fri.type?.toString()
+        if (type == "off") {
+            def extra = holidayUploadExtraKey(fri, ["type"])
+            if (extra) return [error: "unknown field ${extra}"]
+            next.earlyFriday = [type: "off", value: ""]
+            notes << "early Friday off"
+        } else if (type == "time") {
+            def extra = holidayUploadExtraKey(fri, ["type", "value"])
+            if (extra) return [error: "unknown field ${extra}"]
+            def clock = holidayUploadClock(fri.value)
+            if (!clock) return [error: "early Friday needs a time like 18:00"]
+            next.earlyFriday = [type: "time", value: clock]
+            notes << "early Friday at ${clock}"
+        } else if (type == "minutes") {
+            def extra = holidayUploadExtraKey(fri, ["type", "value"])
+            if (extra) return [error: "unknown field ${extra}"]
+            def n = holidayUploadWhole(fri.value)
+            if (n == null || n < 0 || n > 300) return [error: "early Friday minutes must be from 0 to 300"]
+            next.earlyFriday = [type: "minutes", value: n]
+            notes << "early Friday ${n} minutes early"
+        } else return [error: "early Friday type must be off, time, or minutes"]
+    }
+    if (!next) return [settings: null]
+    return [settings: next, summary: notes.join(", ")]
+}
+
+def holidayUploadIds() {
+    return ["shabbat", "roshHashana", "yomKippur", "sukkot", "shemini", "pesachFirst", "pesachLast", "shavuot"]
+}
+
+def holidayUploadLabel(id) {
+    def labels = [
+        shabbat: "Shabbat",
+        roshHashana: "Rosh Hashana",
+        yomKippur: "Yom Kippur",
+        sukkot: "Sukkot",
+        shemini: "Shemini Atzeret / Simchat Torah",
+        pesachFirst: "Pesach, first days",
+        pesachLast: "Pesach, last days",
+        shavuot: "Shavuot"
+    ]
+    return labels[id?.toString()] ?: (id?.toString() ?: "Occasion")
+}
+
+def holidayUploadOccasions(raw, storedOccasions, storedTemplates) {
+    def skipped = []
+    def first = []
+    def seen = []
+    if (!(raw instanceof List)) return [ok: [], skipped: [], occasions: []]
+    for (item in raw) {
+        if (!(item instanceof Map)) {
+            skipped << [name: "Occasion", error: "each occasion must be an object"]
+            continue
+        }
+        def id = item.id?.toString()?.trim()
+        def label = holidayUploadLabel(id)
+        if (!holidayUploadIds().contains(id)) {
+            skipped << [name: label, error: "unknown occasion"]
+            continue
+        }
+        if (seen.contains(id)) {
+            skipped << [name: label, error: "already in this file"]
+            continue
+        }
+        seen << id
+        first << item
+    }
+    def pending = []
+    for (item in first) {
+        def built = holidayUploadOneOccasion(item, storedTemplates)
+        if (built.error) skipped << [name: built.name, error: built.error]
+        else pending << built
+    }
+    def pesachImported = null
+    for (built in pending) if (built.id == "pesachFirst") pesachImported = built
+    boolean pesachSkipped = false
+    if (pesachImported) {
+        pesachSkipped = pesachImported.choice == "skip"
+    } else {
+        def storedChoice = storedOccasions?.pesachFirst?.toString()?.trim()
+        pesachSkipped = !storedChoice || storedChoice == "skip"
+    }
+    def ok = []
+    def occasions = []
+    for (built in pending) {
+        if (built.choice == "pesachFirst" && pesachSkipped) {
+            skipped << [name: built.name, error: "Pesach first days is skipped"]
+            continue
+        }
+        def row = [id: built.id, choice: built.choice]
+        if (built.template instanceof Map) row.template = built.template
+        occasions << row
+        ok << [name: built.name, summary: built.summary]
+    }
+    return [ok: ok, skipped: skipped, occasions: occasions]
+}
+
+def holidayUploadOneOccasion(item, storedTemplates) {
+    def id = item.id?.toString()?.trim()
+    def name = holidayUploadLabel(id)
+    def choice = item.choice?.toString()?.trim()
+    def choices = ["own", "copy", "shabbat", "skip", "pesachFirst"]
+    if (!choices.contains(choice)) return [name: name, error: "choice must be own, copy, shabbat, skip, or pesachFirst"]
+    if (id == "shabbat" && choice != "own") return [name: name, error: "Shabbat uses its own schedule"]
+    if (choice == "pesachFirst" && id != "pesachLast") return [name: name, error: "that choice is only for Pesach last days"]
+    boolean needsTemplate = choice == "own" || choice == "copy"
+    if (needsTemplate) {
+        if (!item.containsKey("template")) return [name: name, error: "that choice needs a template"]
+        def storedTemplate = storedTemplates instanceof Map ? storedTemplates[id] : null
+        def built = holidayUploadTemplate(item.template, storedTemplate)
+        if (built.error) return [name: name, error: built.error]
+        def summary = (choice == "copy" ? "based on Shabbat" : "own schedule") + ", ${built.devices} devices"
+        return [id: id, name: name, choice: choice, template: built.template, summary: summary]
+    }
+    if (item.containsKey("template")) return [name: name, error: "that choice does not take a template"]
+    def summary = "uses Shabbat"
+    if (choice == "skip") summary = "skipped"
+    else if (choice == "pesachFirst") summary = "uses Pesach first days"
+    return [id: id, name: name, choice: choice, summary: summary]
+}
+
+def holidayUploadTemplate(raw, stored) {
+    if (!(raw instanceof Map)) return [error: "template must be an object"]
+    def known = ["start", "night", "morning", "afternoon", "evening", "end", "custom"] as Set
+    for (k in raw.keySet()) {
+        def key = k?.toString()
+        if (!known.contains(key)) return [error: "unknown template field ${key}"]
+    }
+    def template = holidayUploadStoredTemplate(stored)
+    if (raw.containsKey("start")) {
+        def start = raw.start
+        if (!(start instanceof Map)) return [error: "start must be an object"]
+        def extra = holidayUploadExtraKey(start, ["repeatLaterNights", "states"])
+        if (extra) return [error: "unknown field ${extra}"]
+        def repeat = false
+        if (start.containsKey("repeatLaterNights")) {
+            def flag = holidayUploadBool(start.repeatLaterNights)
+            if (flag == null) return [error: "repeatLaterNights must be true or false"]
+            repeat = flag
+        }
+        def states = holidayUploadStateList(start.states, "candle lighting")
+        if (states.error) return states
+        template.start = [states: states.states, repeatLaterNights: repeat]
+    }
+    for (bucket in ["night", "morning", "afternoon", "evening"]) {
+        if (!raw.containsKey(bucket)) continue
+        def groups = raw[bucket]
+        if (!(groups instanceof List)) return [error: "${bucket} must be a list"]
+        def built = []
+        int i = 0
+        for (g in groups) {
+            i++
+            if (!(g instanceof Map)) return [error: "${bucket} ${i} must be an object"]
+            def extra = holidayUploadExtraKey(g, ["time", "states"])
+            if (extra) return [error: "unknown field ${extra}"]
+            def time = holidayUploadClock(g.time)
+            if (!time) return [error: "${bucket} ${i} needs a time like 22:30"]
+            def states = holidayUploadStateList(g.states, "${bucket} ${i}")
+            if (states.error) return states
+            if (!states.states) return [error: "${bucket} ${i} needs a device"]
+            built << [time: time, states: states.states]
+        }
+        template[bucket] = built
+    }
+    if (raw.containsKey("end")) {
+        def end = raw.end
+        if (!(end instanceof Map)) return [error: "end must be an object"]
+        def extra = holidayUploadExtraKey(end, ["states"])
+        if (extra) return [error: "unknown field ${extra}"]
+        def states = holidayUploadStateList(end.states, "havdalah")
+        if (states.error) return states
+        template.end = [states: states.states]
+    }
+    if (raw.containsKey("custom")) {
+        def custom = raw.custom
+        if (!(custom instanceof List)) return [error: "custom must be a list"]
+        def anchors = ["clock-day", "clock-night", "sunrise", "sunset", "after-start", "before-end", "after-end"]
+        def dayChoices = ["every", "first", "last"]
+        def built = []
+        int i = 0
+        for (c in custom) {
+            i++
+            if (!(c instanceof Map)) return [error: "custom ${i} must be an object"]
+            def extra = holidayUploadExtraKey(c, ["anchor", "value", "days", "states"])
+            if (extra) return [error: "unknown field ${extra}"]
+            def anchor = c.anchor?.toString()
+            if (!anchors.contains(anchor)) return [error: "custom ${i} needs an anchor"]
+            def days = c.containsKey("days") ? c.days?.toString() : "every"
+            if (!dayChoices.contains(days)) return [error: "custom ${i} days must be every, first, or last"]
+            def value = null
+            if (anchor.startsWith("clock")) {
+                value = holidayUploadClock(c.value)
+                if (!value) return [error: "custom ${i} needs a time like 15:00"]
+            } else {
+                def n = holidayUploadWhole(c.value)
+                if (n == null || n < 0 || n > 720) return [error: "custom ${i} needs minutes from 0 to 720"]
+                value = n
+            }
+            def states = holidayUploadStateList(c.states, "custom ${i}")
+            if (states.error) return states
+            if (!states.states) return [error: "custom ${i} needs a device"]
+            built << [anchor: anchor, value: value, days: days, states: states.states]
+        }
+        template.custom = built
+    }
+    return [template: template, devices: holidayUploadDeviceCount(template)]
+}
+
+def holidayUploadStoredTemplate(stored) {
+    def template = [
+        start: [states: [], repeatLaterNights: false],
+        night: [], morning: [], afternoon: [], evening: [],
+        end: [states: []],
+        custom: []
+    ]
+    if (!(stored instanceof Map)) return template
+    def copy = holidayUploadCopyValue(stored)
+    if (!(copy instanceof Map)) return template
+    if (copy.start instanceof Map) {
+        template.start = [
+            states: copy.start.states instanceof List ? copy.start.states : [],
+            repeatLaterNights: copy.start.repeatLaterNights == true
+        ]
+    }
+    for (bucket in ["night", "morning", "afternoon", "evening"]) {
+        template[bucket] = copy[bucket] instanceof List ? copy[bucket] : []
+    }
+    if (copy.end instanceof Map) template.end = [states: copy.end.states instanceof List ? copy.end.states : []]
+    template.custom = copy.custom instanceof List ? copy.custom : []
+    return template
+}
+
+def holidayUploadCopyValue(value) {
+    if (value instanceof Map) {
+        def out = [:]
+        value.each { k, v -> out[k == null ? "null" : k.toString()] = holidayUploadCopyValue(v) }
+        return out
+    }
+    if (value instanceof List) {
+        def out = []
+        value.each { v -> out << holidayUploadCopyValue(v) }
+        return out
+    }
+    return value
+}
+
+def holidayUploadDeviceCount(template) {
+    def ids = []
+    def lists = [template?.start?.states, template?.end?.states]
+    for (bucket in ["night", "morning", "afternoon", "evening"]) {
+        for (g in (template[bucket] ?: [])) lists << g?.states
+    }
+    for (c in (template?.custom ?: [])) lists << c?.states
+    for (list in lists) {
+        for (s in (list ?: [])) {
+            def id = s?.id?.toString()
+            if (id && !ids.contains(id)) ids << id
+        }
+    }
+    return ids.size()
+}
+
+def holidayUploadStateList(raw, String slot) {
+    if (raw == null) return [states: []]
+    if (!(raw instanceof List)) return [error: "${slot} states must be a list"]
+    def states = []
+    def sigs = [:]
+    for (st in raw) {
+        def one = holidayUploadResolveState(st)
+        if (one.error) return [error: "${slot}: ${one.error}"]
+        def sid = one.state.id?.toString()
+        def sig = holidayUploadSig(one.state)
+        if (sigs.containsKey(sid)) {
+            if (sigs[sid] != sig) return [error: "${slot}: a device is listed twice with different commands"]
+            continue
+        }
+        sigs[sid] = sig
+        states << one.state
+    }
+    return [states: states]
+}
+
+def holidayUploadSig(st) {
+    def kind = st?.kind?.toString()
+    if (kind == "blind") return "blind|${st.open == true}|${st.position}"
+    if (kind == "fan") return "fan|${st.on == true}|${st.speed}"
+    if (kind == "lock") return "lock|${st.locked != false}"
+    if (kind == "thermostat") return "tstat|${st.mode}|${st.heat}|${st.cool}|${st.fanMode}"
+    return "${kind}|${st.on == true}|${st.level}|${st.ct}"
+}
+
+def holidayUploadDevices(kind) {
+    if (kind == "light") return lights
+    if (kind == "outlet") return outletSwitches
+    if (kind == "lock") return locks
+    if (kind == "blind") return allWindowShades()
+    if (kind == "fan") return ceilingFans
+    if (kind == "thermostat") return thermostats
+    return null
+}
+
+def holidayUploadResolveState(st) {
+    if (!(st instanceof Map)) return [error: "each device state must be an object"]
+    def kind = st.kind?.toString()?.trim()
+    def known = ["light", "outlet", "lock", "blind", "fan", "thermostat"]
+    if (!known.contains(kind)) return [error: "each device needs a kind of light, outlet, lock, blind, fan, or thermostat"]
+    def allowed = ["kind", "name", "id", "label"]
+    if (kind == "light") allowed += ["on", "level", "ct"]
+    else if (kind == "outlet") allowed += ["on"]
+    else if (kind == "lock") allowed += ["locked"]
+    else if (kind == "blind") allowed += ["open", "position"]
+    else if (kind == "fan") allowed += ["on", "speed"]
+    else allowed += ["mode", "heat", "cool", "fanMode"]
+    def extra = holidayUploadExtraKey(st, allowed)
+    if (extra) return [error: "unknown field ${extra}"]
+    def pool = holidayUploadDevices(kind)
+    def resolved = holidayUploadPickDevice(st, pool)
+    if (resolved.error) return [error: resolved.error]
+    def id = resolved.id?.toString()
+    def dev = null
+    for (d in (pool ?: [])) {
+        if (d?.id?.toString() == id) { dev = d; break }
+    }
+    if (kind == "light") return holidayUploadLightState(st, id, dev)
+    if (kind == "outlet") return holidayUploadOutletState(st, id)
+    if (kind == "lock") return holidayUploadLockState(st, id)
+    if (kind == "blind") return holidayUploadBlindState(st, id, dev)
+    if (kind == "fan") return holidayUploadFanState(st, id, dev)
+    return holidayUploadThermostatState(st, id, dev)
+}
+
+def holidayUploadExtraKey(st, List allowed) {
+    for (k in st.keySet()) {
+        def key = k?.toString()
+        if (!key || allowed.contains(key)) continue
+        return key
+    }
+    return null
+}
+
+def holidayUploadPickDevice(st, pool) {
+    def name = (st.name ?: st.label)?.toString()?.trim()
+    def idText = (st.id != null) ? st.id.toString().trim() : ""
+    if (!name && !idText) return [error: "device needs a name or id"]
+    def byId = null
+    if (idText) {
+        byId = scheduleResolveDeviceToken(idText, pool)
+        if (byId?.error) return byId
+    }
+    if (!name) return byId
+    def byName = scheduleResolveDeviceToken(name, pool)
+    if (!byName?.error) {
+        if (byId && byName.id?.toString() != byId.id?.toString()) return [error: "the name and the id are different devices"]
+        return byName
+    }
+    def ambiguous = byName.error?.toString()?.startsWith("more than one device matches")
+    if (ambiguous && byId) {
+        def label = ""
+        for (d in (pool ?: [])) {
+            if (d?.id?.toString() == byId.id?.toString()) {
+                label = scheduleDeviceLabel(d)?.toString()?.toLowerCase() ?: ""
+                break
+            }
+        }
+        def needle = name.toLowerCase()
+        if (label == needle || (needle && label.contains(needle))) return byId
+        return [error: "the name and the id are different devices"]
+    }
+    return byName
+}
+
+def holidayUploadCan(dev, String cap) {
+    if (!dev) return false
+    try { return dev.hasCapability(cap) == true } catch (e) { return false }
+}
+
+def holidayUploadLightState(st, String id, dev) {
+    def on = holidayUploadBool(st.on)
+    if (on == null) return [error: "light needs on true or false"]
+    def out = [id: id, kind: "light", on: on]
+    if (st.level != null) {
+        if (!holidayUploadCan(dev, "SwitchLevel")) return [error: "that light cannot dim"]
+        def level = holidayUploadWhole(st.level)
+        if (level == null || level < 0 || level > 100) return [error: "level must be from 0 to 100"]
+        out.level = level
+    }
+    if (st.ct != null) {
+        if (!holidayUploadCan(dev, "ColorTemperature")) return [error: "that light has no color temperature"]
+        def ct = holidayUploadWhole(st.ct)
+        if (ct == null || ct < 2000 || ct > 6500) return [error: "ct must be from 2000 to 6500"]
+        out.ct = ct
+    }
+    return [state: out]
+}
+
+def holidayUploadOutletState(st, String id) {
+    def on = holidayUploadBool(st.on)
+    if (on == null) return [error: "outlet needs on true or false"]
+    return [state: [id: id, kind: "outlet", on: on]]
+}
+
+def holidayUploadLockState(st, String id) {
+    def locked = holidayUploadBool(st.locked)
+    if (locked == null) return [error: "lock needs locked true or false"]
+    return [state: [id: id, kind: "lock", locked: locked]]
+}
+
+def holidayUploadBlindState(st, String id, dev) {
+    def open = holidayUploadBool(st.open)
+    if (open == null) return [error: "shade needs open true or false"]
+    def out = [id: id, kind: "blind", open: open]
+    if (open == true && st.position != null && st.position.toString().trim()) {
+        if (!(dev && shadeSupportsPosition(dev) == true)) return [error: "that shade has no position"]
+        def pos = holidayUploadWhole(st.position)
+        if (pos == null || pos < 1 || pos > 100) return [error: "position must be from 1 to 100"]
+        out.position = pos
+    }
+    return [state: out]
+}
+
+def holidayUploadFanState(st, String id, dev) {
+    def on = holidayUploadBool(st.on)
+    if (on == null) return [error: "fan needs on true or false"]
+    def out = [id: id, kind: "fan", on: on]
+    if (on == true && st.speed != null && st.speed.toString().trim()) {
+        def speed = dev ? scheduleFanSpeedMatch(dev, st.speed) : null
+        if (!speed) return [error: "that fan has no speed ${st.speed}"]
+        out.speed = speed
+    }
+    return [state: out]
+}
+
+def holidayUploadThermostatState(st, String id, dev) {
+    for (key in ["heat", "cool"]) {
+        if (st[key] != null && holidayUploadWhole(st[key]) == null) return [error: "${key} must be a whole number"]
+    }
+    def unit = null
+    if (dev) {
+        try { unit = thermostatTempUnit(dev) } catch (e) { unit = null }
+    }
+    def err = thermostatSettingError(st, unit)
+    if (err) return [error: err]
+    def n = thermostatSettingNormalized(st)
+    def out = [id: id, kind: "thermostat"]
+    if (n?.mode) out.mode = n.mode.toString()
+    if (n?.heat != null) out.heat = n.heat
+    if (n?.cool != null) out.cool = n.cool
+    if (n?.fanMode) out.fanMode = n.fanMode.toString()
+    return [state: out]
 }
 
 def schedImportFormatSkippedHtml(skipped) {
@@ -1740,6 +2779,11 @@ def scheduleSchemaUrl(boolean local) {
     return "${base}/schedules/schema?access_token=${state.accessToken}"
 }
 
+def holidaySchemaUrl(boolean local) {
+    def base = local ? getFullLocalApiServerUrl() : getFullApiServerUrl()
+    return "${base}/holidays/schema?access_token=${state.accessToken}"
+}
+
 // ---------------------------------------------------------------------------
 // File Manager asset cache + HTTP cache headers
 // ---------------------------------------------------------------------------
@@ -2200,6 +3244,7 @@ mappings {
     path("/holidays/test") { action: [POST: "holidaysTest"] }
     path("/holidays/skip") { action: [POST: "holidaysSkip"] }
     path("/holidays/refresh") { action: [POST: "holidaysRefresh"] }
+    path("/holidays/schema") { action: [GET: "holidaysSchemaGet"] }
     path("/notifications") { action: [GET: "notificationsGet"] }
     path("/notifications/ack") { action: [GET: "notificationsAckGet", POST: "notificationsAck"] }
     path("/tile-notifications") { action: [GET: "tileNotificationsGet"] }
@@ -2229,7 +3274,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.62.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.63.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -2321,7 +3366,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.62.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.63.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -3005,9 +4050,11 @@ def mldLinkCard(label, subtitle, url, type) {
 }
 
 // Light button with dark text. Hubitat forces link blue, which vanished on a blue fill.
-def mldSchedActionLink(String label, String url, String downloadName) {
+def mldSchedActionLink(String label, String url, String downloadName, String linkTitle = null) {
     def extra = downloadName ? " download='${htmlEsc(downloadName)}'" : ""
-    def titleAttr = (label == "Download") ? " title='Download schedule schema'" : ""
+    def titleText = linkTitle
+    if (!titleText && label == "Download") titleText = "Download schedule schema"
+    def titleAttr = titleText ? " title='${htmlEsc(titleText)}'" : ""
     return "<a href='${htmlEsc(url)}' target='_blank'${extra}${titleAttr} " +
         "style='display:inline-block;margin:0 6px 6px 0;padding:6px 12px;border-radius:8px;" +
         "background:#ffffff !important;color:#111827 !important;-webkit-text-fill-color:#111827;" +
@@ -3033,6 +4080,26 @@ def mldSchemaToolbar() {
         "</div>" +
         "<textarea id='mldSchedSchema' readonly aria-hidden='true' style='display:none'>" +
         htmlEsc(schedUploadSchema().trim()) + "</textarea>"
+}
+
+// Copy reads this textarea, not the schedule schema above it.
+def holidaySchemaToolbar() {
+    def copyJs = 'var b=this,el=document.getElementById("mldHolidaySchema");if(!el)return false;' +
+        'var v=el.value||el.textContent||el.innerText||"";' +
+        'var ok=function(){b.textContent="Copied";};' +
+        'var legacy=function(){try{var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");ok();}catch(e){b.textContent="Copy failed";}};' +
+        'if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(v).then(ok).catch(legacy);}else{legacy();}' +
+        'return false;'
+    def copyBtn = "display:inline-block;margin:0 6px 6px 0;padding:6px 12px;border-radius:8px;" +
+        "background:#ffffff;color:#111827;font-weight:700;font-size:13px;line-height:1.2;" +
+        "border:1px solid #111827;cursor:pointer;font-family:inherit"
+    return "<div style='margin:0 0 4px'>" +
+        mldSchedActionLink("Download", holidaySchemaUrl(false), "mdash-holiday-schema.json", "Download Shabbat and holidays schema") +
+        "<button type='button' style='${copyBtn}' onclick='${copyJs}'>Copy</button>" +
+        mldSchedActionLink("Local Network Download", holidaySchemaUrl(true), "mdash-holiday-schema.json", "Download Shabbat and holidays schema") +
+        "</div>" +
+        "<textarea id='mldHolidaySchema' readonly aria-hidden='true' style='display:none'>" +
+        htmlEsc(holidayUploadSchema().trim()) + "</textarea>"
 }
 
 // Hubitat reopens this page at the previous scroll position. Reset scrollable parents.
@@ -6589,6 +7656,10 @@ def setHubModeFromName(modeName) {
     }
 }
 
+def holidayModuleInstalled() {
+    return holidayFilePresent() && holidaysChild()
+}
+
 def holidayFilePresent() {
     def names = []
     try { names = listLocalFileNames() } catch (e) { names = [] }
@@ -10140,7 +11211,7 @@ def runScheduleLightAction(action, result) {
                 def ct = st?.ct
                 if (ct != null) {
                     if (!dev.hasCapability("ColorTemperature")) throw new RuntimeException("setColorTemperature is unavailable")
-                    int k = Math.max(2500, Math.min(6000, ct.toInteger()))
+                    int k = Math.max(2000, Math.min(6500, ct.toInteger()))
                     dev.setColorTemperature(k)
                 }
             } else {
@@ -11194,8 +12265,10 @@ def scheduleDeviceCatalog() {
             if (n) modes << n
         }
     } catch (e) {}
+    def catalogNote = "Devices selected in Modern Dashboard that a schedule can control. target is the schedule action target. controls are fields a schedule may set, not the device's current state. useId means another selected device has the same name, so put id in the schedule instead of name. speeds, modes, and fanModes are the only values a schedule may use for that device. This is not live status. Give this file to an assistant with the schedule schema."
+    if (holidayModuleInstalled()) catalogNote += " The same names are used in a Shabbat and holidays file."
     return [
-        description: "Devices selected in Modern Dashboard that a schedule can control. target is the schedule action target. controls are fields a schedule may set, not the device's current state. useId means another selected device has the same name, so put id in the schedule instead of name. speeds, modes, and fanModes are the only values a schedule may use for that device. This is not live status. Give this file to an assistant with the schedule schema.",
+        description: catalogNote,
         hubModes: modes,
         devices: devices
     ]
@@ -11210,6 +12283,12 @@ def schedulesDevicesGet() {
 def schedulesSchemaGet() {
     def headers = noStoreHeaders() + ["Content-Disposition": "attachment; filename=\"mdash-schedule-schema.json\""]
     render contentType: "application/json", data: schedUploadSchema().trim(), status: 200, headers: headers
+}
+
+def holidaysSchemaGet() {
+    if (!holidayModuleInstalled()) return renderJsonNoStore('{"ok":false,"error":"not found"}', 404)
+    def headers = noStoreHeaders() + ["Content-Disposition": "attachment; filename=\"mdash-holiday-schema.json\""]
+    render contentType: "application/json", data: holidayUploadSchema().trim(), status: 200, headers: headers
 }
 
 def mcpCreateSchedule(args) {

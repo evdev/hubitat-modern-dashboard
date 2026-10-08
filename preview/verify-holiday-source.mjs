@@ -91,6 +91,10 @@ assert(groovy.includes("holidayMarkPassedDone(true)"), "a save must leave held a
   const trial = groovy.slice(groovy.indexOf("def holidaysTest"), groovy.indexOf("// --- state ---"));
   assert(trial.includes("spanOverrides"), "trying actions now uses a one-time schedule");
 }
+assert(groovy.includes("def holidaySettingText"), "zero minutes stay zero in the calendar request");
+assert(!groovy.includes("candleMin ?: 18"), "zero candle minutes must not fall back to 18");
+assert(!groovy.includes("hav.minutes ?: 42"), "zero havdalah minutes must not fall back to 42");
+assert(groovy.includes("templates: templates"), "upload preview can keep template slots the file left out");
 assert(groovy.includes("def holidayActionStillPending"), "save must tell a still-due action from one that already passed");
 {
   const resume = groovy.slice(groovy.indexOf("def holidayTogglePause"), groovy.indexOf("def holidayStartTestSpan"));
@@ -99,7 +103,25 @@ assert(groovy.includes("def holidayActionStillPending"), "save must tell a still
 }
 assert(groovy.includes('a.kind == "modeEnter" && spanOpen'), "an early mode change still runs when the job is a minute late");
 
+assert(parent.includes("holidayUploadStoredTemplate"), "omitted template slots stay as saved");
+assert(parent.includes("the name and the id are different devices"), "a disagreeing device name and id is rejected");
 assert(parent.includes('path("/holidays")'), "parent must expose /holidays");
+assert(parent.includes('path("/holidays/schema")'), "parent must expose the holiday schema download");
+{
+  const imported = groovy.slice(groovy.indexOf("def holidaysImport"), groovy.indexOf("def holidayEnsureState"));
+  assert(imported.includes("def holidaysImport"), "child accepts a holiday file in one write");
+  const checked = imported.indexOf("holidayTemplateErrors");
+  const stored = imported.indexOf("state.config = config");
+  assert(checked >= 0 && stored > checked, "a rejected holiday file must not be stored");
+  assert(imported.includes('clean.remove("paused")'), "a holiday file must not pause the module");
+  assert(imported.includes('clean.remove("fridayOverrideDate")'), "a holiday file must not set a one-time Friday");
+  assert(imported.includes("holidayMarkPassedDone(true, false)"), "a holiday file does not replay device actions already due");
+  assert(imported.includes("holidayNotScheduledReason"), "a holiday file reports when it was saved but not scheduled");
+  assert(imported.includes("holidayQueryChanged()"), "a candle-lighting change refetches the calendar");
+  assert(imported.includes("holidayArm()"), "a holiday file re-arms the next action");
+  assert(!imported.includes("holidaysStatus"), "a holiday file must not rebuild the calendar list");
+  assert(!imported.includes("spanOverrides"), "a holiday file must not touch one-time edits");
+}
 assert(parent.includes('path("/holidays/later")'), "parent must expose /holidays/later");
 assert(parent.includes("child.holidaysLater()"), "parent must ask the child for later holidays");
 assert(groovy.includes('holidayBuildFrom(state.config, nowMs, "near")'), "the first holiday load skips later occasions");

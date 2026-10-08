@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/evdev/hubitat-modern-dashboard/blob/beta/lib/holiday-upload.schema.json",
+  "title": "Modern Dashboard Shabbat and holidays upload",
+  "description": "Write one JSON object for Modern Dashboard and nothing else. It must match this schema. Do not include a schedules array. Use only device names and hub mode names the user gives you. Do not invent devices, rooms, or hub modes. Occasions left out of the file stay as they are. An occasion in the file replaces that occasion's choice. A template slot you include replaces that slot. A slot you leave out stays as saved. An empty list clears that slot. Shabbat choice is own and needs a template. choice shabbat uses the Shabbat template as-is. choice skip does not change devices or the hub mode for that holiday. choice own is a new schedule and needs a template. choice copy is a schedule based on Shabbat and needs a template. choice pesachFirst is only for pesachLast and uses the Pesach first-days template. Clock times are 24-hour hub-local HH:mm. kind is light, outlet, lock, blind, fan, or thermostat. Prefer a device name over its id. If both are set and they are different devices, that occasion is skipped. If the name matches more than one device, the id chooses among those matches. The same device command twice in one slot is stored once. Two different commands for one device in one slot skip that occasion. Heat must be below cool. Fahrenheit setpoints are 50-90. Celsius setpoints are 10-32. Level is 0-100 and only for a light that can dim. ct is color temperature in Kelvin from 2000 to 6500, only for a bulb that supports it. A lock with locked false unlocks and does not ask for a PIN. Shade position is 1-100 and only applies when open is true and that shade supports position. Fan speed must be one that fan reports, such as low, medium, high, or a number like 4. Omit speed to turn the fan on. on false turns the fan off. Do not send paused or a one-time Friday date. Do not add fields that are not in this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "anyOf": [
+    { "required": ["occasions"] },
+    { "required": ["settings"] }
+  ],
+  "properties": {
+    "settings": { "$ref": "#/$defs/settings" },
+    "occasions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/occasion" }
+    }
+  },
+  "$defs": {
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "holidayMode": { "type": "string", "minLength": 1, "description": "Hub mode entered at candle lighting. Must differ from endMode." },
+        "endMode": { "type": "string", "minLength": 1, "description": "Hub mode restored at havdalah. Must differ from holidayMode." },
+        "israel": { "type": "boolean", "description": "true for Israel. Omit or false for the diaspora. Rosh Hashana is two days in both." },
+        "doNotStartModes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "If the hub is in one of these modes at candle lighting, nothing starts. Use [] for none."
+        },
+        "candleMin": { "type": "integer", "minimum": 0, "maximum": 120, "description": "Minutes before sunset for candle lighting. 0 means at sunset. 18 is usual." },
+        "havdalah": { "$ref": "#/$defs/havdalah" },
+        "startEarlyMin": { "type": "integer", "minimum": 0, "maximum": 180, "description": "Minutes before candle lighting to enter the holiday mode and run the start actions. 0 starts at candle lighting." },
+        "earlyFriday": { "$ref": "#/$defs/earlyFriday" }
+      }
+    },
+    "havdalah": {
+      "oneOf": [
+        {
+          "title": "Nightfall",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "nightfall" } }
+        },
+        {
+          "title": "Minutes after sunset",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "minutes"],
+          "properties": {
+            "type": { "const": "minutes" },
+            "minutes": { "type": "integer", "minimum": 0, "maximum": 120, "description": "Minutes after sunset. 0 means at sunset. 42 is common." }
+          }
+        }
+      ]
+    },
+    "earlyFriday": {
+      "description": "Moves candle lighting earlier on a plain Friday only, and only when that time is before candle lighting.",
+      "oneOf": [
+        {
+          "title": "Off",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "off" } }
+        },
+        {
+          "title": "Fixed time",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "time" },
+            "value": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time." }
+          }
+        },
+        {
+          "title": "Minutes early",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "minutes" },
+            "value": { "type": "integer", "minimum": 0, "maximum": 300, "description": "Minutes before that Friday's candle lighting." }
+          }
+        }
+      ]
+    },
+    "occasion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "choice"],
+      "properties": {
+        "id": {
+          "enum": ["shabbat", "roshHashana", "yomKippur", "sukkot", "shemini", "pesachFirst", "pesachLast", "shavuot"]
+        },
+        "choice": {
+          "enum": ["own", "copy", "shabbat", "skip", "pesachFirst"],
+          "description": "own and copy need a template. shabbat uses the Shabbat template. skip leaves that holiday alone. pesachFirst is only for pesachLast."
+        },
+        "template": { "$ref": "#/$defs/template" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "id": { "const": "shabbat" } }, "required": ["id"] },
+          "then": {
+            "properties": { "choice": { "const": "own" } },
+            "required": ["template"]
+          }
+        },
+        {
+          "if": { "properties": { "choice": { "enum": ["own", "copy"] } }, "required": ["choice"] },
+          "then": { "required": ["template"] }
+        },
+        {
+          "if": { "properties": { "choice": { "const": "pesachFirst" } }, "required": ["choice"] },
+          "then": { "properties": { "id": { "const": "pesachLast" } } }
+        },
+        {
+          "if": { "properties": { "choice": { "enum": ["shabbat", "skip", "pesachFirst"] } }, "required": ["choice"] },
+          "then": { "not": { "required": ["template"] } }
+        }
+      ]
+    },
+    "template": {
+      "description": "Slots you include replace those slots. Slots you leave out stay as saved. An empty list clears that slot.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start": { "$ref": "#/$defs/startSlot" },
+        "night": { "$ref": "#/$defs/timeGroups" },
+        "morning": { "$ref": "#/$defs/timeGroups" },
+        "afternoon": { "$ref": "#/$defs/timeGroups" },
+        "evening": { "$ref": "#/$defs/timeGroups" },
+        "end": { "$ref": "#/$defs/endSlot" },
+        "custom": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/customSlot" }
+        }
+      }
+    },
+    "startSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repeatLaterNights": { "type": "boolean", "description": "Also run these actions on later nights of a holiday. Omit or false to run them only on the first night." },
+        "states": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deviceState" }
+        }
+      }
+    },
+    "endSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "states": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deviceState" }
+        }
+      }
+    },
+    "timeGroups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["time", "states"],
+        "properties": {
+          "time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time on that Jewish day. Night times are after candle lighting." },
+          "states": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/deviceState" }
+          }
+        }
+      }
+    },
+    "customSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchor", "value", "states"],
+      "properties": {
+        "anchor": {
+          "enum": ["clock-day", "clock-night", "sunrise", "sunset", "after-start", "before-end", "after-end"],
+          "description": "clock-day and clock-night use an HH:mm value. The others use a number of minutes."
+        },
+        "value": {
+          "oneOf": [
+            { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+            { "type": "integer", "minimum": 0, "maximum": 720 }
+          ]
+        },
+        "days": { "enum": ["every", "first", "last"], "description": "Omit for every day of the occasion." },
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/deviceState" }
+        }
+      }
+    },
+    "deviceState": {
+      "oneOf": [
+        { "$ref": "#/$defs/lightState" },
+        { "$ref": "#/$defs/outletState" },
+        { "$ref": "#/$defs/lockState" },
+        { "$ref": "#/$defs/blindState" },
+        { "$ref": "#/$defs/fanState" },
+        { "$ref": "#/$defs/thermostatState" }
+      ]
+    },
+    "lightState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "light" },
+        "name": { "type": "string", "minLength": 1, "description": "Light name as selected in the app. Prefer name over id." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "on": { "type": "boolean" },
+        "level": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Dim level. Omit for a switch that cannot dim." },
+        "ct": { "type": "integer", "minimum": 2000, "maximum": 6500, "description": "Color temperature in Kelvin. Omit unless that bulb supports it." }
+      }
+    },
+    "outletState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "outlet" },
+        "name": { "type": "string", "minLength": 1, "description": "Outlet name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "on": { "type": "boolean" }
+      }
+    },
+    "lockState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "locked"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "lock" },
+        "name": { "type": "string", "minLength": 1, "description": "Lock name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "locked": { "type": "boolean", "description": "false unlocks. A scheduled unlock does not ask for the PIN." }
+      }
+    },
+    "blindState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "open"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "blind" },
+        "name": { "type": "string", "minLength": 1, "description": "Blind or shade name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "open": { "type": "boolean" },
+        "position": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Open position, 1-100. Only when open is true and that shade supports position. Omit to open without a level. Ignored when open is false." }
+      }
+    },
+    "fanState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "fan" },
+        "name": { "type": "string", "minLength": 1, "description": "Ceiling fan name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "on": { "type": "boolean" },
+        "speed": { "type": "string", "minLength": 1, "description": "A speed that fan reports, such as low, medium, high, or 4. Omit to turn on without a speed. on false turns the fan off." }
+      }
+    },
+    "thermostatState": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "thermostat" },
+        "name": { "type": "string", "minLength": 1, "description": "Thermostat name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "mode": { "type": "string", "description": "heat, cool, auto, off, emergency heat, or another mode that thermostat supports. Omit to change setpoints only. heat and emergency heat require heat. cool requires cool. auto requires both." },
+        "heat": { "type": "integer", "description": "Heat setpoint. 50-90 Fahrenheit or 10-32 Celsius." },
+        "cool": { "type": "integer", "description": "Cool setpoint. Must be above heat. 50-90 Fahrenheit or 10-32 Celsius." },
+        "fanMode": { "type": "string", "description": "auto, on, or circulate, when that thermostat has a fan mode." }
+      }
+    }
+  },
+  "examples": [
+    {
+      "settings": {
+        "holidayMode": "Shabbat",
+        "endMode": "Home",
+        "israel": false,
+        "doNotStartModes": ["Away"],
+        "candleMin": 18,
+        "havdalah": { "type": "minutes", "minutes": 42 },
+        "earlyFriday": { "type": "off" }
+      },
+      "occasions": [
+        {
+          "id": "shabbat",
+          "choice": "own",
+          "template": {
+            "start": {
+              "states": [{ "kind": "light", "name": "Dining", "on": true, "level": 40 }]
+            },
+            "night": [
+              { "time": "22:30", "states": [{ "kind": "light", "name": "Dining", "on": false }] }
+            ],
+            "end": {
+              "states": [{ "kind": "light", "name": "Dining", "on": false }]
+            }
+          }
+        },
+        { "id": "yomKippur", "choice": "shabbat" },
+        { "id": "pesachLast", "choice": "pesachFirst" }
+      ]
+    }
+  ]
+}

@@ -469,6 +469,10 @@ schedule can set, plus hub mode names. Give both to your assistant, then paste
 the JSON it returns on that same page. The schema file is
 [`lib/schedule-upload.schema.json`](lib/schedule-upload.schema.json).
 
+When **mDash Shabbat and Holidays** is installed, that same page also shows the
+Shabbat and holidays schema and accepts that file in the same paste box. The
+holiday schema is hidden when the module is not installed.
+
 A schedule whose name already exists is replaced. Devices are matched by name to
 the lights, outlets, locks, blinds, fans, and thermostats selected in the app.
 
@@ -537,6 +541,31 @@ candle lighting, and which mode to return to at the end. Shabbat is set up
 first. Each Yom Tov can use that schedule as-is, start from a copy, use a new
 schedule, or be skipped. Skipped holidays do not change the hub mode. A Shabbat
 that falls on or next to a skipped holiday still runs.
+
+**Holiday files** use the same **Upload schedules…** page. The Shabbat and
+holidays schema is shown there only when this module is installed. Paste the
+JSON or choose the file, then tap **Upload**. An occasion in the file replaces
+that occasion's choice. Template slots included in the file replace those slots.
+Slots left out stay as they are, and an empty list clears a slot. Occasions left
+out of the file stay as they are. Devices are matched by name. If a name and an
+id are both set and they are different devices, that occasion is skipped. The schema file is
+[`lib/holiday-upload.schema.json`](lib/holiday-upload.schema.json).
+
+```json
+{
+  "occasions": [
+    {
+      "id": "shabbat",
+      "choice": "own",
+      "template": {
+        "start": { "states": [{ "kind": "light", "name": "Dining", "on": true, "level": 40 }] },
+        "end": { "states": [{ "kind": "light", "name": "Dining", "on": false }] }
+      }
+    },
+    { "id": "yomKippur", "choice": "shabbat" }
+  ]
+}
+```
 
 Candle-lighting and havdalah times come from [HebCal](https://www.hebcal.com)
 for the hub’s latitude and longitude. A Jewish day runs from candle lighting

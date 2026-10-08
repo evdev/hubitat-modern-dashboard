@@ -244,6 +244,8 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
   assert(a !== b, "Israel flag changes the calendar query");
   const c = calendarQueryKey({ israel: false, candleMin: 18, havdalah: { type: "nightfall" } }, { lat: 3, lon: 2, tz: TZ });
   assert(a !== c, "location changes the calendar query");
+  const z = calendarQueryKey({ israel: false, candleMin: 0, havdalah: { type: "minutes", minutes: 0 } }, { lat: 1, lon: 2, tz: TZ });
+  assert(z.split("|")[1] === "0" && z.split("|")[3] === "0", "zero candle and havdalah minutes stay in the query");
 }
 
 {

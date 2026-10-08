@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.63
+
+- **Shabbat & holidays:** **Upload schedules…** accepts a Shabbat and holidays
+  file when that module is installed. Occasions and template slots in the file
+  replace those choices; anything left out stays as it is. The schema is on
+  that page, and it can be downloaded or copied. Update Modern Dashboard and
+  mDash Shabbat and Holidays.
+
+- **Shabbat & holidays:** candle-lighting or havdalah set to 0 minutes stays at
+  0. Update mDash Shabbat and Holidays.
+
 ## 0.4.62
 
 - **Scheduler:** the schema on **Upload schedules…** stays off the page. Download

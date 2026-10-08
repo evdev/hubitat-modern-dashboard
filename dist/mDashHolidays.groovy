@@ -341,6 +341,71 @@ def holidaysTest(body) {
     return [ok: true, lastResult: result, apiVersion: 2]
 }
 
+// Read by the parent upload page. Does not rebuild the calendar.
+def holidayUploadSnapshot() {
+    holidayEnsureState()
+    def settings = state.config?.settings instanceof Map ? holidayPlain(state.config.settings) : [:]
+    def occasions = state.config?.occasions instanceof Map ? holidayPlain(state.config.occasions) : [:]
+    def templates = state.config?.templates instanceof Map ? holidayPlain(state.config.templates) : [:]
+    return [settings: settings, occasions: occasions, templates: templates]
+}
+
+// One write for a Shabbat and holidays file. Templates are checked before anything is stored.
+def holidaysImport(body) {
+    holidayEnsureState()
+    def incoming = body?.occasions instanceof List ? body.occasions : []
+    for (item in incoming) {
+        if (!(item instanceof Map)) return [ok: false, error: "each occasion must be an object", revision: state.runtime?.revision ?: 0]
+        if (item.template != null) {
+            def errs = holidayTemplateErrors(item.template)
+            if (errs) return [ok: false, error: holidayErrorMessage(errs), revision: state.runtime?.revision ?: 0]
+        }
+    }
+    def config = state.config instanceof Map ? new LinkedHashMap(state.config) : [:]
+    if (body?.settings instanceof Map) {
+        def clean = holidayPlain(body.settings)
+        clean.remove("paused")
+        clean.remove("fridayOverrideDate")
+        config.settings = holidayMergeSettings(config.settings, clean)
+    }
+    def occasions = config.occasions instanceof Map ? new LinkedHashMap(config.occasions) : [:]
+    def templates = config.templates instanceof Map ? new LinkedHashMap(config.templates) : [:]
+    for (item in incoming) {
+        def id = item?.id?.toString()
+        if (!id) continue
+        if (item?.choice) occasions[id] = item.choice.toString()
+        if (item.template instanceof Map) templates[id] = holidayPlain(item.template)
+    }
+    config.occasions = occasions
+    config.templates = templates
+    state.config = config
+    def savedRt = state.runtime instanceof Map ? new LinkedHashMap(state.runtime) : [:]
+    savedRt.revision = (savedRt.revision ?: 0) + 1
+    state.runtime = savedRt
+    // A file must not cancel a Do-not-start hold. Device actions already due are not run again from this upload.
+    holidayMarkPassedDone(true, false)
+    if (holidayQueryChanged()) holidayFetch(true)
+    else holidayArm()
+    def note = holidayNotScheduledReason()
+    return [ok: true, revision: state.runtime.revision ?: 0, armed: note == null, note: note]
+}
+
+def holidayNotScheduledReason() {
+    if (holidayPaused()) return "The scheduler is paused, so nothing was scheduled."
+    def pf = holidayPreflight()
+    if (!pf.ok) {
+        def first = pf.errors ? pf.errors[0] : null
+        return first?.toString() ?: "Choose the holiday mode and the mode to return to."
+    }
+    if (holidayQueryChanged()) {
+        def err = state.calendar?.error?.toString()?.trim()
+        return err ?: "Holiday times are not loaded yet."
+    }
+    def boundaries = state.calendar?.boundaries
+    if (!(boundaries instanceof List) || !boundaries) return "Holiday times are not loaded yet."
+    return null
+}
+
 // --- state ---
 
 def holidayEnsureState() {
@@ -517,7 +582,17 @@ def holidayQueryKey() {
     def lat = ""
     def lon = ""
     try { lat = location?.latitude?.toString() ?: ""; lon = location?.longitude?.toString() ?: "" } catch (e) {}
-    return "${s.israel == true ? 'il' : 'diaspora'}|${s.candleMin ?: 18}|${hav.type ?: 'nightfall'}|${hav.minutes ?: ''}|${lat}|${lon}|${holidayTzId()}".toString()
+    def candleText = holidaySettingText(s.candleMin, "18")
+    def havMinText = holidaySettingText(hav.minutes, "")
+    return "${s.israel == true ? 'il' : 'diaspora'}|${candleText}|${hav.type ?: 'nightfall'}|${havMinText}|${lat}|${lon}|${holidayTzId()}".toString()
+}
+
+// Groovy treats 0 as missing. A blank value uses the fallback. Zero stays zero.
+def holidaySettingText(value, String fallback) {
+    if (value == null) return fallback
+    def text = value.toString().trim()
+    if (text.length() == 0) return fallback
+    return text
 }
 
 def holidayQueryChanged() {
@@ -549,8 +624,10 @@ def holidayFetch(boolean force) {
     cal.add(Calendar.DATE, 400)
     String end = String.format("%04d-%02d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DATE))
     String geo = (lat != null && lon != null && tz) ? "geo=pos&latitude=${lat}&longitude=${lon}&tzid=${tz.getID()}" : "geo=zip&zip=${zip}"
-    String havdalah = (hav.type?.toString() == "minutes") ? "m=${hav.minutes ?: 42}" : "M=on"
-    String url = "https://www.hebcal.com/hebcal?v=1&cfg=json&maj=on&min=off&mod=off&nx=off&ss=off&mf=off&s=off&c=on&${geo}&start=${start}&end=${end}&b=${s.candleMin ?: 18}&${havdalah}&i=${s.israel == true ? 'on' : 'off'}"
+    String havMinutes = holidaySettingText(hav.minutes, "42")
+    String havdalah = (hav.type?.toString() == "minutes") ? "m=${havMinutes}" : "M=on"
+    String candleText = holidaySettingText(s.candleMin, "18")
+    String url = "https://www.hebcal.com/hebcal?v=1&cfg=json&maj=on&min=off&mod=off&nx=off&ss=off&mf=off&s=off&c=on&${geo}&start=${start}&end=${end}&b=${candleText}&${havdalah}&i=${s.israel == true ? 'on' : 'off'}"
     if (debugLogging) log.debug "mDash Holidays: fetch ${url}"
     try {
         httpGet([uri: url, timeout: 30]) { resp ->
@@ -1569,7 +1646,7 @@ def holidayMarkDone(String id, long ts, String how) {
 // keepPending is for a dashboard save. Resume-from-pause passes false and marks
 // every past action, so unpausing does not replay the holiday that already happened.
 // Matches saveKeepsPending in lib/holiday-core.mjs.
-def holidayMarkPassedDone(boolean keepPending = false) {
+def holidayMarkPassedDone(boolean keepPending = false, boolean keepDeviceCatchUp = true) {
     long nowMs = now()
     try {
         def built = holidayBuild(nowMs)
@@ -1580,7 +1657,7 @@ def holidayMarkPassedDone(boolean keepPending = false) {
             for (a in (span.actions ?: [])) {
                 if (a.skipped == true || a.at == null) continue
                 if ((a.at as long) > nowMs) continue
-                if (keepPending && holidayActionStillPending(a, span, nowMs, heldNow, heldSpanId, replayHeldId)) continue
+                if (keepPending && holidayActionStillPending(a, span, nowMs, heldNow, heldSpanId, replayHeldId, keepDeviceCatchUp)) continue
                 holidayMarkDone(a.id?.toString(), nowMs, "passed")
             }
         }
@@ -1589,7 +1666,7 @@ def holidayMarkPassedDone(boolean keepPending = false) {
     }
 }
 
-def holidayActionStillPending(a, span, long nowMs, boolean heldNow, String heldSpanId, String replayHeldId) {
+def holidayActionStillPending(a, span, long nowMs, boolean heldNow, String heldSpanId, String replayHeldId, boolean keepDeviceCatchUp = true) {
     long at = a.at as long
     boolean spanOpen = false
     try { spanOpen = (span?.end as long) > nowMs } catch (e) {}
@@ -1598,7 +1675,7 @@ def holidayActionStillPending(a, span, long nowMs, boolean heldNow, String heldS
     boolean releasingHold = replayHeldId && replayHeldId == spanId
     if (at >= nowMs - 20000L) return true
     if (a.kind == "modeEnter" && spanOpen) return true
-    if (a.kind == "devices" && ((nowMs - at) <= (2L * 60 * 60 * 1000) || waitingOnHold || releasingHold)) return true
+    if (a.kind == "devices" && (waitingOnHold || releasingHold || (keepDeviceCatchUp && (nowMs - at) <= (2L * 60 * 60 * 1000)))) return true
     return false
 }
 

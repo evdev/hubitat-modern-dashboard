@@ -53,6 +53,8 @@ assert(!js.includes("Copy for AI"), "dashboard must not offer the schema");
 assert(!js.includes("scheduleUploadSchemaText"), "dashboard must not carry the schema text");
 
 const schema = readFileSync(join(root, "lib/schedule-upload.schema.json"), "utf8").trim();
+const holidaySchema = readFileSync(join(root, "lib/holiday-upload.schema.json"), "utf8").trim();
+const holidayJs = readFileSync(join(root, "src/holiday.js"), "utf8");
 const parsed = JSON.parse(schema);
 assert(parsed.required?.includes("schedules"), "schema root is a schedules array");
 assert(parsed.$defs?.trigger?.oneOf?.length === 4, "schema must describe clock, sun, once, and mode triggers");
@@ -100,5 +102,27 @@ assert(groovy.includes('title: "Upload"'), "upload page has an Upload button");
 assert(groovy.includes("rows: 3"), "schedule paste box stays short");
 assert(groovy.includes("mldSchedUploadFilePicker"), "upload page can read a JSON file into the paste box");
 assert(groovy.includes("mldSchedScrollTop"), "upload page scrolls to the top when opened");
+
+const holidayParsed = JSON.parse(holidaySchema);
+assert(holidayParsed.properties?.settings && holidayParsed.properties?.occasions, "holiday schema describes settings and occasions");
+assert(groovy.includes(holidaySchema), "hub upload page must show the same holiday schema file");
+assert(
+  /def holidayUploadSchema\(\) \{\s*return '''/.test(groovy),
+  "holiday schema must be a triple-quoted Groovy string so $ref is not parsed as code",
+);
+assert(/if \(holidayModuleInstalled\(\)\) \{\s*section\("Schema for Shabbat & holidays"/.test(groovy), "holiday schema section is shown only when the module is installed");
+assert(groovy.includes('path("/holidays/schema")'), "holiday schema download must be mapped");
+assert(/def holidaysSchemaGet\(\) \{\s*if \(!holidayModuleInstalled\(\)\) return renderJsonNoStore\('\{"ok":false,"error":"not found"\}', 404\)/.test(groovy), "a missing module does not return the holiday schema");
+assert(groovy.includes("mdash-holiday-schema.json"), "holiday schema downloads under its own name");
+assert(groovy.includes('getElementById("mldHolidaySchema")'), "holiday copy button reads the holiday schema");
+assert(groovy.includes("child.holidaysImport"), "upload commits through the holiday child");
+assert(!groovy.includes("holidayMarkPassedDone"), "the parent leaves holiday catch-up to the child app");
+assert(!js.includes(holidaySchema.slice(0, 80)), "dashboard must not embed the holiday schema file");
+assert(!holidayJs.includes(holidaySchema.slice(0, 80)), "holiday dashboard must not embed the holiday schema file");
+assert(groovy.includes("Imported ${applied.imported} holiday item(s)."), "a holiday upload does not report itself as schedules");
+assert(groovy.includes("Saved, but not scheduled:"), "a saved holiday file says when it was not scheduled");
+assert(groovy.includes("that light cannot dim"), "a level on a switch is rejected");
+assert(groovy.includes("Math.max(2000, Math.min(6500, ct.toInteger()))"), "a scheduled color temperature is sent in the schema range");
+assert(groovy.includes("Use one file for schedules or one file for Shabbat and holidays"), "a mixed file is rejected when the module is installed");
 
 console.log("mcp source ok");
