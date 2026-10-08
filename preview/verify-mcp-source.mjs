@@ -86,11 +86,13 @@ assert(groovy.includes("Download schedule schema"), "upload page offers a schema
 assert(groovy.includes("scheduleSchemaUrl(false)"), "schema download must include the cloud link");
 assert(groovy.includes("mldSchemaToolbar()"), "schema section uses the download and copy toolbar");
 assert(groovy.includes('id=\'mldSchedSchema\''), "schema text is the copy source");
-assert(groovy.includes(">Download<"), "schema has a download button");
+assert(groovy.includes('mldSchedActionLink("Download"'), "schema has a download button");
 assert(groovy.includes(">Copy<"), "schema has a copy button");
 assert(groovy.includes("navigator.clipboard"), "copy button writes the schema to the clipboard");
-assert(groovy.includes('download=\'mdash-schedule-schema.json\''), "schema download keeps the schema filename");
-assert(groovy.includes("max-height:48px"), "schema preview stays short");
+assert(groovy.includes('"mdash-schedule-schema.json"'), "schema download keeps the schema filename");
+assert(groovy.includes("max-height:1.35em"), "schema preview stays one line");
+assert(groovy.includes("background:#ffffff !important"), "download button stays readable on Hubitat link blue");
+assert(!groovy.includes("background:#3b6bff"), "download button must not use a blue fill");
 assert(groovy.includes('title: "Upload"'), "upload page has an Upload button");
 assert(groovy.includes("rows: 3"), "schedule paste box stays short");
 assert(groovy.includes("mldSchedUploadFilePicker"), "upload page can read a JSON file into the paste box");

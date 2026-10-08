@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.61
+
+- **Scheduler:** Download and Copy on **Upload schedules…** stay readable, and
+  the schema preview is one line. Update Modern Dashboard.
+
 ## 0.4.60
 
 - **Scheduler:** **Upload schedules…** shows the schema and device list open.

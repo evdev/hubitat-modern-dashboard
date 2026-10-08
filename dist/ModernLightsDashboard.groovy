@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.60
+// Modern Dashboard v0.4.61
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.60"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.61"
 
 definition(
     name: "Modern Dashboard",
@@ -70,7 +70,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.60 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.61 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -458,15 +458,14 @@ def schedUploadPage() {
         section("Devices for your assistant", hideable: true, hidden: false) {
             // Hubitat keeps the previous page's scroll position, so this page opened at the bottom.
             paragraph mldSchedScrollTop()
-            paragraph "These are the devices selected in this app, and only the controls a schedule can set. Hub mode names are included. Sensors, music, cameras, and scenes are not."
-            paragraph "<small>Each link includes your dashboard token. Treat it like the dashboard link.</small>"
-            paragraph mldLinkCard("Download device list", "Opens from anywhere", scheduleDevicesUrl(false), "warm")
-            paragraph mldLinkCard("Download on your network", "Same file, from the hub", scheduleDevicesUrl(true), "info")
+            paragraph "<small>Selected devices and the controls a schedule can set. Each link includes your dashboard token.</small>"
+            paragraph mldSchedActionLink("Download device list", scheduleDevicesUrl(false), "mdash-devices.json") +
+                mldSchedActionLink("On your network", scheduleDevicesUrl(true), "mdash-devices.json")
         }
         section("Schema for your assistant", hideable: true, hidden: false) {
-            paragraph "Give this schema to your assistant with the device list above. Use only the device names from that list. Download or Copy for the full file."
+            paragraph "<small>Give this to your assistant with the device list. Download or Copy for the full file.</small>"
             paragraph mldSchemaToolbar() +
-                "<pre id='mldSchedSchema' style='white-space:pre-wrap;max-height:48px;overflow:auto;margin:0'>" +
+                "<pre id='mldSchedSchema' style='white-space:nowrap;max-height:1.35em;overflow:auto;margin:0;font-size:11px;line-height:1.35'>" +
                 htmlEsc(schedUploadSchema().trim()) + "</pre>"
         }
         section("Schedule JSON") {
@@ -2232,7 +2231,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.60.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.61.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -2324,7 +2323,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.60.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.61.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -3007,26 +3006,33 @@ def mldLinkCard(label, subtitle, url, type) {
         "</div>"
 }
 
+// Light button with dark text. Hubitat forces link blue, which vanished on a blue fill.
+def mldSchedActionLink(String label, String url, String downloadName) {
+    def extra = downloadName ? " download='${htmlEsc(downloadName)}'" : ""
+    def titleAttr = (label == "Download") ? " title='Download schedule schema'" : ""
+    return "<a href='${htmlEsc(url)}' target='_blank'${extra}${titleAttr} " +
+        "style='display:inline-block;margin:0 6px 6px 0;padding:6px 12px;border-radius:8px;" +
+        "background:#ffffff !important;color:#111827 !important;-webkit-text-fill-color:#111827;" +
+        "text-decoration:none !important;font-weight:700;font-size:13px;line-height:1.2;" +
+        "border:1px solid #111827;cursor:pointer'>${htmlEsc(label)}</a>"
+}
+
 // Download and Copy sit on the schema. Copy reads the pre, so the JSON is not repeated in the button.
 def mldSchemaToolbar() {
-    def btn = "display:inline-block;margin:0 8px 8px 0;padding:8px 14px;border-radius:8px;" +
-        "font-weight:700;font-size:14px;line-height:1.2;cursor:pointer;vertical-align:middle;" +
-        "font-family:inherit;text-decoration:none;border:0"
     def copyJs = 'var b=this,el=document.getElementById("mldSchedSchema");if(!el)return false;' +
         'var v=el.textContent||el.innerText||"";' +
         'var ok=function(){b.textContent="Copied";};' +
         'var legacy=function(){try{var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");ok();}catch(e){b.textContent="Copy failed";}};' +
         'if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(v).then(ok).catch(legacy);}else{legacy();}' +
         'return false;'
-    def cloud = htmlEsc(scheduleSchemaUrl(false))
-    def local = htmlEsc(scheduleSchemaUrl(true))
-    return "<div style='margin:8px 0 4px'>" +
-        "<a href='${cloud}' target='_blank' download='mdash-schedule-schema.json' " +
-        "style='${btn};background:#3b6bff;color:#fff' title='Download schedule schema'>Download</a>" +
-        "<button type='button' style='${btn};background:#e8edf5;color:#1e293b' onclick='${copyJs}'>Copy</button>" +
-        "</div>" +
-        "<div style='font-size:12px;margin:0 0 8px'><a href='${local}' target='_blank' " +
-        "download='mdash-schedule-schema.json'>Download schema on your network</a></div>"
+    def copyBtn = "display:inline-block;margin:0 6px 6px 0;padding:6px 12px;border-radius:8px;" +
+        "background:#ffffff;color:#111827;font-weight:700;font-size:13px;line-height:1.2;" +
+        "border:1px solid #111827;cursor:pointer;font-family:inherit"
+    return "<div style='margin:0 0 4px'>" +
+        mldSchedActionLink("Download", scheduleSchemaUrl(false), "mdash-schedule-schema.json") +
+        "<button type='button' style='${copyBtn}' onclick='${copyJs}'>Copy</button>" +
+        mldSchedActionLink("On your network", scheduleSchemaUrl(true), "mdash-schedule-schema.json") +
+        "</div>"
 }
 
 // Hubitat reopens this page at the previous scroll position. Reset scrollable parents.
