@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.55
+
+- **Scheduler:** the schema on **Upload schedules…** is shown again. It had been
+  blank. Update Modern Dashboard.
+
 ## 0.4.54
 
 - **Scheduler:** schedules can lock or unlock, open or close blinds, and turn

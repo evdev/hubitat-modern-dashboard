@@ -782,7 +782,7 @@ def schedImportRunFromUi() {
 }
 
 def schedUploadSchema() {
-    return ''
+    return '''
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/evdev/hubitat-modern-dashboard/blob/beta/lib/schedule-upload.schema.json",

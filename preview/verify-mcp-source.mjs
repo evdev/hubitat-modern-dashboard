@@ -56,6 +56,10 @@ assert(parsed.required?.includes("schedules"), "schema root is a schedules array
 assert(parsed.$defs?.trigger?.oneOf?.length === 4, "schema must describe clock, sun, once, and mode triggers");
 assert(parsed.$defs?.action?.oneOf?.length === 7, "schema must describe lights, outlets, locks, blinds, fans, thermostats, and hub mode");
 assert(groovy.includes(schema), "hub upload page must show the same schema file");
+assert(
+  /def schedUploadSchema\(\) \{\s*return '''/.test(groovy),
+  "schema must be a triple-quoted Groovy string so the JSON is not parsed as code",
+);
 assert(!js.includes(schema.slice(0, 80)), "dashboard must not embed the schema file");
 
 const catalog = groovy.match(/def scheduleDeviceCatalog\(\)[\s\S]*?\ndef schedulesDevicesGet/);
