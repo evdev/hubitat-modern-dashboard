@@ -4,9 +4,11 @@ import {
   addDays,
   buildDeviceTimeline,
   devicesInActions,
+  earlyShabbatDecision,
   emptyTemplate,
   formatHubTime,
   isListedNear,
+  migrateEarlyShabbatSettings,
   occasionLabel,
   templateBadge,
   resolveTemplate,
@@ -52,7 +54,10 @@ const skipPending = new Map();
 let laterPack = null;
 let laterLoading = false;
 let laterError = "";
+const spanLoading = new Set();
+const spanErrors = new Map();
 let settingsAdvancedOpen = false;
+let settingsEarlyOpen = false;
 let setupOffered = false;
 let model = null;
 let view = "list";
@@ -102,14 +107,29 @@ function laterReady() {
   return !hubDefersLater() || (laterPack && laterPack.revision === model?.revision);
 }
 
+function laterLoadError(data, err) {
+  if (err?.code === "timeout") return "Couldn’t load later holidays. The hub took too long.";
+  if (err?.code === "bad_json") return "Couldn’t load later holidays. The hub’s reply was too large.";
+  const detail = data?.error != null ? String(data.error).trim() : "";
+  if (detail) return "Couldn’t load later holidays. " + detail;
+  return "Couldn’t load later holidays.";
+}
+
+function spanLoadError(data, err) {
+  if (err?.code === "timeout") return "Couldn’t load this holiday. The hub took too long.";
+  if (err?.code === "bad_json") return "Couldn’t load this holiday. The hub’s reply was too large.";
+  const detail = data?.error != null ? String(data.error).trim() : "";
+  return detail || "Couldn’t load this holiday.";
+}
+
 function startLaterLoad() {
   if (laterLoading || !hubDefersLater()) return;
   laterLoading = true;
   const revision = model?.revision;
-  M().getJson("holidays/later").then((data) => {
+  M().getJson("holidays/later", 0, 30000).then((data) => {
     if (model?.revision !== revision) return;
     if (!data?.ok || !Array.isArray(data.rows)) {
-      laterError = "Couldn’t load later holidays.";
+      laterError = laterLoadError(data);
       return;
     }
     laterPack = { revision, rows: data.rows, spans: data.spans || [] };
@@ -119,11 +139,51 @@ function startLaterLoad() {
     }
     reapplyPendingSkips();
     laterError = "";
-  }).catch(() => {
-    if (model?.revision === revision) laterError = "Couldn’t load later holidays.";
+  }).catch((err) => {
+    if (model?.revision === revision) laterError = laterLoadError(null, err);
   }).finally(() => {
     laterLoading = false;
     if (model?.revision === revision && (laterOpen || view === "detail")) render();
+  });
+}
+
+function rememberSpan(span, revision) {
+  if (!laterPack || laterPack.revision !== revision) {
+    laterPack = {
+      revision,
+      rows: [...(laterPack?.rows || [])],
+      spans: [...(laterPack?.spans || [])],
+    };
+  }
+  laterPack.spans = (laterPack.spans || []).filter((s) => s.id !== span.id);
+  laterPack.spans.push(span);
+  for (const occasion of pauseBusy) {
+    const row = [...(model?.rows || []), ...(laterPack.rows || [])].find((r) => r.occasion === occasion);
+    if (row) applyPause(occasion, row.paused === true);
+  }
+  reapplyPendingSkips();
+}
+
+function startSpanLoad(spanId) {
+  const id = String(spanId || "");
+  if (!id || spanLoading.has(id)) return;
+  const existing = spanById(id);
+  if (existing && Array.isArray(existing.actions)) return;
+  spanLoading.add(id);
+  const revision = model?.revision;
+  M().getJson("holidays/later?span=" + encodeURIComponent(id), 0, 45000).then((data) => {
+    if (model?.revision !== revision) return;
+    if (!data?.ok || !data.span || String(data.span.id) !== id) {
+      spanErrors.set(id, spanLoadError(data));
+      return;
+    }
+    rememberSpan(data.span, revision);
+    spanErrors.delete(id);
+  }).catch((err) => {
+    if (model?.revision === revision) spanErrors.set(id, spanLoadError(null, err));
+  }).finally(() => {
+    spanLoading.delete(id);
+    if (model?.revision === revision && view === "detail" && String(detailId) === id) render();
   });
 }
 
@@ -145,17 +205,6 @@ function fmt(ms) {
 
 function hubTz() {
   return model?.tz || catalog().tz || "UTC";
-}
-
-function upcomingFriday() {
-  const tz = hubTz();
-  const now = model?.now || Date.now();
-  let date = zonedParts(now, tz).date;
-  for (let i = 0; i < 8; i++) {
-    if (zonedParts(zonedMs(date, "12:00", tz), tz).weekday === "Fri" && zonedMs(date, "23:59", tz) > now) return date;
-    date = addDays(date, 1);
-  }
-  return date;
 }
 
 function offeredKinds() {
@@ -235,26 +284,6 @@ function stateChipText(s) {
   if (s.on && s.level != null && s.level !== "") text += " " + s.level + "%";
   if (s.on && s.ct != null && s.ct !== "") text += " " + s.ct + "K";
   return text;
-}
-
-function fridaySwitch() {
-  const friday = upcomingFriday();
-  const settings = wizard?.step === "timing" ? wizard.settings : model.settings;
-  const row = ce("label", "sched-hint");
-  const check = ce("input");
-  check.type = "checkbox";
-  check.checked = settings?.fridayOverrideDate === friday;
-  check.addEventListener("change", async () => {
-    settings.fridayOverrideDate = check.checked ? friday : "";
-    if (settings === model.settings) {
-      const saved = await post("holidays/save", { revision: model.revision, settings: model.settings });
-      if (!saved?.ok) flash(saved?.error || "Could not save", true);
-      else { acceptStatus(saved); render(); }
-    }
-  });
-  row.appendChild(check);
-  row.appendChild(document.createTextNode(" This Friday: regular candle-lighting time"));
-  return row;
 }
 
 function isWithinTwoWeeks(start) {
@@ -364,6 +393,34 @@ function hubModeNames() {
   return Array.isArray(model?.modes) ? model.modes.map(String) : [];
 }
 
+function statusWarnings() {
+  const out = [];
+  const cal = String(model?.calendar?.error || "").trim();
+  if (cal) out.push(cal);
+  for (const err of model?.preflight?.errors || []) {
+    const text = String(err || "").trim();
+    if (text && !out.includes(text)) out.push(text);
+  }
+  return out;
+}
+
+function appendStatusWarnings(parent) {
+  for (const text of statusWarnings()) {
+    const w = ce("p", "holiday-warn");
+    w.textContent = text;
+    parent.appendChild(w);
+  }
+}
+
+function appendLocationWarnings(parent) {
+  for (const text of statusWarnings()) {
+    if (!text.includes("Hub Details")) continue;
+    const w = ce("p", "holiday-warn");
+    w.textContent = text;
+    parent.appendChild(w);
+  }
+}
+
 function renderList() {
   const wrap = ce("div", "holiday-slot");
   const head = ce("div", "holiday-head");
@@ -384,21 +441,15 @@ function renderList() {
   actions.appendChild(byLight);
   head.appendChild(actions);
   wrap.appendChild(head);
-  if (model?.calendar?.error) {
-    const w = ce("p", "holiday-warn");
-    w.textContent = model.calendar.error;
-    wrap.appendChild(w);
-  }
-  if (model?.preflight && !model.preflight.ok) {
-    const w = ce("p", "holiday-warn");
-    w.textContent = (model.preflight.errors || []).join(" ");
-    wrap.appendChild(w);
-  }
+  appendStatusWarnings(wrap);
   const near = (model?.rows || []).filter((row) => isWithinTwoWeeks(row.start));
   const laterCount = deferredLaterCount();
   if (!near.length && !laterCount) {
     const empty = ce("p", "sched-empty");
-    empty.textContent = "No upcoming Shabbat or holiday yet. Set up a schedule to see it here.";
+    const blocked = statusWarnings().some((text) => text.includes("Hub Details"));
+    empty.textContent = blocked
+      ? "Shabbat and holiday times are not loaded yet."
+      : "No upcoming Shabbat or holiday yet. Set up a schedule to see it here.";
     wrap.appendChild(empty);
     return wrap;
   }
@@ -485,7 +536,6 @@ function renderRow(row) {
   head.appendChild(open);
   head.appendChild(pauseToggle(row));
   el.appendChild(head);
-  if (isThisFridayShabbat(row)) el.appendChild(fridaySwitch());
   if (row.warning) {
     const w = ce("div", "holiday-warn");
     w.textContent = row.warning;
@@ -506,6 +556,7 @@ function renderRow(row) {
 
 function openDetail(row) {
   detailId = row.spanId;
+  if (row?.spanId) spanErrors.delete(String(row.spanId));
   view = "detail";
   render();
 }
@@ -605,8 +656,9 @@ function rowOccasionId(row) {
 
 function deviceCountForRow(row) {
   const span = spanById(row.spanId);
-  if (!span) return 0;
-  return devicesInActions(span.actions || []).length;
+  if (span && Array.isArray(span.actions)) return devicesInActions(span.actions).length;
+  const n = Number(row?.deviceCount);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function relationshipTone(badge) {
@@ -643,25 +695,94 @@ function fillRelationship(meta, row) {
   }
 }
 
-function isThisFridayShabbat(row) {
-  const early = model?.settings?.earlyFriday;
-  if (!early?.type || early.type === "off") return false;
-  if (rowOccasionId(row) !== "shabbat") return false;
-  return zonedParts(Number(row.start), hubTz()).date === upcomingFriday();
+function plainShabbatDay(span) {
+  return (span?.days || []).find((day) => day?.occasion === "shabbat" && day.fridayDate && day.candlesAt != null) || null;
+}
+
+function earlyWeekSwitch(span) {
+  if (!isShabbatWeek(span) || model?.settings?.earlyShabbat?.enabled !== true) return null;
+  const day = plainShabbatDay(span);
+  if (!day || day.plainFriday === false) return null;
+  const decision = earlyShabbatDecision(day.fridayDate, Number(day.candlesAt), model.settings, hubTz());
+  const now = Number(model?.now) || Date.now();
+  const lead = decision.active ? 0 : Math.max(0, Number(model?.settings?.startEarlyMin) || 0) * 60000;
+  const started = Number(span.start) - lead <= now;
+  const earlyAt = decision.timeBefore ? zonedMs(day.fridayDate, decision.time, hubTz()) : 0;
+  const passed = !started && earlyAt > 0 && earlyAt <= now;
+  const blocked = started || passed || !decision.timeBefore;
+  const field = ce("div", "sched-field");
+  const label = ce("label", "sched-field-label");
+  label.style.cssText = "display:flex;align-items:center;gap:8px";
+  const check = ce("input");
+  check.type = "checkbox";
+  check.checked = decision.active;
+  check.disabled = blocked;
+  check.addEventListener("change", () => {
+    setEarlyWeek(day.fridayDate, check.checked, decision.automatic);
+  });
+  label.appendChild(check);
+  label.appendChild(document.createTextNode("Early Shabbat this week"));
+  field.appendChild(label);
+  const hint = ce("p", "sched-hint");
+  hint.textContent = earlyWeekHint(decision, started, passed ? earlyAt : 0);
+  field.appendChild(hint);
+  return field;
+}
+
+function earlyWeekHint(decision, started, passedAt) {
+  const startLabel = fmtTimeValue(decision.time);
+  const stopLabel = fmtTimeValue(decision.sunsetBefore);
+  const sunsetLabel = fmtClock(decision.sunsetAt);
+  if (started) return "This week has already started.";
+  if (passedAt) return `${fmtClock(passedAt)} already passed.`;
+  if (!decision.timeBefore) return `Candle lighting is ${fmtClock(decision.candlesAt)}, already before ${startLabel}.`;
+  if (decision.pinned === "on") return `On for this week only. Starts at ${startLabel}.`;
+  if (decision.pinned === "off") return "Off for this week only.";
+  if (decision.automatic) return `Sunset is ${sunsetLabel}, so this week starts at ${startLabel}.`;
+  if (decision.sunsetEarly) return `Sunset is ${sunsetLabel}, before ${stopLabel}, so this week uses candle lighting.`;
+  return "This week uses candle lighting.";
+}
+
+async function setEarlyWeek(friday, wantOn, automatic) {
+  const settings = model?.settings;
+  if (!settings) return;
+  const prev = settings.earlyShabbatWeeks;
+  const weeks = { ...(prev || {}) };
+  if (wantOn === automatic) delete weeks[friday];
+  else weeks[friday] = wantOn ? "on" : "off";
+  settings.earlyShabbatWeeks = weeks;
+  const saved = await post("holidays/save", { revision: model.revision, settings });
+  if (!saved?.ok) {
+    settings.earlyShabbatWeeks = prev;
+    flash(saved?.error || "Could not save", true);
+    render();
+    return;
+  }
+  acceptStatus(saved);
+  render();
 }
 
 function renderDetail() {
   const span = spanById(detailId);
   const wrap = ce("div", "holiday-slot");
   wrap.appendChild(backRow("Shabbat & holidays", () => { view = "list"; render(); }));
-  if (!span) {
-    const waiting = hubDefersLater() && deferredLaterCount() > 0 && !laterReady();
+  if (!span || !Array.isArray(span.actions)) {
+    if (span?.name) {
+      const title = ce("h3", "sched-section-title");
+      title.textContent = span.name;
+      wrap.appendChild(title);
+    }
+    const failed = spanErrors.get(String(detailId)) || "";
+    const waiting = !!span || (hubDefersLater() && deferredLaterCount() > 0);
     const p = ce("p", "sched-empty");
-    p.textContent = waiting
-      ? (laterError || "Loading later holidays…")
-      : "That holiday is no longer on the calendar.";
+    p.textContent = !waiting
+      ? "That holiday is no longer on the calendar."
+      : (failed || laterError || "Loading this holiday…");
     wrap.appendChild(p);
-    if (waiting && !laterError) startLaterLoad();
+    if (waiting && !failed && !laterError) {
+      if (!laterReady()) startLaterLoad();
+      else startSpanLoad(detailId);
+    }
     return wrap;
   }
   const title = ce("h3", "sched-section-title");
@@ -676,6 +797,8 @@ function renderDetail() {
       ? `${shabbat ? "Week skipped" : "Skipped this time"} · ${range}`
       : range;
   wrap.appendChild(when);
+  const earlyWeek = earlyWeekSwitch(span);
+  if (earlyWeek) wrap.appendChild(earlyWeek);
   const known = knownDeviceIds();
   const missing = [];
   for (const a of span.actions || []) {
@@ -1463,7 +1586,11 @@ function openWizard(occasion) {
 
 function normalizeWizardSettings(settings) {
   settings.havdalah = settings.havdalah || { type: "nightfall", minutes: 42 };
-  settings.earlyFriday = settings.earlyFriday || { type: "off", value: "" };
+  const migrated = migrateEarlyShabbatSettings(settings);
+  settings.earlyShabbat = migrated.earlyShabbat;
+  settings.earlyShabbatWeeks = migrated.earlyShabbatWeeks;
+  delete settings.earlyFriday;
+  delete settings.fridayOverrideDate;
 }
 
 function wizardFingerprint() {
@@ -1507,6 +1634,7 @@ function renderWizard() {
   cancel.addEventListener("click", closeWizard);
   head.appendChild(cancel);
   wrap.appendChild(head);
+  appendLocationWarnings(wrap);
   const setupAt = SETUP_STEPS.indexOf(wizard.step);
   if (setupAt >= 0) wrap.appendChild(progressBar(setupAt + 1, SETUP_STEPS.length, "Setup"));
   if (wizard.step === "mode") wrap.appendChild(modeStep("holidayMode", "Which mode should the house enter at candle lighting? Pick a mode you do not use for anything else.", "endmode"));
@@ -1668,45 +1796,6 @@ function appendTimingControls(parent, settings) {
     refreshSentence();
   });
   parent.appendChild(labeledField("Start early", "Minutes before candle lighting. 0 starts at candle lighting.", early));
-
-  const friLabel = ce("div", "sched-field");
-  const friName = ce("div", "sched-field-label");
-  friName.textContent = "Early Friday";
-  friLabel.appendChild(friName);
-  const friHint = ce("p", "sched-hint");
-  friHint.textContent = "Only when that night is a plain Shabbat, and only if the time is earlier than candle lighting.";
-  friLabel.appendChild(friHint);
-  const fri = ce("div", "sched-segment");
-  for (const [type, label] of [["off", "Off"], ["time", "Fixed time"], ["minutes", "Minutes early"]]) {
-    const b = ce("button", "sched-seg" + (settings.earlyFriday.type === type ? " is-active" : ""));
-    b.type = "button";
-    b.textContent = label;
-    b.addEventListener("click", () => { settings.earlyFriday.type = type; render(); });
-    fri.appendChild(b);
-  }
-  friLabel.appendChild(fri);
-  parent.appendChild(friLabel);
-  if (settings.earlyFriday.type === "time") {
-    const t = ce("input", "sched-input");
-    t.type = "time";
-    t.value = settings.earlyFriday.value || "18:00";
-    t.addEventListener("change", () => {
-      settings.earlyFriday.value = t.value;
-      refreshSentence();
-    });
-    parent.appendChild(labeledField("Fixed time", "", t));
-  } else if (settings.earlyFriday.type === "minutes") {
-    const n = ce("input", "sched-input");
-    n.type = "number";
-    n.min = "1";
-    n.value = String(settings.earlyFriday.value || 60);
-    n.addEventListener("input", () => {
-      settings.earlyFriday.value = Number(n.value);
-      refreshSentence();
-    });
-    parent.appendChild(labeledField("Minutes early", "", n));
-  }
-  if (settings.earlyFriday.type !== "off" && settings === wizard?.settings) parent.appendChild(fridaySwitch());
 }
 
 function labeledField(label, hint, control) {
@@ -1739,34 +1828,12 @@ function timingSentence(settings) {
   bits.push(hav.type === "minutes"
     ? `Havdalah is ${Number(hav.minutes ?? 42)} minutes after sunset.`
     : "Havdalah is at nightfall.");
-  bits.push(earlyFridaySentence(settings));
-  const fri = settings.earlyFriday || {};
-  const savedFri = saved.earlyFriday || {};
   const changed = Number(saved.candleMin ?? 18) !== mins
     || Number(saved.startEarlyMin ?? 0) !== early
     || (saved.havdalah?.type || "nightfall") !== (hav.type || "nightfall")
-    || Number(saved.havdalah?.minutes ?? 42) !== Number(hav.minutes ?? 42)
-    || (fri.type || "off") !== (savedFri.type || "off")
-    || String(fri.value ?? "") !== String(savedFri.value ?? "");
+    || Number(saved.havdalah?.minutes ?? 42) !== Number(hav.minutes ?? 42);
   if (changed) bits.push("Saving updates the calendar.");
   return bits.join(" ");
-}
-
-function earlyFridaySentence(settings) {
-  const fri = settings.earlyFriday || {};
-  const type = fri.type || "off";
-  if (type === "minutes") {
-    const count = Number(fri.value);
-    const n = Number.isFinite(count) ? count : 0;
-    return `On a plain Friday the house starts ${n} ${n === 1 ? "minute" : "minutes"} before candle lighting.`;
-  }
-  if (type === "time") {
-    const clock = fmtTimeValue(fri.value || "18:00");
-    return clock
-      ? `On a plain Friday the house starts at ${clock}, when that is earlier than candle lighting.`
-      : "On a plain Friday the house starts at a fixed time, when that is earlier than candle lighting.";
-  }
-  return "Early Friday is off.";
 }
 
 function fmtTimeValue(value) {
@@ -1786,6 +1853,7 @@ function openSettings() {
   normalizeWizardSettings(settingsDraft);
   settingsSavedFingerprint = JSON.stringify(settingsDraft);
   settingsAdvancedOpen = false;
+  settingsEarlyOpen = false;
   view = "settings";
   render();
 }
@@ -1809,11 +1877,13 @@ function renderSettings() {
   const title = ce("h3", "sched-section-title");
   title.textContent = "Settings";
   wrap.appendChild(title);
+  appendLocationWarnings(wrap);
   wrap.appendChild(modePicker(settings, "holidayMode", "Hub mode at candle lighting", "Pick a mode you do not use for anything else."));
   wrap.appendChild(modePicker(settings, "endMode", "Hub mode when it ends", "The house returns to this mode at havdalah."));
   wrap.appendChild(locationPicker(settings));
   wrap.appendChild(advancedSettings(settings));
   appendTimingControls(wrap, settings);
+  wrap.appendChild(earlyShabbatSettings(settings));
   const conflicts = model?.conflicts || [];
   if (conflicts.length) {
     const note = ce("p", "sched-hint");
@@ -1906,6 +1976,85 @@ function advancedSettings(settings) {
   }
   box.appendChild(grid);
   return box;
+}
+
+function earlyShabbatSettings(settings) {
+  normalizeWizardSettings(settings);
+  const box = ce("div", "sched-field");
+  const toggle = disclosureButton(settingsEarlyOpen, "Early Shabbat");
+  toggle.addEventListener("click", () => { settingsEarlyOpen = !settingsEarlyOpen; render(); });
+  box.appendChild(toggle);
+  if (!settingsEarlyOpen) return box;
+  const seg = ce("div", "sched-segment");
+  for (const [on, label] of [[false, "Off"], [true, "On"]]) {
+    const b = ce("button", "sched-seg" + (settings.earlyShabbat.enabled === on ? " is-active" : ""));
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      settings.earlyShabbat.enabled = on;
+      if (on && !settings.earlyShabbat.time) settings.earlyShabbat.time = "19:00";
+      if (on && !settings.earlyShabbat.sunsetBefore) settings.earlyShabbat.sunsetBefore = "18:30";
+      render();
+    });
+    seg.appendChild(b);
+  }
+  box.appendChild(seg);
+  if (settings.earlyShabbat.enabled !== true) return box;
+  const sentence = ce("p", "holiday-timing-sentence");
+  const refresh = () => { sentence.textContent = earlyShabbatSentence(settings); };
+  refresh();
+  box.appendChild(sentence);
+  const start = ce("input", "sched-input");
+  start.type = "time";
+  start.value = settings.earlyShabbat.time || "19:00";
+  start.addEventListener("input", () => {
+    settings.earlyShabbat.time = start.value || "19:00";
+    refresh();
+  });
+  box.appendChild(labeledField("Start at", "", start));
+  const stop = ce("input", "sched-input");
+  stop.type = "time";
+  stop.value = settings.earlyShabbat.sunsetBefore || "18:30";
+  stop.addEventListener("input", () => {
+    settings.earlyShabbat.sunsetBefore = stop.value || "18:30";
+    refresh();
+  });
+  box.appendChild(labeledField("Stop when sunset is earlier than", "", stop));
+  return box;
+}
+
+function upcomingPlainFriday() {
+  const spans = [...(model?.spans || []), ...(laterPack?.spans || [])];
+  const now = Number(model?.now) || Date.now();
+  let best = null;
+  for (const span of spans) {
+    const day = plainShabbatDay(span);
+    if (!day || day.plainFriday === false) continue;
+    const at = Number(day.candlesAt);
+    if (!Number.isFinite(at) || at <= now) continue;
+    if (!best || at < Number(best.candlesAt)) best = day;
+  }
+  return best;
+}
+
+function earlyShabbatSentence(settings) {
+  const early = settings?.earlyShabbat || {};
+  if (early.enabled !== true) return "Early Shabbat is off.";
+  const startLabel = fmtTimeValue(early.time || "19:00");
+  const stopLabel = fmtTimeValue(early.sunsetBefore || "18:30");
+  const day = upcomingPlainFriday();
+  if (!day) {
+    return `Starts at ${startLabel} while sunset is ${stopLabel} or later.`;
+  }
+  const decision = earlyShabbatDecision(day.fridayDate, Number(day.candlesAt), {
+    ...settings,
+    candleMin: model?.settings?.candleMin ?? settings?.candleMin,
+    earlyShabbatWeeks: {},
+  }, hubTz());
+  const sunsetLabel = fmtClock(decision.sunsetAt);
+  if (decision.sunsetEarly) return `This Friday sunset is ${sunsetLabel}, before ${stopLabel}, so Shabbat starts at candle lighting.`;
+  if (!decision.timeBefore) return `This Friday candle lighting is ${fmtClock(Number(day.candlesAt))}, already before ${startLabel}, so Shabbat starts at candle lighting.`;
+  return `This Friday sunset is ${sunsetLabel}, so Shabbat starts at ${startLabel}.`;
 }
 
 async function saveSettings() {

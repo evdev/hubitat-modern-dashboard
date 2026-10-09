@@ -12,9 +12,11 @@ import {
   cloneStates,
   conflictingSchedules,
   duplicateDeviceIds,
+  earlyShabbatDecision,
   expandSpan,
   expandUpcoming,
   formatHubTime,
+  migrateEarlyShabbatSettings,
   isListedNear,
   NEAR_LIST_DAYS,
   occasionForHdate,
@@ -22,6 +24,8 @@ import {
   planCatchUp,
   saveKeepsPending,
   preflight,
+  locationProblem,
+  isUnsetPostal,
   resolveTemplate,
   sameMinuteWarnings,
   templateErrors,
@@ -61,8 +65,8 @@ function cfg(extra = {}) {
       candleMin: 18,
       havdalah: { type: "nightfall", minutes: 0 },
       startEarlyMin: 0,
-      earlyFriday: { type: "off", value: "" },
-      fridayOverrideDate: "",
+      earlyShabbat: { enabled: false, time: "19:00", sunsetBefore: "18:30" },
+      earlyShabbatWeeks: {},
       ...(extra.settings || {}),
     },
     templates: {
@@ -246,6 +250,9 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
   assert(a !== c, "location changes the calendar query");
   const z = calendarQueryKey({ israel: false, candleMin: 0, havdalah: { type: "minutes", minutes: 0 } }, { lat: 1, lon: 2, tz: TZ });
   assert(z.split("|")[1] === "0" && z.split("|")[3] === "0", "zero candle and havdalah minutes stay in the query");
+  const zipA = calendarQueryKey({ israel: false, candleMin: 18, havdalah: { type: "nightfall" } }, { lat: 1, lon: 2, tz: TZ, zip: "00000" });
+  const zipB = calendarQueryKey({ israel: false, candleMin: 18, havdalah: { type: "nightfall" } }, { lat: 1, lon: 2, tz: TZ, zip: "10001" });
+  assert(zipA !== zipB, "postal code changes the calendar query");
 }
 
 {
@@ -338,24 +345,145 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
     candles("2026-06-05T19:30:00-04:00"),
     havdalah("2026-06-06T20:40:00-04:00"),
   ];
-  const config = cfg({ settings: { earlyFriday: { type: "time", value: "18:00" }, holidayMode: "Shabbat", endMode: "Home" } });
+  const on = { enabled: true, time: "18:00", sunsetBefore: "18:30" };
+  const config = cfg({ settings: { earlyShabbat: on, holidayMode: "Shabbat", endMode: "Home" } });
   const day = buildObservedDays(items, TZ, config)[0];
-  eq(zonedParts(day.start, TZ).hour, 18, "early Friday used when earlier");
-  const later = cfg({ settings: { earlyFriday: { type: "time", value: "21:00" }, holidayMode: "Shabbat", endMode: "Home" } });
+  eq(zonedParts(day.start, TZ).hour, 18, "early Shabbat used when sunset is late");
+  eq(day.candlesAt, Date.parse("2026-06-05T19:30:00-04:00"), "candle lighting stays on the day");
+  eq(day.plainFriday, true, "a plain Friday can use early Shabbat");
+  const later = cfg({ settings: { earlyShabbat: { ...on, time: "21:00" }, holidayMode: "Shabbat", endMode: "Home" } });
   const day2 = buildObservedDays(items, TZ, later)[0];
-  eq(zonedParts(day2.start, TZ).hour, 19, "early Friday ignored when it is later than candles");
-  const override = cfg({
+  eq(zonedParts(day2.start, TZ).hour, 19, "early Shabbat ignored when it is later than candles");
+  eq(zonedParts(day2.start, TZ).minute, 30, "later than candles stays at candle lighting");
+  const winter = [
+    candles("2026-12-04T16:12:00-05:00"),
+    havdalah("2026-12-05T17:20:00-05:00"),
+  ];
+  const winterRule = cfg({ settings: { earlyShabbat: { enabled: true, time: "15:00", sunsetBefore: "18:30" } } });
+  const winterDay = buildObservedDays(winter, TZ, winterRule)[0];
+  eq(zonedParts(winterDay.start, TZ).hour, 16, "early Shabbat stops when sunset is before 6:30");
+  eq(zonedParts(winterDay.start, TZ).minute, 12, "a winter Friday uses candle lighting");
+  const exact = earlyShabbatDecision("2026-06-05", Date.parse("2026-06-05T18:12:00-04:00"), {
+    candleMin: 18,
+    earlyShabbat: { enabled: true, time: "18:00", sunsetBefore: "18:30" },
+  }, TZ);
+  assert(exact.automatic, "sunset exactly at the cutoff still uses early Shabbat");
+  eq(zonedParts(exact.at, TZ).hour, 18, "exact cutoff starts at the early time");
+  const pastMidnight = earlyShabbatDecision("2026-06-19", Date.parse("2026-06-19T23:50:00-04:00"), {
+    candleMin: 18,
+    earlyShabbat: { enabled: true, time: "19:00", sunsetBefore: "18:30" },
+  }, TZ);
+  assert(!pastMidnight.sunsetEarly, "sunset after midnight is not before 6:30");
+  eq(zonedParts(pastMidnight.at, TZ).hour, 19, "a very late Friday still starts at the early time");
+  const atSunset = earlyShabbatDecision("2026-06-05", Date.parse("2026-06-05T20:00:00-04:00"), {
+    candleMin: 0,
+    earlyShabbat: { enabled: true, time: "19:00", sunsetBefore: "18:30" },
+  }, TZ);
+  eq(atSunset.sunsetAt, Date.parse("2026-06-05T20:00:00-04:00"), "zero candle minutes keeps sunset at candle lighting");
+  assert(!atSunset.sunsetEarly, "sunset at 8:00 is not before 6:30");
+  const pinnedOff = cfg({
     settings: {
-      earlyFriday: { type: "time", value: "18:00" },
-      fridayOverrideDate: "2026-06-05",
+      earlyShabbat: on,
+      earlyShabbatWeeks: { "2026-06-05": "off" },
       holidayMode: "Shabbat",
       endMode: "Home",
     },
   });
-  const day3 = buildObservedDays(items, TZ, override)[0];
-  eq(zonedParts(day3.start, TZ).minute, 30, "one-week regular time");
+  const day3 = buildObservedDays(items, TZ, pinnedOff)[0];
+  eq(zonedParts(day3.start, TZ).minute, 30, "a week can turn early Shabbat off");
+  const pinnedOn = cfg({
+    settings: {
+      earlyShabbat: { enabled: true, time: "15:00", sunsetBefore: "18:30" },
+      earlyShabbatWeeks: { "2026-12-04": "on" },
+      holidayMode: "Shabbat",
+      endMode: "Home",
+    },
+  });
+  const forced = buildObservedDays(winter, TZ, pinnedOn)[0];
+  eq(zonedParts(forced.start, TZ).hour, 15, "a week can turn early Shabbat on");
+  const tooLate = cfg({
+    settings: {
+      earlyShabbat: { enabled: true, time: "19:00", sunsetBefore: "18:30" },
+      earlyShabbatWeeks: { "2026-12-04": "on" },
+      holidayMode: "Shabbat",
+      endMode: "Home",
+    },
+  });
+  const stayed = buildObservedDays(winter, TZ, tooLate)[0];
+  eq(zonedParts(stayed.start, TZ).hour, 16, "a week pin cannot start after candle lighting");
+  const off = cfg({ settings: { earlyShabbat: { enabled: false, time: "18:00", sunsetBefore: "18:30" } } });
+  const quiet = buildObservedDays(items, TZ, off)[0];
+  eq(zonedParts(quiet.start, TZ).hour, 19, "early Shabbat is off by default");
   const yom = buildObservedDays(RH_2026, TZ, config);
-  eq(zonedParts(yom[0].start, TZ).minute, 53, "early Friday does not apply when Shabbat is Yom Tov");
+  eq(zonedParts(yom[0].start, TZ).minute, 53, "early Shabbat does not apply when Shabbat is Yom Tov");
+  const yomFriday = [
+    candles("2026-06-04T19:30:00-04:00"),
+    hol("2026-06-05", "10 Tishrei 5786"),
+    candles("2026-06-05T19:40:00-04:00"),
+    havdalah("2026-06-06T20:40:00-04:00"),
+  ];
+  const ending = buildObservedDays(yomFriday, TZ, config).find((d) => d.occasion === "shabbat");
+  eq(ending.plainFriday, false, "a Friday that is already Yom Tov is not a plain Friday");
+  eq(zonedParts(ending.start, TZ).minute, 40, "early Shabbat does not apply when Friday is Yom Tov");
+  const moved = migrateEarlyShabbatSettings({
+    earlyFriday: { type: "time", value: "18:00" },
+    fridayOverrideDate: "2026-06-05",
+    candleMin: 18,
+  });
+  assert(moved.earlyShabbat.enabled === true, "a saved fixed time turns early Shabbat on");
+  eq(moved.earlyShabbat.time, "18:00", "a saved fixed time is kept");
+  eq(moved.earlyShabbat.sunsetBefore, "18:30", "a saved fixed time uses the 6:30 cutoff");
+  eq(moved.earlyShabbatWeeks["2026-06-05"], "off", "a one-time regular Friday becomes an off week");
+  assert(moved.earlyFriday == null, "the old early Friday setting is removed");
+  const minutes = migrateEarlyShabbatSettings({ earlyFriday: { type: "minutes", value: 60 } });
+  assert(minutes.earlyShabbat.enabled === false, "minutes early cannot become a sunset rule");
+}
+
+{
+  const items = [
+    candles("2026-06-05T19:30:00-04:00"),
+    havdalah("2026-06-06T20:40:00-04:00"),
+  ];
+  const earlyClock = Date.parse("2026-06-05T18:00:00-04:00");
+  const candlesAt = Date.parse("2026-06-05T19:30:00-04:00");
+  const early = cfg({
+    settings: {
+      earlyShabbat: { enabled: true, time: "18:00", sunsetBefore: "18:30" },
+      startEarlyMin: 15,
+    },
+  });
+  const earlyEnter = expandSpan(buildSpans(buildObservedDays(items, TZ, early))[0], early, TZ)
+    .find((a) => a.kind === "modeEnter");
+  const earlyStart = expandSpan(buildSpans(buildObservedDays(items, TZ, early))[0], early, TZ)
+    .find((a) => a.question === "start");
+  eq(earlyEnter.at, earlyClock, "start early minutes do not move an Early Shabbat time");
+  eq(earlyStart.at, earlyClock, "the start actions use the Early Shabbat time");
+  const plain = cfg({ settings: { startEarlyMin: 15 } });
+  const plainEnter = expandSpan(buildSpans(buildObservedDays(items, TZ, plain))[0], plain, TZ)
+    .find((a) => a.kind === "modeEnter");
+  eq(plainEnter.at, candlesAt - 15 * 60000, "start early minutes still move a normal Shabbat");
+  const winter = [
+    candles("2026-12-04T16:12:00-05:00"),
+    havdalah("2026-12-05T17:20:00-05:00"),
+  ];
+  const winterCfg = cfg({
+    settings: {
+      earlyShabbat: { enabled: true, time: "15:00", sunsetBefore: "18:30" },
+      startEarlyMin: 15,
+    },
+  });
+  const winterEnter = expandSpan(buildSpans(buildObservedDays(winter, TZ, winterCfg))[0], winterCfg, TZ)
+    .find((a) => a.kind === "modeEnter");
+  eq(winterEnter.at, Date.parse("2026-12-04T16:12:00-05:00") - 15 * 60000, "a winter Shabbat still starts the extra minutes early");
+  const holiday = cfg({
+    settings: {
+      earlyShabbat: { enabled: true, time: "18:00", sunsetBefore: "18:30" },
+      startEarlyMin: 15,
+    },
+  });
+  const holidayEnter = expandSpan(buildSpans(buildObservedDays(RH_2026, TZ, holiday))[0], holiday, TZ)
+    .find((a) => a.kind === "modeEnter");
+  eq(holidayEnter.at, Date.parse("2026-09-11T18:53:00-04:00") - 15 * 60000, "start early minutes still move a holiday");
 }
 
 {
@@ -493,6 +621,16 @@ eq(occasionForHdate("29 Elul 5786"), null, "erev is not an occasion");
   assert(!pf.ok, "modes must differ");
   const ok = preflight({ holidayMode: "Shabbat", endMode: "Home" }, { lat: 1, lon: 2, tz: TZ }, ["Shabbat", "Home"]);
   assert(ok.ok, "preflight passes");
+  const unset = locationProblem({ lat: 0, lon: 0, tz: TZ, zip: "00000" });
+  assert(unset && unset.includes("00000") && unset.includes("Hub Details"), "00000 is not a location");
+  assert(isUnsetPostal("00000") && isUnsetPostal("0") && isUnsetPostal("00000-0000"), "all-zero postal codes are unset");
+  assert(!isUnsetPostal("00501"), "a real zip that starts with zero is kept");
+  const missing = preflight({ holidayMode: "Shabbat", endMode: "Home" }, { lat: null, lon: null, tz: "", zip: "" }, ["Shabbat", "Home"]);
+  assert(!missing.ok && missing.errors[0].includes("Hub Details"), "a blank postal code blocks the calendar");
+  const zipOnly = preflight({ holidayMode: "Shabbat", endMode: "Home" }, { lat: null, lon: null, tz: "", zip: "10001" }, ["Shabbat", "Home"]);
+  assert(zipOnly.ok, "a real US zip is enough");
+  const coords = locationProblem({ lat: 40.7, lon: -74, tz: TZ, zip: "00000" });
+  assert(coords == null, "real coordinates still load times when the postal code is unset");
 }
 
 {

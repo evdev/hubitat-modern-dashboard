@@ -29,6 +29,7 @@ import {
   preflight,
   conflictingSchedules,
   sameMinuteWarnings,
+  devicesInActions,
   templateBadge,
   zonedMs,
   zonedParts,
@@ -2558,6 +2559,14 @@ const server = createServer(async (req, res) => {
     }
     const split = partitionHolidayList(payload);
     if (sub === "later") {
+      const spanId = url.searchParams.get("span");
+      if (spanId) {
+        const span = split.laterSpans.find((s) => s.id === spanId) || null;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify(span
+          ? { ok: true, apiVersion: payload.apiVersion, tz: payload.tz, now: payload.now, revision: payload.revision, span }
+          : { ok: false, error: "That holiday is no longer on the calendar.", revision: payload.revision, apiVersion: payload.apiVersion }));
+      }
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({
         ok: true,
@@ -2565,8 +2574,21 @@ const server = createServer(async (req, res) => {
         tz: payload.tz,
         now: payload.now,
         revision: payload.revision,
-        rows: split.laterRows,
-        spans: split.laterSpans,
+        rows: split.laterRows.map((row) => {
+          const span = split.laterSpans.find((s) => s.id === row.spanId);
+          return { ...row, deviceCount: devicesInActions(span?.actions || []).length };
+        }),
+        spans: split.laterSpans.map((span) => ({
+          id: span.id,
+          name: span.name,
+          start: span.start,
+          end: span.end,
+          occasion: span.occasion,
+          days: span.days,
+          skipped: span.skipped === true,
+          paused: span.paused === true,
+          once: span.once === true,
+        })),
         laterCount: split.laterRows.length,
       }));
     }

@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.64
+// Modern Dashboard v0.4.65
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.64"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.65"
 
 definition(
     name: "Modern Dashboard",
@@ -70,7 +70,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.64 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.65 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -332,6 +332,8 @@ def mainPage() {
             section("Shabbat & holidays") {
                 paragraph "<small><b>Enabled.</b> <code>mld-holiday.js</code> is in File Manager, so Shabbat &amp; holidays is on. That file comes from the separate <b>mDash Shabbat and Holidays</b> package in Hubitat Package Manager. This page does not install it.</small>"
                 paragraph "<small>If Shabbat and Holiday Scheduler is also installed, turn off its mode switching so the hub is not switched twice.</small>"
+                def postalNote = holidayLocationNotice()
+                if (postalNote) paragraph mldCallout("danger", "Postal code needed", htmlEsc(postalNote))
             }
         }
         section("Light control", hideable: true, hidden: true) {
@@ -450,46 +452,24 @@ def schedImportPage() {
 def schedUploadPage() {
     dynamicPage(name: "schedUploadPage", title: "Upload schedules", install: false, uninstall: false) {
         if (state.schedUploadResult) {
-            section("Last upload") {
+            section("Status") {
                 paragraph mldSchedScrollTop() + schedUploadResultHtml()
             }
         }
-        section("How to import", hideable: true, hidden: false) {
+        section("How to import", hideable: true, hidden: state.schedUploadResult ? true : false) {
             if (!state.schedUploadResult) paragraph mldSchedScrollTop()
             paragraph schedUploadHowTo()
         }
-        section("Devices for your assistant", hideable: true, hidden: false) {
-            if (holidayModuleInstalled()) {
-                paragraph "<small>Selected devices and the controls a schedule or a Shabbat and holidays file can set. Each link includes your dashboard token.</small>"
-            } else {
-                paragraph "<small>Selected devices and the controls a schedule can set. Each link includes your dashboard token.</small>"
-            }
-            paragraph mldSchedActionLink("Download device list", scheduleDevicesUrl(false), "mdash-devices.json") +
-                mldSchedActionLink("Local Network Download", scheduleDevicesUrl(true), "mdash-devices.json")
-        }
-        section("Schema for your assistant", hideable: true, hidden: false) {
-            paragraph "<small>Give this to your assistant with the device list. Download or Copy for the full file.</small>"
-            paragraph mldSchemaToolbar()
-        }
-        if (holidayModuleInstalled()) {
-            section("Schema for Shabbat & holidays", hideable: true, hidden: false) {
-                paragraph "<small>Give this to your assistant with the device list. Use it only for a Shabbat and holidays file. Download or Copy for the full file.</small>"
-                paragraph holidaySchemaToolbar()
-            }
-        }
         section("Schedule JSON") {
             paragraph "<span style='color:#1f7a45'><b>Green</b></span> rows in the preview will be saved. <span style='color:#b8324a'><b>Red</b></span> rows will be skipped and not written."
-            paragraph "<details style='margin:4px 0 8px'><summary style='cursor:pointer'>Schedule example</summary><pre style='white-space:pre-wrap;max-height:48px;overflow:auto'>" + htmlEsc(schedUploadExample()) + "</pre></details>"
-            if (holidayModuleInstalled()) {
-                paragraph "<details style='margin:4px 0 8px'><summary style='cursor:pointer'>Shabbat & holidays example</summary><pre style='white-space:pre-wrap;max-height:48px;overflow:auto'>" + htmlEsc(holidayUploadExample()) + "</pre></details>"
-            }
+            paragraph "<small><b>Upload</b> loads the file and shows that preview. <b>Submit</b>, under the preview, saves the green rows.</small>"
             if (state.schedUploadHidePaste == true) {
                 paragraph mldCallout("tip", "Paste cleared", "Tap <b>Paste another file</b> to upload again.")
                 input name: "btnSchedUploadClear", type: "button", title: "Paste another file"
             } else {
                 input "schedUploadPaste", "textarea", title: "Schedule JSON", required: false, rows: 3
                 paragraph mldSchedUploadFilePicker()
-                input name: "btnSchedUploadRun", type: "button", title: "Upload"
+                input name: "btnSchedUploadLoad", type: "button", title: "Upload"
                 input name: "btnSchedUploadClear", type: "button", title: "Clear paste"
             }
         }
@@ -503,7 +483,7 @@ def schedUploadPage() {
             } else if (preview.hasPaste) {
                 section("Will import (${preview.ok.size()})") {
                     if (!preview.ok) {
-                        paragraph mldCallout("warning", "Nothing to import", "Every row was skipped, so Upload will not save anything.")
+                        paragraph mldCallout("warning", "Nothing to import", "Every row was skipped, so there is nothing to submit.")
                     } else {
                         def lines = preview.ok.collect { row ->
                             def bits = []
@@ -526,13 +506,14 @@ def schedUploadPage() {
                         }.join("")
                         paragraph mldCallout("danger", "${preview.skipped.size()} will not be saved",
                             "<ul style='margin:0;padding-left:18px;color:#b8324a'>${lines}</ul>" +
-                            "<div style='margin-top:6px'>Fix these if you want them included. Rows shown in green are still saved.</div>")
+                            "<div style='margin-top:6px'>Fix these if you want them included. Green rows are saved only when you tap Submit.</div>")
                     }
                 }
-                section("Import") {
+                section("Submit") {
                     if (preview.ok) {
-                        def skipNote = preview.skipped ? " Red rows are skipped." : ""
-                        paragraph mldCallout("info", "Next", "Tap <b>Upload</b> above to save the green rows.${skipNote}")
+                        input name: "btnSchedUploadRun", type: "button", title: "Submit"
+                        def skipNote = preview.skipped ? " Red rows are left out." : ""
+                        paragraph "<small>Submit saves the ${preview.ok.size()} green row${preview.ok.size() == 1 ? '' : 's'}.${skipNote} Nothing is saved until you tap Submit.</small>"
                     } else if (preview.kind == "holiday") {
                         paragraph mldCallout("danger", "No holiday items can be imported",
                             "Nothing will be saved. Fix the red rows, or paste a different Shabbat and holidays file.")
@@ -541,6 +522,25 @@ def schedUploadPage() {
                             "Nothing will be saved. Fix the red rows, or paste a schedules file.")
                     }
                 }
+            }
+        }
+        section("Devices for your assistant", hideable: true, hidden: false) {
+            if (holidayModuleInstalled()) {
+                paragraph "<small>Selected devices and the controls a schedule or a Shabbat and holidays file can set. Each link includes your dashboard token.</small>"
+            } else {
+                paragraph "<small>Selected devices and the controls a schedule can set. Each link includes your dashboard token.</small>"
+            }
+            paragraph mldSchedActionLink("Download device list", scheduleDevicesUrl(false), "mdash-devices.json") +
+                mldSchedActionLink("Local Network Download", scheduleDevicesUrl(true), "mdash-devices.json")
+        }
+        section("Schema for your assistant", hideable: true, hidden: false) {
+            paragraph "<small>Give this to your assistant with the device list. Download or Copy for the full file.</small>"
+            paragraph mldSchemaToolbar()
+        }
+        if (holidayModuleInstalled()) {
+            section("Schema for Shabbat & holidays", hideable: true, hidden: false) {
+                paragraph "<small>Give this to your assistant with the device list. Use it only for a Shabbat and holidays file. Download or Copy for the full file.</small>"
+                paragraph holidaySchemaToolbar()
             }
         }
         section("") {
@@ -1128,7 +1128,7 @@ def holidayUploadSchema() {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/evdev/hubitat-modern-dashboard/blob/beta/lib/holiday-upload.schema.json",
   "title": "Modern Dashboard Shabbat and holidays upload",
-  "description": "Write one JSON object for Modern Dashboard and nothing else. It must match this schema. Do not include a schedules array. Use only device names and hub mode names the user gives you. Do not invent devices, rooms, or hub modes. Occasions left out of the file stay as they are. An occasion in the file replaces that occasion's choice. A template slot you include replaces that slot. A slot you leave out stays as saved. An empty list clears that slot. Shabbat choice is own and needs a template. choice shabbat uses the Shabbat template as-is. choice skip does not change devices or the hub mode for that holiday. choice own is a new schedule and needs a template. choice copy is a schedule based on Shabbat and needs a template. choice pesachFirst is only for pesachLast and uses the Pesach first-days template. Clock times are 24-hour hub-local HH:mm. kind is light, outlet, lock, blind, fan, or thermostat. Prefer a device name over its id. If both are set and they are different devices, that occasion is skipped. If the name matches more than one device, the id chooses among those matches. The same device command twice in one slot is stored once. Two different commands for one device in one slot skip that occasion. Heat must be below cool. Fahrenheit setpoints are 50-90. Celsius setpoints are 10-32. Level is 0-100 and only for a light that can dim. ct is color temperature in Kelvin from 2000 to 6500, only for a bulb that supports it. A lock with locked false unlocks and does not ask for a PIN. Shade position is 1-100 and only applies when open is true and that shade supports position. Fan speed must be one that fan reports, such as low, medium, high, or a number like 4. Omit speed to turn the fan on. on false turns the fan off. Do not send paused or a one-time Friday date. Do not add fields that are not in this schema.",
+  "description": "Write one JSON object for Modern Dashboard and nothing else. It must match this schema. Do not include a schedules array. Use only device names and hub mode names the user gives you. Do not invent devices, rooms, or hub modes. Occasions left out of the file stay as they are. An occasion in the file replaces that occasion's choice. A template slot you include replaces that slot. A slot you leave out stays as saved. An empty list clears that slot. Shabbat choice is own and needs a template. choice shabbat uses the Shabbat template as-is. choice skip does not change devices or the hub mode for that holiday. choice own is a new schedule and needs a template. choice copy is a schedule based on Shabbat and needs a template. choice pesachFirst is only for pesachLast and uses the Pesach first-days template. Clock times are 24-hour hub-local HH:mm. kind is light, outlet, lock, blind, fan, or thermostat. Prefer a device name over its id. If both are set and they are different devices, that occasion is skipped. If the name matches more than one device, the id chooses among those matches. The same device command twice in one slot is stored once. Two different commands for one device in one slot skip that occasion. Heat must be below cool. Fahrenheit setpoints are 50-90. Celsius setpoints are 10-32. Level is 0-100 and only for a light that can dim. ct is color temperature in Kelvin from 2000 to 6500, only for a bulb that supports it. A lock with locked false unlocks and does not ask for a PIN. Shade position is 1-100 and only applies when open is true and that shade supports position. Fan speed must be one that fan reports, such as low, medium, high, or a number like 4. Omit speed to turn the fan on. on false turns the fan off. Do not send paused or a one-week Early Shabbat choice. Do not add fields that are not in this schema.",
   "type": "object",
   "additionalProperties": false,
   "anyOf": [
@@ -1159,7 +1159,7 @@ def holidayUploadSchema() {
         "candleMin": { "type": "integer", "minimum": 0, "maximum": 120, "description": "Minutes before sunset for candle lighting. 0 means at sunset. 18 is usual." },
         "havdalah": { "$ref": "#/$defs/havdalah" },
         "startEarlyMin": { "type": "integer", "minimum": 0, "maximum": 180, "description": "Minutes before candle lighting to enter the holiday mode and run the start actions. 0 starts at candle lighting." },
-        "earlyFriday": { "$ref": "#/$defs/earlyFriday" }
+        "earlyShabbat": { "$ref": "#/$defs/earlyShabbat" }
       }
     },
     "havdalah": {
@@ -1183,37 +1183,16 @@ def holidayUploadSchema() {
         }
       ]
     },
-    "earlyFriday": {
-      "description": "Moves candle lighting earlier on a plain Friday only, and only when that time is before candle lighting.",
-      "oneOf": [
-        {
-          "title": "Off",
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["type"],
-          "properties": { "type": { "const": "off" } }
-        },
-        {
-          "title": "Fixed time",
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["type", "value"],
-          "properties": {
-            "type": { "const": "time" },
-            "value": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time." }
-          }
-        },
-        {
-          "title": "Minutes early",
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["type", "value"],
-          "properties": {
-            "type": { "const": "minutes" },
-            "value": { "type": "integer", "minimum": 0, "maximum": 300, "description": "Minutes before that Friday's candle lighting." }
-          }
-        }
-      ]
+    "earlyShabbat": {
+      "description": "On a plain Friday, start Shabbat at time when sunset is at or after sunsetBefore. When sunset is earlier, candle lighting is used. Off unless enabled is true.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean", "description": "false leaves every Friday at candle lighting." },
+        "time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time. Shabbat starts then when that time is before candle lighting. 19:00 if omitted." },
+        "sunsetBefore": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "When sunset is earlier than this hub-local time, Early Shabbat does not apply. 18:30 if omitted." }
+      }
     },
     "occasion": {
       "type": "object",
@@ -1427,7 +1406,7 @@ def holidayUploadSchema() {
         "doNotStartModes": ["Away"],
         "candleMin": 18,
         "havdalah": { "type": "minutes", "minutes": 42 },
-        "earlyFriday": { "type": "off" }
+        "earlyShabbat": { "enabled": false, "time": "19:00", "sunsetBefore": "18:30" }
       },
       "occasions": [
         {
@@ -1452,36 +1431,6 @@ def holidayUploadSchema() {
   ]
 }
 '''
-}
-
-def holidayUploadExample() {
-    return '''{
-  "occasions": [
-    {
-      "id": "shabbat",
-      "choice": "own",
-      "template": {
-        "start": { "states": [{ "kind": "light", "name": "Dining", "on": true, "level": 40 }] },
-        "end": { "states": [{ "kind": "light", "name": "Dining", "on": false }] }
-      }
-    }
-  ]
-}'''
-}
-
-def schedUploadExample() {
-    return """{
-  "schedules": [
-    {
-      "name": "Porch at sunset",
-      "trigger": { "kind": "daily", "when": "sunset", "offsetMin": 0 },
-      "action": {
-        "target": "lights",
-        "states": [{ "name": "Porch", "on": true, "level": 40 }]
-      }
-    }
-  ]
-}"""
 }
 
 def schedUploadPreviewFromSettings() {
@@ -1562,7 +1511,7 @@ def schedUploadResultHtml() {
     def title = state.schedUploadResult?.toString() ?: ""
     if (!title) return ""
     def tone = state.schedUploadTone?.toString()
-    if (!tone) tone = title.startsWith("Upload failed") ? "danger" : "success"
+    if (!tone) tone = (title.startsWith("Upload failed") || title.startsWith("Submit failed")) ? "danger" : "success"
     def detail = htmlEsc(state.schedUploadDetail?.toString() ?: "").replace("\n", "<br>")
     if (state.schedUploadSaved) {
         detail += "<div style='margin-top:8px'><b style='color:#1f7a45'>Saved</b>${state.schedUploadSaved}</div>"
@@ -1582,11 +1531,11 @@ def schedUploadHowTo() {
     } else {
         steps << "Download or copy the <b>schema</b>. Give the schema and the device list to your assistant. Ask for one JSON file."
     }
-    steps << "Paste that JSON into the box below, or tap <b>Choose file</b>. <span style='color:#1f7a45'><b>Green</b></span> preview rows will be saved. <span style='color:#b8324a'><b>Red</b></span> rows will be skipped."
+    steps << "Paste that JSON into the box below, or tap <b>Choose file</b>. Then tap <b>Upload</b>. Choosing a file loads it for you. <span style='color:#1f7a45'><b>Green</b></span> preview rows can be saved. <span style='color:#b8324a'><b>Red</b></span> rows will be skipped. Nothing is saved yet."
     if (holiday) {
-        steps << "Tap <b>Upload</b>. Use one file for schedules, or one file for Shabbat and holidays. A schedule name that already exists is replaced. A holiday occasion in the file replaces that occasion's choice. Template slots you include replace those slots. Slots you leave out stay as they are."
+        steps << "Tap <b>Submit</b> under the preview. Use one file for schedules, or one file for Shabbat and holidays. A schedule name that already exists is replaced. A holiday occasion in the file replaces that occasion's choice. Template slots you include replace those slots. Slots you leave out stay as they are."
     } else {
-        steps << "Tap <b>Upload</b>. A schedule name that already exists is replaced. Schedules that are not in the file stay as they are."
+        steps << "Tap <b>Submit</b> under the preview. A schedule name that already exists is replaced. Schedules that are not in the file stay as they are."
     }
     def items = []
     for (int i = 0; i < steps.size(); i++) {
@@ -1599,9 +1548,9 @@ def schedUploadFailDetail(String error, String kind) {
     def why = error?.toString()?.trim() ?: "Nothing was imported."
     def lines = [why, "Nothing was saved. The paste is still in the box."]
     if (kind == "holiday") {
-        lines << "Shabbat & holidays was not changed. Fix the file, then tap Upload again."
+        lines << "Shabbat & holidays was not changed. Fix the file, tap Upload to preview it again, then tap Submit."
     } else {
-        lines << "Your existing schedules were not changed. Use a file shaped like { \"schedules\": [ ... ] }, or one schedule with a trigger and an action. Then tap Upload again."
+        lines << "Your existing schedules were not changed. Use a file shaped like { \"schedules\": [ ... ] }, or one schedule with a trigger and an action. Tap Upload to preview it, then tap Submit."
     }
     return lines.join("\n")
 }
@@ -1623,18 +1572,38 @@ def schedUploadFormatSavedHtml(rows) {
     return "<ul style='margin:6px 0 0;padding-left:18px;color:#1f7a45'>${lines.join('')}</ul>"
 }
 
-def schedUploadRunFromUi() {
+def schedUploadLoadFromUi() {
+    state.schedUploadHidePaste = false
     def text = schedUploadPaste?.toString()?.trim()
     if (!text) {
-        schedUploadRemember("danger", "Upload failed",
-            "Nothing was saved.\nThe paste box is empty. Paste JSON, or tap Choose file and pick a .json file. Check the preview, then tap Upload.",
+        schedUploadRemember("danger", "Nothing was loaded",
+            "The paste box is empty.\nPaste JSON, or tap Choose file and pick a .json file. Then tap Upload. Nothing is saved until you tap Submit.",
             null, null)
         return
     }
     def parsed = schedUploadParseText(text)
     if (parsed.error) {
         def kind = parsed.kind == "holiday" ? "holiday" : "schedules"
-        schedUploadRemember("danger", "Upload failed", schedUploadFailDetail(parsed.error, kind), null, null)
+        schedUploadRemember("danger", "This file cannot be imported yet", schedUploadFailDetail(parsed.error, kind), null, null)
+        return
+    }
+    schedUploadRemember("info", "File loaded",
+        "Nothing is saved yet.\nGreen rows will be saved when you tap Submit. Red rows will be skipped.",
+        null, null)
+}
+
+def schedUploadRunFromUi() {
+    def text = schedUploadPaste?.toString()?.trim()
+    if (!text) {
+        schedUploadRemember("danger", "Submit failed",
+            "Nothing was saved.\nThe paste box is empty. Paste JSON, or tap Choose file and pick a .json file. Tap Upload to preview it, then tap Submit.",
+            null, null)
+        return
+    }
+    def parsed = schedUploadParseText(text)
+    if (parsed.error) {
+        def kind = parsed.kind == "holiday" ? "holiday" : "schedules"
+        schedUploadRemember("danger", "Submit failed", schedUploadFailDetail(parsed.error, kind), null, null)
         return
     }
     if (parsed.kind == "holiday") {
@@ -1643,7 +1612,7 @@ def schedUploadRunFromUi() {
     }
     def applied = schedulesCommitBundle(parsed.items)
     if (applied.ok != true) {
-        schedUploadRemember("danger", "Upload failed", schedUploadFailDetail(applied.error ?: "nothing imported", "schedules"), applied.skipped, null)
+        schedUploadRemember("danger", "Submit failed", schedUploadFailDetail(applied.error ?: "nothing imported", "schedules"), applied.skipped, null)
         return
     }
     def skippedN = applied.skipped ? applied.skipped.size() : 0
@@ -1687,7 +1656,7 @@ def schedUploadFormatSkippedHtml(skipped) {
 def holidayUploadRun(body) {
     def applied = holidayUploadCommit(body)
     if (applied?.ok != true) {
-        schedUploadRemember("danger", "Upload failed", schedUploadFailDetail(applied?.error ?: "nothing imported", "holiday"), applied?.skipped, null)
+        schedUploadRemember("danger", "Submit failed", schedUploadFailDetail(applied?.error ?: "nothing imported", "holiday"), applied?.skipped, null)
         return
     }
     def skippedN = applied.skipped ? applied.skipped.size() : 0
@@ -1742,7 +1711,7 @@ def holidayUploadCommit(body) {
     if (prepared.settings instanceof Map) payload.settings = prepared.settings
     def result = null
     try { result = child.holidaysImport(payload) } catch (e) {
-        return [ok: false, error: holidayUploadChildError(e, "Upload failed"), imported: 0, skipped: prepared.skipped ?: []]
+        return [ok: false, error: holidayUploadChildError(e, "Submit failed"), imported: 0, skipped: prepared.skipped ?: []]
     }
     if (result?.ok != true) return [ok: false, error: result?.error ?: "nothing imported", imported: 0, skipped: prepared.skipped ?: []]
     def scheduled = null
@@ -1824,8 +1793,8 @@ def holidayUploadKnownMode(String name, List modes) {
 def holidayUploadSettings(body, current) {
     if (!body.containsKey("settings")) return [settings: null]
     def incoming = body.settings
-    def allowed = ["holidayMode", "endMode", "israel", "doNotStartModes", "candleMin", "havdalah", "startEarlyMin", "earlyFriday"] as Set
-    def ignored = ["paused", "fridayOverrideDate"] as Set
+    def allowed = ["holidayMode", "endMode", "israel", "doNotStartModes", "candleMin", "havdalah", "startEarlyMin", "earlyShabbat"] as Set
+    def ignored = ["paused", "fridayOverrideDate", "earlyShabbatWeeks"] as Set
     def next = [:]
     def notes = []
     for (k in incoming.keySet()) {
@@ -1904,30 +1873,24 @@ def holidayUploadSettings(body, current) {
             notes << "havdalah ${n} minutes after sunset"
         } else return [error: "havdalah type must be nightfall or minutes"]
     }
-    if (incoming.containsKey("earlyFriday")) {
-        def fri = incoming.earlyFriday
-        if (!(fri instanceof Map)) return [error: "earlyFriday must be an object"]
-        def type = fri.type?.toString()
-        if (type == "off") {
-            def extra = holidayUploadExtraKey(fri, ["type"])
-            if (extra) return [error: "unknown field ${extra}"]
-            next.earlyFriday = [type: "off", value: ""]
-            notes << "early Friday off"
-        } else if (type == "time") {
-            def extra = holidayUploadExtraKey(fri, ["type", "value"])
-            if (extra) return [error: "unknown field ${extra}"]
-            def clock = holidayUploadClock(fri.value)
-            if (!clock) return [error: "early Friday needs a time like 18:00"]
-            next.earlyFriday = [type: "time", value: clock]
-            notes << "early Friday at ${clock}"
-        } else if (type == "minutes") {
-            def extra = holidayUploadExtraKey(fri, ["type", "value"])
-            if (extra) return [error: "unknown field ${extra}"]
-            def n = holidayUploadWhole(fri.value)
-            if (n == null || n < 0 || n > 300) return [error: "early Friday minutes must be from 0 to 300"]
-            next.earlyFriday = [type: "minutes", value: n]
-            notes << "early Friday ${n} minutes early"
-        } else return [error: "early Friday type must be off, time, or minutes"]
+    if (incoming.containsKey("earlyShabbat")) {
+        def early = incoming.earlyShabbat
+        if (!(early instanceof Map)) return [error: "earlyShabbat must be an object"]
+        def extra = holidayUploadExtraKey(early, ["enabled", "time", "sunsetBefore"])
+        if (extra) return [error: "unknown field ${extra}"]
+        if (!(early.enabled instanceof Boolean)) return [error: "earlyShabbat enabled must be true or false"]
+        def time = "19:00"
+        if (early.containsKey("time")) {
+            time = holidayUploadClock(early.time)
+            if (!time) return [error: "early Shabbat needs a time like 19:00"]
+        }
+        def cutoff = "18:30"
+        if (early.containsKey("sunsetBefore")) {
+            cutoff = holidayUploadClock(early.sunsetBefore)
+            if (!cutoff) return [error: "early Shabbat sunset time needs a time like 18:30"]
+        }
+        next.earlyShabbat = [enabled: early.enabled == true, time: time, sunsetBefore: cutoff]
+        notes << (early.enabled == true ? "early Shabbat at ${time} until sunset is before ${cutoff}" : "early Shabbat off")
     }
     if (!next) return [settings: null]
     return [settings: next, summary: notes.join(", ")]
@@ -2423,6 +2386,8 @@ def appButtonHandler(btn) {
         schedImportRunFromUi()
     } else if (btn == "btnSchedImportClear") {
         schedImportClearPaste()
+    } else if (btn == "btnSchedUploadLoad") {
+        schedUploadLoadFromUi()
     } else if (btn == "btnSchedUploadRun") {
         schedUploadRunFromUi()
     } else if (btn == "btnSchedUploadClear") {
@@ -3414,7 +3379,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.64.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.65.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -3506,7 +3471,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.64.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.65.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -4248,12 +4213,13 @@ def mldSchedScrollTop() {
     return "<img alt='' width='1' height='1' style='position:absolute;width:1px;height:1px;opacity:0' src='invalid:mld' onerror='${js}'>"
 }
 
-// Reads a JSON file into the Schedule JSON box. Upload then sends that text.
+// Reads a JSON file into the Schedule JSON box, then presses Upload so the hub
+// reloads the preview. Submit is a separate button and is what saves the file.
 def mldSchedUploadFilePicker() {
-    def js = 'var f=this.files&&this.files[0];if(!f)return;var r=new FileReader();r.onload=function(){var text=String(r.result||"");var areas=document.getElementsByTagName("textarea");var area=null;for(var i=0;i<areas.length;i++){var n=(areas[i].getAttribute("name")||"")+" "+(areas[i].id||"");if(n.indexOf("schedUploadPaste")>=0){area=areas[i];break;}}if(!area&&areas.length===1)area=areas[0];if(!area)return;var proto=window.HTMLTextAreaElement&&Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,"value");if(proto&&proto.set)proto.set.call(area,text);else area.value=text;area.dispatchEvent(new Event("input",{bubbles:true}));area.dispatchEvent(new Event("change",{bubbles:true}));area.focus();};r.readAsText(f);'
+    def js = 'var input=this;var f=input.files&&input.files[0];if(!f)return;var label=document.getElementById("mldSchedFileLabel");var say=function(msg){if(label)label.textContent=msg;};var r=new FileReader();r.onload=function(){var text=String(r.result||"");var areas=document.getElementsByTagName("textarea");var area=null;var i;for(i=0;i<areas.length;i++){var el=areas[i];if(el.id==="mldSchedSchema"||el.id==="mldHolidaySchema")continue;if(el.getAttribute("aria-hidden")==="true"||el.readOnly)continue;var n=(el.getAttribute("name")||"")+" "+(el.id||"");if(n.indexOf("schedUploadPaste")>=0){area=el;break;}}if(!area){for(i=0;i<areas.length;i++){var el2=areas[i];if(el2.id==="mldSchedSchema"||el2.id==="mldHolidaySchema")continue;if(el2.getAttribute("aria-hidden")==="true"||el2.readOnly)continue;var st=window.getComputedStyle?getComputedStyle(el2):null;if(st&&(st.display==="none"||st.visibility==="hidden"))continue;area=el2;break;}}if(!area){say("Could not find the paste box. Paste the JSON, then tap Upload.");return;}var proto=window.HTMLTextAreaElement&&Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,"value");if(proto&&proto.set)proto.set.call(area,text);else area.value=text;if(window.jQuery){try{window.jQuery(area).val(text);}catch(e){}}try{area.dispatchEvent(new Event("input",{bubbles:true}));area.dispatchEvent(new Event("change",{bubbles:true}));}catch(e3){}try{area.focus();area.blur();}catch(e4){}try{input.value="";}catch(e2){}say("Loaded "+(f.name||"file")+".");setTimeout(function(){setTimeout(function(){say("Loaded "+(f.name||"file")+". Tap Upload to preview it.");},700);var nodes=document.querySelectorAll("input,button");var j;var el3;for(j=0;j<nodes.length;j++){el3=nodes[j];if(el3.id==="mldSchedFile")continue;var blob=(el3.id||"")+" "+(el3.getAttribute("name")||"")+" "+(el3.getAttribute("onclick")||"")+" "+(el3.value||"");if(blob.indexOf("btnSchedUploadLoad")>=0){el3.click();return;}}for(j=0;j<nodes.length;j++){el3=nodes[j];var typ=el3.type||"";var tag=el3.tagName||"";if(tag!=="BUTTON"&&typ!=="button"&&typ!=="submit")continue;var text2=(el3.innerText||el3.value||"").replace(/^\\s+|\\s+$/g,"");if(text2==="Upload"){el3.click();return;}}say("Loaded "+(f.name||"file")+". Tap Upload to preview it.");},0);};r.onerror=function(){say("Could not read that file. Paste the JSON, then tap Upload.");};r.readAsText(f);'
     return "<label style='display:inline-block;margin:0 0 8px;padding:8px 14px;border-radius:8px;" +
         "font-weight:700;font-size:14px;line-height:1.2;cursor:pointer;background:#e8edf5;color:#1e293b'>" +
-        "Choose file<input id='mldSchedFile' type='file' accept='.json,application/json' " +
+        "<span id='mldSchedFileLabel'>Choose file</span><input id='mldSchedFile' type='file' accept='.json,application/json' " +
         "style='display:none' onchange='${js}'></label>"
 }
 
@@ -7833,6 +7799,12 @@ def holidaysChild() {
     return null
 }
 
+def holidayLocationNotice() {
+    def child = holidaysChild()
+    if (!child) return ""
+    try { return child.holidayLocationNotice()?.toString()?.trim() ?: "" } catch (e) { return "" }
+}
+
 def holidaysAvailable() {
     if (!schedulerIsEnabled()) return false
     if (!holidayFilePresent()) return false
@@ -7866,7 +7838,11 @@ def holidaysRoute(String method) {
     def result = null
     try {
         if (method == "status") result = child.holidaysStatus()
-        else if (method == "later") result = child.holidaysLater()
+        else if (method == "later") {
+            def spanId = null
+            try { spanId = params?.span?.toString()?.trim() } catch (e) { spanId = null }
+            result = spanId ? child.holidaysLater(spanId) : child.holidaysLater()
+        }
         else if (method == "save") result = child.holidaysSave(body)
         else if (method == "preview") result = child.holidaysPreview(body)
         else if (method == "test") result = child.holidaysTest(body)

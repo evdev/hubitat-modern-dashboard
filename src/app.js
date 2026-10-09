@@ -2004,11 +2004,12 @@
     }
   }
 
-  async function getJson(url, authPass) {
+  async function getJson(url, authPass, timeoutMs) {
     const pass = authPass || 0;
+    const ms = timeoutMs || 15000;
     let r;
     try {
-      r = await fetchWithTimeout(withToken(url), { cache: "no-store", headers: { "Accept": "application/json" } });
+      r = await fetchWithTimeout(withToken(url), { cache: "no-store", headers: { "Accept": "application/json" } }, ms);
     } catch (e) {
       if (e?.name === "AbortError") {
         const err = new Error("timed out");
@@ -2020,7 +2021,7 @@
       throw err;
     }
     if (r.status === 401) {
-      if (await continueAfterDashboard401(pass)) return getJson(url, pass + 1);
+      if (await continueAfterDashboard401(pass)) return getJson(url, pass + 1, ms);
       const err = new Error("auth required");
       err.code = "auth_required";
       throw err;

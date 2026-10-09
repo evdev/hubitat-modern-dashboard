@@ -466,7 +466,8 @@ In the Hubitat app, open **Dashboard options — advanced**, then **Upload sched
 That page shows the schema and a download for it, and a download of the device
 list. The list is the devices selected in the app and only the controls a
 schedule can set, plus hub mode names. Give both to your assistant, then paste
-the JSON it returns on that same page. The schema file is
+the JSON it returns on that same page. **Upload** previews the file. **Submit**
+saves the green rows. The schema file is
 [`lib/schedule-upload.schema.json`](lib/schedule-upload.schema.json).
 
 When **mDash Shabbat and Holidays** is installed, that same page also shows the
@@ -544,8 +545,8 @@ that falls on or next to a skipped holiday still runs.
 
 **Holiday files** use the same **Upload schedules…** page. The Shabbat and
 holidays schema is shown there only when this module is installed. Paste the
-JSON or choose the file, then tap **Upload**. An occasion in the file replaces
-that occasion's choice. Template slots included in the file replace those slots.
+JSON or choose the file, tap **Upload** to preview it, then tap **Submit**.
+An occasion in the file replaces that occasion's choice. Template slots included in the file replace those slots.
 Slots left out stay as they are, and an empty list clears a slot. Occasions left
 out of the file stay as they are. Devices are matched by name. If a name and an
 id are both set and they are different devices, that occasion is skipped. The schema file is

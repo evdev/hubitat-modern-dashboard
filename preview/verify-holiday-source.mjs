@@ -77,10 +77,13 @@ assert(groovy.includes("holidayMarkPassedDone(true)"), "a save must leave held a
   assert(skipSave.includes("active.held = false"), "undoing a skipped week releases the hold");
   assert(skipSave.includes("active.ended = false"), "undoing a skipped week lets later actions run");
   assert(groovy.includes("def holidayPruneSkipped"), "a skipped week is dropped after its date");
+  assert(groovy.includes("def holidayPruneEarlyWeeks"), "a one-week Early Shabbat choice is dropped after that Shabbat");
   const detail = holidayJs.slice(holidayJs.indexOf("function renderDetail"), holidayJs.indexOf("function renderByLight"));
   assert(detail.includes("Pause every week"), "Shabbat detail can pause every week");
   assert(detail.includes('togglePause("shabbat")'), "pause every week still pauses the Shabbat occasion");
   assert(detail.includes("Skip this week"), "Shabbat detail skips this week");
+  assert(holidayJs.includes("Early Shabbat this week"), "a Shabbat week can turn early Shabbat on or off");
+  assert(!holidayJs.includes("Early Friday"), "early Friday is no longer a timing control");
   assert(detail.includes("Skip this time"), "a holiday detail still skips this occurrence");
   assert(detail.includes("Change this time only"), "a span can be changed once");
   assert(detail.includes("Use the usual schedule"), "a one-time change can be removed");
@@ -92,6 +95,18 @@ assert(groovy.includes("holidayMarkPassedDone(true)"), "a save must leave held a
   assert(trial.includes("spanOverrides"), "trying actions now uses a one-time schedule");
 }
 assert(groovy.includes("def holidaySettingText"), "zero minutes stay zero in the calendar request");
+assert(groovy.includes("def holidayLocationProblem"), "a missing postal code is checked before HebCal");
+assert(groovy.includes("which is not a location"), "an all-zero postal code is reported as unset");
+assert(groovy.includes("cannot be loaded until the hub has a location"), "a blank postal code tells the user where to fix it");
+{
+  const fetch = groovy.slice(groovy.indexOf("def holidayFetch(boolean force)"), groovy.indexOf("def holidayFetchRetry"));
+  assert(fetch.indexOf("holidayLocationProblem") >= 0 && fetch.indexOf("holidayLocationProblem") < fetch.indexOf("httpGet"), "fetch checks the postal code before calling HebCal");
+  assert(!fetch.includes("Hub location is not set"), "a missing place names the postal code");
+}
+assert(parent.includes("holidayLocationNotice"), "the app page asks the child about the postal code");
+assert(parent.includes("Postal code needed"), "the app page shows a missing postal code");
+assert(holidayJs.includes("function appendLocationWarnings"), "the dashboard shows the postal-code warning");
+assert(holidayJs.includes("Shabbat and holiday times are not loaded yet."), "an empty list says times are not loaded when the hub has no place");
 assert(!groovy.includes("candleMin ?: 18"), "zero candle minutes must not fall back to 18");
 assert(!groovy.includes("hav.minutes ?: 42"), "zero havdalah minutes must not fall back to 42");
 assert(groovy.includes("templates: templates"), "upload preview can keep template slots the file left out");
@@ -114,7 +129,8 @@ assert(parent.includes('path("/holidays/schema")'), "parent must expose the holi
   const stored = imported.indexOf("state.config = config");
   assert(checked >= 0 && stored > checked, "a rejected holiday file must not be stored");
   assert(imported.includes('clean.remove("paused")'), "a holiday file must not pause the module");
-  assert(imported.includes('clean.remove("fridayOverrideDate")'), "a holiday file must not set a one-time Friday");
+  assert(imported.includes('clean.remove("fridayOverrideDate")'), "a holiday file must not set an old one-time Friday");
+  assert(imported.includes('clean.remove("earlyShabbatWeeks")'), "a holiday file must not set a one-week Early Shabbat choice");
   assert(imported.includes("holidayMarkPassedDone(true, false)"), "a holiday file does not replay device actions already due");
   assert(imported.includes("holidayNotScheduledReason"), "a holiday file reports when it was saved but not scheduled");
   assert(imported.includes("holidayQueryChanged()"), "a candle-lighting change refetches the calendar");
@@ -124,10 +140,20 @@ assert(parent.includes('path("/holidays/schema")'), "parent must expose the holi
 }
 assert(parent.includes('path("/holidays/later")'), "parent must expose /holidays/later");
 assert(parent.includes("child.holidaysLater()"), "parent must ask the child for later holidays");
+assert(parent.includes("params?.span"), "parent reads which later holiday was opened");
+assert(parent.includes("child.holidaysLater(spanId)"), "parent asks for one later holiday when that holiday is opened");
 assert(groovy.includes('holidayBuildFrom(state.config, nowMs, "near")'), "the first holiday load skips later occasions");
 assert(groovy.includes("def holidaysLater"), "later holidays load on their own request");
+assert(groovy.includes('holidayBuildFrom(state.config, nowMs, "later", wanted)'), "one later holiday is built on its own");
+assert(groovy.includes("boolean listOnly = scope == \"later\" && !wanted"), "the later list skips timelines");
+assert(groovy.includes("row.deviceCount = holidayDeviceCount"), "later rows count devices without a timeline");
+{
+  const buildFrom = groovy.slice(groovy.indexOf("def holidayBuildFrom"), groovy.indexOf("def holidayListedNear"));
+  assert(buildFrom.indexOf("if (listOnly)") < buildFrom.indexOf("holidayExpandSpan"), "timelines are built after the later list has already returned");
+}
 assert(groovy.includes("holidayListedNear"), "the child uses the same two-week cutoff as the dashboard");
-assert(holidayJs.includes('getJson("holidays/later")'), "the dashboard loads later holidays when that section opens");
+assert(holidayJs.includes('getJson("holidays/later"'), "the dashboard loads later holidays when that section opens");
+assert(holidayJs.includes('holidays/later?span='), "opening a later holiday loads that timeline");
 assert(parent.includes("def holidayRunAction"), "parent must run holiday device actions");
 assert(parent.includes("def holidaySupportedKinds()"), "parent must tell the child which device kinds it can run");
 assert(/def holidayRunKind[\s\S]*runShadeCmd\(dev,/.test(parent), "blinds go through runShadeCmd");

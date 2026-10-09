@@ -99,6 +99,8 @@ assert(groovy.includes('"mdash-schedule-schema.json"'), "schema download keeps t
 assert(groovy.includes("background:#ffffff !important"), "download button stays readable on Hubitat link blue");
 assert(!groovy.includes("background:#3b6bff"), "download button must not use a blue fill");
 assert(groovy.includes('title: "Upload"'), "upload page has an Upload button");
+assert(groovy.includes('title: "Submit"'), "saving a loaded file is a different button than upload");
+assert(groovy.includes("btnSchedUploadLoad"), "upload loads the file without saving");
 assert(groovy.includes("rows: 3"), "schedule paste box stays short");
 assert(groovy.includes("mldSchedUploadFilePicker"), "upload page can read a JSON file into the paste box");
 assert(groovy.includes("mldSchedScrollTop"), "upload page scrolls to the top when opened");

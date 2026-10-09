@@ -494,9 +494,12 @@ function assertUploadBlobLimits() {
   }
 }
 
-/** Minify without renaming identifiers so split-chunk __MLD exports stay stable. */
+/** Self-contained IIFE. Local names can be shortened; globalThis property names stay. */
 function bundleHolidayJs() {
-  const css = readFileSync(join(root, "src", "holiday.css"), "utf8");
+  const css = esbuild.transformSync(readFileSync(join(root, "src", "holiday.css"), "utf8"), {
+    loader: "css",
+    minify: true,
+  }).code;
   const source = readFileSync(join(root, "src", "holiday.js"), "utf8")
     .replace("__HOLIDAY_CSS__", JSON.stringify(css));
   for (const name of ["flash", "holidayBridge", "getJson", "postJson"]) {
@@ -516,11 +519,15 @@ function bundleHolidayJs() {
     write: false,
     minifyWhitespace: true,
     minifySyntax: true,
-    minifyIdentifiers: false,
+    minifyIdentifiers: true,
     legalComments: "none",
     target: ["es2018"],
   });
-  return result.outputFiles[0].text;
+  const text = result.outputFiles[0].text;
+  if (!text.includes("globalThis.mldHoliday={mount:")) {
+    throw new Error("mld-holiday.js lost its mount export");
+  }
+  return text;
 }
 
 function minifyJs(label, source) {

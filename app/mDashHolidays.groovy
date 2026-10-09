@@ -161,6 +161,12 @@ def holidayModeChanged(evt) {
 
 def holidaysStatus() {
     holidayEnsureState()
+    def problem = holidayLocationProblem()
+    if (problem) holidayStoreLocationProblem(problem)
+    else {
+        def stored = state.calendar?.error?.toString() ?: ""
+        if (stored.contains("which is not a location") || stored.contains("cannot be loaded until the hub has a location")) holidayFetch(false)
+    }
     def nowMs = now()
     def built = holidayBuildFrom(state.config, nowMs, "near")
     return [
@@ -188,16 +194,37 @@ def holidaysStatus() {
     ]
 }
 
-def holidaysLater() {
+// The open list is names and dates. One holiday's timeline is built when that holiday is opened.
+// Building every later timeline in this request is slow on a C-7 and can exceed Hubitat Cloud's reply size.
+def holidaysLater(spanId = null) {
     holidayEnsureState()
     def nowMs = now()
-    def built = holidayBuildFrom(state.config, nowMs, "later")
+    def wanted = spanId?.toString()?.trim()
+    if (!wanted) wanted = null
+    def built = holidayBuildFrom(state.config, nowMs, "later", wanted)
+    if (wanted) {
+        def span = null
+        for (s in (built.spans ?: [])) {
+            if (s?.id?.toString() == wanted) { span = s; break }
+        }
+        if (!(span instanceof Map) || !(span.actions instanceof List)) {
+            return [ok: false, error: "That holiday is no longer on the calendar.", revision: state.runtime?.revision ?: 0, apiVersion: 2]
+        }
+        return [
+            ok: true,
+            apiVersion: 2,
+            tz: holidayTzId(),
+            now: nowMs,
+            revision: state.runtime?.revision ?: 0,
+            span: span
+        ]
+    }
     return [
         ok: true,
         apiVersion: 2,
         tz: holidayTzId(),
         now: nowMs,
-        revision: state.runtime.revision ?: 0,
+        revision: state.runtime?.revision ?: 0,
         rows: built.rows,
         spans: built.spans,
         laterCount: built.laterCount
@@ -366,6 +393,7 @@ def holidaysImport(body) {
         def clean = holidayPlain(body.settings)
         clean.remove("paused")
         clean.remove("fridayOverrideDate")
+        clean.remove("earlyShabbatWeeks")
         config.settings = holidayMergeSettings(config.settings, clean)
     }
     def occasions = config.occasions instanceof Map ? new LinkedHashMap(config.occasions) : [:]
@@ -416,6 +444,7 @@ def holidayEnsureState() {
     if (!(config.occasions instanceof Map)) { config.occasions = holidayDefaultOccasions(); writeConfig = true }
     if (!(config.pausedOccasions instanceof List)) { config.pausedOccasions = []; writeConfig = true }
     if (!(config.spanOverrides instanceof Map)) { config.spanOverrides = [:]; writeConfig = true }
+    if (holidayMigrateEarlyShabbat(config)) writeConfig = true
     if (writeConfig) state.config = config
     holidayPruneOverrides()
     if (!(state.calendar instanceof Map)) state.calendar = [boundaries: [], holidays: [], query: "", fetchedAt: 0, error: ""]
@@ -428,13 +457,15 @@ def holidayEnsureState() {
     if (!(rt.skippedSpanIds instanceof List)) { rt.skippedSpanIds = []; writeRuntime = true }
     if (writeRuntime) state.runtime = rt
     holidayPruneSkipped()
+    holidayPruneEarlyWeeks()
 }
 
 def holidayDefaultSettings() {
     return [
         holidayMode: "", endMode: "", israel: false, doNotStartModes: [],
         candleMin: 18, havdalah: [type: "nightfall", minutes: 42], startEarlyMin: 0,
-        earlyFriday: [type: "off", value: ""], fridayOverrideDate: "", paused: false
+        earlyShabbat: [enabled: false, time: "19:00", sunsetBefore: "18:30"],
+        earlyShabbatWeeks: [:], paused: false
     ]
 }
 
@@ -543,13 +574,67 @@ def holidayModeNames() {
     return out
 }
 
-def holidayPreflight() {
-    def errors = []
-    def tz = holidayTzId()
+// HebCal needs a real place. A blank postal code, or an all-zero placeholder such as 00000, is not one.
+// Latitude and longitude still work, including outside the US, unless both are zero.
+def holidayHubPlace() {
     def lat = null
     def lon = null
-    try { lat = location?.latitude; lon = location?.longitude } catch (e) {}
-    if (lat == null || lon == null || !tz) errors << "Set the hub latitude, longitude, and time zone."
+    def zip = ""
+    try {
+        lat = location?.latitude
+        lon = location?.longitude
+        zip = location?.zipCode?.toString()?.trim() ?: ""
+    } catch (e) {}
+    return [lat: lat, lon: lon, zip: zip, tz: holidayTzId()]
+}
+
+def holidayDecimal(value) {
+    if (value == null) return null
+    def text = value.toString().trim()
+    if (!text) return null
+    try { return new BigDecimal(text) } catch (e) { return null }
+}
+
+def holidayCoordsUsable(lat, lon, String tz) {
+    def la = holidayDecimal(lat)
+    def lo = holidayDecimal(lon)
+    if (la == null || lo == null || !tz) return false
+    if (la.compareTo(BigDecimal.ZERO) == 0 && lo.compareTo(BigDecimal.ZERO) == 0) return false
+    return true
+}
+
+def holidayLocationProblem() {
+    def place = holidayHubPlace()
+    if (holidayCoordsUsable(place.lat, place.lon, place.tz?.toString())) return null
+    def zip = place.zip?.toString() ?: ""
+    if (zip ==~ /\d{5}(?:-\d{4})?/ && !(zip ==~ /0+(?:-\d+)?/)) return null
+    if (zip ==~ /0+(?:-\d+)?/) {
+        return "The hub postal code is still ${zip}, which is not a location. Enter your postal code under Settings, Hub Details, so Shabbat and holiday times can be loaded.".toString()
+    }
+    return "Enter your postal code under Settings, Hub Details. Outside the United States, set the latitude, longitude, and time zone there instead. Shabbat and holiday times cannot be loaded until the hub has a location."
+}
+
+def holidayStoreLocationProblem(String problem) {
+    if (!problem) return
+    def stored = state.calendar?.error?.toString() ?: ""
+    boolean hasBounds = state.calendar?.boundaries instanceof List && state.calendar.boundaries.size() > 0
+    if (stored != problem || hasBounds) {
+        holidayPutCalendar([error: problem, boundaries: null, holidays: null])
+        log.warn "mDash Holidays: ${problem}"
+    }
+}
+
+def holidayLocationNotice() {
+    holidayEnsureState()
+    def problem = holidayLocationProblem()
+    if (problem) holidayStoreLocationProblem(problem)
+    return problem ?: ""
+}
+
+def holidayPreflight() {
+    def errors = []
+    def locErr = holidayLocationProblem()
+    if (locErr) errors << locErr
     def holiday = state.config.settings.holidayMode?.toString()?.trim()
     def end = state.config.settings.endMode?.toString()?.trim()
     if (!holiday || !end) errors << "Choose the holiday mode and the mode to return to."
@@ -562,15 +647,25 @@ def holidayPreflight() {
 
 def holidayStatusParagraph() {
     holidayEnsureState()
+    def problem = holidayLocationProblem()
+    if (problem) holidayStoreLocationProblem(problem)
     def pf = holidayPreflight()
-    def cal = state.calendar?.error ? "Calendar: ${state.calendar.error}" : "Calendar fetched."
+    def calErr = state.calendar?.error?.toString()?.trim()
+    def pfErrs = []
+    if (!pf.ok) {
+        for (err in (pf.errors ?: [])) {
+            def text = err?.toString()?.trim()
+            if (text && text != calErr) pfErrs << text
+        }
+    }
+    def cal = calErr ? "Calendar: ${calErr}" : "Calendar fetched."
     def next = ""
     try {
         def built = holidayBuild(now())
         if (built.rows) next = "Next: ${built.rows[0].name}."
     } catch (e) { next = "" }
     def pause = holidayPaused() ? " Paused — the hub mode was left as it is." : ""
-    def pfText = pf.ok ? "" : " ${pf.errors.join(' ')}"
+    def pfText = pfErrs ? " ${pfErrs.join(' ')}" : ""
     return "${cal} ${next}${pause}${pfText}"
 }
 
@@ -584,7 +679,7 @@ def holidayQueryKey() {
     try { lat = location?.latitude?.toString() ?: ""; lon = location?.longitude?.toString() ?: "" } catch (e) {}
     def candleText = holidaySettingText(s.candleMin, "18")
     def havMinText = holidaySettingText(hav.minutes, "")
-    return "${s.israel == true ? 'il' : 'diaspora'}|${candleText}|${hav.type ?: 'nightfall'}|${havMinText}|${lat}|${lon}|${holidayTzId()}".toString()
+    return "${s.israel == true ? 'il' : 'diaspora'}|${candleText}|${hav.type ?: 'nightfall'}|${havMinText}|${lat}|${lon}|${holidayTzId()}|${holidayHubPlace().zip}".toString()
 }
 
 // Groovy treats 0 as missing. A blank value uses the fallback. Zero stays zero.
@@ -599,31 +694,46 @@ def holidayQueryChanged() {
     return holidayQueryKey() != state.calendar?.query?.toString()
 }
 
+def holidayHebcalZipError(String text, String zip) {
+    def raw = text?.toString() ?: ""
+    if (!raw.toLowerCase().contains("zip")) return null
+    def shown = zip ? " ${zip}" : ""
+    return "HebCal does not recognize the hub postal code${shown}. Enter the correct postal code under Settings, Hub Details.".toString()
+}
+
+def holidayResponseText(e) {
+    def parts = []
+    try { if (e?.message) parts << e.message.toString() } catch (ignored) {}
+    try {
+        def data = e?.response?.data
+        if (data?.error) parts << data.error.toString()
+        else if (data != null) parts << data.toString()
+    } catch (ignored) {}
+    return parts.join(" ")
+}
+
 def holidayFetch(boolean force) {
     holidayEnsureState()
+    def problem = holidayLocationProblem()
+    if (problem) {
+        holidayStoreLocationProblem(problem)
+        return [scheduled: false]
+    }
     if (!force && state.calendar?.fetchedAt && (now() - (state.calendar.fetchedAt as long)) < 6L * 24 * 60 * 60 * 1000 && !state.calendar?.error && !holidayQueryChanged()) {
         return
     }
+    def place = holidayHubPlace()
     def tz = holidayTz()
-    def lat = null
-    def lon = null
-    def zip = null
-    try {
-        lat = location?.latitude
-        lon = location?.longitude
-        zip = location?.zipCode
-    } catch (e) {}
-    if ((lat == null || lon == null || !tz) && !zip) {
-        holidayPutCalendar([error: "Hub location is not set."])
-        return [scheduled: false]
-    }
+    def lat = place.lat
+    def lon = place.lon
+    def zip = place.zip?.toString() ?: ""
     def s = state.config.settings
     def hav = s.havdalah ?: [:]
     Calendar cal = Calendar.getInstance(tz ?: TimeZone.getDefault())
     String start = String.format("%04d-%02d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DATE))
     cal.add(Calendar.DATE, 400)
     String end = String.format("%04d-%02d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DATE))
-    String geo = (lat != null && lon != null && tz) ? "geo=pos&latitude=${lat}&longitude=${lon}&tzid=${tz.getID()}" : "geo=zip&zip=${zip}"
+    String geo = holidayCoordsUsable(lat, lon, place.tz?.toString()) ? "geo=pos&latitude=${lat}&longitude=${lon}&tzid=${tz.getID()}" : "geo=zip&zip=${zip}"
     String havMinutes = holidaySettingText(hav.minutes, "42")
     String havdalah = (hav.type?.toString() == "minutes") ? "m=${havMinutes}" : "M=on"
     String candleText = holidaySettingText(s.candleMin, "18")
@@ -633,8 +743,11 @@ def holidayFetch(boolean force) {
     try {
         httpGet([uri: url, timeout: 30]) { resp ->
             if (resp.status != 200) {
-                holidayPutCalendar([error: "HebCal returned ${resp.status}.".toString()])
-                runIn(6 * 60 * 60, holidayFetchRetry)
+                def detail = ""
+                try { detail = resp.data?.error?.toString() ?: resp.data?.toString() ?: "" } catch (ignored) {}
+                def zipErr = holidayHebcalZipError(detail, zip)
+                holidayPutCalendar([error: (zipErr ?: "HebCal returned ${resp.status}.").toString()])
+                if (!zipErr) runIn(6 * 60 * 60, holidayFetchRetry)
                 return
             }
             def data = resp.data
@@ -657,9 +770,15 @@ def holidayFetch(boolean force) {
             box.result = holidayArm() ?: [scheduled: false]
         }
     } catch (e) {
-        holidayPutCalendar([error: "Could not reach HebCal."])
-        log.warn "mDash Holidays: fetch failed — ${e}"
-        try { runIn(6 * 60 * 60, holidayFetchRetry) } catch (ignored) {}
+        def zipErr = holidayHebcalZipError(holidayResponseText(e), zip)
+        if (zipErr) {
+            holidayPutCalendar([error: zipErr])
+            log.warn "mDash Holidays: ${zipErr}"
+        } else {
+            holidayPutCalendar([error: "Could not reach HebCal."])
+            log.warn "mDash Holidays: fetch failed — ${e}"
+            try { runIn(6 * 60 * 60, holidayFetchRetry) } catch (ignored) {}
+        }
         return [scheduled: false]
     }
     return box.result ?: [scheduled: false]
@@ -739,7 +858,7 @@ def holidayBuild(long nowMs) {
     return holidayBuildFrom(state.config, nowMs)
 }
 
-def holidayBuildFrom(config, long nowMs, String scope = "all") {
+def holidayBuildFrom(config, long nowMs, String scope = "all", String onlySpanId = null) {
     def days = holidayObservedDays(config)
     def spans = holidaySpans(days)
     long nearCut = nowMs + 17L * 24 * 60 * 60 * 1000
@@ -769,24 +888,40 @@ def holidayBuildFrom(config, long nowMs, String scope = "all") {
     if (scope == "near") chosen = soon
     else if (scope == "later") chosen = later
     def skipped = new HashSet((state.runtime?.skippedSpanIds ?: []).collect { it?.toString() })
+    def calendar = state.calendar
+    def calendarError = calendar?.error ? calendar.error.toString() : ""
     def rows = []
     def outSpans = []
+    String wanted = onlySpanId?.toString()?.trim() ?: ""
+    // Opening Later asks for every later holiday. Timelines wait until one holiday is opened.
+    boolean listOnly = scope == "later" && !wanted
     for (span in chosen) {
+        if (wanted && span.id?.toString() != wanted) continue
         boolean isSkipped = skipped.contains(span.id?.toString())
         boolean isPaused = span.id?.toString() != "test" && holidaySpanPaused(span, config)
         def onceTemplate = holidayOnceTemplate(span, config)
         boolean isOnce = onceTemplate != null
-        def actions = (span.id == "test") ? holidayTestActions(span, config) : holidayExpandSpan(span, config)
         def warning = ""
-        if (state.calendar?.error && span.id != "test") warning = state.calendar.error.toString()
+        if (calendarError && span.id?.toString() != "test") warning = calendarError
         def missed = holidayMissedNote(span.id?.toString())
         if (missed) warning = warning ? "${warning} ${missed}" : missed
         boolean inProgress = (span.start as long) <= nowMs && (span.end as long) > nowMs
-        rows << [
+        def row = [
             spanId: span.id, name: span.name, start: span.start, end: span.end,
             occasion: span.occasion, badge: isSkipped ? "skipped" : holidayBadge(span, config),
             inProgress: inProgress, warning: warning, skipped: isSkipped, paused: isPaused, once: isOnce
         ]
+        if (listOnly) {
+            row.deviceCount = holidayDeviceCount(span, config)
+            rows << row
+            outSpans << [
+                id: span.id, name: span.name, start: span.start, end: span.end, occasion: span.occasion,
+                days: span.days, skipped: isSkipped, paused: isPaused, once: isOnce
+            ]
+            continue
+        }
+        def actions = (span.id == "test") ? holidayTestActions(span, config) : holidayExpandSpan(span, config)
+        rows << row
         outSpans << [
             id: span.id, name: span.name, start: span.start, end: span.end, occasion: span.occasion,
             days: span.days, actions: actions, warnings: holidaySameMinute(actions),
@@ -870,24 +1005,97 @@ def holidayObservedDays(config) {
         if (yomDates.contains(saturday)) continue
         def end = holidayNextBoundary(boundaries, b.at as long)
         if (end == null) continue
-        long start = b.at as long
-        if (!yomDates.contains(parts.date)) start = holidayEarlyFriday(parts.date, start, settings, tz)
-        days << [date: saturday, hdate: "", occasion: "shabbat", yomTov: false, start: start, end: end, fridayDate: parts.date]
+        long candlesAt = b.at as long
+        boolean plain = !yomDates.contains(parts.date)
+        long start = plain ? holidayEarlyShabbat(parts.date, candlesAt, settings, tz) : candlesAt
+        days << [date: saturday, hdate: "", occasion: "shabbat", yomTov: false, start: start, end: end, candlesAt: candlesAt, fridayDate: parts.date, plainFriday: plain]
     }
     days.sort { a, b -> (a.start as long) <=> (b.start as long) }
     return days
 }
 
-def holidayEarlyFriday(String friday, long candlesAt, settings, TimeZone tz) {
-    def early = settings?.earlyFriday ?: [:]
-    def type = early.type?.toString() ?: "off"
-    if (type == "off") return candlesAt
-    if (settings?.fridayOverrideDate?.toString() == friday) return candlesAt
-    Long at = null
-    if (type == "time" && early.value) at = holidayZonedMs(friday, early.value.toString(), tz)
-    else if (type == "minutes") at = candlesAt - ((early.value ?: 0) as long) * 60000L
-    if (at == null) return candlesAt
-    return at < candlesAt ? at : candlesAt
+def holidayClock(value) {
+    def text = value?.toString()?.trim()
+    if (!(text ==~ /^([01][0-9]|2[0-3]):[0-5][0-9]$/)) return null
+    return text
+}
+
+// A saved fixed Early Friday time becomes Early Shabbat. Minutes-early cannot, so it stays off.
+def holidayMigrateEarlyShabbat(Map config) {
+    if (!(config?.settings instanceof Map)) return false
+    def settings = new LinkedHashMap(config.settings)
+    def early = settings.earlyShabbat instanceof Map ? settings.earlyShabbat : null
+    boolean enabled = false
+    def time = "19:00"
+    def cutoff = "18:30"
+    if (early != null) {
+        enabled = early.enabled == true
+        time = holidayClock(early.time) ?: "19:00"
+        cutoff = holidayClock(early.sunsetBefore) ?: "18:30"
+    } else if (settings.earlyFriday instanceof Map && settings.earlyFriday.type?.toString() == "time") {
+        def clock = holidayClock(settings.earlyFriday.value)
+        if (clock) {
+            enabled = true
+            time = clock
+        }
+    }
+    def cleaned = [:]
+    if (settings.earlyShabbatWeeks instanceof Map) {
+        settings.earlyShabbatWeeks.each { k, v ->
+            def key = k?.toString()
+            def pin = v?.toString()
+            if (key ==~ /^\d{4}-\d{2}-\d{2}$/ && (pin == "on" || pin == "off")) cleaned[key] = pin
+        }
+    }
+    def override = settings.fridayOverrideDate?.toString() ?: ""
+    if (override ==~ /^\d{4}-\d{2}-\d{2}$/ && !cleaned.containsKey(override)) cleaned[override] = "off"
+    boolean same = early instanceof Map && early.enabled == enabled && early.time?.toString() == time && early.sunsetBefore?.toString() == cutoff
+    same = same && !settings.containsKey("earlyFriday") && !settings.containsKey("fridayOverrideDate")
+    same = same && settings.earlyShabbatWeeks instanceof Map && settings.earlyShabbatWeeks.size() == cleaned.size()
+    if (same) {
+        settings.earlyShabbatWeeks.each { k, v ->
+            if (cleaned[k?.toString()] != v?.toString()) same = false
+        }
+    }
+    if (same) return false
+    settings.earlyShabbat = [enabled: enabled, time: time, sunsetBefore: cutoff]
+    settings.earlyShabbatWeeks = cleaned
+    settings.remove("earlyFriday")
+    settings.remove("fridayOverrideDate")
+    config.settings = settings
+    return true
+}
+
+// Sunset is candle lighting plus candleMin. A week pin wins, and the start stays at or before candle lighting.
+def holidayEarlyShabbat(String friday, long candlesAt, settings, TimeZone tz) {
+    def early = settings?.earlyShabbat instanceof Map ? settings.earlyShabbat : [:]
+    boolean enabled = early.enabled == true
+    def time = holidayClock(early.time) ?: "19:00"
+    def cutoff = holidayClock(early.sunsetBefore) ?: "18:30"
+    long candleMin = 18L
+    try {
+        if (settings != null && settings.containsKey("candleMin") && settings.candleMin != null) candleMin = settings.candleMin as long
+    } catch (e) { candleMin = 18L }
+    long sunsetAt = candlesAt + candleMin * 60000L
+    // Compare instants on that Friday. Clock minutes treat a sunset after midnight as early morning.
+    Long cutoffAt = holidayZonedMs(friday, cutoff, tz)
+    boolean sunsetEarly = cutoffAt != null && sunsetAt < cutoffAt
+    Long startAt = holidayZonedMs(friday, time, tz)
+    boolean timeBefore = startAt != null && startAt < candlesAt
+    boolean automatic = enabled && !sunsetEarly && timeBefore
+    def pin = ""
+    def weeks = settings?.earlyShabbatWeeks
+    if (weeks instanceof Map) {
+        def chosen = weeks[friday]?.toString()
+        if (chosen == "on" || chosen == "off") pin = chosen
+    }
+    boolean active = false
+    if (enabled && timeBefore) {
+        if (pin == "on") active = true
+        else if (pin == "off") active = false
+        else active = automatic
+    }
+    return active && startAt != null ? startAt : candlesAt
 }
 
 def holidaySpans(days) {
@@ -956,6 +1164,29 @@ def holidayPruneSkipped() {
     state.runtime = copy
 }
 
+// A one-week Early Shabbat choice is keyed by Friday. Drop it after that Saturday.
+def holidayPruneEarlyWeeks() {
+    def config = state.config instanceof Map ? state.config : null
+    def settings = config?.settings
+    def weeks = settings?.earlyShabbatWeeks
+    if (!(weeks instanceof Map) || weeks.isEmpty()) return
+    def today = holidayParts(now(), holidayTz()).date
+    def remove = []
+    weeks.keySet().each { k ->
+        def friday = k?.toString()
+        if (!(friday ==~ /^\d{4}-\d{2}-\d{2}$/)) { remove << k; return }
+        if (holidayDateEnded(holidayAddDays(friday, 1), today)) remove << k
+    }
+    if (!remove) return
+    def nextWeeks = new LinkedHashMap(weeks)
+    remove.each { nextWeeks.remove(it) }
+    def nextSettings = new LinkedHashMap(settings)
+    nextSettings.earlyShabbatWeeks = nextWeeks
+    def copy = new LinkedHashMap(config)
+    copy.settings = nextSettings
+    state.config = copy
+}
+
 // A one-time schedule is keyed by the span's dates. Drop it after that date has passed.
 def holidayPruneOverrides() {
     def config = state.config instanceof Map ? state.config : null
@@ -987,11 +1218,47 @@ def holidayTemplateFor(span, day, config) {
     return holidayResolveTemplate(day?.occasion?.toString(), config) ?: holidayEmptyTemplate()
 }
 
+// Same devices the timeline would list, without placing times or calling the parent app.
+def holidayDeviceCount(span, config) {
+    def ids = new HashSet()
+    for (day in (span?.days ?: [])) {
+        def template = holidayTemplateFor(span, day, config)
+        if (!(template instanceof Map)) continue
+        if (day?.isFirst == true || template?.start?.repeatLaterNights == true) holidayCollectDeviceIds(template?.start?.states, ids)
+        for (bucket in ["night", "morning", "afternoon", "evening"]) {
+            def groups = template[bucket]
+            if (!(groups instanceof List)) continue
+            for (group in groups) if (group?.time) holidayCollectDeviceIds(group?.states, ids)
+        }
+        def custom = template?.custom
+        if (custom instanceof List) {
+            for (entry in custom) {
+                def which = entry?.days?.toString() ?: "every"
+                if (which == "first" && day?.isFirst != true) continue
+                if (which == "last" && day?.isLast != true) continue
+                holidayCollectDeviceIds(entry?.states, ids)
+            }
+        }
+        if (day?.isLast == true) holidayCollectDeviceIds(template?.end?.states, ids)
+    }
+    return ids.size()
+}
+
+def holidayCollectDeviceIds(states, Set ids) {
+    if (!(states instanceof List)) return
+    for (s in states) {
+        def id = s?.id?.toString()
+        if (!id) continue
+        def kind = s?.kind?.toString()
+        if (kind == "blind" || kind == "fan" || kind == "lock" || kind == "thermostat" || !kind || kind == "light" || kind == "outlet") ids.add(id)
+    }
+}
+
 def holidayExpandSpan(span, config) {
     def tz = holidayTz()
     def settings = config?.settings ?: [:]
     def actions = []
-    long early = holidayStartEarly(span.start as long, settings)
+    long early = holidayStartEarly(span.start as long, settings, holidayEarlyShabbatStart(span.days ? span.days[0] : null))
     def frozen = state.runtime?.activeSpan
     if (frozen?.id?.toString() == span.id?.toString() && frozen.startRan == true && frozen.end) {
         // A running span keeps the end it started with.
@@ -999,7 +1266,7 @@ def holidayExpandSpan(span, config) {
     actions << [id: "${span.id}|modeEnter", at: early, kind: "modeEnter", spanId: span.id, question: "modeEnter", groupIndex: 0, states: [], skipped: false, mode: settings.holidayMode?.toString() ?: ""]
     for (day in span.days) {
         def template = holidayTemplateFor(span, day, config)
-        long startAt = holidayStartEarly(day.start as long, settings)
+        long startAt = holidayStartEarly(day.start as long, settings, holidayEarlyShabbatStart(day))
         if (day.isFirst == true || template?.start?.repeatLaterNights == true) {
             def states = holidayCloneStates(template?.start?.states)
             if (states) actions << holidayDeviceAction(span, day, "start", 0, startAt, states, false, "")
@@ -1085,7 +1352,13 @@ def holidayQuestionOrder(String q) {
     return 4
 }
 
-def holidayStartEarly(long at, settings) {
+def holidayEarlyShabbatStart(day) {
+    if (day?.occasion?.toString() != "shabbat" || day?.candlesAt == null) return false
+    return (day.start as long) < (day.candlesAt as long)
+}
+
+def holidayStartEarly(long at, settings, boolean earlyShabbat = false) {
+    if (earlyShabbat) return at
     long n = 0
     try { n = (settings?.startEarlyMin ?: 0) as long } catch (e) { n = 0 }
     return at - n * 60000L
@@ -1354,6 +1627,8 @@ def holidayWhen(long ms) {
 def holidayArm() {
     holidayEnsureState()
     try { unschedule("holidayFire") } catch (e) {}
+    def problem = holidayLocationProblem()
+    if (problem) holidayStoreLocationProblem(problem)
     if (holidayPaused()) return [scheduled: false]
     if (!holidayPreflight().ok && !state.runtime?.testSpan) return [scheduled: false]
     if (!state.calendar?.boundaries && !state.runtime?.testSpan) {

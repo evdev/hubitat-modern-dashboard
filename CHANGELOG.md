@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.65
+
+- **Shabbat & holidays:** Early Shabbat starts at a chosen time when sunset is
+  late enough, and stays at candle lighting when sunset is earlier. One week
+  can be turned on or off from that week's page. Update Modern Dashboard and
+  mDash Shabbat and Holidays.
+
+- **Shabbat & holidays:** **Later, after the next two weeks** opens on a slower
+  hub. The list loads first, and a holiday's timeline loads when that holiday
+  is opened. Update Modern Dashboard and mDash Shabbat and Holidays.
+
+- **Scheduler:** **Upload** previews a file. **Submit** saves the green rows.
+  Update Modern Dashboard.
+
 ## 0.4.64
 
 - **Scheduler:** **Upload schedules…** shows which rows will be saved and which
