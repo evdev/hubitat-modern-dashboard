@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.64
+
+- **Scheduler:** **Upload schedules…** shows which rows will be saved and which
+  will be skipped, and the result says what was saved. Update Modern Dashboard.
+
+- **Shabbat & holidays:** after a holiday file is uploaded, the page says
+  whether the next action was scheduled, saved but not scheduled, or will be
+  tried again shortly. Update Modern Dashboard and mDash Shabbat and Holidays.
+
+- **Dashboard:** lock, unlock, and thermostat modes use their own colors on a
+  schedule and on a Shabbat or holiday. Lights and outlets are listed
+  separately. Update Modern Dashboard and mDash Shabbat and Holidays.
+
 ## 0.4.63
 
 - **Shabbat & holidays:** **Upload schedules…** accepts a Shabbat and holidays

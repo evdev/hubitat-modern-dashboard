@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.63
+// Modern Dashboard v0.4.64
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.63"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.64"
 
 definition(
     name: "Modern Dashboard",
@@ -70,7 +70,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.63 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.64 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -451,13 +451,14 @@ def schedUploadPage() {
     dynamicPage(name: "schedUploadPage", title: "Upload schedules", install: false, uninstall: false) {
         if (state.schedUploadResult) {
             section("Last upload") {
-                paragraph "<div id='mldSchedResult'>" + htmlEsc(state.schedUploadResult.toString()) + "</div>"
-                if (state.schedUploadSkipped) paragraph state.schedUploadSkipped.toString()
+                paragraph mldSchedScrollTop() + schedUploadResultHtml()
             }
         }
+        section("How to import", hideable: true, hidden: false) {
+            if (!state.schedUploadResult) paragraph mldSchedScrollTop()
+            paragraph schedUploadHowTo()
+        }
         section("Devices for your assistant", hideable: true, hidden: false) {
-            // Hubitat keeps the previous page's scroll position, so this page opened at the bottom.
-            paragraph mldSchedScrollTop()
             if (holidayModuleInstalled()) {
                 paragraph "<small>Selected devices and the controls a schedule or a Shabbat and holidays file can set. Each link includes your dashboard token.</small>"
             } else {
@@ -472,22 +473,18 @@ def schedUploadPage() {
         }
         if (holidayModuleInstalled()) {
             section("Schema for Shabbat & holidays", hideable: true, hidden: false) {
-                paragraph "<small>Give this to your assistant with the device list. An occasion in the file replaces that occasion. Download or Copy for the full file.</small>"
+                paragraph "<small>Give this to your assistant with the device list. Use it only for a Shabbat and holidays file. Download or Copy for the full file.</small>"
                 paragraph holidaySchemaToolbar()
             }
         }
         section("Schedule JSON") {
-            if (holidayModuleInstalled()) {
-                paragraph "Paste JSON or choose a file, then tap <b>Upload</b>. A schedule name that already exists is replaced. A Shabbat or holiday occasion in the file replaces that occasion."
-            } else {
-                paragraph "Paste JSON or choose a file, then tap <b>Upload</b>. A schedule name that already exists is replaced."
-            }
-            paragraph "<details style='margin:4px 0 8px'><summary style='cursor:pointer'>Example</summary><pre style='white-space:pre-wrap;max-height:48px;overflow:auto'>" + htmlEsc(schedUploadExample()) + "</pre></details>"
+            paragraph "<span style='color:#1f7a45'><b>Green</b></span> rows in the preview will be saved. <span style='color:#b8324a'><b>Red</b></span> rows will be skipped and not written."
+            paragraph "<details style='margin:4px 0 8px'><summary style='cursor:pointer'>Schedule example</summary><pre style='white-space:pre-wrap;max-height:48px;overflow:auto'>" + htmlEsc(schedUploadExample()) + "</pre></details>"
             if (holidayModuleInstalled()) {
                 paragraph "<details style='margin:4px 0 8px'><summary style='cursor:pointer'>Shabbat & holidays example</summary><pre style='white-space:pre-wrap;max-height:48px;overflow:auto'>" + htmlEsc(holidayUploadExample()) + "</pre></details>"
             }
             if (state.schedUploadHidePaste == true) {
-                paragraph "<small>Paste cleared. Tap <b>Paste another file</b> to upload again.</small>"
+                paragraph mldCallout("tip", "Paste cleared", "Tap <b>Paste another file</b> to upload again.")
                 input name: "btnSchedUploadClear", type: "button", title: "Paste another file"
             } else {
                 input "schedUploadPaste", "textarea", title: "Schedule JSON", required: false, rows: 3
@@ -500,17 +497,26 @@ def schedUploadPage() {
         if (state.schedUploadHidePaste != true) {
             if (preview.error && preview.hasPaste) {
                 section("Error") {
-                    paragraph "<b>${htmlEsc(preview.error)}</b>"
+                    paragraph mldCallout("danger", "This file cannot be imported yet",
+                        htmlEsc(preview.error.toString()) + "<br>Nothing has been saved. Fix the file, then tap <b>Upload</b>.")
                 }
             } else if (preview.hasPaste) {
                 section("Will import (${preview.ok.size()})") {
                     if (!preview.ok) {
-                        paragraph "<small>Nothing to import.</small>"
+                        paragraph mldCallout("warning", "Nothing to import", "Every row was skipped, so Upload will not save anything.")
                     } else {
                         def lines = preview.ok.collect { row ->
-                            "<li><b>${htmlEsc(row.name)}</b> — ${htmlEsc(row.summary)}</li>"
+                            def bits = []
+                            def summary = row?.summary?.toString()?.trim()
+                            if (summary) bits << summary
+                            if (row?.replaced == true) bits << "will replace the schedule with this name"
+                            else if (row?.replaced == false) bits << "will be added"
+                            if (row?.enabled == false) bits << "will be left off"
+                            def text = htmlEsc(bits.join(". "))
+                            "<li><b>${htmlEsc(row.name)}</b>${text ? " — ${text}" : ""}</li>"
                         }.join("")
-                        paragraph "<ul>${lines}</ul>"
+                        paragraph mldCallout("success", "${preview.ok.size()} will be saved",
+                            "<ul style='margin:0;padding-left:18px;color:#1f7a45'>${lines}</ul>")
                     }
                 }
                 if (preview.skipped) {
@@ -518,16 +524,21 @@ def schedUploadPage() {
                         def lines = preview.skipped.collect { row ->
                             "<li><b>${htmlEsc(row.name ?: "Untitled")}</b>: ${htmlEsc(row.error)}</li>"
                         }.join("")
-                        paragraph "<ul style='color:#a33'>${lines}</ul>"
+                        paragraph mldCallout("danger", "${preview.skipped.size()} will not be saved",
+                            "<ul style='margin:0;padding-left:18px;color:#b8324a'>${lines}</ul>" +
+                            "<div style='margin-top:6px'>Fix these if you want them included. Rows shown in green are still saved.</div>")
                     }
                 }
                 section("Import") {
                     if (preview.ok) {
-                        paragraph "<small>Tap <b>Upload</b> above to import these.</small>"
+                        def skipNote = preview.skipped ? " Red rows are skipped." : ""
+                        paragraph mldCallout("info", "Next", "Tap <b>Upload</b> above to save the green rows.${skipNote}")
                     } else if (preview.kind == "holiday") {
-                        paragraph "<b>No holiday items can be imported.</b>"
+                        paragraph mldCallout("danger", "No holiday items can be imported",
+                            "Nothing will be saved. Fix the red rows, or paste a different Shabbat and holidays file.")
                     } else {
-                        paragraph "<b>No schedules can be imported.</b>"
+                        paragraph mldCallout("danger", "No schedules can be imported",
+                            "Nothing will be saved. Fix the red rows, or paste a schedules file.")
                     }
                 }
             }
@@ -1517,29 +1528,113 @@ def schedUploadParseText(String text) {
 def schedUploadClearPaste() {
     if (state.schedUploadHidePaste == true) {
         state.schedUploadHidePaste = false
-        state.remove("schedUploadResult")
-        state.remove("schedUploadSkipped")
+        schedUploadClearResult()
         return
     }
     state.schedUploadHidePaste = true
     try { app.clearSetting("schedUploadPaste") } catch (e1) {
         try { app.updateSetting("schedUploadPaste", [type: "textarea", value: ""]) } catch (e2) {}
     }
+    schedUploadClearResult()
+}
+
+def schedUploadClearResult() {
     state.remove("schedUploadResult")
+    state.remove("schedUploadDetail")
+    state.remove("schedUploadTone")
     state.remove("schedUploadSkipped")
+    state.remove("schedUploadSaved")
+}
+
+def schedUploadRemember(String tone, String title, String detail, skipped, saved) {
+    state.schedUploadTone = tone
+    state.schedUploadResult = title?.toString()
+    state.schedUploadDetail = detail?.toString()
+    def skippedHtml = schedUploadFormatSkippedHtml(skipped)
+    if (skippedHtml) state.schedUploadSkipped = skippedHtml
+    else state.remove("schedUploadSkipped")
+    def savedHtml = schedUploadFormatSavedHtml(saved)
+    if (savedHtml) state.schedUploadSaved = savedHtml
+    else state.remove("schedUploadSaved")
+}
+
+def schedUploadResultHtml() {
+    def title = state.schedUploadResult?.toString() ?: ""
+    if (!title) return ""
+    def tone = state.schedUploadTone?.toString()
+    if (!tone) tone = title.startsWith("Upload failed") ? "danger" : "success"
+    def detail = htmlEsc(state.schedUploadDetail?.toString() ?: "").replace("\n", "<br>")
+    if (state.schedUploadSaved) {
+        detail += "<div style='margin-top:8px'><b style='color:#1f7a45'>Saved</b>${state.schedUploadSaved}</div>"
+    }
+    if (state.schedUploadSkipped) {
+        detail += "<div style='margin-top:8px'><b style='color:#b8324a'>Not saved</b>${state.schedUploadSkipped}</div>"
+    }
+    return mldCallout(tone, title, detail)
+}
+
+def schedUploadHowTo() {
+    def holiday = holidayModuleInstalled()
+    def steps = []
+    steps << "Download the <b>device list</b> below. It has the device names and hub mode names this app can use. Do not invent names."
+    if (holiday) {
+        steps << "Download or copy the <b>schedule schema</b>, or the <b>Shabbat &amp; holidays schema</b> if that is the file you want. Give that schema and the device list to your assistant. Ask for one JSON file."
+    } else {
+        steps << "Download or copy the <b>schema</b>. Give the schema and the device list to your assistant. Ask for one JSON file."
+    }
+    steps << "Paste that JSON into the box below, or tap <b>Choose file</b>. <span style='color:#1f7a45'><b>Green</b></span> preview rows will be saved. <span style='color:#b8324a'><b>Red</b></span> rows will be skipped."
+    if (holiday) {
+        steps << "Tap <b>Upload</b>. Use one file for schedules, or one file for Shabbat and holidays. A schedule name that already exists is replaced. A holiday occasion in the file replaces that occasion's choice. Template slots you include replace those slots. Slots you leave out stay as they are."
+    } else {
+        steps << "Tap <b>Upload</b>. A schedule name that already exists is replaced. Schedules that are not in the file stay as they are."
+    }
+    def items = []
+    for (int i = 0; i < steps.size(); i++) {
+        items << "<li style='margin:0 0 8px 0'><b style='color:#3b6bff'>Step ${i + 1}.</b> ${steps[i]}</li>"
+    }
+    return mldCallout("info", "How to import", "<ol style='margin:0;padding-left:18px'>${items.join('')}</ol>")
+}
+
+def schedUploadFailDetail(String error, String kind) {
+    def why = error?.toString()?.trim() ?: "Nothing was imported."
+    def lines = [why, "Nothing was saved. The paste is still in the box."]
+    if (kind == "holiday") {
+        lines << "Shabbat & holidays was not changed. Fix the file, then tap Upload again."
+    } else {
+        lines << "Your existing schedules were not changed. Use a file shaped like { \"schedules\": [ ... ] }, or one schedule with a trigger and an action. Then tap Upload again."
+    }
+    return lines.join("\n")
+}
+
+def schedUploadFormatSavedHtml(rows) {
+    def lines = []
+    for (row in (rows ?: [])) {
+        def name = htmlEsc(row?.name?.toString()?.trim() ?: "Untitled")
+        def bits = []
+        if (row?.replaced == true) bits << "replaced the schedule with this name"
+        else if (row?.replaced == false) bits << "added"
+        def summary = row?.summary?.toString()?.trim()
+        if (summary) bits << summary
+        if (row?.enabled == false) bits << "left off"
+        def text = htmlEsc(bits.join(". "))
+        lines << "<li><b>${name}</b>${text ? " — ${text}" : ""}</li>"
+    }
+    if (!lines) return null
+    return "<ul style='margin:6px 0 0;padding-left:18px;color:#1f7a45'>${lines.join('')}</ul>"
 }
 
 def schedUploadRunFromUi() {
     def text = schedUploadPaste?.toString()?.trim()
     if (!text) {
-        state.schedUploadResult = "Upload failed: paste JSON or choose a file first."
-        state.schedUploadSkipped = null
+        schedUploadRemember("danger", "Upload failed",
+            "Nothing was saved.\nThe paste box is empty. Paste JSON, or tap Choose file and pick a .json file. Check the preview, then tap Upload.",
+            null, null)
         return
     }
     def parsed = schedUploadParseText(text)
     if (parsed.error) {
-        state.schedUploadResult = "Upload failed: ${parsed.error}"
-        state.schedUploadSkipped = null
+        def kind = parsed.kind == "holiday" ? "holiday" : "schedules"
+        schedUploadRemember("danger", "Upload failed", schedUploadFailDetail(parsed.error, kind), null, null)
         return
     }
     if (parsed.kind == "holiday") {
@@ -1548,13 +1643,31 @@ def schedUploadRunFromUi() {
     }
     def applied = schedulesCommitBundle(parsed.items)
     if (applied.ok != true) {
-        state.schedUploadResult = "Upload failed: ${applied.error ?: "nothing imported"}"
-        state.schedUploadSkipped = schedUploadFormatSkippedHtml(applied.skipped)
+        schedUploadRemember("danger", "Upload failed", schedUploadFailDetail(applied.error ?: "nothing imported", "schedules"), applied.skipped, null)
         return
     }
     def skippedN = applied.skipped ? applied.skipped.size() : 0
-    state.schedUploadResult = "Imported ${applied.imported} schedule(s)." + (skippedN ? " Skipped ${skippedN}." : "")
-    state.schedUploadSkipped = schedUploadFormatSkippedHtml(applied.skipped)
+    int n = 0
+    try { n = applied.imported as int } catch (e) { n = 0 }
+    def title = n == 1 ? "Imported 1 schedule." : "Imported ${n} schedules."
+    if (skippedN) title += " ${skippedN} not saved."
+    int replacedN = 0
+    int addedN = 0
+    for (row in (applied.importedRows ?: [])) {
+        if (row?.replaced == true) replacedN++
+        else if (row?.replaced == false) addedN++
+    }
+    def lines = []
+    lines << (n == 1 ? "Saved 1 schedule in Modern Dashboard." : "Saved ${n} schedules in Modern Dashboard.")
+    if (replacedN && addedN) lines << "${replacedN} replaced a schedule that already had the same name. ${addedN} ${addedN == 1 ? 'was' : 'were'} added."
+    else if (replacedN == 1) lines << "It replaced a schedule that already had the same name."
+    else if (replacedN) lines << "Each one replaced a schedule that already had the same name."
+    else if (n == 1) lines << "It was added."
+    else lines << "Each one was added."
+    lines << "The green list is what was saved. Schedules that were not in this file were left as they are."
+    if (skippedN) lines << "The red list was not written. Fix those and upload again if you want them included."
+    lines << "The paste was cleared. Tap Paste another file to upload another one."
+    schedUploadRemember(skippedN ? "warning" : "success", title, lines.join("\n"), applied.skipped, applied.importedRows)
     try { log.info "Modern Dashboard: uploaded ${applied.imported} schedule(s)" + (skippedN ? " (${skippedN} skipped)" : "") } catch (e) {}
     state.schedUploadHidePaste = true
     try { app.clearSetting("schedUploadPaste") } catch (e1) {
@@ -1564,26 +1677,51 @@ def schedUploadRunFromUi() {
 
 def schedUploadFormatSkippedHtml(skipped) {
     if (!skipped) return null
-    return skipped.collect { row ->
-        "• ${htmlEsc(row.name ?: "Untitled")}: ${htmlEsc(row.error)}"
-    }.join("<br>")
+    def lines = skipped.collect { row ->
+        "<li><b>${htmlEsc(row.name ?: "Untitled")}</b>: ${htmlEsc(row.error)}</li>"
+    }
+    if (!lines) return null
+    return "<ul style='margin:6px 0 0;padding-left:18px;color:#b8324a'>${lines.join('')}</ul>"
 }
 
 def holidayUploadRun(body) {
     def applied = holidayUploadCommit(body)
     if (applied?.ok != true) {
-        state.schedUploadResult = "Upload failed: ${applied?.error ?: "nothing imported"}"
-        state.schedUploadSkipped = schedUploadFormatSkippedHtml(applied?.skipped)
+        schedUploadRemember("danger", "Upload failed", schedUploadFailDetail(applied?.error ?: "nothing imported", "holiday"), applied?.skipped, null)
         return
     }
     def skippedN = applied.skipped ? applied.skipped.size() : 0
-    def msg = "Imported ${applied.imported} holiday item(s)." + (skippedN ? " Skipped ${skippedN}." : "")
-    if (applied.armed == false) {
-        def why = applied.note?.toString()?.trim()
-        msg += why ? " Saved, but not scheduled: ${why}" : " Saved, but not scheduled."
+    int n = 0
+    try { n = applied.imported as int } catch (e) { n = 0 }
+    def title = n == 1 ? "Imported 1 holiday item." : "Imported ${n} holiday items."
+    if (skippedN) title += " ${skippedN} not saved."
+    if (applied.armed == false) title += " Saved, but not scheduled."
+    boolean hadOccasion = false
+    for (row in (applied.rows ?: [])) {
+        if (row?.id) hadOccasion = true
     }
-    state.schedUploadResult = msg
-    state.schedUploadSkipped = schedUploadFormatSkippedHtml(applied.skipped)
+    def lines = []
+    lines << (n == 1 ? "Saved 1 holiday item in Shabbat & holidays." : "Saved ${n} holiday items in Shabbat & holidays.")
+    if (hadOccasion) lines << "Each occasion in the file replaced that occasion's choice. Template slots included in the file replaced those slots. Slots you left out, occasions you left out, one-time edits, and paused occasions were kept."
+    else lines << "Settings in the file were saved. Occasions, templates, one-time edits, and paused occasions were kept."
+    lines << "The green list is what was saved."
+    if (applied.armed == false) {
+        def why = applied.note?.toString()?.trim() ?: "the next action could not be armed"
+        lines << "Saved, but not scheduled: ${why}"
+        lines << "The file is saved on the hub. Fix that, then upload again or open Shabbat & holidays."
+    } else if (applied.scheduled == true) {
+        def when = applied.when?.toString()?.trim()
+        if (when) lines << "The next action was scheduled for ${when}."
+        else lines << "The next action was scheduled."
+    } else if (applied.retry == true) {
+        lines << "The file is saved. The next action could not be scheduled just now. Shabbat & holidays will try again shortly."
+    } else if (applied.scheduled == false) {
+        lines << "The file is saved. No timer was set, because no lighting, havdalah, or other action is still ahead."
+    }
+    if (skippedN) lines << "The red list was not changed."
+    lines << "The paste was cleared. Tap Paste another file to upload another one."
+    def tone = (skippedN || applied.armed == false || applied.scheduled == false || applied.retry == true) ? "warning" : "success"
+    schedUploadRemember(tone, title, lines.join("\n"), applied.skipped, applied.rows)
     try { log.info "Modern Dashboard: uploaded ${applied.imported} holiday item(s)" + (skippedN ? " (${skippedN} skipped)" : "") } catch (e) {}
     state.schedUploadHidePaste = true
     try { app.clearSetting("schedUploadPaste") } catch (e1) {
@@ -1607,7 +1745,9 @@ def holidayUploadCommit(body) {
         return [ok: false, error: holidayUploadChildError(e, "Upload failed"), imported: 0, skipped: prepared.skipped ?: []]
     }
     if (result?.ok != true) return [ok: false, error: result?.error ?: "nothing imported", imported: 0, skipped: prepared.skipped ?: []]
-    return [ok: true, imported: prepared.ok.size(), skipped: prepared.skipped ?: [], armed: result?.armed != false, note: result?.note]
+    def scheduled = null
+    if (result instanceof Map && result.containsKey("scheduled")) scheduled = result.scheduled == true
+    return [ok: true, imported: prepared.ok.size(), skipped: prepared.skipped ?: [], armed: result?.armed != false, scheduled: scheduled, retry: result?.retry == true, when: result?.when?.toString(), note: result?.note, rows: prepared.ok]
 }
 
 def holidayUploadChildError(e, String fallback) {
@@ -1878,7 +2018,7 @@ def holidayUploadOneOccasion(item, storedTemplates) {
         def storedTemplate = storedTemplates instanceof Map ? storedTemplates[id] : null
         def built = holidayUploadTemplate(item.template, storedTemplate)
         if (built.error) return [name: name, error: built.error]
-        def summary = (choice == "copy" ? "based on Shabbat" : "own schedule") + ", ${built.devices} devices"
+        def summary = (choice == "copy" ? "based on Shabbat" : "own schedule") + ", ${built.devices} " + ((built.devices == 1) ? "device" : "devices")
         return [id: id, name: name, choice: choice, template: built.template, summary: summary]
     }
     if (item.containsKey("template")) return [name: name, error: "that choice does not take a template"]
@@ -3274,7 +3414,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.63.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.64.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -3366,7 +3506,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.63.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.64.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -11937,7 +12077,7 @@ def schedulesPreviewBundle(items) {
     def parsed = parseSchedulesMapResult()
     if (parsed.ok != true) return [ok: [], skipped: [], error: parsed.error]
     def map = parsed.map instanceof Map ? parsed.map : [:]
-    def ok = []
+    def okById = new LinkedHashMap()
     def skipped = []
     for (raw in (items ?: [])) {
         def prepared = schedulesPrepareUploadItem(raw, map, true, false)
@@ -11945,11 +12085,14 @@ def schedulesPreviewBundle(items) {
             skipped << [name: prepared.name, error: prepared.error]
             continue
         }
+        def priorId = prepared.schedule?.id?.toString()?.trim()
+        boolean replaced = false
+        if (priorId && map.containsKey(priorId)) replaced = true
         def staged = schedulesStageOne(map, prepared.schedule)
         if (staged.ok != true) skipped << [name: prepared.name, error: staged.error]
-        else ok << [name: prepared.schedule?.name ?: prepared.name, summary: scheduleSummary(prepared.schedule), id: staged.id]
+        else okById[staged.id] = [name: prepared.schedule?.name ?: prepared.name, summary: scheduleSummary(prepared.schedule), id: staged.id, replaced: replaced, enabled: prepared.schedule?.enabled == true]
     }
-    return [ok: ok, skipped: skipped, error: null]
+    return [ok: okById.isEmpty() ? [] : new ArrayList(okById.values()), skipped: skipped, error: null]
 }
 
 def schedulesCommitBundle(items) {
@@ -11958,6 +12101,7 @@ def schedulesCommitBundle(items) {
     def map = parsed.map instanceof Map ? parsed.map : [:]
     def priorJson = state.schedulesJson
     def importedIds = []
+    def importedRowById = new LinkedHashMap()
     def armedIds = []
     def skipped = []
     for (raw in (items ?: [])) {
@@ -11966,12 +12110,21 @@ def schedulesCommitBundle(items) {
             skipped << [name: prepared.name, error: prepared.error]
             continue
         }
+        def priorId = prepared.schedule?.id?.toString()?.trim()
+        boolean replaced = false
+        if (priorId && map.containsKey(priorId)) replaced = true
         def staged = schedulesStageOne(map, prepared.schedule)
         if (staged.ok != true) {
             skipped << [name: prepared.name, error: staged.error]
             continue
         }
         importedIds << staged.id
+        importedRowById[staged.id] = [
+            name: prepared.schedule?.name ?: prepared.name ?: "Untitled",
+            summary: scheduleSummary(prepared.schedule),
+            replaced: replaced == true,
+            enabled: prepared.schedule?.enabled == true
+        ]
         if (prepared.schedule?.enabled == true) armedIds << staged.id
     }
     if (!importedIds) {
@@ -11982,7 +12135,7 @@ def schedulesCommitBundle(items) {
     if (done.ok != true) {
         return [ok: false, error: done.error, imported: 0, skipped: skipped, schedules: schedulesListForClient()]
     }
-    return [ok: true, imported: importedIds.unique().size(), skipped: skipped, schedules: schedulesListForClient()]
+    return [ok: true, imported: importedIds.unique().size(), skipped: skipped, importedRows: new ArrayList(importedRowById.values()), schedules: schedulesListForClient()]
 }
 
 def schedulesUpload() {

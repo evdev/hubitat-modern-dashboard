@@ -18725,13 +18725,15 @@
     return row;
   }
 
-  function schedTwoWay(row, leftOn, leftLabel, rightLabel, onLeft, onRight) {
+  function schedTwoWay(row, leftOn, leftLabel, rightLabel, onLeft, onRight, tones) {
     const onOff = ce("div", "sched-onoff");
-    const left = ce("button", "sched-seg " + (leftOn ? "is-active" : ""));
+    const leftTone = leftOn && tones ? " " + tones[0] : "";
+    const rightTone = !leftOn && tones ? " " + tones[1] : "";
+    const left = ce("button", "sched-seg" + (leftOn ? " is-active" + leftTone : ""));
     left.type = "button";
     left.textContent = leftLabel;
     left.addEventListener("click", onLeft);
-    const right = ce("button", "sched-seg " + (!leftOn ? "is-active" : ""));
+    const right = ce("button", "sched-seg" + (!leftOn ? " is-active" + rightTone : ""));
     right.type = "button";
     right.textContent = rightLabel;
     right.addEventListener("click", onRight);
@@ -18752,7 +18754,7 @@
       makeState: (d) => ({ id: d.i, locked: true }),
       renderRow: (d, st, redraw) => schedDeviceActionRow(d, redraw, (row) => {
         const isLocked = st.locked !== false;
-        schedTwoWay(row, isLocked, "Lock", "Unlock", () => { st.locked = true; redraw(); }, () => { st.locked = false; redraw(); });
+        schedTwoWay(row, isLocked, "Lock", "Unlock", () => { st.locked = true; redraw(); }, () => { st.locked = false; redraw(); }, ["is-lock", "is-unlock"]);
         if (!isLocked) {
           const hint = ce("p", "sched-hint");
           hint.textContent = "A saved schedule unlocks this door without asking for the PIN.";
@@ -19183,6 +19185,16 @@
     return field;
   }
 
+  function schedTstatStateClass(mode) {
+    const key = normalizeTstatModeKey(mode);
+    if (key === "heat" || key === "emergencyheat") return "is-theat";
+    if (key === "cool") return "is-tcool";
+    if (key === "auto") return "is-tauto";
+    if (key === "off") return "is-toff";
+    if (tstatAuxMode(mode)) return "is-tfan";
+    return "";
+  }
+
   function renderSchedThermostatAction() {
     const wrap = ce("div", "sched-action");
     const q = ce("p", "sched-question");
@@ -19232,7 +19244,8 @@
       const seg = ce("div", "sched-segment");
       for (const m of modes) {
         const active = normalizeTstatModeKey(ac.mode) === normalizeTstatModeKey(m);
-        const b = ce("button", "sched-seg " + (active ? "is-active" : ""));
+        const tone = active ? schedTstatStateClass(m) : "";
+        const b = ce("button", "sched-seg" + (active ? " is-active" + (tone ? " " + tone : "") : ""));
         b.type = "button";
         b.textContent = schedTstatModeLabel(m);
         b.addEventListener("click", () => {

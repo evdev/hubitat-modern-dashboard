@@ -50,12 +50,12 @@
 }
 .holiday-seg-half.is-heat,
 .holiday-seg.is-heat,
-.holiday-legend-swatch.is-heat { background: var(--holiday-heat, #e06c75); }
+.holiday-legend-swatch.is-heat { background: var(--holiday-heat, #ff5c5c); }
 .holiday-seg-half.is-cool,
 .holiday-seg.is-cool,
-.holiday-legend-swatch.is-cool { background: var(--holiday-cool, #6cb6ff); }
+.holiday-legend-swatch.is-cool { background: var(--holiday-cool, #5b9cff); }
 .holiday-seg.is-fan,
-.holiday-legend-swatch.is-fan { background: var(--holiday-fan, #3d9a6a); }
+.holiday-legend-swatch.is-fan { background: var(--holiday-fan, #3dd68c); }
 .holiday-seg.is-fan-off,
 .holiday-seg.is-blind-closed,
 .holiday-legend-swatch.is-blind-closed { background: var(--holiday-off, #3a4258); }
@@ -71,12 +71,12 @@
 }
 .holiday-legend-swatch.is-blind-open { background: var(--holiday-blind, #e7d3b0); }
 .holiday-seg.is-lock-shut,
-.holiday-legend-swatch.is-lock-shut { background: var(--holiday-lock, #6b7cff); }
+.holiday-legend-swatch.is-lock-shut { background: var(--holiday-lock, var(--accent, #5b8cff)); }
 .holiday-seg.is-lock-open,
-.holiday-legend-swatch.is-lock-open { background: var(--holiday-unlock, #ff5c7a); }
+.holiday-legend-swatch.is-lock-open { background: var(--holiday-unlock, var(--danger, #ff5c7a)); }
 .holiday-chip.is-lock-shut {
-  background: color-mix(in srgb, var(--holiday-lock, #6b7cff) 28%, transparent);
-  color: var(--holiday-lock-ink, #a8b4ff);
+  background: color-mix(in srgb, var(--holiday-lock, var(--accent, #5b8cff)) 28%, transparent);
+  color: var(--holiday-lock-ink, var(--accent, #5b8cff));
 }
 .holiday-chip.is-lock-open {
   background: color-mix(in srgb, var(--holiday-unlock, #ff5c7a) 22%, transparent);
@@ -185,6 +185,17 @@
 .holiday-device { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 0; flex-wrap: wrap; }
 .holiday-device .sched-field { flex: 1 0 100%; }
 .holiday-group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.holiday-group-head .holiday-kicker {
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+[data-theme="light"] .holiday-group-head .holiday-kicker { color: #000; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .holiday-group-head .holiday-kicker { color: #000; }
+}
 .holiday-tstat { flex: 1 0 100%; display: flex; flex-direction: column; gap: 8px; }
 .holiday-tstat .sched-segment, .holiday-speed-seg { flex: 1 0 100%; flex-wrap: wrap; }
 .holiday-lock-hint { flex: 1 0 100%; margin: 0; }
@@ -394,9 +405,9 @@
   color: var(--on, #ffb86b);
 }
 .holiday-chip.is-off { background: rgba(255,255,255,0.06); color: var(--text-dim, var(--text-faint)); }
-.holiday-chip.is-heat { background: var(--holiday-heat, #e06c75); color: var(--holiday-ink, #1a1208); }
-.holiday-chip.is-cool { background: var(--holiday-cool, #6cb6ff); color: var(--holiday-cool-ink, #102033); }
-.holiday-chip.is-fan { background: var(--holiday-fan-chip, #146b4a); color: var(--holiday-fan-chip-ink, #f3fff8); }
+.holiday-chip.is-heat { background: var(--holiday-heat, #ff5c5c); color: var(--holiday-ink, #1a1208); }
+.holiday-chip.is-cool { background: var(--holiday-cool, #5b9cff); color: var(--holiday-cool-ink, #102033); }
+.holiday-chip.is-fan { background: color-mix(in srgb, #3dd68c 28%, transparent); color: #3dd68c; }
 .holiday-chip.is-fan-on {
   background: color-mix(in srgb, var(--holiday-fan-med, #14998c) 28%, transparent);
   color: var(--holiday-fan-high, #5eead4);
@@ -406,7 +417,7 @@
   color: var(--holiday-blind, #e7d3b0);
 }
 .holiday-chip.is-auto {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--holiday-heat, #e06c75) 28%, transparent), color-mix(in srgb, var(--holiday-cool, #6cb6ff) 28%, transparent));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--holiday-heat, #ff5c5c) 28%, transparent), color-mix(in srgb, var(--holiday-cool, #5b9cff) 28%, transparent));
   color: var(--text);
 }
 .holiday-device-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

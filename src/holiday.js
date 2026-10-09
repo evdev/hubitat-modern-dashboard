@@ -2224,7 +2224,8 @@ function deviceLists(states) {
 function renderRoomDevices(devices, states) {
   const body = ce("div", "holiday-room-body");
   const groups = [
-    ["Lights & outlets", devices.filter((d) => d.kind === "light" || d.kind === "outlet"), "switch"],
+    ["Lights", devices.filter((d) => d.kind === "light"), "switch"],
+    ["Outlets", devices.filter((d) => d.kind === "outlet"), "switch"],
     ["Blinds", devices.filter((d) => d.kind === "blind"), "blind"],
     ["Fans", devices.filter((d) => d.kind === "fan"), "fan"],
     ["Locks", devices.filter((d) => d.kind === "lock"), "lock"],
@@ -2274,7 +2275,7 @@ function roomStateSummary(devices, states) {
 
 function groupBulkChoices(kind) {
   if (kind === "blind") return [[true, "Open", true], [false, "Close", false], [null, "Leave as-is", null]];
-  if (kind === "lock") return [[true, "Lock", false], [false, "Unlock", true], [null, "Leave as-is", null]];
+  if (kind === "lock") return [[true, "Lock", "lock"], [false, "Unlock", "unlock"], [null, "Leave as-is", null]];
   if (kind === "thermostat") return [[true, "Set", true], [null, "Leave as-is", null]];
   return [[true, "On", true], [false, "Off", false], [null, "Leave as-is", null]];
 }
@@ -2349,8 +2350,21 @@ function applyGroupState(devices, states, kind, value) {
 }
 
 function stateButtonClass(on, active) {
-  const kind = on == null ? "is-skip" : (on ? "is-on" : "is-off");
+  const kind = on == null ? "is-skip"
+    : on === "lock" ? "is-lock"
+    : on === "unlock" ? "is-unlock"
+    : (on ? "is-on" : "is-off");
   return "sched-seg holiday-state " + kind + (active ? " is-active" : "");
+}
+
+function thermostatStateClass(mode) {
+  const key = String(mode || "").toLowerCase().replace(/[\s_-]+/g, "");
+  if (key === "heat" || key === "emergencyheat") return "is-theat";
+  if (key === "cool") return "is-tcool";
+  if (key === "auto") return "is-tauto";
+  if (key === "off") return "is-toff";
+  if (key === "fan" || key === "fanonly" || key === "dry" || key === "drymode" || key === "dehumidify" || key === "dehumidification") return "is-tfan";
+  return "";
 }
 
 function timelineLegend(actions) {
@@ -2530,7 +2544,7 @@ function firstFanSpeed(d, speeds) {
 function appendLockChoices(row, d, states, current) {
   const locked = current?.kind === "lock" ? current.locked !== false : null;
   row.appendChild(choiceRow(
-    [[true, "Lock", false], [false, "Unlock", true], [null, "Leave as-is", null]],
+    [[true, "Lock", "lock"], [false, "Unlock", "unlock"], [null, "Leave as-is", null]],
     (v) => (v == null ? !current : locked === v),
     (v) => {
       const idx = findState(states, d.id);
@@ -2572,7 +2586,8 @@ function appendThermostatChoices(row, d, states, current) {
     for (const m of modes) {
       const active = api.normalizeTstatModeKey?.(current.mode) === api.normalizeTstatModeKey?.(m)
         || String(current.mode || "").toLowerCase().replace(/[\s_-]+/g, "") === String(m).toLowerCase().replace(/[\s_-]+/g, "");
-      const b = ce("button", "sched-seg" + (active ? " is-active" : ""));
+      const tone = thermostatStateClass(m);
+      const b = ce("button", "sched-seg" + (active ? " is-active" + (tone ? " " + tone : "") : ""));
       b.type = "button";
       b.textContent = typeof api.schedTstatModeLabel === "function" ? api.schedTstatModeLabel(m) : m;
       b.addEventListener("click", () => {

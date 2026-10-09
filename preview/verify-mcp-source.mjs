@@ -119,7 +119,7 @@ assert(groovy.includes("child.holidaysImport"), "upload commits through the holi
 assert(!groovy.includes("holidayMarkPassedDone"), "the parent leaves holiday catch-up to the child app");
 assert(!js.includes(holidaySchema.slice(0, 80)), "dashboard must not embed the holiday schema file");
 assert(!holidayJs.includes(holidaySchema.slice(0, 80)), "holiday dashboard must not embed the holiday schema file");
-assert(groovy.includes("Imported ${applied.imported} holiday item(s)."), "a holiday upload does not report itself as schedules");
+assert(groovy.includes("Imported 1 holiday item."), "a holiday upload does not report itself as schedules");
 assert(groovy.includes("Saved, but not scheduled:"), "a saved holiday file says when it was not scheduled");
 assert(groovy.includes("that light cannot dim"), "a level on a switch is rejected");
 assert(groovy.includes("Math.max(2000, Math.min(6500, ct.toInteger()))"), "a scheduled color temperature is sent in the schema range");

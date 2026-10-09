@@ -2067,6 +2067,16 @@ body.fav-embed-expanded-open{overflow:hidden}
   touch-action: manipulation; -webkit-touch-callout: none;
 }
 .sched-seg.is-active { background: var(--accent, #7b5cff); border-color: var(--accent, #7b5cff); color: #fff; }
+.sched-seg.is-lock.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sched-seg.is-unlock.is-active { background: var(--danger, #ff5c7a); border-color: var(--danger, #ff5c7a); color: #fff; }
+.sched-seg.is-theat.is-active { background: #ff5c5c; border-color: #ff5c5c; color: #fff; }
+.sched-seg.is-tcool.is-active { background: #5b9cff; border-color: #5b9cff; color: #fff; }
+.sched-seg.is-tauto.is-active { background: #b58cff; border-color: #b58cff; color: #fff; }
+.sched-seg.is-tfan.is-active { background: #3dd68c; border-color: #3dd68c; color: #102033; }
+.sched-seg.is-toff.is-active {
+  background: var(--panel-solid); color: var(--text); border-color: var(--text-faint);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-faint) 55%, transparent);
+}
 .sched-field { display: flex; flex-direction: column; gap: 8px; }
 .sched-field-label { font-size: 0.95rem; color: var(--muted); font-weight: 500; }
 .sched-input {

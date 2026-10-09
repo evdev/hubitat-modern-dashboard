@@ -384,10 +384,10 @@ def holidaysImport(body) {
     state.runtime = savedRt
     // A file must not cancel a Do-not-start hold. Device actions already due are not run again from this upload.
     holidayMarkPassedDone(true, false)
-    if (holidayQueryChanged()) holidayFetch(true)
-    else holidayArm()
+    def arm = holidayQueryChanged() ? holidayFetch(true) : holidayArm()
     def note = holidayNotScheduledReason()
-    return [ok: true, revision: state.runtime.revision ?: 0, armed: note == null, note: note]
+    boolean scheduled = note == null && arm?.scheduled == true
+    return [ok: true, revision: state.runtime.revision ?: 0, armed: note == null, scheduled: scheduled, retry: scheduled ? false : arm?.retry == true, when: scheduled ? arm?.when?.toString() : null, note: note]
 }
 
 def holidayNotScheduledReason() {
@@ -615,7 +615,7 @@ def holidayFetch(boolean force) {
     } catch (e) {}
     if ((lat == null || lon == null || !tz) && !zip) {
         holidayPutCalendar([error: "Hub location is not set."])
-        return
+        return [scheduled: false]
     }
     def s = state.config.settings
     def hav = s.havdalah ?: [:]
@@ -629,6 +629,7 @@ def holidayFetch(boolean force) {
     String candleText = holidaySettingText(s.candleMin, "18")
     String url = "https://www.hebcal.com/hebcal?v=1&cfg=json&maj=on&min=off&mod=off&nx=off&ss=off&mf=off&s=off&c=on&${geo}&start=${start}&end=${end}&b=${candleText}&${havdalah}&i=${s.israel == true ? 'on' : 'off'}"
     if (debugLogging) log.debug "mDash Holidays: fetch ${url}"
+    def box = [result: [scheduled: false]]
     try {
         httpGet([uri: url, timeout: 30]) { resp ->
             if (resp.status != 200) {
@@ -653,13 +654,15 @@ def holidayFetch(boolean force) {
                 error: ""
             ])
             log.info "mDash Holidays: calendar updated (${holidays.size()} holiday days)"
-            holidayArm()
+            box.result = holidayArm() ?: [scheduled: false]
         }
     } catch (e) {
         holidayPutCalendar([error: "Could not reach HebCal."])
         log.warn "mDash Holidays: fetch failed — ${e}"
         try { runIn(6 * 60 * 60, holidayFetchRetry) } catch (ignored) {}
+        return [scheduled: false]
     }
+    return box.result ?: [scheduled: false]
 }
 
 def holidayFetchRetry() { holidayFetch(true) }
@@ -1337,14 +1340,24 @@ def holidayActiveSpan(long nowMs) {
     return null
 }
 
+def holidayWhen(long ms) {
+    try {
+        def fmt = new java.text.SimpleDateFormat("EEE MMM d, h:mm a", java.util.Locale.US)
+        def tz = holidayTz()
+        if (tz) fmt.setTimeZone(tz)
+        return fmt.format(new Date(ms))
+    } catch (e) {
+        return ""
+    }
+}
+
 def holidayArm() {
     holidayEnsureState()
     try { unschedule("holidayFire") } catch (e) {}
-    if (holidayPaused()) return
-    if (!holidayPreflight().ok && !state.runtime?.testSpan) return
+    if (holidayPaused()) return [scheduled: false]
+    if (!holidayPreflight().ok && !state.runtime?.testSpan) return [scheduled: false]
     if (!state.calendar?.boundaries && !state.runtime?.testSpan) {
-        holidayFetch(false)
-        return
+        return holidayFetch(false) ?: [scheduled: false]
     }
     def built = holidayBuild(now())
     long nowMs = now()
@@ -1368,11 +1381,14 @@ def holidayArm() {
         try {
             runOnce(new Date(fireAt), holidayFire)
             if (debugLogging) log.debug "mDash Holidays: next action ${new Date(nextAt)}"
+            return [scheduled: true, when: holidayWhen(nextAt)]
         } catch (e) {
             log.warn "mDash Holidays: could not arm the next action — ${e}"
             try { runIn(60, holidayRetrySoon, [overwrite: true]) } catch (ignored) {}
+            return [scheduled: false, retry: true]
         }
     }
+    return [scheduled: false]
 }
 
 def holidayFire() {
