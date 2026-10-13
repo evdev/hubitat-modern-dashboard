@@ -1,7 +1,5 @@
-#!/usr/bin/env node
-// Unit tests for dashboard default schedule names.
-// Run: node preview/verify-scheduler-naming.mjs
-
+import test from "node:test";
+import strictAssert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function assert(cond, msg) {
-  if (!cond) throw new Error(msg);
+  strictAssert.ok(cond, msg);
 }
 
 function loadAutoScheduleName() {
@@ -37,6 +35,7 @@ function loadAutoScheduleName() {
 const autoScheduleName = loadAutoScheduleName();
 
 const appJs = readFileSync(join(root, "src/app.js"), "utf8");
+test("scheduler UI delegates to generated-name helpers", () => {
 assert(
   appJs.includes("const fn = globalThis.autoScheduleName"),
   "autoSchedName must call globalThis.autoScheduleName (Hubitat split JS files)"
@@ -61,6 +60,7 @@ assert(
   /name:\s*\(schedNameCustom \? \(schedDraft\.name \|\| ""\)\.trim\(\) : ""\) \|\| autoSchedName\(\)/.test(appJs),
   "save uses the generated name unless the user edited it"
 );
+});
 
 function clock12(str24) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(str24 || "").trim());
@@ -106,6 +106,7 @@ function nameOf(draft, fmt = fmt12, cats = catalogs) {
   return autoScheduleName(draft, cats, fmt);
 }
 
+test("generates useful default schedule names", () => {
 assert(
   nameOf({
     trigger: { kind: "daily", when: "clock", time: "19:30" },
@@ -295,6 +296,7 @@ assert(
     "whitespace-only device name falls back to Device id"
   );
 }
+});
 
 function loadSchedActionDescription() {
   const src = readFileSync(join(root, "src/app.js"), "utf8");
@@ -308,6 +310,7 @@ function loadSchedActionDescription() {
 
 const { schedIdList, schedActionDescription } = loadSchedActionDescription();
 
+test("normalizes thermostat IDs and describes thermostat actions", () => {
 assert(schedIdList(37).join(",") === "37", "scalar device id is one thermostat");
 assert(schedIdList("37").join(",") === "37", "string device id is not split into digits");
 assert(schedIdList([37]).join(",") === "37", "single-item id array stays one thermostat");
@@ -348,5 +351,4 @@ assert(
   ) === "Hall Thermostat \u00b7 Auto \u00b7 Heat 68\u00b0 \u00b7 Cool 72\u00b0 \u00b7 Fan on",
   "auto mode lists both setpoints without duplicating heat/cool as the mode word"
 );
-
-console.log("ok unit: scheduler default naming");
+});

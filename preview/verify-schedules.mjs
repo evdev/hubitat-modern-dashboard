@@ -1,21 +1,10 @@
 #!/usr/bin/env node
-// Smoke test: scheduler CRUD / nextFire / validation via preview server.
+// Integration test: scheduler CRUD / nextFire / validation via preview server.
 // Run: node preview/verify-schedules.mjs
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import {
-  scheduleCronForTrigger,
-  cronNextFire,
-  cronFieldValues,
-  modeCycleError,
-  parseLocalDateTimeMs,
-  dueScheduleIds,
-  nextDispatcherAt,
-  scheduleSunNextFire,
-  validateSchedulePayload,
-} from "../lib/scheduler-core.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = String(18000 + Math.floor(Math.random() * 2000));
@@ -86,88 +75,6 @@ function pad(n) {
 function futureOnceAt(hoursAhead = 2) {
   const d = new Date(Date.now() + hoursAhead * 3600 * 1000);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-// ---------- pure unit checks (no server) ----------
-{
-  const daily = scheduleCronForTrigger("daily", "19:30", []);
-  assert(daily === "0 30 19 * * ? *", `daily cron expected * * ?, got ${daily}`);
-  const weekly = scheduleCronForTrigger("weekly", "08:00", ["MON", "WED"]);
-  assert(weekly === "0 0 8 ? * MON,WED *", `weekly cron got ${weekly}`);
-  assert(scheduleCronForTrigger("daily", "25:00", []) == null, "invalid hour should reject");
-  assert(scheduleCronForTrigger("weekly", "08:00", []) == null, "weekly without days should reject");
-  const dow = cronFieldValues("MON,WED", 1, 7);
-  assert(dow && dow.has(2) && dow.has(4) && !dow.has(1), "MON/WED day-name parsing");
-  const from = new Date();
-  from.setHours(7, 0, 0, 0);
-  const nf = cronNextFire(weekly, from.getTime() - 1000);
-  assert(nf != null && nf > from.getTime() - 1000, "weekly nextFire should resolve");
-  // Exactly on a matching minute must advance to a future occurrence
-  const onFire = new Date();
-  onFire.setHours(8, 0, 0, 0);
-  // Find a Monday 08:00
-  while (onFire.getDay() !== 1) onFire.setDate(onFire.getDate() + 1);
-  const nfAfter = cronNextFire("0 0 8 ? * MON *", onFire.getTime());
-  assert(nfAfter != null && nfAfter > onFire.getTime(), "nextFire must not return the just-elapsed minute");
-  assert(Number.isNaN(parseLocalDateTimeMs("2026-02-31T10:00")), "impossible calendar date should reject");
-  assert(Number.isFinite(parseLocalDateTimeMs("2028-02-29T10:00")), "valid leap date should parse");
-
-  // Dispatcher helpers still order due jobs for tests; Hubitat arms per-job
-  // scheduledJobHandler with overwrite:false.
-  const at = Date.now();
-  const schedules = {
-    "sun-b": { enabled: true, nextFire: at },
-    "sun-a": { enabled: true, nextFire: at },
-    early: { enabled: true, nextFire: at + 500 },
-    recovered: { enabled: true, nextFire: at - 5 * 60 * 1000 },
-    stale: { enabled: true, nextFire: at - 11 * 60 * 1000 },
-    paused: { enabled: false, nextFire: at },
-  };
-  const due = dueScheduleIds(schedules, at);
-  assert(due.join(",") === "recovered,sun-a,sun-b", `due order: ${due.join(",")}`);
-  assert(!due.includes("early"), "must not fire a future job early");
-  assert(!due.includes("stale"), "must not replay stale daily jobs");
-  assert(nextDispatcherAt(schedules, at) === at + 1000, "overdue uses minimum delay");
-  assert(nextDispatcherAt({}, at) == null, "no schedules means no dispatcher");
-
-  const midnight = new Date(2026, 8, 15, 0, 0, 0, 0);
-  const crossed = scheduleSunNextFire(
-    { kind: "daily", when: "sunset", offsetMin: 420 },
-    "sunset",
-    midnight.getTime(),
-    (_which, offsetMin, day) => {
-      const sunset = new Date(day);
-      sunset.setHours(18, 0, 0, 0);
-      return sunset.getTime() + offsetMin * 60 * 1000;
-    },
-  );
-  const expectedCrossed = new Date(2026, 8, 15, 1, 0, 0, 0).getTime();
-  assert(crossed === expectedCrossed, `cross-midnight sunset offset: ${new Date(crossed)}`);
-
-  const staleOnce = {
-    enabled: true,
-    trigger: { kind: "once", at: "2020-01-01T00:00" },
-    action: { target: "lights", states: [{ id: 1, on: true }] },
-  };
-  assert(
-    validateSchedulePayload(staleOnce, at) === "one-time schedule must be in the future",
-    "enabling a stale one-time schedule must be rejected",
-  );
-
-  console.log("ok unit: cron generation / day-name nextFire");
-}
-
-{
-  assert(modeCycleError([{ id: "a", enabled: true, trigger: { kind: "mode", mode: "Day" }, action: { target: "hubMode", mode: "Day" } }]) === "mode trigger cannot set the same hub mode", "self-loop rejected");
-  assert(modeCycleError([
-    { id: "a", enabled: true, trigger: { kind: "mode", mode: "Day" }, action: { target: "hubMode", mode: "Evening" } },
-    { id: "b", enabled: true, trigger: { kind: "mode", mode: "Evening" }, action: { target: "hubMode", mode: "Day" } },
-  ]) === "mode schedules form a hub-mode loop", "A→B→A rejected");
-  assert(modeCycleError([
-    { id: "a", enabled: true, trigger: { kind: "mode", mode: "Day" }, action: { target: "hubMode", mode: "Evening" } },
-    { id: "b", enabled: true, trigger: { kind: "mode", mode: "Evening" }, action: { target: "lights", states: [{ id: 1, on: false }] } },
-  ]) == null, "mode→lights cascade allowed");
-  console.log("ok unit: mode-cycle validation");
 }
 
 const child = spawn("node", ["preview/server.mjs"], {

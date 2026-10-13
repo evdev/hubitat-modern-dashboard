@@ -1,6 +1,5 @@
-#!/usr/bin/env node
-// Run: node preview/verify-sar-import.mjs
-
+import test from "node:test";
+import strictAssert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,32 +9,29 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = readFileSync(join(root, "preview/fixtures/simple-automation-export.txt"), "utf8");
 
 function assert(cond, msg) {
-  if (!cond) throw new Error(msg);
+  strictAssert.ok(cond, msg);
 }
 
 function byKey(ok, key) {
   return ok.find((x) => x.importKey === key || x.importKey?.startsWith(key));
 }
 
-// Parse repair
-{
+test("repairs and parses a Simple Automation Rules export", () => {
   const p = parseSarExport(fixture);
   assert(!p.error, "fixture should parse: " + p.error);
   assert(p.root.appData["194"], "app 194 present");
   assert(p.root.appData["148"], "app 148 present");
   assert(p.root.appData["105"], "app 105 present");
-}
+});
 
-// Empty / invalid
-{
+test("reports empty and invalid exports", () => {
   const e = convertSarExport("");
   assert(e.error && /empty/i.test(e.error), "empty paste error");
   const bad = convertSarExport("{not json");
   assert(bad.error && /invalid/i.test(bad.error), "invalid json error");
-}
+});
 
-// Convert with all devices in lights picker
-{
+test("converts supported rules with selected light devices", () => {
   const lightIds = ["176", "238", "230", "56"];
   const r = convertSarExport(fixture, lightIds, []);
   assert(!r.error, "convert error: " + r.error);
@@ -57,29 +53,26 @@ function byKey(ok, key) {
   const a105 = r.ok.find((x) => String(x.importKey).includes("sar-105"));
   assert(a105, "105 present");
   assert(a105.schedule.trigger.time === "00:00", "105 midnight");
-}
+});
 
-// Devices missing → skip with reasons
-{
+test("skips unavailable devices with useful reasons", () => {
   const r = convertSarExport(fixture, [], []);
   assert(!r.error, "no parse error");
   assert(r.ok.length === 0, "nothing importable without pickers");
   assert(r.skipped.length > 0, "must have skip reasons");
   assert(r.skipped.every((s) => s.reason && s.name), "each skip has name+reason");
   assert(r.skipped.some((s) => /not in Lights\/Outlets|No devices remain/i.test(s.reason)), "device skip reason");
-}
+});
 
-// Partial: one device in picker, one missing
-{
+test("partially imports a rule when only some devices are available", () => {
   const r = convertSarExport(fixture, ["176"], []);
   const a194 = r.ok.find((x) => String(x.importKey).includes("sar-194"));
   assert(a194, "194 still imports with one device");
   assert(a194.schedule.action.states.length === 1, "only device 176");
   assert(r.skipped.some((s) => /Partial:/i.test(s.reason) && /238/.test(s.reason)), "partial skip for 238");
-}
+});
 
-// Mode Changes → mDash mode trigger
-{
+test("converts mode changes into dashboard mode triggers", () => {
   const modeFixture = readFileSync(join(root, "preview/fixtures/simple-automation-mode-change.txt"), "utf8");
   const r = convertSarExport(modeFixture, [], ["260", "261"]);
   assert(!r.error, "mode fixture parse: " + r.error);
@@ -90,10 +83,9 @@ function byKey(ok, key) {
   assert(row.schedule.action.target === "outlets", "outlets target");
   assert(row.schedule.action.states.every((s) => s.on === true), "turn on");
   assert(row.schedule.action.states.length === 2, "both devices");
-}
+});
 
-// Sunrise + Set Temperature + second time (sunset anti-action)
-{
+test("converts sunrise color-temperature rules and their secondary action", () => {
   const ctFixture = readFileSync(join(root, "preview/fixtures/simple-automation-sunrise-ct.txt"), "utf8");
   const r = convertSarExport(ctFixture, ["244"], []);
   assert(!r.error, "ct fixture: " + r.error);
@@ -110,10 +102,9 @@ function byKey(ok, key) {
   assert(secondary.schedule.action.states[0].on === false, "secondary off");
   assert(secondary.schedule.action.states[0].level == null, "secondary no level");
   assert(secondary.schedule.action.states[0].ct == null, "secondary no ct");
-}
+});
 
-// Secondary time with clock → anti-action off
-{
+test("converts a secondary clock time into an off action", () => {
   const mini = JSON.stringify({
     deviceReplacements: { "1": { deviceLabel: "Lamp" } },
     appReplacements: {
@@ -141,10 +132,9 @@ function byKey(ok, key) {
   assert(sec.schedule.trigger.time === "23:00", "secondary 23:00");
   assert(sec.schedule.action.states[0].on === false, "anti off");
   assert(/ \(off\)$/.test(sec.name), "synthetic secondary named off");
-}
+});
 
-// Unsupported trigger fixture
-{
+test("reports unsupported triggers", () => {
   const mini = JSON.stringify({
     deviceReplacements: { "1": { deviceLabel: "Lamp" } },
     appReplacements: {
@@ -167,10 +157,9 @@ function byKey(ok, key) {
   const r = convertSarExport(mini, ["1"], []);
   assert(r.ok.length === 0, "switch trigger not importable");
   assert(r.skipped.some((s) => /Unsupported trigger/i.test(s.reason)), "trigger skip reason: " + JSON.stringify(r.skipped));
-}
+});
 
-// Toggle unsupported
-{
+test("reports unsupported toggle actions", () => {
   const mini = JSON.stringify({
     deviceReplacements: { "1": { deviceLabel: "Lamp" } },
     appReplacements: {
@@ -192,17 +181,15 @@ function byKey(ok, key) {
   const r = convertSarExport(mini, ["1"], []);
   assert(r.ok.length === 0);
   assert(r.skipped.some((s) => /Unsupported action:\s*Toggle/i.test(s.reason)), "toggle reason");
-}
+});
 
-// Outlet classification
-{
+test("classifies selected outlet devices as outlet actions", () => {
   const r = convertSarExport(fixture, [], ["176", "238", "230", "56"]);
   assert(r.ok.length >= 3, "outlets path");
   assert(r.ok.every((x) => x.schedule.action.target === "outlets"), "all outlets");
-}
+});
 
-// Weekly days + sunset offset (Restricted = days, not modes)
-{
+test("converts weekly day restrictions and sunset offsets", () => {
   const weekly = readFileSync(join(root, "preview/fixtures/simple-automation-weekly-sunset.txt"), "utf8");
   const r = convertSarExport(weekly, [], ["66"]);
   assert(!r.error, "weekly fixture: " + r.error);
@@ -214,18 +201,16 @@ function byKey(ok, key) {
   assert(s.trigger.offsetMin === -40, "offset -40");
   assert(s.onlyInModes.length === 0, "no mode restriction in this export");
   assert(s.action.states[0].on === true, "turn on");
-}
+});
 
-// Leftover at2Time=00:00 with empty at2T is NOT a cycle (app 148)
-{
+test("ignores a leftover secondary time when the secondary trigger is empty", () => {
   const r = convertSarExport(fixture, ["176", "238", "230", "56"], []);
   const rows148 = r.ok.filter((x) => String(x.importKey).includes("sar-148"));
   assert(rows148.length === 1, "148 one schedule, not leftover midnight off: " + rows148.length);
   assert(!r.ok.some((x) => String(x.importKey).includes("sar-148-2")), "148 must not split");
-}
+});
 
-// Live cycle: sunset +20 on, sunrise −20 off (Bug Zapper 290)
-{
+test("converts a sunset-to-sunrise device cycle", () => {
   const zap = readFileSync(join(root, "preview/fixtures/simple-automation-bug-zapper-cycle.txt"), "utf8");
   const r = convertSarExport(zap, ["59"], []);
   assert(!r.error, "zapper fixture: " + r.error);
@@ -241,10 +226,9 @@ function byKey(ok, key) {
   assert(secondary.schedule.trigger.offsetMin === -20, "zapper sunrise -20");
   assert(secondary.schedule.action.states[0].on === false, "zapper off");
   assert(/ \(off\)$/.test(secondary.name), "zapper secondary named off: " + secondary.name);
-}
+});
 
-// Live cycle: sunset on, clock 00:00 off (floodlights 415). at2T=time; no doAntiAction in export.
-{
+test("converts a sunset-to-midnight device cycle", () => {
   const flood = readFileSync(join(root, "preview/fixtures/simple-automation-floodlight-sunset-clock.txt"), "utf8");
   const ids = ["356", "54", "55", "359"];
   const r = convertSarExport(flood, ids, []);
@@ -261,17 +245,11 @@ function byKey(ok, key) {
   assert(secondary.schedule.trigger.time === "00:00", "flood 00:00");
   assert(secondary.schedule.action.states[0].on === false, "flood off");
   assert(/ \(off\)$/.test(secondary.name), "flood secondary named off: " + secondary.name);
-}
+});
 
-// CT sunrise cycle secondary is named (off)
-{
+test("labels synthetic secondary schedules as off actions", () => {
   const ctFixture = readFileSync(join(root, "preview/fixtures/simple-automation-sunrise-ct.txt"), "utf8");
   const r = convertSarExport(ctFixture, ["244"], []);
   const secondary = r.ok.find((x) => x.importKey === "sar-396-2-lights");
   assert(/ \(off\)$/.test(secondary.name), "ct secondary named off: " + secondary.name);
-}
-
-console.log("ok sar-import:", {
-  withLights: convertSarExport(fixture, ["176", "238", "230", "56"], []).ok.length,
-  skippedWithout: convertSarExport(fixture, [], []).skipped.length,
 });
