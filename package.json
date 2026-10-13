@@ -12,6 +12,8 @@
   },
   "homepage": "https://github.com/evdev/hubitat-modern-dashboard#readme",
   "scripts": {
+    "test": "node --test test/app-config.test.mjs test/app-devices.test.mjs test/app-favorites.test.mjs test/app-preferences.test.mjs test/app-thermostats-api.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/app.js test/app-config.test.mjs test/app-devices.test.mjs test/app-favorites.test.mjs test/app-preferences.test.mjs test/app-thermostats-api.test.mjs",
     "build": "node build.mjs",
     "preview": "node preview/server.mjs",
     "verify:sensors": "node preview/verify-sensors.mjs",
