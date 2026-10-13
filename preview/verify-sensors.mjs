@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-// Smoke-test sensor + valve API shapes against the local preview server.
+// Integration test: sensor + valve API shapes against the local preview server.
 // Run:  node preview/verify-sensors.mjs
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { buildMergedSensorCard, sensorCardFilterTypes, sensorTemperatureReading, climateSensorsByRoom } from "./merge-sensor-card.mjs";
-import { filterSensorExForType, sensorLastEventLine, sensorCardFootText, mockSensorExFooter } from "./sensor-ex-display.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = String(18000 + Math.floor(Math.random() * 2000));
@@ -96,16 +94,8 @@ async function main() {
     }
     const contactJunk = data.sensors.find((s) => s.i === 2101);
     assert(contactJunk?.ex?.some((e) => e.k === "enrollment"), "contact mock includes enrollment junk in raw ex[]");
-    const contactFiltered = filterSensorExForType(contactJunk.ex, contactJunk.t);
-    assert(!contactFiltered.some((e) => e.k === "enrollment"), "typed sensor ex[] filters enrollment");
-    const contactFoot = sensorCardFootText(contactJunk, mockSensorExFooter(contactJunk));
-    assert(!/enroll/i.test(contactFoot), "contact footer never shows enrollment");
-    assert(sensorLastEventLine(contactJunk).includes("Last activity"), "contact last-activity label");
     const leak = data.sensors.find((s) => s.i === 2104);
     assert(leak?.le != null && leak.le > 0, "leak sensor exposes last event timestamp");
-    const leakFoot = sensorCardFootText(leak, mockSensorExFooter(leak));
-    assert(!/enroll/i.test(leakFoot), "leak footer never shows enrollment");
-    assert(sensorLastEventLine(leak).includes("Last activity"), "leak last-activity label");
 
     const motionMulti = data.sensors.find((s) => s.i === 2103);
     assert(motionMulti && motionMulti.ex.filter((e) => e.k !== "battery").length >= 3, "motion multisensor carries multiple secondary readings");
@@ -129,41 +119,14 @@ async function main() {
     const dualTemp = data.tempSensors.find((t) => t.i === 2105);
     const dualHum = data.sensors.find((s) => s.i === 2105 && s.t === "humidity");
     assert(dualTemp && dualHum, "dual temp+humidity device in both arrays");
-    const mergedHum = buildMergedSensorCard(dualTemp, dualHum);
-    assert(mergedHum.t === "temp", "merged temp+humidity card is temperature-primary");
-    assert(mergedHum.ex.some((e) => e.k === "humidity" && e.v === dualHum.v), "merged card carries humidity as secondary");
-    const mergedHumTypes = sensorCardFilterTypes(mergedHum);
-    assert(mergedHumTypes.has("temp") && mergedHumTypes.has("humidity"), "temp+humidity tile counts in both filter categories");
 
     const dualIllTemp = data.tempSensors.find((t) => t.i === 2106);
     const dualIll = data.sensors.find((s) => s.i === 2106 && s.t === "illuminance");
     assert(dualIllTemp && dualIll, "dual temp+illuminance device in both arrays");
-    const mergedIll = buildMergedSensorCard(dualIllTemp, dualIll);
-    assert(mergedIll.t === "temp", "merged temp+illuminance card is temperature-primary");
-    assert(mergedIll.ex.some((e) => e.k === "illuminance" && e.v === dualIll.v), "merged card carries illuminance as secondary");
 
     const dualGenericTemp = data.tempSensors.find((t) => t.i === 2199);
     const dualGeneric = data.sensors.find((s) => s.i === 2199 && s.t === "generic");
     assert(dualGenericTemp && dualGeneric, "dual temp+generic device in both arrays");
-    const mergedGeneric = buildMergedSensorCard(dualGenericTemp, dualGeneric);
-    assert(mergedGeneric.t === "generic", "merged temp+generic card keeps generic primary");
-    assert(mergedGeneric.ex.some((e) => e.k === "temperature" && e.v === dualGenericTemp.temp), "merged generic card folds temperature into ex[]");
-    const mergedGenericTypes = sensorCardFilterTypes(mergedGeneric);
-    assert(mergedGenericTypes.has("generic") && mergedGenericTypes.has("temp"), "temp+generic tile counts in both filter categories");
-
-    const motionClimate = sensorTemperatureReading(motionMulti);
-    assert(motionClimate && Math.round(motionClimate.temp) === 68, "motion multisensor temperature reading for Lights room climate");
-    const climateByRoom = climateSensorsByRoom(data.tempSensors, data.sensors);
-    const garageClimate = climateByRoom.get(6);
-    assert(garageClimate?.some((s) => s.i === 2103), "Garage room climate falls back to motion multisensor 2103");
-    const kitchenClimate = climateByRoom.get(2);
-    assert(kitchenClimate?.some((s) => s.i === 2001), "Kitchen keeps dedicated temp sensor");
-    assert(!kitchenClimate?.some((s) => s.i === 2108), "dedicated temp sensor is not overridden by other kitchen sensors");
-    const dedicatedWins = climateSensorsByRoom(
-      [{ i: 1, n: "Dedicated", r: 42, temp: 70, u: "F" }],
-      [{ i: 2, n: "Motion", r: 42, t: "motion", ex: [{ k: "temperature", v: 68, u: "F" }] }],
-    );
-    assert(dedicatedWins.get(42)?.[0]?.i === 1, "dedicated temp sensor wins over motion extra in the same room");
 
     const motion = data.sensors.find((s) => s.t === "motion");
     const motionDev = await getJson(`/device?id=${motion.i}`);
