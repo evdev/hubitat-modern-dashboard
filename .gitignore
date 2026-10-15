@@ -1,4 +1,5 @@
 node_modules/
+.tools/
 dist/*
 !dist/ModernLightsDashboard.groovy
 !dist/mDashHolidays.groovy

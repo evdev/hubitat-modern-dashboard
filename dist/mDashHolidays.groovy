@@ -464,16 +464,16 @@ def holidayEnsureState() {
     def stamp = "${today}|${rev}"
     boolean shaped = false
     try {
-        shaped = state.config instanceof Map
-            && state.config.settings instanceof Map
-            && state.config.templates instanceof Map
-            && state.config.occasions instanceof Map
-            && state.config.pausedOccasions instanceof List
-            && state.config.spanOverrides instanceof Map
-            && state.runtime instanceof Map
-            && state.runtime.doneIds instanceof Map
-            && state.runtime.skippedSpanIds instanceof List
-            && state.calendar instanceof Map
+        shaped = state.config instanceof Map &&
+            state.config.settings instanceof Map &&
+            state.config.templates instanceof Map &&
+            state.config.occasions instanceof Map &&
+            state.config.pausedOccasions instanceof List &&
+            state.config.spanOverrides instanceof Map &&
+            state.runtime instanceof Map &&
+            state.runtime.doneIds instanceof Map &&
+            state.runtime.skippedSpanIds instanceof List &&
+            state.calendar instanceof Map
     } catch (e) { shaped = false }
     if (shaped && today && HOLIDAY_ENSURED.get(appId)?.toString() == stamp) return
     def config = state.config instanceof Map ? new LinkedHashMap(state.config) : [:]

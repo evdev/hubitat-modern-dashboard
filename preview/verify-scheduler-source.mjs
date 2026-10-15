@@ -19,6 +19,7 @@ assert(!src.includes('return "0 ${mm} ${hh} ? * ${dow} *"'), "old daily cron wit
 
 // Sun times via getSunriseAndSunset, not location.sunrise(opts)
 assert(src.includes("getSunriseAndSunset(opts)"), "must call getSunriseAndSunset(opts)");
+assert(src.includes("SUN_MS_CACHE"), "sunrise and sunset lookups are memoized");
 assert(!/location\.sunrise\s*\(/.test(src), "must not call location.sunrise(...)");
 assert(!/location\.sunset\s*\(/.test(src), "must not call location.sunset(...)");
 {

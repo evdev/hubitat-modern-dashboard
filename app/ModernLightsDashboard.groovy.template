@@ -22,6 +22,17 @@ import groovy.transform.Field
 @Field private static final long LOCAL_FILE_NAME_CACHE_TTL = 30000L
 @Field private static Long HOLIDAY_CHILD_APP_ID = null
 @Field private static Long SYNAGOGUE_CHILD_APP_ID = null
+// Sunrise/sunset, the LAN schedule list, and room/capability facts survive from one refresh to the next.
+// Live device attributes do not.
+@Field private static Map SUN_MS_CACHE = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map SCHEDULES_FRAGMENT_CACHE = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map DEVICE_FACT_CACHE = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map HTML_SANITIZED = new java.util.concurrent.ConcurrentHashMap()
+// Per hub thread, so one dashboard's refresh does not make another app's commands use the refresh cache.
+@Field private static Map POLL_FLAGS = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map POLL_STATE_BOXES = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map POLL_ROOM_MAPS = new java.util.concurrent.ConcurrentHashMap()
+@Field private static final long DEVICE_FACT_CACHE_TTL = 30000L
 
 definition(
     name: "Modern Dashboard",
@@ -2345,6 +2356,7 @@ def schedImportFormatSkippedHtml(skipped) {
 def installed() {
     try { clearLocalFileNameCache() } catch (e) {}
     try { clearChildAppCache() } catch (e) {}
+    try { clearDashboardPollMemos() } catch (e) {}
     if (!state.accessToken) { createAccessToken() }
     logInit()
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
@@ -2361,6 +2373,7 @@ def installed() {
 def updated() {
     try { clearLocalFileNameCache() } catch (e) {}
     try { clearChildAppCache() } catch (e) {}
+    try { clearDashboardPollMemos() } catch (e) {}
     logInit()
     try { clearLocalAssetCache() } catch (e) { log.warn "Modern Dashboard: asset cache clear failed: ${e}" }
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
@@ -2526,9 +2539,9 @@ def logInit() {
 
 def audioHasDashboardControls(d) {
     if (d == null) return false
-    return d.hasCommand("play") || d.hasCommand("pause") || d.hasCommand("stop") ||
-        d.hasCommand("previousTrack") || d.hasCommand("nextTrack") ||
-        d.hasCommand("setVolume") || d.hasCommand("setLevel")
+    return deviceHasCommand(d, "play") || deviceHasCommand(d, "pause") || deviceHasCommand(d, "stop") ||
+        deviceHasCommand(d, "previousTrack") || deviceHasCommand(d, "nextTrack") ||
+        deviceHasCommand(d, "setVolume") || deviceHasCommand(d, "setLevel")
 }
 
 def allAudioDevices() {
@@ -2573,11 +2586,11 @@ def shadePosition(dev) {
 }
 
 def shadeSupportsPosition(dev) {
-    return dev.hasCommand("setPosition") || dev.hasCommand("setLevel")
+    return deviceHasCommand(dev, "setPosition") || deviceHasCommand(dev, "setLevel")
 }
 
 def shadeSupportsStop(dev) {
-    return dev.hasCommand("stopPositionChange") || dev.hasCommand("stop")
+    return deviceHasCommand(dev, "stopPositionChange") || deviceHasCommand(dev, "stop")
 }
 
 def shadeStatus(dev) {
@@ -2636,7 +2649,7 @@ def sensorExtraStateEntry(d, nm) {
     def raw = null
     def unit = null
     try {
-        def st = d.currentState(nm)
+        def st = pollCurrentState(d, nm?.toString())
         raw = st?.value
         unit = st?.unit
     } catch (e) {}
@@ -2670,13 +2683,7 @@ def allSensorDevices() {
 }
 
 def sensorRoomId(d, roomsList) {
-    def roomName = null
-    try { roomName = d.getRoomName() } catch (e) { roomName = null }
-    if (roomName) {
-        def rm = roomsList.find { it.name == roomName }
-        if (rm) return rm.id
-    }
-    return null
+    return pollRoomId(d, roomsList)
 }
 
 // Card-worthy secondary attrs only (typed sensors); generic may discover more via sensorSkipAttrs.
@@ -2698,7 +2705,7 @@ def sensorExtraAttrs(d, primaryAttr, int maxNonBattery, String sensorType = null
     if (genericDiscovery) {
         def present = []
         try {
-            for (st in d.currentStates) {
+            for (st in deviceCurrentStates(d)) {
                 def nm = st?.name?.toString()?.toLowerCase()
                 if (!nm || skip.contains(nm)) continue
                 def key = sensorExtraAttrKey(nm)
@@ -2816,13 +2823,13 @@ def appendExJsonArray(out, extras) {
 def audioControlFlags(d) {
     if (d == null) return 0
     int f = 0
-    if (d.hasCommand("play")) f |= 1
-    if (d.hasCommand("pause")) f |= 2
-    if (d.hasCommand("stop")) f |= 4
-    if (d.hasCommand("previousTrack")) f |= 8
-    if (d.hasCommand("nextTrack")) f |= 16
-    if (d.hasCommand("setVolume") || d.hasCommand("setLevel")) f |= 32
-    if (d.hasCommand("mute")) f |= 64
+    if (deviceHasCommand(d, "play")) f |= 1
+    if (deviceHasCommand(d, "pause")) f |= 2
+    if (deviceHasCommand(d, "stop")) f |= 4
+    if (deviceHasCommand(d, "previousTrack")) f |= 8
+    if (deviceHasCommand(d, "nextTrack")) f |= 16
+    if (deviceHasCommand(d, "setVolume") || deviceHasCommand(d, "setLevel")) f |= 32
+    if (deviceHasCommand(d, "mute")) f |= 64
     return f
 }
 
@@ -2858,11 +2865,7 @@ def normalizeAudioTrack(d) {
 }
 
 def audioRoomId(d, roomsList) {
-    def roomName = null
-    try { roomName = d.getRoomName() } catch (e) { roomName = null }
-    if (!roomName) return null
-    def rm = roomsList.find { it.name == roomName }
-    return rm ? rm.id : null
+    return pollRoomId(d, roomsList)
 }
 
 def appendAudioDeviceJson(out, d, roomsList) {
@@ -2873,7 +2876,7 @@ def appendAudioDeviceJson(out, d, roomsList) {
     def muteVal = safeCurrent(d, "mute")
     def flags = audioControlFlags(d)
     out << "{\"i\":" << d.id
-    out << ",\"n\":" << jsonStr(d.displayName)
+    out << ",\"n\":" << jsonStr(pollDisplayName(d))
     out << ",\"r\":" << (rid == null ? "null" : rid.toString())
     out << ",\"st\":" << jsonStr(statusVal ?: "idle")
     out << ",\"v\":" << (lvl == null ? "null" : lvl.toString())
@@ -3581,6 +3584,8 @@ def renderLanProbe() {
 // ---------------------------------------------------------------------------
 def renderData() {
     if (!guardDashboardAccess()) return renderAuthRequired()
+    beginDashboardPoll()
+    try {
     def out = new StringBuilder()
     out << "{\"config\":{"
     out << "\"pollIntervalMs\":" << (pollSec ? (pollSec.toInteger() * 1000) : 5000)
@@ -3607,16 +3612,10 @@ def renderData() {
     if (lights) {
         for (d in lights) {
             if (!first) out << ","; first = false
-            def isDim = d.hasCapability("SwitchLevel")
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
-            def hasCt = d.hasCapability("ColorTemperature")
-            def hasRgb = d.hasCapability("ColorControl")
+            def isDim = pollHasCapability(d, "SwitchLevel")
+            def rid = pollRoomId(d, roomsList)
+            def hasCt = pollHasCapability(d, "ColorTemperature")
+            def hasRgb = pollHasCapability(d, "ColorControl")
             def sw = safeCurrent(d, "switch")
             def lvl = isDim ? safeCurrent(d, "level") : null
             def kelvin = hasCt ? safeCurrent(d, "colorTemperature") : null
@@ -3624,7 +3623,7 @@ def renderData() {
             def sat = hasRgb ? safeCurrent(d, "saturation") : null
             def cmode = (hasCt && hasRgb) ? safeCurrent(d, "colorMode") : null
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"d\":" << (isDim ? 1 : 0)
             out << ",\"ct\":" << (hasCt ? 1 : 0)
@@ -3651,26 +3650,16 @@ def renderData() {
     if (thermostats) {
         for (d in thermostats) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def tmode = safeCurrent(d, "thermostatMode")
             def ostate = safeCurrent(d, "thermostatOperatingState")
             def hsp = safeCurrent(d, "heatingSetpoint")
             def csp = safeCurrent(d, "coolingSetpoint")
             def temp = safeCurrent(d, "temperature")
-            def tempUnit = "F"
-            try {
-                def st = d.currentState("temperature")
-                if (st?.unit) tempUnit = st.unit
-            } catch (e) {}
-            def hasFanMode = d.hasCapability("ThermostatFanMode") || d.hasAttribute("thermostatFanMode")
+            def tempUnit = pollCurrentState(d, "temperature")?.unit?.toString() ?: "F"
+            def hasFanMode = pollHasCapability(d, "ThermostatFanMode") || deviceHasAttribute(d, "thermostatFanMode")
             def fmode = hasFanMode ? safeCurrent(d, "thermostatFanMode") : null
-            def hasFanSpeed = d.hasAttribute("fanSpeed") || d.hasCommand("setFanSpeed") || d.hasAttribute("fanSpeedLevels")
+            def hasFanSpeed = deviceHasAttribute(d, "fanSpeed") || deviceHasCommand(d, "setFanSpeed") || deviceHasAttribute(d, "fanSpeedLevels")
             def fspeed = hasFanSpeed ? safeCurrent(d, "fanSpeed") : null
             def supModes = safeCurrent(d, "supportedThermostatModes")
             def supFanModes = null
@@ -3679,7 +3668,7 @@ def renderData() {
             }
             def fsLevels = hasFanSpeed ? safeCurrent(d, "fanSpeedLevels") : null
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"tm\":" << jsonStr(tmode)
             out << ",\"os\":" << jsonStr(ostate)
@@ -3705,23 +3694,13 @@ def renderData() {
         for (d in tempSensors) {
             if (thermoIds.contains(d.id)) continue
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def temp = safeCurrent(d, "temperature")
-            def tempUnit = "F"
-            try {
-                def st = d.currentState("temperature")
-                if (st?.unit) tempUnit = st.unit
-            } catch (e) {}
+            def tempUnit = pollCurrentState(d, "temperature")?.unit?.toString() ?: "F"
             def bat = safeCurrent(d, "battery")
             def extras = sensorExtraAttrs(d, "temperature", sensorExMaxForType("temp"), "temp")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"temp\":" << numOrNull(temp)
             out << ",\"u\":" << jsonStr(tempUnit)
@@ -3771,7 +3750,7 @@ def renderData() {
             if (urls == null || !urls.u) continue
             if (!first) out << ","; first = false
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"u\":" << jsonStr(urls.u)
             if (urls.uh) out << ",\"uh\":" << jsonStr(urls.uh)
             def streamType = urls.t ? urls.t : "webrtc"
@@ -3784,16 +3763,10 @@ def renderData() {
     if (locks) {
         for (d in locks) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def lockSt = safeCurrent(d, "lock")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
             out << ",\"st\":" << jsonStr(lockSt)
@@ -3805,16 +3778,10 @@ def renderData() {
     if (garageDoors) {
         for (d in garageDoors) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def doorSt = safeCurrent(d, "door")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"st\":" << jsonStr(doorSt)
             out << "}"
@@ -3824,17 +3791,11 @@ def renderData() {
     first = true
     for (d in allWindowShades()) {
         if (!first) out << ","; first = false
-        def roomName = null
-        try { roomName = d.getRoomName() } catch (e) { roomName = null }
-        def rid = null
-        if (roomName) {
-            def rm = roomsList.find { it.name == roomName }
-            if (rm) rid = rm.id
-        }
+        def rid = pollRoomId(d, roomsList)
         def shadeSt = shadeStatus(d)
         def shadePos = shadePosition(d)
         out << "{\"i\":" << d.id
-        out << ",\"n\":" << jsonStr(d.displayName)
+        out << ",\"n\":" << jsonStr(pollDisplayName(d))
         out << ",\"r\":" << (rid == null ? "null" : rid.toString())
         out << ",\"st\":" << jsonStr(shadeSt)
         out << ",\"pos\":" << numOrNull(shadePos)
@@ -3847,22 +3808,16 @@ def renderData() {
     if (ceilingFans) {
         for (d in ceilingFans) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def speed = safeCurrent(d, "speed")
             def sw = safeCurrent(d, "switch")
-            def hasSw = d.hasCapability("Switch") || d.hasCommand("on") || d.hasCommand("off")
+            def hasSw = pollHasCapability(d, "Switch") || deviceHasCommand(d, "on") || deviceHasCommand(d, "off")
             def on = false
             if (sw != null) on = (sw == "on")
             else if (speed != null) on = (speed.toString().toLowerCase() != "off")
             def supSpeeds = safeCurrent(d, "supportedFanSpeeds")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"s\":" << (on ? 1 : 0)
             out << ",\"sp\":" << jsonStr(speed)
@@ -3876,16 +3831,10 @@ def renderData() {
     if (valves) {
         for (d in valves) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def valveSt = safeCurrent(d, "valve")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"st\":" << jsonStr(valveSt)
             out << "}"
@@ -3960,27 +3909,238 @@ def renderData() {
         out << ",\"dashSessionExpiresAt\":" << authRenewed.expiresAt
     }
     out << "}"
-    renderJsonNoStore(out.toString(), 200)
+    return renderJsonNoStore(out.toString(), 200)
+    } finally {
+        endDashboardPoll()
+    }
+}
+
+def dashboardAppId() {
+    try {
+        def id = app?.id
+        if (id != null && id.toString()) return id.toString()
+    } catch (e) {}
+    return "0"
+}
+
+def clearDashboardPollMemos() {
+    try { if (DEVICE_FACT_CACHE != null) DEVICE_FACT_CACHE.clear() } catch (e) {}
+    try { if (SCHEDULES_FRAGMENT_CACHE != null) SCHEDULES_FRAGMENT_CACHE.remove(dashboardAppId()) } catch (e) {}
+}
+
+def ensureDashboardPollCaches() {
+    if (SUN_MS_CACHE == null) SUN_MS_CACHE = new java.util.concurrent.ConcurrentHashMap()
+    if (SCHEDULES_FRAGMENT_CACHE == null) SCHEDULES_FRAGMENT_CACHE = new java.util.concurrent.ConcurrentHashMap()
+    if (DEVICE_FACT_CACHE == null) DEVICE_FACT_CACHE = new java.util.concurrent.ConcurrentHashMap()
+    if (HTML_SANITIZED == null) HTML_SANITIZED = new java.util.concurrent.ConcurrentHashMap()
+    if (POLL_FLAGS == null) POLL_FLAGS = new java.util.concurrent.ConcurrentHashMap()
+    if (POLL_STATE_BOXES == null) POLL_STATE_BOXES = new java.util.concurrent.ConcurrentHashMap()
+    if (POLL_ROOM_MAPS == null) POLL_ROOM_MAPS = new java.util.concurrent.ConcurrentHashMap()
+}
+
+def pollThreadId() {
+    try { return Thread.currentThread().id } catch (e) { return 0L }
+}
+
+def pollFactsOn() {
+    try {
+        ensureDashboardPollCaches()
+        return POLL_FLAGS.get(pollThreadId()) == Boolean.TRUE
+    } catch (e) { return false }
+}
+
+def beginDashboardPoll() {
+    ensureDashboardPollCaches()
+    def id = pollThreadId()
+    POLL_FLAGS.put(id, Boolean.TRUE)
+    POLL_STATE_BOXES.put(id, new java.util.concurrent.ConcurrentHashMap())
+    POLL_ROOM_MAPS.remove(id)
+}
+
+def endDashboardPoll() {
+    def id = pollThreadId()
+    try { if (POLL_FLAGS != null) POLL_FLAGS.remove(id) } catch (e) {}
+    try { if (POLL_STATE_BOXES != null) POLL_STATE_BOXES.remove(id) } catch (e) {}
+    try { if (POLL_ROOM_MAPS != null) POLL_ROOM_MAPS.remove(id) } catch (e) {}
+}
+
+def pollDeviceKey(d) {
+    try {
+        def id = d?.id?.toString()
+        if (id) return id
+    } catch (e) {}
+    return "obj:" + System.identityHashCode(d)
+}
+
+// One currentStates read for this refresh. Missing names fall back to currentState.
+def pollStateBox(d) {
+    ensureDashboardPollCaches()
+    def boxes = POLL_STATE_BOXES.get(pollThreadId())
+    if (!(boxes instanceof Map)) boxes = new java.util.concurrent.ConcurrentHashMap()
+    def key = pollDeviceKey(d)
+    def hit = boxes.get(key)
+    if (hit instanceof Map) return hit
+    def byName = [:]
+    def list = []
+    try {
+        def states = d?.currentStates
+        if (states) {
+            for (st in states) {
+                def nm = st?.name?.toString()
+                if (!nm) continue
+                list << st
+                if (!byName.containsKey(nm)) byName[nm] = st
+                def low = nm.toLowerCase()
+                if (!byName.containsKey(low)) byName[low] = st
+            }
+        }
+    } catch (e) {}
+    def box = [byName: byName, list: list]
+    boxes.put(key, box)
+    POLL_STATE_BOXES.put(pollThreadId(), boxes)
+    return box
+}
+
+def deviceCurrentStates(d) {
+    if (pollFactsOn() && d != null) return pollStateBox(d).list ?: []
+    try { return d?.currentStates ?: [] } catch (e) { return [] }
+}
+
+def pollCurrentState(d, String attrName) {
+    if (d == null || !attrName) return null
+    if (pollFactsOn()) {
+        def byName = pollStateBox(d).byName
+        if (byName instanceof Map) {
+            if (byName.containsKey(attrName)) return byName[attrName]
+            def lower = attrName.toLowerCase()
+            if (lower != attrName && byName.containsKey(lower)) return byName[lower]
+        }
+    }
+    try { return d.currentState(attrName) } catch (e) { return null }
 }
 
 def safeCurrent(d, attrName) {
     try {
-        def st = d.currentState(attrName)
-        return st?.value
+        return pollCurrentState(d, attrName?.toString())?.value
     } catch (e) { return null }
 }
 
-def appendOnOffDeviceJson(out, d, roomsList) {
-    def roomName = null
-    try { roomName = d.getRoomName() } catch (e) { roomName = null }
-    def rid = null
-    if (roomName) {
-        def rm = roomsList.find { it.name == roomName }
-        if (rm) rid = rm.id
+def deviceFactSlot(d) {
+    if (!pollFactsOn() || d == null) return null
+    long at = 0L
+    try { at = now() as long } catch (e) { at = 0L }
+    if (at <= 0L) return null
+    def key = pollDeviceKey(d)
+    def hit = DEVICE_FACT_CACHE.get(key)
+    if (hit instanceof Map) {
+        long stamp = 0L
+        try { stamp = hit.at as long } catch (e) { stamp = 0L }
+        long age = at - stamp
+        if (age >= 0L && age < DEVICE_FACT_CACHE_TTL) return hit
     }
+    def slot = [at: at]
+    DEVICE_FACT_CACHE.put(key, slot)
+    return slot
+}
+
+def deviceFact(d, String key, Closure compute) {
+    def slot = deviceFactSlot(d)
+    if (!(slot instanceof Map)) return compute()
+    if (slot.containsKey(key)) return slot[key]
+    def value = compute()
+    slot[key] = value
+    return value
+}
+
+def pollHasCapability(d, String cap) {
+    if (d == null || !cap) return false
+    if (!pollFactsOn()) {
+        try { return d.hasCapability(cap) == true } catch (e) { return false }
+    }
+    return deviceFact(d, "cap:" + cap) {
+        try { return d.hasCapability(cap) == true } catch (e) { return false }
+    } == true
+}
+
+def deviceHasCommand(d, String cmd) {
+    if (d == null || !cmd) return false
+    if (!pollFactsOn()) {
+        try { return d.hasCommand(cmd) == true } catch (e) { return false }
+    }
+    return deviceFact(d, "cmd:" + cmd) {
+        try { return d.hasCommand(cmd) == true } catch (e) { return false }
+    } == true
+}
+
+def deviceHasAttribute(d, String attr) {
+    if (d == null || !attr) return false
+    if (!pollFactsOn()) {
+        try { return d.hasAttribute(attr) == true } catch (e) { return false }
+    }
+    return deviceFact(d, "attr:" + attr) {
+        try { return d.hasAttribute(attr) == true } catch (e) { return false }
+    } == true
+}
+
+def pollDisplayName(d) {
+    if (d == null) return null
+    if (!pollFactsOn()) {
+        try { return d.displayName } catch (e) { return null }
+    }
+    return deviceFact(d, "name") {
+        try { return d.displayName } catch (e) { return null }
+    }
+}
+
+def pollRoomName(d) {
+    if (d == null) return null
+    if (!pollFactsOn()) {
+        try { return d.getRoomName() } catch (e) { return null }
+    }
+    return deviceFact(d, "room") {
+        try { return d.getRoomName() } catch (e) { return null }
+    }
+}
+
+def roomIdsByName(roomsList) {
+    def map = [:]
+    for (r in (roomsList ?: [])) {
+        if (r?.name == null) continue
+        if (!map.containsKey(r.name)) map[r.name] = r.id
+        def text = r.name.toString()
+        if (!map.containsKey(text)) map[text] = r.id
+    }
+    return map
+}
+
+def pollRoomId(d, roomsList) {
+    if (pollFactsOn()) {
+        ensureDashboardPollCaches()
+        def roomKey = pollThreadId()
+        def roomIds = POLL_ROOM_MAPS.get(roomKey)
+        if (!(roomIds instanceof Map)) {
+            roomIds = roomIdsByName(roomsList)
+            POLL_ROOM_MAPS.put(roomKey, roomIds)
+        }
+        def name = pollRoomName(d)
+        if (name == null) return null
+        if (roomIds.containsKey(name)) return roomIds[name]
+        def text = name.toString()
+        if (text != name && roomIds.containsKey(text)) return roomIds[text]
+        return null
+    }
+    def roomName = null
+    try { roomName = d?.getRoomName() } catch (e) { roomName = null }
+    if (!roomName) return null
+    def rm = roomsList?.find { it.name == roomName }
+    return rm ? rm.id : null
+}
+
+def appendOnOffDeviceJson(out, d, roomsList) {
+    def rid = pollRoomId(d, roomsList)
     def sw = safeCurrent(d, "switch")
     out << "{\"i\":" << d.id
-    out << ",\"n\":" << jsonStr(d.displayName)
+    out << ",\"n\":" << jsonStr(pollDisplayName(d))
     out << ",\"r\":" << (rid == null ? "null" : rid.toString())
     out << ",\"s\":" << (sw == "on" ? 1 : 0)
     out << "}"
@@ -4004,8 +4164,7 @@ def isNumberLike(v) {
 
 // First meaningful (non-skip, non-empty) attribute value for generic sensors.
 def firstMeaningfulAttr(d, skipAttr) {
-    def states = null
-    try { states = d.currentStates } catch (e) { states = null }
+    def states = deviceCurrentStates(d)
     if (states == null) return null
     try {
         for (st in states) {
@@ -4123,7 +4282,7 @@ def appendSensorJson(out, d, entry, roomsList) {
     def aFlag = reading.a
     def rid = sensorRoomId(d, roomsList)
     out << "{\"i\":" << d.id
-    out << ",\"n\":" << jsonStr(d.displayName)
+    out << ",\"n\":" << jsonStr(pollDisplayName(d))
     out << ",\"r\":" << (rid == null ? "null" : rid.toString())
     out << ",\"t\":" << jsonStr(t)
     if (rawVal != null && isNumberLike(rawVal)) {
@@ -4474,15 +4633,15 @@ def jsonListAttr(v) {
 }
 
 def tstatHasComfortMode(d) {
-    return d.hasCommand("setComfortMode") || d.hasAttribute("comfortMode")
+    return deviceHasCommand(d, "setComfortMode") || deviceHasAttribute(d, "comfortMode")
 }
 
 def tstatHasComfortFanSpeed(d) {
-    return d.hasCommand("setComfortFanSpeed") || d.hasAttribute("comfortFanSpeed")
+    return deviceHasCommand(d, "setComfortFanSpeed") || deviceHasAttribute(d, "comfortFanSpeed")
 }
 
 def tstatHasVane(d) {
-    return d.hasCommand("setVanePosition") || d.hasAttribute("vanePosition")
+    return deviceHasCommand(d, "setVanePosition") || deviceHasAttribute(d, "vanePosition")
 }
 
 def appendTstatComfortJson(out, d) {
@@ -6424,12 +6583,18 @@ def looksLikeDashboardHtml(raw) {
 
 def sanitizeHtmlForDashboard(raw) {
     if (raw == null) return null
-    def s = raw.toString()
+    ensureDashboardPollCaches()
+    def original = raw.toString()
+    def cached = HTML_SANITIZED.get(original)
+    if (cached instanceof String) return cached
+    def s = original
     s = s.replaceAll(/(?is)<script\b[^>]*>.*?<\/script>/, "")
     s = s.replaceAll(/(?is)<script\b[^>]*\/?>/, "")
     s = s.replaceAll(/(?i)\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/, "")
     s = s.replaceAll(/(?i)(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/, '$1=$2#$2')
     s = s.replaceAll(/(?is)<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/, "")
+    if (HTML_SANITIZED.size() > 40) HTML_SANITIZED.clear()
+    HTML_SANITIZED.put(original, s)
     return s
 }
 
@@ -6501,7 +6666,7 @@ def htmlTileWantsBody(tileId, includeHtmlBodies, activeIds) {
 def discoverHtmlTilesForDevice(d, includeHtmlBodies = false, activeIds = null) {
     def out = []
     if (!d) return out
-    def deviceName = d.displayName?.toString() ?: ("Device " + d.id)
+    def deviceName = pollDisplayName(d)?.toString() ?: ("Device " + d.id)
     def deviceId = d.id
     if (isTileBuilderStorageDevice(d)) {
         def descs = mergeTileDescriptionMaps(parseTileDescriptionsMap(d), tileBuilderDescriptions(d))
@@ -6524,7 +6689,7 @@ def discoverHtmlTilesForDevice(d, includeHtmlBodies = false, activeIds = null) {
     def seen = new HashSet()
     def named = htmlNamedAttrs()
     try {
-        def states = d.currentStates ?: []
+        def states = deviceCurrentStates(d) ?: []
         for (st in states) {
             def nm = st?.name?.toString()
             if (!nm) continue
@@ -10614,7 +10779,38 @@ def scheduleOffsetMin(tr) {
     }
 }
 
+def scheduleSunCacheKey(which, offsetMin, forDate) {
+    def tz = null
+    def lat = ""
+    def lon = ""
+    try {
+        tz = location?.timeZone
+        lat = location?.latitude?.toString() ?: ""
+        lon = location?.longitude?.toString() ?: ""
+    } catch (e) {}
+    def tzId = ""
+    try { tzId = tz?.ID?.toString() ?: "" } catch (e) { tzId = "" }
+    def cal = Calendar.getInstance()
+    if (tz) cal.setTimeZone(tz)
+    if (forDate instanceof Date) cal.setTime(forDate)
+    else if (forDate != null) {
+        try { cal.setTime(forDate as Date) } catch (e) { return null }
+    }
+    def day = String.format("%04d-%02d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DATE))
+    def off = 0
+    try { off = (offsetMin ?: 0) as Integer } catch (e) { off = 0 }
+    def whichKey = (which == "sunrise") ? "sunrise" : "sunset"
+    return "${tzId}|${lat}|${lon}|${day}|${whichKey}|${off}".toString()
+}
+
 def scheduleSunMs(which, offsetMin, forDate) {
+    ensureDashboardPollCaches()
+    def key = null
+    try { key = scheduleSunCacheKey(which, offsetMin, forDate) } catch (e) { key = null }
+    if (key != null) {
+        def hit = SUN_MS_CACHE.get(key)
+        if (hit instanceof Number) return hit
+    }
     try {
         def opts = [:]
         def off = (offsetMin ?: 0) as Integer
@@ -10623,7 +10819,12 @@ def scheduleSunMs(which, offsetMin, forDate) {
         if (forDate) opts.date = forDate
         def rs = getSunriseAndSunset(opts)
         def d = (which == "sunrise") ? rs?.sunrise : rs?.sunset
-        return d?.getTime()
+        def ms = d?.getTime()
+        if (ms != null && key != null) {
+            if (SUN_MS_CACHE.size() > 2000) SUN_MS_CACHE.clear()
+            SUN_MS_CACHE.put(key, ms as long)
+        }
+        return ms
     } catch (e) {
         return null
     }
@@ -10788,9 +10989,18 @@ def lastResultJson(s) {
 
 def schedulesJsonFragment() {
     if (!schedulerIsEnabled()) return ',"schedules":[]'
+    ensureDashboardPollCaches()
+    def raw = ""
+    try { raw = state?.schedulesJson?.toString() ?: "" } catch (e) { raw = "" }
+    def cacheKey = (schedulerUse24Hour == true ? "24|" : "12|") + raw
+    def appId = dashboardAppId()
+    def cached = SCHEDULES_FRAGMENT_CACHE.get(appId)
+    if (cached instanceof Map && cached.key == cacheKey && cached.fragment instanceof String) return cached.fragment
     def parsed = parseSchedulesMapResult()
     if (parsed.ok != true) {
-        return ',"schedules":[],"schedulesError":' + jsonStr(parsed.error ?: "schedule store unreadable")
+        def errFragment = ',"schedules":[],"schedulesError":' + jsonStr(parsed.error ?: "schedule store unreadable")
+        SCHEDULES_FRAGMENT_CACHE.put(appId, [key: cacheKey, fragment: errFragment])
+        return errFragment
     }
     def map = parsed.map instanceof Map ? parsed.map : [:]
     def out = new StringBuilder()
@@ -10825,7 +11035,9 @@ def schedulesJsonFragment() {
         out << "}"
     }
     out << "]"
-    return out.toString()
+    def fragment = out.toString()
+    SCHEDULES_FRAGMENT_CACHE.put(appId, [key: cacheKey, fragment: fragment])
+    return fragment
 }
 
 def initializeScheduler() {

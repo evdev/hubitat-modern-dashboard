@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.67
+
+- **Dashboard:** Each refresh reuses today's sunrise and sunset, the schedule list,
+  and each device's room and capabilities. A room move, a rename, or a driver
+  change shows up within 30 seconds, or right away when the app is saved. On,
+  off, level, and sensor readings are still read every time. Update Modern
+  Dashboard.
+
 ## 0.4.66
 
 - **Shabbat & holidays:** The dashboard asks the hub for less on each refresh, and a holiday timeline is built once and reused. A module file added or removed in File Manager can take up to 30 seconds to show up, or shows up right away when the app page is opened. Update Modern Dashboard, mDash Shabbat and Holidays, and mDash Synagogue.

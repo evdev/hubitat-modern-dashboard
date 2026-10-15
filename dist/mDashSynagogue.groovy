@@ -244,15 +244,15 @@ def synagogueEnsureState() {
     def stamp = "${today}|${rev}"
     boolean shaped = false
     try {
-        shaped = state.config instanceof Map
-            && state.config.settings instanceof Map
-            && state.config.days instanceof Map
-            && state.config.calendars instanceof List
-            && state.config.titleRules instanceof List
-            && state.config.bookings instanceof List
-            && state.runtime instanceof Map
-            && state.hebcal instanceof Map
-            && state.ical instanceof Map
+        shaped = state.config instanceof Map &&
+            state.config.settings instanceof Map &&
+            state.config.days instanceof Map &&
+            state.config.calendars instanceof List &&
+            state.config.titleRules instanceof List &&
+            state.config.bookings instanceof List &&
+            state.runtime instanceof Map &&
+            state.hebcal instanceof Map &&
+            state.ical instanceof Map
     } catch (e) { shaped = false }
     if (shaped && today && SYNAGOGUE_ENSURED.get(appId)?.toString() == stamp) return
     if (!(state.config instanceof Map)) {
