@@ -20,6 +20,9 @@ assert(!src.includes('return "0 ${mm} ${hh} ? * ${dow} *"'), "old daily cron wit
 // Sun times via getSunriseAndSunset, not location.sunrise(opts)
 assert(src.includes("getSunriseAndSunset(opts)"), "must call getSunriseAndSunset(opts)");
 assert(src.includes("SUN_MS_CACHE"), "sunrise and sunset lookups are memoized");
+assert(src.includes("def pollSlotId()"), "refresh cache is keyed by the installed app");
+assert(src.includes("return dashboardAppId()"), "refresh cache uses the dashboard app id");
+assert(!src.includes("identityHashCode"), "refresh cache must not call identityHashCode");
 assert(!/location\.sunrise\s*\(/.test(src), "must not call location.sunrise(...)");
 assert(!/location\.sunset\s*\(/.test(src), "must not call location.sunset(...)");
 {

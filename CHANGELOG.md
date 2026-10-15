@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.68
+
+- **Dashboard:** A refresh keeps its device cache on this dashboard, so another
+  app on the hub does not reuse it. Update Modern Dashboard.
+
 ## 0.4.67
 
 - **Dashboard:** Each refresh reuses today's sunrise and sunset, the schedule list,

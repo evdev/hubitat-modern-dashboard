@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.67
+// Modern Dashboard v0.4.68
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.67"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.68"
 @Field private static List LOCAL_FILE_NAME_CACHE = null
 @Field private static long LOCAL_FILE_NAME_CACHE_AT = 0L
 @Field private static final long LOCAL_FILE_NAME_CACHE_TTL = 30000L
@@ -28,7 +28,7 @@ import groovy.transform.Field
 @Field private static Map SCHEDULES_FRAGMENT_CACHE = new java.util.concurrent.ConcurrentHashMap()
 @Field private static Map DEVICE_FACT_CACHE = new java.util.concurrent.ConcurrentHashMap()
 @Field private static Map HTML_SANITIZED = new java.util.concurrent.ConcurrentHashMap()
-// Per hub thread, so one dashboard's refresh does not make another app's commands use the refresh cache.
+// Per installed app, so one dashboard's refresh does not make another app's commands use the refresh cache.
 @Field private static Map POLL_FLAGS = new java.util.concurrent.ConcurrentHashMap()
 @Field private static Map POLL_STATE_BOXES = new java.util.concurrent.ConcurrentHashMap()
 @Field private static Map POLL_ROOM_MAPS = new java.util.concurrent.ConcurrentHashMap()
@@ -87,7 +87,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.67 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.68 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -3434,7 +3434,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.67.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.68.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -3533,7 +3533,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.67.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.68.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -3938,27 +3938,27 @@ def ensureDashboardPollCaches() {
     if (POLL_ROOM_MAPS == null) POLL_ROOM_MAPS = new java.util.concurrent.ConcurrentHashMap()
 }
 
-def pollThreadId() {
-    try { return Thread.currentThread().id } catch (e) { return 0L }
+def pollSlotId() {
+    return dashboardAppId()
 }
 
 def pollFactsOn() {
     try {
         ensureDashboardPollCaches()
-        return POLL_FLAGS.get(pollThreadId()) == Boolean.TRUE
+        return POLL_FLAGS.get(pollSlotId()) == Boolean.TRUE
     } catch (e) { return false }
 }
 
 def beginDashboardPoll() {
     ensureDashboardPollCaches()
-    def id = pollThreadId()
+    def id = pollSlotId()
     POLL_FLAGS.put(id, Boolean.TRUE)
     POLL_STATE_BOXES.put(id, new java.util.concurrent.ConcurrentHashMap())
     POLL_ROOM_MAPS.remove(id)
 }
 
 def endDashboardPoll() {
-    def id = pollThreadId()
+    def id = pollSlotId()
     try { if (POLL_FLAGS != null) POLL_FLAGS.remove(id) } catch (e) {}
     try { if (POLL_STATE_BOXES != null) POLL_STATE_BOXES.remove(id) } catch (e) {}
     try { if (POLL_ROOM_MAPS != null) POLL_ROOM_MAPS.remove(id) } catch (e) {}
@@ -3969,13 +3969,13 @@ def pollDeviceKey(d) {
         def id = d?.id?.toString()
         if (id) return id
     } catch (e) {}
-    return "obj:" + System.identityHashCode(d)
+    try { return "obj:" + d.hashCode() } catch (e) { return "obj:0" }
 }
 
 // One currentStates read for this refresh. Missing names fall back to currentState.
 def pollStateBox(d) {
     ensureDashboardPollCaches()
-    def boxes = POLL_STATE_BOXES.get(pollThreadId())
+    def boxes = POLL_STATE_BOXES.get(pollSlotId())
     if (!(boxes instanceof Map)) boxes = new java.util.concurrent.ConcurrentHashMap()
     def key = pollDeviceKey(d)
     def hit = boxes.get(key)
@@ -3997,7 +3997,7 @@ def pollStateBox(d) {
     } catch (e) {}
     def box = [byName: byName, list: list]
     boxes.put(key, box)
-    POLL_STATE_BOXES.put(pollThreadId(), boxes)
+    POLL_STATE_BOXES.put(pollSlotId(), boxes)
     return box
 }
 
@@ -4116,7 +4116,7 @@ def roomIdsByName(roomsList) {
 def pollRoomId(d, roomsList) {
     if (pollFactsOn()) {
         ensureDashboardPollCaches()
-        def roomKey = pollThreadId()
+        def roomKey = pollSlotId()
         def roomIds = POLL_ROOM_MAPS.get(roomKey)
         if (!(roomIds instanceof Map)) {
             roomIds = roomIdsByName(roomsList)

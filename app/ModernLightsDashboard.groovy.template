@@ -28,7 +28,7 @@ import groovy.transform.Field
 @Field private static Map SCHEDULES_FRAGMENT_CACHE = new java.util.concurrent.ConcurrentHashMap()
 @Field private static Map DEVICE_FACT_CACHE = new java.util.concurrent.ConcurrentHashMap()
 @Field private static Map HTML_SANITIZED = new java.util.concurrent.ConcurrentHashMap()
-// Per hub thread, so one dashboard's refresh does not make another app's commands use the refresh cache.
+// Per installed app, so one dashboard's refresh does not make another app's commands use the refresh cache.
 @Field private static Map POLL_FLAGS = new java.util.concurrent.ConcurrentHashMap()
 @Field private static Map POLL_STATE_BOXES = new java.util.concurrent.ConcurrentHashMap()
 @Field private static Map POLL_ROOM_MAPS = new java.util.concurrent.ConcurrentHashMap()
@@ -3938,27 +3938,27 @@ def ensureDashboardPollCaches() {
     if (POLL_ROOM_MAPS == null) POLL_ROOM_MAPS = new java.util.concurrent.ConcurrentHashMap()
 }
 
-def pollThreadId() {
-    try { return Thread.currentThread().id } catch (e) { return 0L }
+def pollSlotId() {
+    return dashboardAppId()
 }
 
 def pollFactsOn() {
     try {
         ensureDashboardPollCaches()
-        return POLL_FLAGS.get(pollThreadId()) == Boolean.TRUE
+        return POLL_FLAGS.get(pollSlotId()) == Boolean.TRUE
     } catch (e) { return false }
 }
 
 def beginDashboardPoll() {
     ensureDashboardPollCaches()
-    def id = pollThreadId()
+    def id = pollSlotId()
     POLL_FLAGS.put(id, Boolean.TRUE)
     POLL_STATE_BOXES.put(id, new java.util.concurrent.ConcurrentHashMap())
     POLL_ROOM_MAPS.remove(id)
 }
 
 def endDashboardPoll() {
-    def id = pollThreadId()
+    def id = pollSlotId()
     try { if (POLL_FLAGS != null) POLL_FLAGS.remove(id) } catch (e) {}
     try { if (POLL_STATE_BOXES != null) POLL_STATE_BOXES.remove(id) } catch (e) {}
     try { if (POLL_ROOM_MAPS != null) POLL_ROOM_MAPS.remove(id) } catch (e) {}
@@ -3969,13 +3969,13 @@ def pollDeviceKey(d) {
         def id = d?.id?.toString()
         if (id) return id
     } catch (e) {}
-    return "obj:" + System.identityHashCode(d)
+    try { return "obj:" + d.hashCode() } catch (e) { return "obj:0" }
 }
 
 // One currentStates read for this refresh. Missing names fall back to currentState.
 def pollStateBox(d) {
     ensureDashboardPollCaches()
-    def boxes = POLL_STATE_BOXES.get(pollThreadId())
+    def boxes = POLL_STATE_BOXES.get(pollSlotId())
     if (!(boxes instanceof Map)) boxes = new java.util.concurrent.ConcurrentHashMap()
     def key = pollDeviceKey(d)
     def hit = boxes.get(key)
@@ -3997,7 +3997,7 @@ def pollStateBox(d) {
     } catch (e) {}
     def box = [byName: byName, list: list]
     boxes.put(key, box)
-    POLL_STATE_BOXES.put(pollThreadId(), boxes)
+    POLL_STATE_BOXES.put(pollSlotId(), boxes)
     return box
 }
 
@@ -4116,7 +4116,7 @@ def roomIdsByName(roomsList) {
 def pollRoomId(d, roomsList) {
     if (pollFactsOn()) {
         ensureDashboardPollCaches()
-        def roomKey = pollThreadId()
+        def roomKey = pollSlotId()
         def roomIds = POLL_ROOM_MAPS.get(roomKey)
         if (!(roomIds instanceof Map)) {
             roomIds = roomIdsByName(roomsList)
