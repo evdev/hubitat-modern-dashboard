@@ -4,6 +4,7 @@
 // Run:  node preview/server.mjs   then open http://localhost:4321/
 
 import { readFileSync, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createServer } from "node:http";
@@ -135,6 +136,7 @@ state.schedules = [{
 }];
 for (const s of state.schedules) mockRecomputeNextFire(s);
 state.holidaysAvailable = true;
+state.synagogueAvailable = true;
 state.holiday = emptyConfig();
 state.holiday.occasions = {
   roshHashana: "shabbat",
@@ -319,7 +321,7 @@ function buildMockData(count) {
   return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], thermostatOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, htmlZooms: {}, htmlTitles: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: mockHtmlTilesCatalog(), rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, hubTimeZone: (Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Denver"), hubNow: Date.now(), triggersEnabled: true, alertsArmed: true, alertsArmSwitchId: 9100, triggerSourceIds: [101, 201], triggerActions: [], unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
+  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, hubTimeZone: (Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Denver"), hubNow: Date.now(), triggersEnabled: true, alertsArmed: true, alertsArmSwitchId: 9100, triggerSourceIds: [101, 201], triggerActions: [], unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: false, dashboardPasswordRequired: false, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
 }
 
 function tstatOstateForMode(tm) {
@@ -1123,6 +1125,10 @@ const server = createServer(async (req, res) => {
   if (p === "/app-holiday.js") {
     res.writeHead(200, { "Content-Type": "application/javascript" });
     return res.end(readDist("mld-holiday.js"));
+  }
+  if (p === "/app-synagogue.js") {
+    res.writeHead(200, { "Content-Type": "application/javascript" });
+    return res.end(readDist("mld-synagogue.js"));
   }
   if (p === "/manifest.webmanifest") {
     res.writeHead(200, { "Content-Type": "application/manifest+json" });
@@ -2510,6 +2516,52 @@ const server = createServer(async (req, res) => {
       favoritesLayout: reconciled,
     }));
   }
+  if (p.startsWith("/synagogue")) {
+    const auth = requireDashAuth(res, url, null);
+    if (!auth) return;
+    const sub = p.replace(/^\/synagogue\/?/, "");
+    let body = null;
+    if (req.method !== "GET") {
+      try { body = await readJsonBody(req); } catch { body = {}; }
+    }
+    const op = sub === "preview" ? "preview" : sub === "skip" ? "skip" : sub === "save" ? "save" : "status";
+    if ((op === "save" || op === "skip" || op === "preview") && body?.revision != null && Number(body.revision) !== synagoguePreviewState.revision) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "Changed on another device. Reload.", revision: synagoguePreviewState.revision }));
+    }
+    if (sub === "skip" && body && !body.op) body.op = "skip";
+    try {
+      const ics = await synagoguePreviewIcs(synagoguePreviewState.config, body);
+      const data = await synagoguePreviewCall({
+        op,
+        tz: state.hubTimeZone,
+        now: Date.now(),
+        revision: synagoguePreviewState.revision,
+        config: synagoguePreviewState.config,
+        body,
+        ics,
+        demo: true,
+      agendaDays: [7, 14, 21].includes(Number(url.searchParams.get("days"))) ? Number(url.searchParams.get("days")) : 7,
+      });
+      if (data?.config && (op === "save" || op === "skip")) {
+        synagoguePreviewState.config = data.config;
+        synagoguePreviewState.revision += 1;
+        data.revision = synagoguePreviewState.revision;
+      } else if (data && !synagoguePreviewState.config && data.config) {
+        synagoguePreviewState.config = data.config;
+        data.revision = synagoguePreviewState.revision;
+      } else if (data) {
+        data.revision = synagoguePreviewState.revision;
+      }
+      const client = data && typeof data === "object" ? { ...data } : data;
+      if (client && typeof client === "object") delete client.config;
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify(client));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: false, error: err.message || "Synagogue preview failed" }));
+    }
+  }
   if (p.startsWith("/holidays")) {
     const sub = p.replace(/^\/holidays\/?/, "");
     let body = null;
@@ -2979,6 +3031,116 @@ function mockSchedulesList() {
     onlyInModes: s.onlyInModes || [],
     ts: s.ts,
   }));
+}
+
+const PREVIEW_SHUL_ICS = `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:preview-mincha
+SUMMARY:Weekday Mincha
+DTSTART;TZID=America/Denver:20261014T174000
+DTEND;TZID=America/Denver:20261014T181000
+RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH
+END:VEVENT
+BEGIN:VEVENT
+UID:preview-board
+SUMMARY:Board meeting
+LOCATION:Ballroom
+DTSTART;TZID=America/Denver:20261015T190000
+DTEND;TZID=America/Denver:20261015T203000
+RRULE:FREQ=WEEKLY;BYDAY=TH
+END:VEVENT
+BEGIN:VEVENT
+UID:preview-kiddush
+SUMMARY:Kiddush
+DTSTART;TZID=America/Denver:20261017T120000
+DTEND;TZID=America/Denver:20261017T130000
+RRULE:FREQ=WEEKLY;BYDAY=SA
+END:VEVENT
+BEGIN:VEVENT
+UID:preview-rental
+SUMMARY:Rental - Cohen
+LOCATION:Social hall
+DTSTART;TZID=America/Denver:20261018T180000
+DTEND;TZID=America/Denver:20261018T200000
+END:VEVENT
+END:VCALENDAR
+`;
+
+async function loadPreviewIcs(url) {
+  const text = String(url || "");
+  if (text === "https://preview.local/shul.ics") return PREVIEW_SHUL_ICS;
+  if (!text.startsWith("https://")) return "";
+  try {
+    const res = await fetch(text, { redirect: "follow", signal: AbortSignal.timeout(8000) });
+    if (!res.ok || !String(res.url || "").startsWith("https://")) return "";
+    return await res.text();
+  } catch {
+    return "";
+  }
+}
+
+async function synagoguePreviewIcs(config, body) {
+  const list = [...(config?.calendars || [])];
+  if ((body?.op === "calendar" || body?.op === "checkCalendar") && body.calendar?.id) {
+    const incoming = { ...body.calendar };
+    const idx = list.findIndex((cal) => cal.id === incoming.id);
+    if (idx >= 0) list[idx] = { ...list[idx], ...incoming, url: incoming.url || list[idx].url };
+    else list.push(incoming);
+  }
+  if (body?.op === "deleteCalendar" && body.id) {
+    const id = String(body.id);
+    for (let i = list.length - 1; i >= 0; i -= 1) if (list[i].id === id) list.splice(i, 1);
+  }
+  const ics = {};
+  for (const cal of list) {
+    if (!cal?.id || !cal.url) continue;
+    ics[cal.id] = await loadPreviewIcs(cal.url);
+  }
+  return ics;
+}
+
+const synagoguePreviewState = { revision: 1, config: null };
+let synagogueProc = null;
+let synagogueQueue = Promise.resolve();
+let synagogueBuf = "";
+let synagogueWait = null;
+
+function ensureSynagogueProc() {
+  if (synagogueProc) return;
+  synagogueProc = spawn("groovy", ["preview/verify-synagogue.groovy", "serve"], { cwd: root });
+  synagogueProc.stdout.setEncoding("utf8");
+  synagogueProc.stderr.setEncoding("utf8");
+  synagogueProc.stdout.on("data", (chunk) => {
+    synagogueBuf += chunk;
+    let nl = synagogueBuf.indexOf("\n");
+    while (nl >= 0) {
+      const line = synagogueBuf.slice(0, nl).trim();
+      synagogueBuf = synagogueBuf.slice(nl + 1);
+      if (line && synagogueWait) {
+        const wait = synagogueWait;
+        synagogueWait = null;
+        try { wait.resolve(JSON.parse(line)); }
+        catch (err) { wait.reject(err); }
+      }
+      nl = synagogueBuf.indexOf("\n");
+    }
+  });
+  synagogueProc.on("exit", () => { synagogueProc = null; });
+}
+
+function synagoguePreviewCall(payload) {
+  synagogueQueue = synagogueQueue.then(() => new Promise((resolve, reject) => {
+    ensureSynagogueProc();
+    synagogueWait = { resolve, reject };
+    synagogueProc.stdin.write(JSON.stringify(payload) + "\n");
+    setTimeout(() => {
+      if (synagogueWait && synagogueWait.resolve === resolve) {
+        synagogueWait = null;
+        reject(new Error("Synagogue preview timed out"));
+      }
+    }, 60000);
+  }));
+  return synagogueQueue;
 }
 
 const PORT = process.env.PORT || 4321;

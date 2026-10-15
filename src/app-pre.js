@@ -545,6 +545,7 @@ const MUSIC_ART_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linear
 
 const OUTLET_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnOutlet" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9fe7ff"/><stop offset="1" stop-color="#2b9bd6"/></linearGradient></defs><rect x="3.8" y="2.7" width="16.4" height="18.6" rx="3.4" fill="url(#qnOutlet)" stroke="#1f7aa8" stroke-width="0.9"/><rect x="3.8" y="2.7" width="16.4" height="18.6" rx="3.4" fill="none" stroke="#ffffff" stroke-width="0.5" opacity="0.45"/><circle cx="12" cy="5.4" r="0.55" fill="#1f7aa8" opacity="0.55"/><rect x="8.1" y="8" width="1.7" height="5.4" rx="0.85" fill="#ffffff"/><rect x="14.2" y="8" width="1.7" height="5.4" rx="0.85" fill="#ffffff"/><circle cx="12" cy="17.1" r="1.55" fill="#ffffff"/></svg>';
 
+const SYNAGOGUE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" overflow="visible"><defs><linearGradient id="qnSyn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9eb6ff"/><stop offset="1" stop-color="#3b6bff"/></linearGradient><linearGradient id="qnSynGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#e0913a"/></linearGradient></defs><path fill="url(#qnSynGold)" stroke="#c98a2a" stroke-width="0.4" stroke-linejoin="round" fill-rule="evenodd" d="M12 .65 15.2 6.2H8.8ZM12 7.45 8.8 1.9h6.4Z"/><path d="M4.2 21.5V12.1L12 8.4l7.8 3.7v9.4H4.2z" fill="url(#qnSyn)" stroke="#2b54e6" stroke-width="0.7" stroke-linejoin="round"/><path d="M10.05 21.5v-3.7a1.95 1.95 0 0 1 3.9 0v3.7z" fill="#10224a" stroke="#d6e2ff" stroke-width="0.35"/></svg>';
 const QUICK_NAV = [
   { id: "quick-locks", popup: "locks", title: "Locks", svg: LOCK_SVG },
   { id: "quick-scenes", popup: "scenes", title: "Scenes", svg: SCENES_SVG },
@@ -554,6 +555,7 @@ const QUICK_NAV = [
   { id: "quick-fans", popup: "fans", title: "Fans", svg: FANS_SVG },
   { id: "quick-outlets", popup: "outlets", title: "Outlets", svg: OUTLET_SVG },
   { id: "quick-scheduling", popup: "scheduling", title: "Scheduling", svg: SCHEDULE_SVG },
+  { id: "quick-synagogue", popup: "synagogue", title: "Synagogue", svg: SYNAGOGUE_SVG },
   { id: "quick-sensors", popup: "sensors", title: "Sensors", svg: SENSORS_SVG },
   { id: "quick-thermostats", popup: "thermostats", title: "Thermostats", svg: TSTAT_NAV_SVG },
   { id: "quick-music", popup: "music", title: "Music", svg: MUSIC_SVG },

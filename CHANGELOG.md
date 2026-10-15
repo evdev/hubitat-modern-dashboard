@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.66
+
+- **Shabbat & holidays:** The dashboard asks the hub for less on each refresh, and a holiday timeline is built once and reused. A module file added or removed in File Manager can take up to 30 seconds to show up, or shows up right away when the app page is opened. Update Modern Dashboard, mDash Shabbat and Holidays, and mDash Synagogue.
+
+- **Climate:** Select all in the thermostat menu selects every thermostat, including when device ids arrive as text. When they are already all selected, the button says Deselect all. Fans and shades use the same label. Selecting every thermostat in a room still changes the setpoint. Scheduler thermostat steps have the same Select all / Deselect all control.
+
+- **Synagogue:** Optional mDash Synagogue package. A Synagogue tab programs
+  prayer times from HebCal, with lights, outlets, locks, and thermostats, and
+  can use Shabbat as the template for Yom Tov. Calendars accept a secret
+  https or webcal link. Title rules and one-time bookings join the same
+  timeline. Install it separately. Update Modern Dashboard and mDash Synagogue.
+
+- **Synagogue:** Opening the tab, saving, and running a cue reuse one schedule
+  build instead of calculating it again. Holiday search keeps the cursor in
+  the field. Update mDash Synagogue.
+
 ## 0.4.65
 
 - **Shabbat & holidays:** Early Shabbat starts at a chosen time when sunset is

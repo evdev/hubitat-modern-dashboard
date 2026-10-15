@@ -1,0 +1,31 @@
+{
+	"packageName": "mDash Synagogue",
+	"minimumHEVersion": "2.3.0",
+	"author": "Ephrayim (evdev)",
+	"version": "0.4.66",
+	"dateReleased": "2026-10-15",
+	"licenseFile": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/LICENSE",
+	"releaseNotes": "Optional synagogue schedules for Modern Dashboard. Installs mld-synagogue.js. Modern Dashboard turns the feature on when that file is in File Manager.",
+	"documentationLink": "https://github.com/evdev/hubitat-modern-dashboard#readme",
+	"communityLink": "https://community.hubitat.com/t/release-modern-dashboard-mdash-minimal-setup-pwa-with-built-in-scheduler-runs-entirely-on-your-hub/165028",
+	"gitHubUrl": "https://github.com/evdev/hubitat-modern-dashboard",
+	"apps": [
+		{
+			"id": "b7e1c4a2-6d8f-4b31-9a70-2c5e8f1d4a63",
+			"name": "mDash Synagogue",
+			"namespace": "mDash",
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/mDashSynagogue.groovy",
+			"required": true,
+			"oauth": false,
+			"primary": true
+		}
+	],
+	"drivers": [],
+	"files": [
+		{
+			"id": "e1f2a3b4-c5d6-4789-a012-3456789abcde",
+			"name": "mld-synagogue.js",
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-synagogue.js"
+		}
+	]
+}

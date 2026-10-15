@@ -779,6 +779,7 @@
   let scenesPopupEnabled = true;
   let roomClimateEnabled = true;
   let schedulerEnabled = true;
+  let synagogueAvailable = false;
   let unlockPinEnabled = false;
   let unlockPinRequired = false;
   let hsmLockUntil = 0;
@@ -802,8 +803,8 @@
   }
 
   // ---------- tab mode (inline tabs instead of popups) ----------
-  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "cameras", "blinds", "fans", "outlets", "scheduling"]);
-  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", cameras: "Cameras", blinds: "Blinds", fans: "Fans", outlets: "Outlets", scheduling: "Scheduler" };
+  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "cameras", "blinds", "fans", "outlets", "scheduling", "synagogue"]);
+  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", cameras: "Cameras", blinds: "Blinds", fans: "Fans", outlets: "Outlets", scheduling: "Scheduler", synagogue: "Synagogue" };
   let tabMode = cfg.enableTabs;
   let activeTab = "lights";
   let defaultTabApplied = false;
@@ -2867,10 +2868,29 @@
 
   // =================== thermostat ===================
 
+  function deviceIdSet(ids) {
+    return new Set((ids || []).map((id) => String(id)));
+  }
+
+  function allDeviceIdsSelected(allIds, selectedIds) {
+    const selected = deviceIdSet(selectedIds);
+    return allIds.length > 0 && allIds.every((id) => selected.has(String(id)));
+  }
+
+  function selectAllControlLabel(allSelected) {
+    return allSelected ? "Deselect all" : "Select all";
+  }
+
+  // Keep the id values from the device list so later === checks still match.
+  function keepListedIds(selectedIds, allIds) {
+    const wanted = deviceIdSet(selectedIds);
+    return allIds.filter((id) => wanted.has(String(id)));
+  }
+
   function applyCentralTstatSelection(selectedIds) {
     if (!tstatSession?.central && !tstatSession?.roomGroup) return;
     const allIds = tstatSession.allIds || thermostats.map((t) => t.i);
-    const ids = selectedIds.filter((id) => allIds.includes(id));
+    const ids = keepListedIds(selectedIds, allIds);
     tstatSession.ids = ids;
     if (tstatSession.central) {
       const selected = ids.map((id) => thermostats.find((t) => t.i === id)).filter(Boolean);
@@ -3301,8 +3321,9 @@
     // disabled look when off or none selected for bulk
     const noneSelected = !!(tstatTargetPickerEnabled() && !tstatSession.ids?.length);
     popup._svg.classList.toggle("disabled", tm === "off" || tstatFanOnlyMode(tm) || noneSelected);
-    const noMode = !!(tstatSession?.roomGroup && tstatSession.ids?.length !== 1)
-      || !!(tstatSession?.central && !tm);
+    // Several thermostats in one room still share this dial's setpoint.
+    // All-thermostats has no setpoint until a shared mode is chosen.
+    const noMode = !!(tstatSession?.central && !tm);
     const canAdjust = tm !== "off" && !tstatFanOnlyMode(tm) && !noMode && !noneSelected;
     if (popup._minusBtn) popup._minusBtn.disabled = !canAdjust;
     if (popup._plusBtn) popup._plusBtn.disabled = !canAdjust;
@@ -4019,16 +4040,19 @@
   function syncCentralTstatTargetMenu() {
     if (!centralTstatTargetMenu || !tstatTargetPickerEnabled()) return;
     const allIds = tstatSession.allIds || [];
-    const selectedSet = new Set(tstatSession.ids);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+    const selectedSet = deviceIdSet(tstatSession.ids);
+    const allSelected = allDeviceIdsSelected(allIds, tstatSession.ids);
     const selectAllBtn = centralTstatTargetMenu.querySelector(".tstat-target-all");
     if (selectAllBtn) {
+      const selectAllName = selectAllBtn.querySelector(".tstat-target-name");
+      const label = selectAllControlLabel(allSelected);
+      if (selectAllName) selectAllName.textContent = label;
+      selectAllBtn.setAttribute("aria-label", label);
       selectAllBtn.classList.toggle("active", allSelected);
       selectAllBtn.setAttribute("aria-selected", allSelected ? "true" : "false");
     }
     for (const b of centralTstatTargetMenu.querySelectorAll(".tstat-target-opt:not(.tstat-target-all)")) {
-      const id = Number(b.dataset.tstatId);
-      const on = selectedSet.has(id);
+      const on = selectedSet.has(String(b.dataset.tstatId));
       b.classList.toggle("active", on);
       if (on) b.setAttribute("aria-selected", "true");
       else b.removeAttribute("aria-selected");
@@ -4044,8 +4068,8 @@
     menu.setAttribute("aria-multiselectable", "true");
 
     const allIds = tstatSession.allIds || thermostats.map((t) => t.i);
-    const selectedSet = new Set(tstatSession.ids);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+    const selectedSet = deviceIdSet(tstatSession.ids);
+    const allSelected = allDeviceIdsSelected(allIds, tstatSession.ids);
 
     const selectAllBtn = ce("button", "tstat-target-opt tstat-target-all");
     selectAllBtn.type = "button";
@@ -4053,7 +4077,9 @@
     const selectAllCheck = ce("span", "tstat-target-check");
     const selectAllInfo = ce("span", "tstat-target-info");
     const selectAllName = ce("span", "tstat-target-name");
-    selectAllName.textContent = "Select all";
+    const selectAllLabel = selectAllControlLabel(allSelected);
+    selectAllName.textContent = selectAllLabel;
+    selectAllBtn.setAttribute("aria-label", selectAllLabel);
     selectAllInfo.appendChild(selectAllName);
     selectAllBtn.appendChild(selectAllCheck);
     selectAllBtn.appendChild(selectAllInfo);
@@ -4064,9 +4090,9 @@
     selectAllBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       hapticTap();
-      const currentSelected = new Set(tstatSession.ids);
-      const currentlyAll = allIds.length > 0 && allIds.every((id) => currentSelected.has(id));
-      applyCentralTstatSelection(currentlyAll ? [] : allIds.slice());
+      const liveIds = tstatSession.allIds || allIds;
+      const currentlyAll = allDeviceIdsSelected(liveIds, tstatSession.ids);
+      applyCentralTstatSelection(currentlyAll ? [] : liveIds.slice());
     });
     menu.appendChild(selectAllBtn);
 
@@ -4088,16 +4114,17 @@
       info.appendChild(room);
       b.appendChild(check);
       b.appendChild(info);
-      if (selectedSet.has(t.i)) {
+      if (selectedSet.has(String(t.i))) {
         b.classList.add("active");
         b.setAttribute("aria-selected", "true");
       }
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         hapticTap();
-        const next = new Set(tstatSession.ids);
-        if (next.has(t.i)) next.delete(t.i);
-        else next.add(t.i);
+        const next = deviceIdSet(tstatSession.ids);
+        const key = String(t.i);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
         applyCentralTstatSelection([...next]);
       });
       menu.appendChild(b);
@@ -4499,16 +4526,19 @@
   function syncMasterTargetMenu(state, session, datasetKey) {
     if (!state.menu || !session) return;
     const allIds = session.allIds || [];
-    const selectedSet = new Set(session.ids);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+    const selectedSet = deviceIdSet(session.ids);
+    const allSelected = allDeviceIdsSelected(allIds, session.ids);
     const selectAllBtn = state.menu.querySelector(".tstat-target-all");
     if (selectAllBtn) {
+      const selectAllName = selectAllBtn.querySelector(".tstat-target-name");
+      const label = selectAllControlLabel(allSelected);
+      if (selectAllName) selectAllName.textContent = label;
+      selectAllBtn.setAttribute("aria-label", label);
       selectAllBtn.classList.toggle("active", allSelected);
       selectAllBtn.setAttribute("aria-selected", allSelected ? "true" : "false");
     }
     for (const b of state.menu.querySelectorAll(".tstat-target-opt:not(.tstat-target-all)")) {
-      const id = Number(b.dataset[datasetKey]);
-      const on = selectedSet.has(id);
+      const on = selectedSet.has(String(b.dataset[datasetKey]));
       b.classList.toggle("active", on);
       if (on) b.setAttribute("aria-selected", "true");
       else b.removeAttribute("aria-selected");
@@ -4525,8 +4555,8 @@
     menu.setAttribute("aria-multiselectable", "true");
 
     const allIds = session.allIds || [];
-    const selectedSet = new Set(session.ids);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+    const selectedSet = deviceIdSet(session.ids);
+    const allSelected = allDeviceIdsSelected(allIds, session.ids);
 
     const selectAllBtn = ce("button", "tstat-target-opt tstat-target-all");
     selectAllBtn.type = "button";
@@ -4534,7 +4564,9 @@
     const selectAllCheck = ce("span", "tstat-target-check");
     const selectAllInfo = ce("span", "tstat-target-info");
     const selectAllName = ce("span", "tstat-target-name");
-    selectAllName.textContent = "Select all";
+    const selectAllLabel = selectAllControlLabel(allSelected);
+    selectAllName.textContent = selectAllLabel;
+    selectAllBtn.setAttribute("aria-label", selectAllLabel);
     selectAllInfo.appendChild(selectAllName);
     selectAllBtn.appendChild(selectAllCheck);
     selectAllBtn.appendChild(selectAllInfo);
@@ -4545,9 +4577,10 @@
     selectAllBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       hapticTap();
-      const currentSelected = new Set(session.ids);
-      const currentlyAll = allIds.length > 0 && allIds.every((id) => currentSelected.has(id));
-      config.onApply(currentlyAll ? [] : allIds.slice());
+      const live = config.getSession();
+      const liveIds = live?.allIds || allIds;
+      const currentlyAll = allDeviceIdsSelected(liveIds, live?.ids || []);
+      config.onApply(currentlyAll ? [] : liveIds.slice());
     });
     menu.appendChild(selectAllBtn);
 
@@ -4566,16 +4599,18 @@
       info.appendChild(room);
       b.appendChild(check);
       b.appendChild(info);
-      if (selectedSet.has(dev.i)) {
+      if (selectedSet.has(String(dev.i))) {
         b.classList.add("active");
         b.setAttribute("aria-selected", "true");
       }
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         hapticTap();
-        const next = new Set(session.ids);
-        if (next.has(dev.i)) next.delete(dev.i);
-        else next.add(dev.i);
+        const live = config.getSession();
+        const next = deviceIdSet(live?.ids || []);
+        const key = String(dev.i);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
         config.onApply([...next]);
       });
       menu.appendChild(b);
@@ -4628,7 +4663,7 @@
   function applyFanMasterSelection(selectedIds) {
     if (!fanMasterSession) return;
     const allIds = fanMasterSession.allIds || ceilingFans.map((f) => f.i);
-    fanMasterSession.ids = selectedIds.filter((id) => allIds.includes(id));
+    fanMasterSession.ids = keepListedIds(selectedIds, allIds);
     publishMld({ fanMasterSession });
     updateFanMasterHead();
     renderFanMasterBody();
@@ -4638,7 +4673,7 @@
   function applyShadeMasterSelection(selectedIds) {
     if (!shadeMasterSession) return;
     const allIds = shadeMasterSession.allIds || windowShades.map((s) => s.i);
-    shadeMasterSession.ids = selectedIds.filter((id) => allIds.includes(id));
+    shadeMasterSession.ids = keepListedIds(selectedIds, allIds);
     publishMld({ shadeMasterSession });
     updateShadeMasterHead();
     renderShadeMasterBody();
@@ -7866,6 +7901,7 @@
     scenesPopupEnabled = d.scenesPopupEnabled !== false;
     roomClimateEnabled = d.roomClimateEnabled !== false;
     schedulerEnabled = d.schedulerEnabled !== false;
+    synagogueAvailable = d.synagogueAvailable === true;
     if (d.triggersEnabled != null) triggersEnabled = !!d.triggersEnabled;
     if (d.alertsArmed != null) applyAlertsArmed(!!d.alertsArmed);
     if (d.alertsArmSwitchId != null) {
@@ -9312,7 +9348,7 @@
     return el;
   }
 
-  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "fans", "outlets", "scheduling"]);
+  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "fans", "outlets", "scheduling", "synagogue"]);
   const HUB_MODE_POPUP_TYPE = "hub-mode";
 
   function syncQuickPopupWidth(popup, type) {
@@ -12854,6 +12890,7 @@
       case "fans": return ceilingFans.length > 0;
       case "outlets": return outletsSeparateTab && outlets.length > 0;
       case "scheduling": return schedulerEnabled;
+      case "synagogue": return synagogueAvailable;
       case "sensors": {
         const listFn = globalThis.__MLD?.mergedSensorList;
         return typeof listFn === "function" && listFn().length > 0;
@@ -12914,6 +12951,7 @@
           if (isPost3Ready()) postCall("renderSchedulerView");
           else void activateDeferredModule("scheduling");
           break;
+        case "synagogue": renderSynagogueView(); break;
       }
       return;
     }
@@ -12932,6 +12970,7 @@
         if (isPost3Ready()) postCall("renderSchedulerView");
         else void activateDeferredModule("scheduling");
         break;
+      case "synagogue": renderSynagogueView(); break;
     }
   }
 
@@ -12967,6 +13006,9 @@
       case "thermostats": renderThermostatsPopup(); break;
       case "scheduling":
         void activateDeferredModule("scheduling");
+        break;
+      case "synagogue":
+        renderSynagogueView();
         break;
       default:
         popup._body.className = "quick-body";
@@ -13071,6 +13113,18 @@
     if (CURRENT_CATEGORY_TITLE_EL) CURRENT_CATEGORY_TITLE_EL.textContent = currentCategoryLabel();
   }
 
+  function renderSynagogueView() {
+    const body = currentBody();
+    if (!body) return;
+    if (body.querySelector(".synagogue-slot")) return;
+    setQuickBodyClass(body, "quick-body quick-body-synagogue");
+    body.innerHTML = "";
+    const host = ce("div", "synagogue-slot");
+    body.appendChild(host);
+    if (globalThis.mldSynagogue?.mount) globalThis.mldSynagogue.mount(host);
+    else host.textContent = "Synagogue did not load. Install mDash Synagogue, then reload this page.";
+  }
+
   function applyDefaultTabIfNeeded() {
     if (defaultTabApplied || !tabMode) return;
     defaultTabApplied = true;
@@ -13135,6 +13189,7 @@
         case "fans": refreshFansPopup(); break;
         case "outlets": renderOutletsPopup(); break;
         case "scheduling": void activateDeferredModule("scheduling"); break;
+        case "synagogue": renderSynagogueView(); break;
       }
     }
     applySearch();
@@ -19204,6 +19259,23 @@
     const selected = schedTstatList(schedDraft.action.devices);
 
     const selectedIds = new Set(schedIdList(schedDraft.action.devices));
+    if (thermostats.length) {
+      const head = ce("div", "sched-actions-room-head");
+      const nm = ce("div", "sched-room-name");
+      nm.textContent = "Thermostats";
+      head.appendChild(nm);
+      const allOn = thermostats.every((t) => selectedIds.has(String(t.i)));
+      const allBtn = ce("button", "ghost-btn sched-mini-btn");
+      allBtn.type = "button";
+      allBtn.textContent = allOn ? "Deselect all" : "Select all";
+      allBtn.addEventListener("click", () => {
+        hapticTap();
+        schedDraft.action.devices = allOn ? [] : thermostats.map((t) => t.i);
+        renderSchedulerActive();
+      });
+      head.appendChild(allBtn);
+      wrap.appendChild(head);
+    }
     const list = ce("div", "sched-lights");
     for (const t of thermostats) {
       const sel = selectedIds.has(String(t.i));

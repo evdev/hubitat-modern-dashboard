@@ -1,0 +1,43 @@
+.synagogue-slot { display: flex; flex-direction: column; gap: 12px; width: min(720px, 100%); margin: 0 auto; padding: 4px 2px 88px; text-align: left; }
+.quick-body-synagogue { text-align: left; }
+.synagogue-hero { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 16px; background: var(--panel-2, #151922); border: 1px solid var(--stroke, #334); }
+.synagogue-kicker { margin: 0; font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #9aa); }
+.synagogue-hero-time { margin: 0; font-size: 1.55rem; font-weight: 750; letter-spacing: -0.02em; }
+.synagogue-health { margin: 0; color: var(--muted, #9aa); font-size: .9rem; line-height: 1.4; }
+.synagogue-banner { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, #ff5c7a 16%, transparent); }
+.synagogue-note { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent, #7b5cff) 14%, transparent); line-height: 1.4; }
+.synagogue-group { margin: 10px 2px 0; font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #9aa); }
+.synagogue-occ { display: grid; grid-template-columns: 5.4rem 1fr; gap: 8px 12px; align-items: start; }
+.synagogue-clock { font-size: 1.05rem; font-weight: 750; line-height: 1.2; }
+.synagogue-sub { color: var(--muted, #9aa); font-size: .88rem; }
+.synagogue-pills, .synagogue-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.synagogue-pill { display: inline-flex; align-items: center; min-height: 26px; padding: 0 8px; border-radius: 999px; font-size: .78rem; font-weight: 700; background: rgba(255,255,255,.08); color: inherit; }
+.synagogue-pill.is-unset, .synagogue-pill.is-bad { background: #3a2a14; color: #ffb86b; }
+.synagogue-pill.is-same { background: #1a2744; color: #9eb6ff; }
+.synagogue-pill.is-own, .synagogue-pill.is-ok { background: #163024; color: #9d7; }
+.synagogue-pill.is-late { background: #3a1822; color: #ff8aa0; }
+.synagogue-name-row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.synagogue-he { direction: rtl; color: var(--muted, #9aa); font-size: .95rem; }
+.synagogue-field { display: flex; flex-direction: column; gap: 4px; }
+.synagogue-field input, .synagogue-field select, .synagogue-find {
+  min-height: 44px; border-radius: 12px; border: 1px solid var(--stroke, #334);
+  background: var(--panel-2, #10141c); color: inherit; padding: 0 10px; width: 100%; box-sizing: border-box;
+}
+.synagogue-check { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.synagogue-kind { flex-shrink: 0; font-size: .85rem; font-weight: 600; color: var(--muted, #9aa); }
+.synagogue-bar { position: sticky; bottom: 0; display: flex; gap: 8px; padding: 12px 0 calc(8px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--bg, #0e1116) 28%); z-index: 2; }
+.synagogue-bar > .synagogue-grow { flex: 1; }
+.synagogue-danger { color: #ff8aa0; }
+.synagogue-progress { height: 8px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; }
+.synagogue-progress > span { display: block; height: 100%; background: var(--accent, #7b5cff); }
+.synagogue-timeline { position: relative; height: 36px; margin: 8px 0 4px; border-radius: 999px; background: var(--panel-2, #10141c); }
+.synagogue-mark { position: absolute; top: 8px; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%; background: var(--accent, #7b5cff); border: 0; padding: 0; }
+.synagogue-sheet-back { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.5); display: flex; align-items: flex-end; justify-content: center; }
+.synagogue-sheet { width: min(560px, 100%); max-height: min(80vh, 640px); overflow: auto; background: var(--panel-solid, #161a24); border: 1px solid var(--stroke, #334); box-shadow: 0 12px 40px rgba(0,0,0,.45); border-radius: 18px 18px 0 0; padding: 16px 16px calc(18px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
+.synagogue-undo { position: sticky; bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--panel-solid, #10141c); border: 1px solid var(--stroke, #334); }
+.synagogue-cues { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.synagogue-cues li { color: var(--muted, #9aa); font-size: .9rem; }
+@media (min-width: 800px) {
+  .synagogue-sheet-back { align-items: center; }
+  .synagogue-sheet { border-radius: 18px; }
+}

@@ -44,6 +44,7 @@ cap.
   - [Notifications](#notifications)
   - [Dashboard triggers](#dashboard-triggers)
   - [Scheduler](#scheduler)
+  - [Synagogue](#synagogue)
   - [Favorites](#favorites)
   - [Search, collapse & reorder](#search-collapse--reorder)
   - [UI preferences](#ui-preferences)
@@ -496,6 +497,28 @@ the lights, outlets, locks, blinds, fans, and thermostats selected in the app.
 `"when": "clock"` and `"time": "19:30"`. Weekly schedules add `"days": ["MON","FRI"]`.
 One-time schedules use `"at": "2026-10-09T19:30"` in hub local time. Omit
 `enabled` to leave the schedule on.
+
+### Synagogue
+
+**mDash Synagogue** is a separate package. Leave it uninstalled unless you want
+it. After Hubitat Package Manager installs it, open Modern Dashboard and tap
+Done so the hub can start the child app. A **Synagogue** tab then appears.
+
+The tab is where you program the building. The hub computes the times. Set up a
+space, such as the sanctuary, with the lights, outlets, locks, and thermostats
+already selected in Modern Dashboard. Each space has cues: heat an hour before,
+lights two minutes before, and lights off at the end. Services are scheduled by
+day: weekdays, Shabbat, and each holiday. A holiday can use the Shabbat schedule
+as it is, or start from it and change it. A time can be a clock time or a number
+of minutes before or after a HebCal time, such as sunset. The hub location has
+to be set under Settings, Hub Details.
+
+**Calendars** takes a secret https or webcal link, such as a Google Calendar
+iCal address. The hub fetches it. The link stays on the hub and is shown only
+by its last six characters. A title rule sends matching events to a space, and
+those events join the same timeline as the services, including the stay-on gap.
+One-time bookings do too. All-day events are ignored. A repeat the hub cannot
+apply is named and skipped.
 
 **AI assistant (MCP)**
 

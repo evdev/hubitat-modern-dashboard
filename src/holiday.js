@@ -704,12 +704,13 @@ function earlyWeekSwitch(span) {
   const day = plainShabbatDay(span);
   if (!day || day.plainFriday === false) return null;
   const decision = earlyShabbatDecision(day.fridayDate, Number(day.candlesAt), model.settings, hubTz());
+  if (!decision.timeBefore) return null;
   const now = Number(model?.now) || Date.now();
   const lead = decision.active ? 0 : Math.max(0, Number(model?.settings?.startEarlyMin) || 0) * 60000;
   const started = Number(span.start) - lead <= now;
-  const earlyAt = decision.timeBefore ? zonedMs(day.fridayDate, decision.time, hubTz()) : 0;
-  const passed = !started && earlyAt > 0 && earlyAt <= now;
-  const blocked = started || passed || !decision.timeBefore;
+  const earlyAt = zonedMs(day.fridayDate, decision.time, hubTz());
+  const passed = !started && earlyAt <= now;
+  const blocked = started || passed;
   const field = ce("div", "sched-field");
   const label = ce("label", "sched-field-label");
   label.style.cssText = "display:flex;align-items:center;gap:8px";
@@ -735,7 +736,6 @@ function earlyWeekHint(decision, started, passedAt) {
   const sunsetLabel = fmtClock(decision.sunsetAt);
   if (started) return "This week has already started.";
   if (passedAt) return `${fmtClock(passedAt)} already passed.`;
-  if (!decision.timeBefore) return `Candle lighting is ${fmtClock(decision.candlesAt)}, already before ${startLabel}.`;
   if (decision.pinned === "on") return `On for this week only. Starts at ${startLabel}.`;
   if (decision.pinned === "off") return "Off for this week only.";
   if (decision.automatic) return `Sunset is ${sunsetLabel}, so this week starts at ${startLabel}.`;

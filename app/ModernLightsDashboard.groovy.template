@@ -17,6 +17,11 @@ import groovy.transform.Field
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
 @Field private static final String MLD_DEPLOYED_VERSION = "__APP_VERSION__"
+@Field private static List LOCAL_FILE_NAME_CACHE = null
+@Field private static long LOCAL_FILE_NAME_CACHE_AT = 0L
+@Field private static final long LOCAL_FILE_NAME_CACHE_TTL = 30000L
+@Field private static Long HOLIDAY_CHILD_APP_ID = null
+@Field private static Long SYNAGOGUE_CHILD_APP_ID = null
 
 definition(
     name: "Modern Dashboard",
@@ -40,6 +45,7 @@ preferences {
 
 def mainPage() {
     if (!state.accessToken) { createAccessToken() }
+    try { clearLocalFileNameCache() } catch (e) {}
     def assetsOk = assetsPresent()
     def localUrl = dashboardUrl(true)
     def cloudUrl = dashboardUrl(false)
@@ -290,7 +296,8 @@ def mainPage() {
                     ["blinds": "Blinds"],
                     ["fans": "Fans"],
                     ["outlets": "Outlets"],
-                    ["scheduling": "Scheduler"]
+                    ["scheduling": "Scheduler"],
+                    ["synagogue": "Synagogue"]
                 ],
                 defaultValue: "lights", required: false
             paragraph "<small>Applies when Category tabs is enabled on the dashboard. Falls back to Lights if the chosen tab has no content (or Cameras when not on the local URL).</small>"
@@ -334,6 +341,13 @@ def mainPage() {
                 paragraph "<small>If Shabbat and Holiday Scheduler is also installed, turn off its mode switching so the hub is not switched twice.</small>"
                 def postalNote = holidayLocationNotice()
                 if (postalNote) paragraph mldCallout("danger", "Postal code needed", htmlEsc(postalNote))
+            }
+        }
+        if (synagogueFilePresent()) {
+            section("Synagogue") {
+                paragraph "<small><b>Enabled.</b> <code>mld-synagogue.js</code> is in File Manager, so Synagogue is on. That file comes from the separate <b>mDash Synagogue</b> package in Hubitat Package Manager. This page does not install it.</small>"
+                def synagogueNote = synagogueLocationNotice()
+                if (synagogueNote) paragraph mldCallout("danger", "Location needed", htmlEsc(synagogueNote))
             }
         }
         section("Light control", hideable: true, hidden: true) {
@@ -2329,11 +2343,14 @@ def schedImportFormatSkippedHtml(skipped) {
 }
 
 def installed() {
+    try { clearLocalFileNameCache() } catch (e) {}
+    try { clearChildAppCache() } catch (e) {}
     if (!state.accessToken) { createAccessToken() }
     logInit()
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
     try { holidayEnsureChild() } catch (e) { log.warn "Modern Dashboard: holiday setup failed: ${e}" }
+    try { synagogueSyncChild() } catch (e) { log.warn "Modern Dashboard: synagogue setup failed: ${e}" }
     try { holidayNotifyChild() } catch (e) { log.warn "Modern Dashboard: holiday notify failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
@@ -2342,12 +2359,15 @@ def installed() {
 }
 
 def updated() {
+    try { clearLocalFileNameCache() } catch (e) {}
+    try { clearChildAppCache() } catch (e) {}
     logInit()
     try { clearLocalAssetCache() } catch (e) { log.warn "Modern Dashboard: asset cache clear failed: ${e}" }
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
     try { syncDashPasswordEpoch() } catch (e) { log.warn "Modern Dashboard: dash password sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
     try { holidayEnsureChild() } catch (e) { log.warn "Modern Dashboard: holiday setup failed: ${e}" }
+    try { synagogueSyncChild() } catch (e) { log.warn "Modern Dashboard: synagogue setup failed: ${e}" }
     try { holidayNotifyChild() } catch (e) { log.warn "Modern Dashboard: holiday notify failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
@@ -3045,8 +3065,10 @@ def rewriteDashboardAssetRefsToFileManager(String html) {
         ["src", "app-post2.js", assetJsPost2File()],
         ["src", "app-post3.js", assetJsPost3File()],
         ["src", "app-holiday.js", assetJsHolidayFile()],
+        ["src", "app-synagogue.js", assetJsSynagogueFile()],
         ["content", "app-post3.js", assetJsPost3File()],
         ["content", "app-holiday.js", assetJsHolidayFile()],
+        ["content", "app-synagogue.js", assetJsSynagogueFile()],
     ].each { spec ->
         def attr = spec[0], assetPath = spec[1], fmFile = spec[2]
         def escaped = assetPath.replace(".", "\\.")
@@ -3067,6 +3089,7 @@ def assetJsPostFile() { return "mld-app-post.js" }
 def assetJsPost2File() { return "mld-app-post2.js" }
 def assetJsPost3File() { return "mld-app-post3.js" }
 def assetJsHolidayFile() { return "mld-holiday.js" }
+def assetJsSynagogueFile() { return "mld-synagogue.js" }
 def assetManifestFile() { return "mld-manifest.webmanifest" }
 def assetSwFile() { return "mld-sw.js" }
 def assetIcon192File() { return "mld-icon-192.b64" }
@@ -3198,7 +3221,29 @@ def logHubFileAuthHint(String context) {
     }
 }
 
+def clearLocalFileNameCache() {
+    LOCAL_FILE_NAME_CACHE = null
+    LOCAL_FILE_NAME_CACHE_AT = 0L
+}
+
+def clearChildAppCache() {
+    HOLIDAY_CHILD_APP_ID = null
+    SYNAGOGUE_CHILD_APP_ID = null
+}
+
 def listLocalFileNames() {
+    long at = 0L
+    try { at = now() as long } catch (e) { at = 0L }
+    if (LOCAL_FILE_NAME_CACHE != null && at > LOCAL_FILE_NAME_CACHE_AT && (at - LOCAL_FILE_NAME_CACHE_AT) < LOCAL_FILE_NAME_CACHE_TTL) {
+        return new ArrayList(LOCAL_FILE_NAME_CACHE)
+    }
+    def names = fetchLocalFileNames()
+    LOCAL_FILE_NAME_CACHE = names instanceof List ? new ArrayList(names) : []
+    LOCAL_FILE_NAME_CACHE_AT = at > 0L ? at : 0L
+    return new ArrayList(LOCAL_FILE_NAME_CACHE)
+}
+
+def fetchLocalFileNames() {
     def names = []
     try {
         def params = [
@@ -3299,6 +3344,7 @@ mappings {
     path("/app-post2.js") { action: [GET: "renderJsPost2"] }
     path("/app-post3.js") { action: [GET: "renderJsPost3"] }
     path("/app-holiday.js") { action: [GET: "renderJsHoliday"] }
+    path("/app-synagogue.js") { action: [GET: "renderJsSynagogue"] }
     path("/manifest.webmanifest") { action: [GET: "renderManifest"] }
     path("/sw.js") { action: [GET: "renderSw"] }
     path("/icons/icon-192.png") { action: [GET: "renderIcon192"] }
@@ -3350,6 +3396,12 @@ mappings {
     path("/holidays/skip") { action: [POST: "holidaysSkip"] }
     path("/holidays/refresh") { action: [POST: "holidaysRefresh"] }
     path("/holidays/schema") { action: [GET: "holidaysSchemaGet"] }
+    path("/synagogue") { action: [GET: "synagogueGet"] }
+    path("/synagogue/days") { action: [GET: "synagogueDaysGet"] }
+    path("/synagogue/save") { action: [POST: "synagogueSave"] }
+    path("/synagogue/preview") { action: [POST: "synagoguePreview"] }
+    path("/synagogue/skip") { action: [POST: "synagogueSkip"] }
+    path("/synagogue/refresh") { action: [POST: "synagogueRefresh"] }
     path("/notifications") { action: [GET: "notificationsGet"] }
     path("/notifications/ack") { action: [GET: "notificationsAckGet", POST: "notificationsAck"] }
     path("/tile-notifications") { action: [GET: "tileNotificationsGet"] }
@@ -3390,11 +3442,12 @@ def renderIndex() {
         html = appendAccessToken(html, "href", "app.css", token)
         html = appendAccessToken(html, "href", "app-post.css", token)
         html = html.replace('href="manifest.webmanifest"', "href=\"manifest.webmanifest${q}\"")
-        for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js", "app-holiday.js"]) {
+        for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js", "app-holiday.js", "app-synagogue.js"]) {
             html = appendAccessToken(html, "src", asset, token)
         }
         html = appendAccessToken(html, "content", "app-post3.js", token)
         html = appendAccessToken(html, "content", "app-holiday.js", token)
+        html = appendAccessToken(html, "content", "app-synagogue.js", token)
     }
     html = rewriteDashboardAssetRefsToFileManager(html)
     renderNoStore("text/html", html, 200)
@@ -3445,6 +3498,12 @@ def renderJsPost3() {
 def renderJsHoliday() {
     def js = readLocalAsset(assetJsHolidayFile())
     if (!js) { js = "globalThis.mldHolidayMissing=true;console.warn('Upload mld-holiday.js to File Manager');" }
+    renderVersionedAsset("application/javascript", js)
+}
+
+def renderJsSynagogue() {
+    def js = readLocalAsset(assetJsSynagogueFile())
+    if (!js) { js = "globalThis.mldSynagogueMissing=true;console.warn('Upload mld-synagogue.js to File Manager');" }
     renderVersionedAsset("application/javascript", js)
 }
 
@@ -3858,6 +3917,8 @@ def renderData() {
     out << ",\"roomClimateEnabled\":" << (roomClimateEnabled == null ? "true" : (roomClimateEnabled == true ? "true" : "false"))
     out << ",\"schedulerEnabled\":" << (schedulerIsEnabled() ? "true" : "false")
     out << ",\"holidaysAvailable\":" << (holidaysAvailable() ? "true" : "false")
+    try { synagogueSyncChild() } catch (e) { log.warn "Modern Dashboard: synagogue sync failed: ${e}" }
+    out << ",\"synagogueAvailable\":" << (synagogueAvailable() ? "true" : "false")
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
     out << ",\"hubTimeZone\":" << jsonStr(hubTimeZoneId())
     out << ",\"hubNow\":" << now().toString()
@@ -4085,7 +4146,7 @@ def resolvedDashboardName() {
 def normalizedDefaultTab() {
     def allowed = [
         "lights", "favorites", "sensors", "thermostats", "music",
-        "cameras", "blinds", "fans", "outlets", "scheduling"
+        "cameras", "blinds", "fans", "outlets", "scheduling", "synagogue"
     ] as Set
     def v = defaultTab?.toString()?.trim()
     return (v && allowed.contains(v)) ? v : "lights"
@@ -5800,7 +5861,7 @@ def saveRoomOrderFromList(order) {
 // Nav order (state.navOrder — synced across devices)
 // ---------------------------------------------------------------------------
 def validNavKeySet() {
-    return ["lights", "locks", "scenes", "hub-mode", "security", "blinds", "outlets", "scheduling", "sensors", "thermostats", "music", "cameras", "favorites"] as Set
+    return ["lights", "locks", "scenes", "hub-mode", "security", "blinds", "outlets", "scheduling", "sensors", "thermostats", "music", "cameras", "favorites", "synagogue"] as Set
 }
 
 def cameraGo2rtcServerBase(dev) {
@@ -7769,9 +7830,9 @@ def holidayModuleInstalled() {
 def holidayFilePresent() {
     def names = []
     try { names = listLocalFileNames() } catch (e) { names = [] }
-    if (names) {
+        if (names) {
         def present = fileNamePresent(names, assetJsHolidayFile())
-        state.holidayFileSeen = present
+        if (state.holidayFileSeen != present) state.holidayFileSeen = present
         return present
     }
     return state.holidayFileSeen == true
@@ -7789,12 +7850,21 @@ def holidayEnsureChild() {
 }
 
 def holidaysChild() {
+    if (HOLIDAY_CHILD_APP_ID != null) {
+        def cached = null
+        try { cached = getChildAppById(HOLIDAY_CHILD_APP_ID) } catch (e) { cached = null }
+        if (cached) return cached
+        HOLIDAY_CHILD_APP_ID = null
+    }
     def kids = []
     try { kids = getChildApps() ?: [] } catch (e) { kids = [] }
     for (child in kids) {
         def name = ""
         try { name = "${child?.getLabel() ?: ''} ${child?.name ?: ''}" } catch (e) { name = "" }
-        if (name.contains("Shabbat") || name.contains("Holiday")) return child
+        if (name.contains("Shabbat") || name.contains("Holiday")) {
+            try { HOLIDAY_CHILD_APP_ID = child.id as Long } catch (e2) {}
+            return child
+        }
     }
     return null
 }
@@ -7867,6 +7937,156 @@ def holidaysPreview() { return holidaysRoute("preview") }
 def holidaysTest() { return holidaysRoute("test") }
 def holidaysSkip() { return holidaysRoute("skip") }
 def holidaysRefresh() { return holidaysRoute("refresh") }
+
+def synagogueFilePresent() {
+    def names = []
+    try { names = listLocalFileNames() } catch (e) { names = [] }
+        if (names) {
+        def present = fileNamePresent(names, assetJsSynagogueFile())
+        if (state.synagogueFileSeen != present) state.synagogueFileSeen = present
+        return present
+    }
+    return state.synagogueFileSeen == true
+}
+
+def synagogueSyncChild() {
+    boolean present = synagogueFilePresent()
+    def child = synagogueChild()
+    if (!present) {
+        if (child) {
+            try { if (child.synagogueIsHidden() != true) child.synagogueHidden() } catch (e) {}
+        }
+        return
+    }
+    if (!child) {
+        try {
+            addChildApp("mDash", "mDash Synagogue", "Synagogue")
+            log.info "Modern Dashboard: Synagogue is on because mld-synagogue.js is in File Manager."
+        } catch (e) {
+            log.info "Modern Dashboard: mld-synagogue.js is in File Manager. Install the mDash Synagogue package with Hubitat Package Manager so schedules can run."
+        }
+        return
+    }
+    try { if (child.synagogueIsHidden() == true) child.synagogueShown() } catch (e) {}
+}
+
+def synagogueChild() {
+    if (SYNAGOGUE_CHILD_APP_ID != null) {
+        def cached = null
+        try { cached = getChildAppById(SYNAGOGUE_CHILD_APP_ID) } catch (e) { cached = null }
+        if (cached) return cached
+        SYNAGOGUE_CHILD_APP_ID = null
+    }
+    def kids = []
+    try { kids = getChildApps() ?: [] } catch (e) { kids = [] }
+    for (child in kids) {
+        def name = ""
+        try { name = "${child?.getLabel() ?: ''} ${child?.name ?: ''}" } catch (e2) { name = "" }
+        if (name.contains("Synagogue")) {
+            try { SYNAGOGUE_CHILD_APP_ID = child.id as Long } catch (e3) {}
+            return child
+        }
+    }
+    return null
+}
+
+def synagogueLocationNotice() {
+    def child = synagogueChild()
+    if (!child) return ""
+    try { return child.synagogueLocationNotice()?.toString()?.trim() ?: "" } catch (e) { return "" }
+}
+
+def synagogueAvailable() {
+    return synagogueFilePresent()
+}
+
+def synagogueRoute(String method) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def child = synagogueChild()
+    if (!child) return renderJsonNoStore('{"ok":false,"error":"Install the optional mDash Synagogue app with Hubitat Package Manager."}', 404)
+    def body = null
+    if (method != "status" && method != "days") {
+        body = request?.JSON
+        if (body == null) {
+            try {
+                def raw = request?.postBody ?: request?.content
+                if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+            } catch (e) {}
+        }
+    }
+    def result = null
+    try {
+        if (method == "status") {
+            def days = null
+            try { days = params?.days } catch (e) { days = null }
+            result = child.synagogueStatus(days)
+        }
+        else if (method == "days") {
+            def dayId = null
+            try { dayId = params?.day?.toString()?.trim() } catch (e) { dayId = null }
+            result = dayId ? child.synagogueDays(dayId) : child.synagogueDays(null)
+        }
+        else if (method == "save") result = child.synagogueSave(body)
+        else if (method == "preview") result = child.synagoguePreview(body)
+        else if (method == "skip") result = child.synagogueSkip(body)
+        else if (method == "refresh") {
+            child.synagogueRefresh()
+            result = child.synagogueStatus()
+            result.ok = true
+        }
+    } catch (e) {
+        log.warn "Modern Dashboard: synagogue ${method} failed: ${e}"
+        return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", 500)
+    }
+    def json = groovy.json.JsonOutput.toJson(result ?: [ok: false])
+    return renderJsonNoStore(withAuthJson(json), 200)
+}
+
+def synagogueGet() { return synagogueRoute("status") }
+def synagogueDaysGet() { return synagogueRoute("days") }
+def synagogueSave() { return synagogueRoute("save") }
+def synagoguePreview() { return synagogueRoute("preview") }
+def synagogueSkip() { return synagogueRoute("skip") }
+def synagogueRefresh() { return synagogueRoute("refresh") }
+
+def synagogueHolidayDefaults() {
+    def child = holidaysChild()
+    if (!child) return [:]
+    try {
+        def snap = child.holidayDefaultsSnapshot()
+        if (snap instanceof Map && (snap.containsKey("candleMin") || snap.containsKey("havdalahMinutes") || snap.containsKey("israel"))) {
+            def minutes = snap.havdalahMinutes != null ? snap.havdalahMinutes : 50
+            return [candleMin: snap.candleMin, havdalahMinutes: minutes, israel: snap.israel == true]
+        }
+    } catch (e) {}
+    try {
+        def status = child.holidaysStatus()
+        def settings = status?.settings
+        if (!(settings instanceof Map)) return [:]
+        def hav = settings.havdalah instanceof Map ? settings.havdalah : [:]
+        def minutes = hav.minutes != null ? hav.minutes : 50
+        return [candleMin: settings.candleMin, havdalahMinutes: minutes, israel: settings.israel == true]
+    } catch (e) {
+        return [:]
+    }
+}
+
+def synagogueScheduleNames() {
+    def out = [:]
+    def map = [:]
+    try { map = parseSchedulesMap() } catch (e) { map = [:] }
+    if (!(map instanceof Map)) return out
+    map.each { id, sched ->
+        if (sched?.enabled == false) return
+        def name = sched?.name?.toString() ?: "Schedule"
+        def ids = []
+        def action = sched?.action
+        if (action?.states instanceof List) action.states.each { st -> if (st?.id != null) ids << st.id.toString() }
+        if (action?.devices instanceof List) action.devices.each { d -> if (d != null) ids << d.toString() }
+        ids.each { dev -> if (dev && !out[dev]) out[dev] = name }
+    }
+    return out
+}
 
 def holidaySupportedKinds() {
     return ["light", "outlet", "blind", "fan", "lock", "thermostat"]

@@ -47,6 +47,10 @@ assert(/holidayTemplateSlots[\s\S]*"night"[\s\S]*"evening"[\s\S]*template\?\.cus
 assert(groovy.includes("holidayModeThisRun"), "device commands in the same run must not reread a stale location.mode");
 assert(groovy.includes("def holidayPlain"), "JSON saved into state must be copied into plain maps");
 assert(groovy.includes("def holidayPutCalendar"), "calendar fetches must replace state.calendar");
+{
+  const put = groovy.slice(groovy.indexOf("def holidayPutCalendar"), groovy.indexOf("def holidayPaused"));
+  assert(put.includes("holidayDropBuilt()"), "replacing the stored calendar must drop the cached timeline");
+}
 assert(groovy.includes("singleThreaded: true"), "mode changes and the schedule must not run at the same time");
 assert(groovy.includes("config.pausedOccasions = list"), "pausing one occasion must be written back onto state.config");
 assert(groovy.includes("afterEnd ? at < (day.end as long)"), "a custom time after the end is outside the day when it lands early");
@@ -149,7 +153,7 @@ assert(groovy.includes("boolean listOnly = scope == \"later\" && !wanted"), "the
 assert(groovy.includes("row.deviceCount = holidayDeviceCount"), "later rows count devices without a timeline");
 {
   const buildFrom = groovy.slice(groovy.indexOf("def holidayBuildFrom"), groovy.indexOf("def holidayListedNear"));
-  assert(buildFrom.indexOf("if (listOnly)") < buildFrom.indexOf("holidayExpandSpan"), "timelines are built after the later list has already returned");
+  assert(buildFrom.indexOf("if (listOnly)") < buildFrom.indexOf("holidayActionsFor"), "timelines are built after the later list has already returned");
 }
 assert(groovy.includes("holidayListedNear"), "the child uses the same two-week cutoff as the dashboard");
 assert(holidayJs.includes('getJson("holidays/later"'), "the dashboard loads later holidays when that section opens");
@@ -175,6 +179,25 @@ assert(build.includes("holidayPackageManifest.json"), "holiday file must be its 
   assert(!postFn[0].includes('error: "Could not save" }'), "holiday post must not replace the hub error");
   assert(postFn[0].includes("res?.error"), "holiday post keeps the hub error");
   assert(postFn[0].includes("status === 401"), "a rejected password session stays on the password dialog");
+}
+{
+  const avail = groovy.slice(groovy.indexOf("def holidayIsAvailable"), groovy.indexOf("def holidayDefaultsSnapshot"));
+  assert(!avail.includes("holidayEnsureState"), "the poll check does not rebuild holiday state");
+}
+assert(groovy.includes("def holidayNextFireAt"), "the scheduler finds the next fire without expanding every span");
+assert(groovy.includes("def holidayDefaultsSnapshot"), "candle lighting can be read without a timeline");
+assert(!groovy.slice(groovy.indexOf("def holidayArm"), groovy.indexOf("def holidayFire")).includes("holidayBuild(now())"), "arming does not build every timeline");
+assert(parent.includes("LOCAL_FILE_NAME_CACHE_TTL"), "the file manager listing is cached");
+assert(parent.includes("clearLocalFileNameCache"), "the app page refreshes the file list");
+assert(parent.includes("getChildAppById"), "a child app is remembered by id");
+{
+  const defs = parent.slice(parent.indexOf("def synagogueHolidayDefaults"), parent.indexOf("def synagogueScheduleNames"));
+  assert(defs.indexOf("holidayDefaultsSnapshot") >= 0 && defs.indexOf("holidayDefaultsSnapshot") < defs.indexOf("holidaysStatus"), "synagogue defaults try the small holiday read first");
+}
+const synagogue = readFileSync(join(root, "app/mDashSynagogue.groovy"), "utf8");
+{
+  const hidden = synagogue.slice(synagogue.indexOf("def synagogueIsHidden"), synagogue.indexOf("def synagogueHidden"));
+  assert(!hidden.includes("synagogueEnsureState"), "the poll check does not rebuild synagogue state");
 }
 
 console.log("holiday source ok");
