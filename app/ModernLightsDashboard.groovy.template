@@ -3585,6 +3585,7 @@ def renderLanProbe() {
 def renderData() {
     if (!guardDashboardAccess()) return renderAuthRequired()
     beginDashboardPoll()
+    long pollStartedAt = now()
     try {
     def out = new StringBuilder()
     out << "{\"config\":{"
@@ -3866,7 +3867,7 @@ def renderData() {
     out << ",\"roomClimateEnabled\":" << (roomClimateEnabled == null ? "true" : (roomClimateEnabled == true ? "true" : "false"))
     out << ",\"schedulerEnabled\":" << (schedulerIsEnabled() ? "true" : "false")
     out << ",\"holidaysAvailable\":" << (holidaysAvailable() ? "true" : "false")
-    try { synagogueSyncChild() } catch (e) { log.warn "Modern Dashboard: synagogue sync failed: ${e}" }
+    try { synagogueSyncSoon() } catch (e) { log.warn "Modern Dashboard: synagogue sync failed: ${e}" }
     out << ",\"synagogueAvailable\":" << (synagogueAvailable() ? "true" : "false")
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
     out << ",\"hubTimeZone\":" << jsonStr(hubTimeZoneId())
@@ -3912,6 +3913,7 @@ def renderData() {
     return renderJsonNoStore(out.toString(), 200)
     } finally {
         endDashboardPoll()
+        noteSlowDashboardPoll(pollStartedAt)
     }
 }
 
@@ -3962,6 +3964,34 @@ def endDashboardPoll() {
     try { if (POLL_FLAGS != null) POLL_FLAGS.remove(id) } catch (e) {}
     try { if (POLL_STATE_BOXES != null) POLL_STATE_BOXES.remove(id) } catch (e) {}
     try { if (POLL_ROOM_MAPS != null) POLL_ROOM_MAPS.remove(id) } catch (e) {}
+}
+
+// Hubitat runs one call at a time in this app, so a slow dashboard refresh makes every
+// schedule behind it start late. Say so in the log, at most once every five minutes.
+// The timestamp lives in a static map, so this never writes app state.
+def noteSlowDashboardPoll(long startedAt) {
+    try {
+        long took = now() - startedAt
+        if (took < 1500L) return
+        ensureDashboardPollCaches()
+        def key = "slow:${pollSlotId()}"
+        def prev = POLL_FLAGS.get(key)
+        long last = (prev instanceof Long) ? (prev as long) : 0L
+        if (now() - last < 300000L) return
+        POLL_FLAGS.put(key, now())
+        log.warn "Modern Dashboard: a dashboard refresh kept the app busy for ${took} ms. Schedules due in that time start late."
+    } catch (e) {}
+}
+
+// A schedule that starts well after its planned time usually waited behind another call.
+def scheduleNoteLateStart(id, s) {
+    try {
+        if (s?.nextFire == null) return
+        long late = now() - (s.nextFire as long)
+        if (late >= 5000L && late <= 900000L) {
+            log.warn "Modern Dashboard: schedule ${scheduleLogName(id, s)} started ${Math.round(late / 1000.0d)} s after its time"
+        }
+    } catch (e) {}
 }
 
 def pollDeviceKey(d) {
@@ -8043,15 +8073,56 @@ def holidayLocationNotice() {
 def holidaysAvailable() {
     if (!schedulerIsEnabled()) return false
     if (!holidayFilePresent()) return false
+    if (!holidaysChild()) return true
+    // This runs inside the dashboard poll. The holiday app calls back here to run
+    // devices. Entering that app from the poll locks both until Hubitat gives up
+    // after 120 seconds. The poll reads a flag the holiday app reported instead.
+    if (state.holidayUserPaused == null) holidayPauseFlagSoon()
+    return state.holidayUserPaused != true
+}
+
+def holidaySetUserPaused(boolean paused) {
+    state.holidayUserPaused = paused == true
+}
+
+// First poll after an upgrade, before the holiday app has reported its pause flag.
+// The read runs as its own call a second later, and at most once a minute.
+def holidayPauseFlagSoon() {
+    long last = 0L
+    try { last = (state.holidayPauseSeedAt ?: 0L) as long } catch (e) { last = 0L }
+    if (now() - last < 60000L) return
+    state.holidayPauseSeedAt = now()
+    try { runIn(1, "holidaySeedPauseFlag", [overwrite: true]) } catch (e) {}
+}
+
+def holidaySeedPauseFlag() {
     def child = holidaysChild()
-    if (!child) return true
-    try { return child.holidayIsAvailable() == true } catch (e) { return true }
+    if (!child) return
+    try {
+        state.holidayUserPaused = child.holidayUserPaused() == true
+    } catch (e) {
+        // An older holiday app has no holidayUserPaused. A gate timeout must not
+        // be followed by a second call into that app.
+        def missing = "${e?.getClass()?.name ?: ''} ${e}".contains("MissingMethodException")
+        if (!missing) {
+            state.holidayPauseSeedAt = now()
+            return
+        }
+        try {
+            state.holidayUserPaused = child.holidayIsAvailable() != true
+        } catch (e2) {
+            state.holidayPauseSeedAt = now()
+        }
+    }
 }
 
 def holidayNotifyChild() {
     def child = holidaysChild()
     if (!child) return
-    try { child.holidayParentPause(!schedulerIsEnabled()) } catch (e) {
+    try {
+        def userPaused = child.holidayParentPause(!schedulerIsEnabled())
+        if (userPaused instanceof Boolean) state.holidayUserPaused = userPaused
+    } catch (e) {
         log.warn "Modern Dashboard: holiday child pause failed: ${e}"
     }
 }
@@ -8114,13 +8185,35 @@ def synagogueFilePresent() {
     return state.synagogueFileSeen == true
 }
 
+// The dashboard poll calls this. It must not enter the Synagogue app: that app calls
+// back here to run devices, and the two would wait on each other until Hubitat gives
+// up after 120 seconds. The poll only notices that the file appeared or went away,
+// and the sync runs as its own call a second later, at most once a minute.
+def synagogueSyncSoon() {
+    boolean present = synagogueFilePresent()
+    if (state.synagogueChildSynced == present) return
+    long last = 0L
+    try { last = (state.synagogueSyncAt ?: 0L) as long } catch (e) { last = 0L }
+    if (now() - last < 60000L) return
+    state.synagogueSyncAt = now()
+    try { runIn(1, "synagogueSyncChild", [overwrite: true]) } catch (e) {}
+}
+
 def synagogueSyncChild() {
     boolean present = synagogueFilePresent()
     def child = synagogueChild()
     if (!present) {
         if (child) {
-            try { if (child.synagogueIsHidden() != true) child.synagogueHidden() } catch (e) {}
+            try {
+                if (child.synagogueIsHidden() != true) child.synagogueHidden()
+            } catch (e) {
+                // The child was busy. Leave the flag unset so a later poll tries again,
+                // and start the one-minute wait from now rather than from the queue time.
+                state.synagogueSyncAt = now()
+                return
+            }
         }
+        state.synagogueChildSynced = present
         return
     }
     if (!child) {
@@ -8129,10 +8222,19 @@ def synagogueSyncChild() {
             log.info "Modern Dashboard: Synagogue is on because mld-synagogue.js is in File Manager."
         } catch (e) {
             log.info "Modern Dashboard: mld-synagogue.js is in File Manager. Install the mDash Synagogue package with Hubitat Package Manager so schedules can run."
+            state.synagogueSyncAt = now()
+            return
         }
+        state.synagogueChildSynced = present
         return
     }
-    try { if (child.synagogueIsHidden() == true) child.synagogueShown() } catch (e) {}
+    try {
+        if (child.synagogueIsHidden() == true) child.synagogueShown()
+    } catch (e) {
+        state.synagogueSyncAt = now()
+        return
+    }
+    state.synagogueChildSynced = present
 }
 
 def synagogueChild() {
@@ -11331,6 +11433,9 @@ def scheduledJobHandler(data) {
             return
         }
     }
+    // After the duplicate check, so a second fire for the same slot is not called late.
+    // Before the mode check, so a schedule that waited and then skipped still says how long.
+    scheduleNoteLateStart(id, s)
     // Mode condition applies to time-based schedules only (not mode triggers)
     if (kind != "mode") {
         def onlyInModes = s?.onlyInModes

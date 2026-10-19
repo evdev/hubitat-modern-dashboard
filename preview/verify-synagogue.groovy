@@ -19,11 +19,28 @@ class SynagogueHubStub extends Script {
     def log = [info: { }, warn: { }, debug: { }, error: { }]
     def state = [:]
     def location = [timeZone: TimeZone.getTimeZone("America/New_York"), latitude: 40.71, longitude: -74.0, zipCode: "10001", mode: "Day", modes: ["Day", "Night"]]
+    int parentSunCalls = 0
     def parent = [
         holidayRunAction: { states -> [attempted: (states ?: []).size(), succeeded: (states ?: []).size(), missing: [], failed: []] },
-        scheduleSunMs: { which, offset, date -> null },
+        scheduleSunMs: { which, offset, date -> parentSunCalls++; null },
         synagogueScheduleNames: { [:] }
     ]
+    // The app's own sun lookup. Six in the morning and six in the evening, New York.
+    boolean sunMissing = false
+    def getSunriseAndSunset(Map opts) {
+        if (sunMissing) return [sunrise: null, sunset: null]
+        def day = opts?.date instanceof Date ? opts.date : new Date()
+        def at = { int hour ->
+            def cal = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"))
+            cal.setTime(day)
+            cal.set(Calendar.HOUR_OF_DAY, hour)
+            cal.set(Calendar.MINUTE, 0)
+            cal.set(Calendar.SECOND, 0)
+            cal.set(Calendar.MILLISECOND, 0)
+            return cal.getTime()
+        }
+        return [sunrise: at(6), sunset: at(18)]
+    }
     long now() { System.currentTimeMillis() }
     def httpGet(Map m, Closure c) {}
     def unschedule(Object... args) {}
@@ -660,8 +677,10 @@ def thirdBuilt = app.synagogueBuilt(cacheCtx)
 check(!firstBuilt.is(thirdBuilt), "a new revision builds the schedule again")
 app.synagogueClearBuilt()
 def bareCtx = [tz: tz.getID(), now: cacheNow, zmanim: [:], flags: [:], sun: [:], horizon: 4]
+app.sunMissing = true
 def bareOne = app.synagogueBuilt(bareCtx)
 def bareTwo = app.synagogueBuilt(bareCtx)
+app.sunMissing = false
 check(!bareOne.is(bareTwo), "a schedule with no sunrise or sunset is calculated again")
 def oddFlags = [:]
 for (int i = 0; i < 40; i++) oddFlags[app.synagogueAddDays("2026-09-01", i, tz)] = [yomTov: "notARealDay" + i]
@@ -670,6 +689,15 @@ oddFlags[kippur] = [yomTov: "yomKippur"]
 def oddMenu = app.synagogueMenu(app.synagogueDefaultConfig(), [tz: tz.getID(), now: app.synagogueZonedMs("2026-09-01", "08:00", tz), flags: oddFlags])
 check(oddMenu.find { it.id == "shabbat" }?.next == "2026-10-17", "unknown day ids do not hide the next Shabbat")
 check(oddMenu.find { it.id == "yomKippur" }?.next == kippur, "unknown day ids do not hide a later holiday")
+
+// A timer reads sunrise and sunset from this app. A call into the dashboard app waits
+// for whatever that app is doing, and the dashboard app can be waiting on this one.
+def sunCtx = [tz: tz.getID(), now: app.synagogueZonedMs("2026-10-16", "08:00", tz), zmanim: [:]]
+app.synagogueFillSun(sunCtx)
+check(sunCtx.sun.size() == 21, "a fire fills sun times for three weeks")
+check(sunCtx.sun["2026-10-16"]?.sunrise == app.synagogueZonedMs("2026-10-16", "06:00", tz), "the app's own sunrise is used")
+check(sunCtx.sun["2026-10-16"]?.sunset == app.synagogueZonedMs("2026-10-16", "18:00", tz), "the app's own sunset is used")
+check(app.parentSunCalls == 0, "a fire asked the dashboard app for sun times")
 
 if (failed) {
     println failed + " failed"

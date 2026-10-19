@@ -39,6 +39,8 @@
   const MENU_OPEN_LOCAL_BTN = document.getElementById("menu-open-local");
   const MENU_OPEN_CLOUD_BTN = document.getElementById("menu-open-cloud");
   const MENU_LOCAL_URL_EL = document.getElementById("menu-local-url");
+  const MENU_INSTALL_WRAP = document.getElementById("menu-install-wrap");
+  const MENU_INSTALL_BTN = document.getElementById("menu-install");
   const HAPTICS_STORAGE_KEY = "mld_haptics";
   const NOTIF_SOUND_STORAGE_KEY = "mld_notif_sound";
   const NOTIF_SNOOZE_STORAGE_KEY = "mld_notif_snooze";
@@ -1994,6 +1996,22 @@
     });
   }
   registerServiceWorkerForPwa();
+
+  // Shared by reference across script chunks. Do not reassign this object.
+  const installState = { evt: null, dismissed: false, installed: false };
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    if (installState.installed) return;
+    installState.evt = e;
+    installState.dismissed = false;
+    postCall("updateInstallMenuUI");
+  });
+  window.addEventListener("appinstalled", () => {
+    installState.evt = null;
+    installState.installed = true;
+    installState.dismissed = false;
+    postCall("updateInstallMenuUI");
+  });
 
   async function fetchWithTimeout(url, opts = {}, ms = 15000) {
     const ctrl = new AbortController();
@@ -5242,6 +5260,80 @@
     }
   }
 
+  function isIOS() {
+    const ua = navigator.userAgent || "";
+    if (/iPhone|iPad|iPod/.test(ua)) return true;
+    try {
+      return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+    } catch {
+      return false;
+    }
+  }
+
+  function isInstalledApp() {
+    if (isStandaloneDisplay()) return true;
+    try { return window.navigator.standalone === true; } catch { return false; }
+  }
+
+  function installMenuMode() {
+    if (installState.installed || isInstalledApp() || !window.isSecureContext) return "";
+    if (installState.evt) return "native";
+    if (installState.dismissed) return "manual";
+    if (isIOS()) return "ios";
+    return "";
+  }
+
+  function installHelpText() {
+    const ua = navigator.userAgent || "";
+    if (!isIOS()) {
+      return "Open your browser menu, then tap Install app or Add to Home screen.";
+    }
+    if (/FBAN|FBAV|Instagram|Line\//.test(ua)) {
+      return "Open this page in Safari first.\n\nThen tap Share, tap Add to Home Screen, keep Open as Web App on, and tap Add.";
+    }
+    let text = "Tap Share (or the ••• button, then Share).\nScroll and tap Add to Home Screen. On some versions it is under View More.\nKeep Open as Web App on, then tap Add.";
+    if (/CriOS|FxiOS|EdgiOS/.test(ua)) {
+      text += "\n\nIf Add to Home Screen is missing, open this page in Safari.";
+    }
+    return text;
+  }
+
+  function updateInstallMenuUI() {
+    if (!MENU_INSTALL_WRAP) return;
+    MENU_INSTALL_WRAP.hidden = !installMenuMode();
+  }
+
+  async function onInstallMenuClick() {
+    postCall("closeTopbarOverflowMenu");
+    const mode = installMenuMode();
+    if (mode === "native" && installState.evt) {
+      const evt = installState.evt;
+      installState.evt = null;
+      updateInstallMenuUI();
+      try {
+        await evt.prompt();
+        const choice = await evt.userChoice;
+        if (choice && choice.outcome === "accepted") installState.installed = true;
+        else installState.dismissed = true;
+      } catch {
+        installState.dismissed = true;
+      }
+      updateInstallMenuUI();
+      return;
+    }
+    if (mode === "ios" || mode === "manual") {
+      postCall("confirmAction", {
+        message: installHelpText(),
+        confirmLabel: "OK",
+        infoOnly: true,
+      });
+    }
+  }
+
+  if (MENU_INSTALL_BTN) {
+    MENU_INSTALL_BTN.addEventListener("click", () => { void onInstallMenuClick(); });
+  }
+
   function initAndroidLocalImmersive() {
     if (!isLocalOrigin() || !isAndroid() || isStandaloneDisplay()) return;
 
@@ -5370,6 +5462,7 @@
     if (MENU_LOCAL_URL_EL && document.activeElement !== MENU_LOCAL_URL_EL) {
       MENU_LOCAL_URL_EL.value = localUrl;
     }
+    updateInstallMenuUI();
   }
 
   function hideLocalModeBanner() {
@@ -13371,6 +13464,7 @@
     cancel.textContent = "Cancel";
     const ok = ce("button", "confirm-btn");
     ok.type = "button";
+    el._cancel = cancel;
     panel.appendChild(msg);
     actions.appendChild(cancel);
     actions.appendChild(ok);
@@ -13390,13 +13484,15 @@
     return el;
   }
 
-  function confirmAction({ message, confirmLabel, danger = false }) {
+  function confirmAction({ message, confirmLabel, danger = false, infoOnly = false }) {
     return new Promise((resolve) => {
       cancelAllSlideGestures();
       const popup = ensureConfirmPopup();
       popup._msg.textContent = message;
+      popup._msg.classList.toggle("confirm-msg-multiline", !!infoOnly);
       popup._ok.textContent = confirmLabel;
-      popup._ok.classList.toggle("danger", danger);
+      popup._ok.classList.toggle("danger", !!danger && !infoOnly);
+      if (popup._cancel) popup._cancel.hidden = !!infoOnly;
       confirmPending = resolve;
       popup.hidden = false;
       popup.classList.add("open");
@@ -17910,7 +18006,24 @@
     schedRowInFlight.delete(String(id || ""));
   }
 
+  // A poll must not detach an open Shabbat screen. Moving that node flashes
+  // "Edit usual schedule" and resets the page scroll.
+  function holidaySubviewIsSettled() {
+    if (schedDraft) return false;
+    if (!holidaysAvailable || !globalThis.mldHoliday?.shouldPreserve?.()) return false;
+    const wrap = currentBody()?.querySelector(".sched-list-wrap");
+    if (!wrap) return false;
+    let slot = false;
+    let scheduleChrome = false;
+    for (const child of wrap.children) {
+      if (child.classList.contains("holiday-slot")) slot = true;
+      if (child.classList.contains("sched-section-head")) scheduleChrome = true;
+    }
+    return slot && !scheduleChrome;
+  }
+
   function renderSchedulerView() {
+    if (holidaySubviewIsSettled()) return;
     void ensureSchedulesLoaded({ force: true }).then(() => {
       if (schedulerViewIsActive()) renderSchedulerActive();
     });
@@ -17919,6 +18032,7 @@
 
   function renderSchedulerActive() {
     if (!schedulerViewIsActive()) return;
+    if (holidaySubviewIsSettled()) return;
     const popup = ensureQuickPopup();
     syncQuickPopupRef(popup);
     syncQuickPopupWidthForOpen(popup);

@@ -168,6 +168,38 @@ assert(/kind == "light"\) \{[\s\S]*?runScheduleLightAction/.test(parent), "only 
 assert(!/for \(st in states\) \{[\s\S]{0,500}def one = \[states: \[\[id: st\?\.id, on:/.test(parent), "states are not rebuilt as lights before the kind is known");
 assert(parent.includes("holidayFilePresent"), "parent enables holidays when mld-holiday.js is present");
 assert(parent.includes("holidaysAvailable"), "parent must report holidaysAvailable");
+{
+  const poll = parent.slice(parent.indexOf("def holidaysAvailable"), parent.indexOf("def holidaySetUserPaused"));
+  assert(!poll.includes("holidayIsAvailable"), "the dashboard poll must not enter the holiday child");
+  assert(poll.includes("holidayUserPaused"), "the poll remembers the holiday pause flag");
+  assert(poll.includes("holidayPauseFlagSoon"), "an upgraded hub reads the pause flag outside the poll");
+}
+{
+  // The poll holds the dashboard app's gate. Each child calls back into it to run
+  // devices, so a poll that enters a child can lock both for 120 seconds.
+  const poll = parent.slice(parent.indexOf("def renderData()"), parent.indexOf("def pollSlotId()"));
+  assert(poll.includes("synagogueSyncSoon()"), "the poll only queues the Synagogue sync");
+  assert(!poll.includes("synagogueSyncChild()"), "the dashboard poll must not enter the Synagogue app");
+  assert(!poll.includes("synagogueIsHidden") && !poll.includes("holidayIsAvailable") && !poll.includes("holidayParentPause"), "the dashboard poll must not call a child app");
+  const soon = parent.slice(parent.indexOf("def synagogueSyncSoon"), parent.indexOf("def synagogueSyncChild"));
+  assert(soon.includes('runIn(1, "synagogueSyncChild"'), "the Synagogue sync runs as its own call");
+  assert(!soon.includes("child."), "queueing the Synagogue sync does not touch the child");
+  const seed = parent.slice(parent.indexOf("def holidayPauseFlagSoon"), parent.indexOf("def holidaySeedPauseFlag"));
+  assert(seed.includes('runIn(1, "holidaySeedPauseFlag"'), "the pause flag read runs as its own call");
+}
+{
+  // Dashboard copies of the settings can be stale, and Pause has its own button.
+  const merge = groovy.slice(groovy.indexOf("def holidayMergeSettings"), groovy.indexOf("def holidayPlain"));
+  assert(merge.includes('"paused"'), "a settings save from the dashboard must not change the pause flag");
+  assert(groovy.includes("def holidayUserPaused()"), "the parent can read the user's pause flag");
+}
+{
+  // Timers read sunrise and sunset from this app. A call into the dashboard app waits on its gate.
+  const sun = groovy.slice(groovy.indexOf("def holidaySun("), groovy.indexOf("def holidayDeviceKinds"));
+  assert(sun.includes("getSunriseAndSunset("), "the holiday app reads sun times itself");
+  assert(!sun.includes("parent."), "the holiday app must not ask the dashboard app for sun times");
+  assert(groovy.includes("def holidayNoteLateStart"), "a late holiday action is logged");
+}
 assert(!parent.includes('app(name: "mDashHolidays"'), "parent must not offer a child-app install button");
 assert(!parent.includes("mld-holiday.js</code></li><li><code>mld-manifest"), "holiday file stays off the required twelve");
 assert(build.includes('asset.name !== "mld-holiday.js"'), "Modern Dashboard package must not ship mld-holiday.js");

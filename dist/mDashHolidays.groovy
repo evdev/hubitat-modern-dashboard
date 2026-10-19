@@ -74,7 +74,12 @@ def initialize() {
     schedule("0 15 0 * * ?", holidayMidnight, [overwrite: true])
     // If a one-shot fire is lost, this still runs due actions and arms the next one.
     schedule("0 5 * * * ?", holidayWatch, [overwrite: true])
+    holidayTellParentPause()
     holidayArm()
+}
+
+def holidayTellParentPause() {
+    try { parent.holidaySetUserPaused(state?.config?.settings?.paused == true) } catch (e) {}
 }
 
 def holidayParentPause(boolean hidden) {
@@ -89,6 +94,7 @@ def holidayParentPause(boolean hidden) {
         holidayMarkPassedDone()
         holidayArm()
     }
+    return state.config?.settings?.paused == true
 }
 
 def holidayTogglePause() {
@@ -110,6 +116,7 @@ def holidayTogglePause() {
         holidayArm()
         log.info "mDash Holidays: resumed. Past actions were not replayed."
     }
+    holidayTellParentPause()
 }
 
 def holidayStartTestSpan() {
@@ -535,7 +542,12 @@ def holidayConfigCopy() {
 
 def holidayMergeSettings(current, incoming) {
     def next = current instanceof Map ? new LinkedHashMap(current) : holidayDefaultSettings()
-    incoming.each { k, v -> next[k?.toString()] = holidayPlain(v) }
+    incoming.each { k, v ->
+        // Pause and resume go through the Pause button. A dashboard page that was
+        // open before a pause carries the old value in its copy of the settings.
+        if (k?.toString() == "paused") return
+        next[k?.toString()] = holidayPlain(v)
+    }
     return next
 }
 
@@ -600,9 +612,16 @@ def holidaySpanPaused(span, config) {
     return ((config?.pausedOccasions ?: []).collect { it?.toString() }).contains(id)
 }
 
-// The dashboard poll calls this every refresh. It must not rebuild state.
+// Kept for a parent that still asks. The dashboard poll must not call this:
+// the parent is single-threaded, and this app calls back into the parent.
 def holidayIsAvailable() {
     return !holidayPaused()
+}
+
+// What the parent keeps for the dashboard poll after an upgrade. Only the user's
+// Pause button counts here, not the scheduler being hidden.
+def holidayUserPaused() {
+    return state?.config?.settings?.paused == true
 }
 
 // Candle lighting, havdalah, and Israel for another module. Does not build a timeline.
@@ -1070,11 +1089,64 @@ def holidaySpanLowerBound(span, config) {
     return lower
 }
 
-def holidayNextFireAt(long nowMs) {
+// Havdalah, a custom time after havdalah, and the test span's end are scheduled
+// at the span's end. The dashboard list drops a span once that moment arrives,
+// which used to drop those actions too. Keep a finished span until its mode
+// can still be restored, or until a later action can still run.
+def holidaySpanUpperBound(span, config) {
+    if (span?.id?.toString() == "test") return (span?.end ?: 0L) as long
+    long upper = (span?.end ?: 0L) as long
+    for (day in (span?.days ?: [])) {
+        def template = holidayTemplateFor(span, day, config)
+        def custom = template?.custom
+        if (!(custom instanceof List)) continue
+        for (entry in custom) {
+            if (entry?.anchor?.toString() != "after-end") continue
+            long mins = 0
+            try { mins = (entry?.value ?: 0) as long } catch (e) { mins = 0 }
+            if (mins < 0) mins = 0
+            long at = (day.end as long) + mins * 60000L
+            if (at > upper) upper = at
+        }
+    }
+    return upper
+}
+
+def holidayActionSpans(long nowMs) {
     def selected = holidaySelectSpans(state.config, nowMs)
+    def spans = []
+    def seen = new HashSet()
+    for (s in (selected.kept ?: [])) {
+        def id = s?.id?.toString()
+        if (id) seen.add(id)
+        spans << s
+    }
+    long modeGrace = nowMs - 36L * 60 * 60 * 1000
+    long actionGrace = nowMs - 2L * 60 * 60 * 1000
+    for (s in holidaySpanShells(state.config)) {
+        def id = s?.id?.toString()
+        if (!id || seen.contains(id)) continue
+        long end = (s?.end ?: 0L) as long
+        if (end > nowMs) continue
+        if (end <= modeGrace) {
+            long upper = holidaySpanUpperBound(s, state.config)
+            if (upper <= actionGrace) continue
+        }
+        seen.add(id)
+        spans << s
+    }
+    def test = state?.runtime?.testSpan
+    if (test?.start && !seen.contains("test")) {
+        long end = (test.end ?: 0L) as long
+        if (end <= nowMs && end > modeGrace) spans << holidayTestShell(test)
+    }
+    return spans
+}
+
+def holidayNextFireAt(long nowMs) {
     def done = state.runtime?.doneIds ?: [:]
     def remaining = []
-    for (span in (selected.kept ?: [])) {
+    for (span in holidayActionSpans(nowMs)) {
         if (holidaySpanSkipped(span)) continue
         if (span?.id?.toString() != "test" && holidaySpanPaused(span, state.config)) continue
         remaining << span
@@ -1104,9 +1176,8 @@ def holidayNextFireAt(long nowMs) {
 }
 
 def holidayRuntimeSpans(long nowMs, long actionHorizon) {
-    def selected = holidaySelectSpans(state.config, nowMs)
     def out = []
-    for (span in (selected.kept ?: [])) {
+    for (span in holidayActionSpans(nowMs)) {
         long lower = holidaySpanLowerBound(span, state.config)
         def actions = []
         if (span?.id?.toString() == "test" || lower <= actionHorizon) actions = holidayActionsFor(span, state.config)
@@ -1651,9 +1722,11 @@ def holidayCustomAt(entry, day, TimeZone tz) {
     if (anchor == "before-end") return [at: (day.end as long) - mins * 60000L]
     if (anchor == "after-end") return [at: (day.end as long) + mins * 60000L]
     def sun = holidaySun(day.date.toString())
-    if (!sun) return [at: null]
-    long base = anchor == "sunrise" ? (sun.sunrise as long) : (sun.sunset as long)
-    return [at: base + mins * 60000L]
+    def sunMs = anchor == "sunrise" ? sun?.sunrise : sun?.sunset
+    // A map with a null sunrise or sunset is still truthy. Casting that null
+    // to long used to abort the whole run, so candle lighting never started.
+    if (sunMs == null) return [at: null]
+    return [at: (sunMs as long) + mins * 60000L]
 }
 
 def holidaySun(String date) {
@@ -1678,11 +1751,10 @@ def holidaySun(String date) {
         cal.set(Calendar.MONTH, (parts[1] as int) - 1)
         cal.set(Calendar.DATE, parts[2] as int)
         cal.set(Calendar.HOUR_OF_DAY, 12)
-        def when = cal.getTime()
-        sun = [
-            sunrise: parent.scheduleSunMs("sunrise", 0, when),
-            sunset: parent.scheduleSunMs("sunset", 0, when)
-        ]
+        // Read from this app. A call into the dashboard app waits for whatever that
+        // app is doing, and the dashboard app waits on this one when it polls.
+        def rs = getSunriseAndSunset([date: cal.getTime()])
+        sun = [sunrise: rs?.sunrise?.getTime(), sunset: rs?.sunset?.getTime()]
     } catch (e) { sun = null }
     if (sun == null || sun.sunrise == null || sun.sunset == null) box.missed = true
     box.byDate[date] = sun
@@ -1978,10 +2050,12 @@ def holidayReconcile(boolean fromBoot) {
         if (at > nowMs + 15000L) continue
         if (at >= nowMs - 20000L) onTime << a
         else if (a.kind == "modeEnter" && spanOpen) onTime << a
+        else if (a.kind == "modeEnter" && (nowMs - at) <= twoHours) onTime << a
         else if (a.kind == "devices" && ((nowMs - at) <= twoHours || waitingOnHold || releasingHold)) missed << a
         else holidayMarkDone(a.id?.toString(), nowMs, "skipped")
     }
     for (a in onTime) {
+        holidayNoteLateStart(a, nowMs)
         try {
             holidayExecute(a, nowMs)
         } catch (e) {
@@ -1995,7 +2069,6 @@ def holidayReconcile(boolean fromBoot) {
         if (doneNow[a.id?.toString()] != null) continue
         for (s in (a.states ?: [])) latest["${s.kind}:${s.id}"] = [id: a.id, at: a.at, state: s]
     }
-    holidayFixMode(built, nowMs)
     def replay = []
     def ran = new HashSet()
     for (row in latest.values().sort { a, b -> (a.at as long) <=> (b.at as long) }) {
@@ -2016,6 +2089,8 @@ def holidayReconcile(boolean fromBoot) {
             holidayMarkDone(a.id?.toString(), nowMs, onlyUnlocks ? "skipped" : "collapsed")
         }
     }
+    // Replay while the hub is still in the holiday mode, then restore the end mode.
+    boolean replayFailed = false
     if (replay && !held && holidayCurrentMode() == state.config.settings.holidayMode?.toString()) {
         try {
             parent.holidayRunAction(replay)
@@ -2024,11 +2099,13 @@ def holidayReconcile(boolean fromBoot) {
             holidayRemember("", fromBoot ? "replayed after restart" : "replayed after delay")
         } catch (e) {
             needsRetry = true
+            replayFailed = true
             log.warn "mDash Holidays: replay failed — ${e}"
         }
     } else if (replayHeldId && !held && !replay) {
         holidayPutRuntime([replayHeld: null])
     }
+    if (!replayFailed) holidayFixMode(built, nowMs)
     } catch (e) {
         needsRetry = true
         log.warn "mDash Holidays: reconcile failed — ${e}"
@@ -2042,6 +2119,15 @@ def holidayReconcile(boolean fromBoot) {
             log.warn "mDash Holidays: re-arm failed — ${e2}"
         }
     }
+}
+
+// An action that starts well after its time usually waited behind another call
+// into this app, or was caught up after a restart.
+def holidayNoteLateStart(a, long nowMs) {
+    try {
+        long late = nowMs - (a.at as long)
+        if (late >= 5000L) log.warn "mDash Holidays: ${a.question ?: a.kind} started ${Math.round(late / 1000.0d)} s after its time"
+    } catch (e) {}
 }
 
 def holidayExecute(a, long nowMs) {
@@ -2157,8 +2243,7 @@ def holidaySpanOpen(spans, spanId, long nowMs) {
 }
 
 def holidaySpanEnd(spanId) {
-    def selected = holidaySelectSpans(state.config, now())
-    for (s in (selected.kept ?: [])) if (s.id?.toString() == spanId?.toString()) return s.end
+    for (s in holidayActionSpans(now())) if (s.id?.toString() == spanId?.toString()) return s.end
     return null
 }
 
@@ -2246,6 +2331,7 @@ def holidayActionStillPending(a, span, long nowMs, boolean heldNow, String heldS
     boolean releasingHold = replayHeldId && replayHeldId == spanId
     if (at >= nowMs - 20000L) return true
     if (a.kind == "modeEnter" && spanOpen) return true
+    if (a.kind == "modeEnter" && (nowMs - at) <= (2L * 60 * 60 * 1000)) return true
     if (a.kind == "devices" && (waitingOnHold || releasingHold || (keepDeviceCatchUp && (nowMs - at) <= (2L * 60 * 60 * 1000)))) return true
     return false
 }

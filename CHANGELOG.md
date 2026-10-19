@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.69
+
+- **Dashboard:** The menu includes Install app. On Android it installs the app. On iPhone and iPad it shows how to add it to the Home Screen. The item stays hidden once the app is already open from the home screen. Update Modern Dashboard.
+
+- **Dashboard:** A refresh no longer steps into the Shabbat or synagogue app, so a slow refresh does not hold the next schedule. An open Shabbat week stays where it is while the dashboard refreshes. Update Modern Dashboard.
+
+- **Shabbat & holidays:** An action after havdalah still runs after that day leaves the list. A missing sunrise or sunset no longer skips candle lighting. Pause stays paused when an older page is still open. Update Modern Dashboard and mDash Shabbat and Holidays.
+
+- **Synagogue:** Prayer times read sunrise and sunset in the synagogue app, so a dashboard refresh does not delay them. Update mDash Synagogue.
+
 ## 0.4.68
 
 - **Dashboard:** A refresh keeps its device cache on this dashboard, so another

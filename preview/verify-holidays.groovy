@@ -29,6 +29,8 @@ class HolidayHubStub extends Script {
     long clock = System.currentTimeMillis()
     int thermoCalls = 0
     int sunCalls = 0
+    int parentSunCalls = 0
+    boolean sunMissing = false
     int scheduleParses = 0
     int deviceRuns = 0
     int runOnceCalls = 0
@@ -47,6 +49,22 @@ class HolidayHubStub extends Script {
     def unsubscribe(Object... args) {}
     def httpGet(Map m, Closure c) {}
     def definition(Map m) {}
+    // The app's own sun lookup. Six in the morning and six in the evening, New York.
+    def getSunriseAndSunset(Map opts) {
+        sunCalls++
+        if (sunMissing) return [sunrise: null, sunset: null]
+        def day = opts?.date instanceof Date ? opts.date : new Date(clock)
+        def at = { int hour ->
+            def cal = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"))
+            cal.setTime(day)
+            cal.set(Calendar.HOUR_OF_DAY, hour)
+            cal.set(Calendar.MINUTE, 0)
+            cal.set(Calendar.SECOND, 0)
+            cal.set(Calendar.MILLISECOND, 0)
+            return cal.getTime()
+        }
+        return [sunrise: at(6), sunset: at(18)]
+    }
     def preferences(Closure c) { if (c) c.call() }
     def page(Map m) {}
     def section(Object... args) {}
@@ -96,6 +114,7 @@ def loadApp(File file) {
         thermostatSettingError: { s -> null },
         scheduleSunMs: { which, offset, date ->
             stub.sunCalls++
+            stub.parentSunCalls++
             def cal = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"))
             cal.setTime(date instanceof Date ? date : new Date(stub.clock))
             cal.set(Calendar.HOUR_OF_DAY, which?.toString() == "sunrise" ? 6 : 18)
@@ -163,6 +182,8 @@ def seed(app, Map opts) {
     app.location.mode = opts.mode ?: "Home"
     app.thermoCalls = 0
     app.sunCalls = 0
+    app.parentSunCalls = 0
+    app.sunMissing = false
     app.scheduleParses = 0
     app.deviceRuns = 0
     app.runOnceCalls = 0
@@ -270,6 +291,7 @@ def runCase(String label, Map opts) {
     try { oldSnap = snapshot(oldApp) } catch (e) { failed++; println "FAIL ${label} old threw ${e}"; return }
     try { newSnap = snapshot(newApp) } catch (e) { failed++; println "FAIL ${label} new threw ${e}"; e.printStackTrace(); return }
     same(label, oldSnap, newSnap)
+    check(newApp.parentSunCalls == 0, "${label} the new app asked the dashboard app for sun times")
     oldApp.thermoCalls = 0
     oldApp.sunCalls = 0
     oldApp.scheduleParses = 0
@@ -290,6 +312,8 @@ def reconcile(String label, Map opts) {
     seed(newApp, opts)
     try { oldApp.holidayReconcile(false) } catch (e) { failed++; println "FAIL ${label} old reconcile ${e}"; return }
     try { newApp.holidayReconcile(false) } catch (e) { failed++; println "FAIL ${label} new reconcile ${e}"; e.printStackTrace(); return }
+    // A timer that calls into the dashboard app can wait on the poll that holds it.
+    check(newApp.parentSunCalls == 0, "${label} the new app asked the dashboard app for sun times during a fire")
     def pack = { app ->
         def done = []
         (app.state.runtime?.doneIds instanceof Map ? app.state.runtime.doneIds.keySet() : []).each { done << it.toString() }
@@ -404,6 +428,64 @@ newApp.location.latitude = 0
 newApp.location.longitude = 0
 newApp.location.zipCode = "00000"
 try { same("cleared hub location drops the calendar", snapshot(oldApp), snapshot(newApp)) } catch (e) { failed++; println "FAIL cleared hub location ${e}" }
+
+// The timer fires at havdalah, which is the span's end. The old list dropped that
+// span before the end actions could run, so nothing happened.
+long candle = ms("2026-06-05T20:12:00-04:00")
+long hav = ms("2026-06-06T21:15:00-04:00")
+def endRuntime = [
+    mode: "Shabbat",
+    activeSpan: [id: "2026-06-06", start: candle, end: hav, held: false, overridden: false, startRan: true, ended: false],
+    doneIds: ["2026-06-06|modeEnter": candle, "2026-06-06|d0|start|0": candle]
+]
+seed(oldApp, [clock: hav + 1000, items: summer, config: config()] + endRuntime)
+seed(newApp, [clock: hav + 1000, items: summer, config: config()] + endRuntime)
+try { oldApp.holidayReconcile(false) } catch (e) { failed++; println "FAIL old havdalah reconcile ${e}" }
+try { newApp.holidayReconcile(false) } catch (e) { failed++; println "FAIL new havdalah reconcile ${e}"; e.printStackTrace() }
+check(oldApp.deviceRuns == 0, "the previous app ran havdalah after the span had ended")
+check(newApp.deviceRuns == 1, "havdalah actions run when the timer fires as the span ends")
+check(newApp.location.mode == "Home", "havdalah returns the hub to the end mode")
+
+long testStart = ms("2026-06-04T12:02:00-04:00")
+long testEnd = testStart + 10 * 60 * 1000
+seed(newApp, [clock: testEnd + 5 * 60 * 1000, items: summer, config: config(), mode: "Home", testSpan: [id: "test", start: testStart, end: testEnd]])
+try { newApp.holidayReconcile(false) } catch (e) { failed++; println "FAIL late test span ${e}"; e.printStackTrace() }
+check(newApp.deviceRuns >= 1, "a test span that already ended still runs its device actions")
+check(newApp.location.mode == "Home", "a late test span does not leave the hub in the holiday mode")
+
+seed(oldApp, [clock: hav + 2 * 60 * 1000, items: summer, config: config()] + endRuntime)
+seed(newApp, [clock: hav + 2 * 60 * 1000, items: summer, config: config()] + endRuntime)
+try { oldApp.holidayReconcile(false) } catch (e) { failed++; println "FAIL old late havdalah ${e}" }
+try { newApp.holidayReconcile(false) } catch (e) { failed++; println "FAIL new late havdalah ${e}"; e.printStackTrace() }
+check(oldApp.deviceRuns == 0, "the previous app ran havdalah a couple of minutes late")
+check(newApp.deviceRuns == 1, "havdalah actions still run when the timer is a couple of minutes late")
+check(newApp.location.mode == "Home", "a late havdalah still returns the hub to the end mode")
+check(newApp.parentSunCalls == 0, "a late havdalah asked the dashboard app for sun times")
+check(newApp.sunCalls > 0, "the holiday app did not read sun times from the hub itself")
+
+// The hub can load candle lighting from a postal code while sunrise is unavailable.
+// Expanding that custom used to throw and skip every action in the same run.
+oldApp.parent.scheduleSunMs = { which, offset, date -> null }
+seed(oldApp, [clock: candle + 1000, items: summer, config: config()])
+seed(newApp, [clock: candle + 1000, items: summer, config: config()])
+newApp.sunMissing = true
+try { oldApp.holidayReconcile(false) } catch (e) { failed++; println "FAIL old missing sun ${e}" }
+try { newApp.holidayReconcile(false) } catch (e) { failed++; println "FAIL new missing sun ${e}"; e.printStackTrace() }
+check(oldApp.deviceRuns == 0, "the previous app ran candle lighting when sunrise was missing")
+check(newApp.deviceRuns >= 1, "candle lighting still runs when sunrise is missing")
+check(newApp.location.mode == "Shabbat", "candle lighting still sets the holiday mode when sunrise is missing")
+newApp.sunMissing = false
+
+// A dashboard page opened before a pause still carries paused: false in its copy of the settings.
+seed(newApp, [clock: ms("2026-06-04T12:00:00-04:00"), items: summer, config: config(settings: [paused: true])])
+check(newApp.holidayUserPaused() == true, "the pause flag reads the user's Pause button")
+try { newApp.holidaysSave([settings: [paused: false, candleMin: 20]]) } catch (e) { failed++; println "FAIL stale settings save ${e}"; e.printStackTrace() }
+check(newApp.state.config.settings.paused == true, "a settings save from the dashboard resumed a paused app")
+check(newApp.state.config.settings.candleMin == 20, "a settings save from the dashboard dropped the other settings")
+seed(newApp, [clock: ms("2026-06-04T12:00:00-04:00"), items: summer, config: config(settings: [paused: false])])
+try { newApp.holidaysSave([settings: [paused: true, candleMin: 22]]) } catch (e) { failed++; println "FAIL stale settings save 2 ${e}"; e.printStackTrace() }
+check(newApp.state.config.settings.paused == false, "a settings save from the dashboard paused a running app")
+check(newApp.holidayUserPaused() == false, "the pause flag follows the stored setting")
 
 if (failed) {
     println "${failed} holiday comparison failure(s)"

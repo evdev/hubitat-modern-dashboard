@@ -77,7 +77,8 @@ def synagogueScheduleJobs() {
 
 def synagogueApiVersion() { return 1 }
 
-// The dashboard poll calls this every refresh. It must not rebuild state.
+// The dashboard poll must not call this. The parent is single-threaded and this app
+// calls back into it, so the poll would lock both. The parent syncs on its own call.
 def synagogueIsHidden() {
     return state?.runtime?.hidden == true
 }
@@ -2579,10 +2580,10 @@ def synagogueFillSun(Map ctx) {
             cal.set(Calendar.MONTH, (parts[1] as int) - 1)
             cal.set(Calendar.DATE, parts[2] as int)
             cal.set(Calendar.HOUR_OF_DAY, 12)
-            sun[date] = [
-                sunrise: parent?.scheduleSunMs("sunrise", 0, cal.getTime()),
-                sunset: parent?.scheduleSunMs("sunset", 0, cal.getTime())
-            ]
+            // Read from this app. A call into the dashboard app waits for whatever that
+            // app is doing, and the dashboard app can be waiting on this one.
+            def rs = getSunriseAndSunset([date: cal.getTime()])
+            sun[date] = [sunrise: rs?.sunrise?.getTime(), sunset: rs?.sunset?.getTime()]
         } catch (e) {
             sun[date] = [sunrise: null, sunset: null]
         }
@@ -2598,6 +2599,7 @@ def synagogueCatchUp() {
     long caught = now()
     for (action in synagogueDue(built.actions, caught, fired)) {
         boolean late = caught > ((synagogueLong(action.occEnd) ?: 0L) + 30L * 60000L)
+        synagogueNoteLateStart(action, caught)
         synagogueRunAction(action, fired, late)
     }
     for (action in (built.actions ?: [])) {
@@ -2615,6 +2617,15 @@ def synagogueCatchUp() {
 }
 
 def synagogueFire() { synagogueCatchUp(); synagogueArm() }
+
+// An action that starts well after its time usually waited behind another call
+// into this app, or was caught up after a restart.
+def synagogueNoteLateStart(Map action, long caught) {
+    try {
+        long late = caught - (synagogueLong(action.at) ?: caught)
+        if (late >= 5000L) log.warn "mDash Synagogue: ${action.label} started ${Math.round(late / 1000.0d)} s after its time"
+    } catch (e) {}
+}
 
 def synagogueRunAction(Map action, Map fired, boolean late) {
     def id = action.id?.toString()

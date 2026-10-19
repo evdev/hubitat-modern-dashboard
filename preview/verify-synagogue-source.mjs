@@ -36,4 +36,12 @@ assert(pre.includes("qnSyn"), "synagogue tab icon is its own picture");
 assert(build.includes('readdirSync(dir)'), "synagogue scripts are bundled from src/synagogue");
 assert(groovy.includes("webcal://"), "webcal links are accepted");
 assert(groovy.includes("synagogueMaskSecret"), "calendar links are masked");
+{
+  const sun = groovy.slice(groovy.indexOf("def synagogueFillSun"), groovy.indexOf("def synagogueCatchUp"));
+  assert(sun.includes("getSunriseAndSunset("), "the synagogue app reads sun times itself");
+  assert(!sun.includes("parent"), "a fire must not ask the dashboard app for sun times");
+  assert(groovy.includes("def synagogueNoteLateStart"), "a late synagogue action is logged");
+  const poll = parent.slice(parent.indexOf("def renderData()"), parent.indexOf("def pollSlotId()"));
+  assert(!poll.includes("synagogueSyncChild()") && !poll.includes("synagogueIsHidden"), "the dashboard poll must not enter the synagogue app");
+}
 console.log("synagogue source ok");

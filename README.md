@@ -66,8 +66,9 @@ cap.
 2. **Minimal-effort configuration** — install the app, pick devices in Hubitat
    preferences, open the link. Rooms and layout come from your Hubitat room
    assignments. Customization is optional, not required.
-3. **Installable PWA** — open the cloud URL on your phone and add it to your home
-   screen (Android Chrome: Install app; iOS Safari: Add to Home Screen).
+3. **Installable PWA** — open the cloud URL on your phone and use **Install app**
+   in the menu (Android Chrome installs directly; iPhone and iPad get Add to
+   Home Screen steps).
 4. **Simple remote scheduler** — create daily, weekly, one-time, sunrise/sunset,
    and mode-change schedules from the dashboard itself. No Hubitat login, no Rule
    Machine, no external service — just the same OAuth dashboard URL.
@@ -741,6 +742,8 @@ does not appear when you expect it.
 
 1. **Install from the cloud URL.** iOS **Add to Home Screen** requires the HTTPS
    cloud link. You cannot install a full standalone PWA from the local HTTP URL.
+   On an iPhone or iPad, **Install app** in the menu explains the Share sheet
+   steps. It stays hidden when the dashboard is already open from the Home Screen.
 2. **Installed PWA stays on the cloud origin.** The home-screen app loads
    `cloud.hubitat.com`. That is correct for remote access and PWA install.
 3. **Switching to local mode leaves the PWA origin.** If you tap **Open local
@@ -790,8 +793,11 @@ Use the **Cloud** link from the app page (`cloud.hubitat.com`, path includes
 
 | Platform | How to install |
 | -------- | -------------- |
-| **Android Chrome** | Open the cloud URL → menu → **Install app** (or the install banner) |
-| **iOS Safari** | Open the cloud URL → **Share** → **Add to Home Screen** |
+| **Android Chrome** | Open the cloud URL → menu → **Install app** |
+| **Desktop Chrome or Edge** | Same **Install app** menu item, when the browser offers install |
+| **iPhone and iPad** | Open the cloud URL in Safari → menu → **Install app** for the steps. Tap Share, then Add to Home Screen, and leave Open as Web App on |
+
+The **Install app** item is hidden when the dashboard is already open as the installed app, and on the local `http://` hub address. iOS cannot tell that the icon is already on the Home Screen while you are still in Safari, so the item can still appear in that tab. Browsers that never offer an install prompt, such as Firefox on Android, do not show the item.
 
 The installed app opens in a standalone window branded **mDash**. A pass-through
 service worker is registered (required for Chrome install criteria) but **does

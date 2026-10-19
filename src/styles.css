@@ -736,6 +736,7 @@ body.reorder-dragging {
 .topbar-overflow-menu {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
   flex-direction: column; min-width: 220px; max-width: min(300px, calc(100vw - 16px)); padding: var(--space-sm);
+  max-height: calc(100dvh - 90px); overflow-y: auto; overscroll-behavior: contain;
   background: var(--panel-solid); border: 1px solid var(--stroke-2);
   border-radius: var(--radius-sm); box-shadow: var(--shadow);
 }
@@ -1328,6 +1329,12 @@ body.reorder-dragging {
 .confirm-msg {
   font-size: 15px; font-weight: 600; color: var(--text);
   text-align: center; line-height: 1.45;
+}
+.confirm-msg.confirm-msg-multiline {
+  white-space: pre-line; text-align: left; font-weight: 500;
+}
+.confirm-panel:has(.confirm-msg-multiline) {
+  width: min(360px, calc(100vw - 32px));
 }
 .confirm-actions { display: flex; gap: 10px; }
 .confirm-actions .confirm-cancel,

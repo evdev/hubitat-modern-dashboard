@@ -206,6 +206,14 @@ assert(js.includes("new Set(schedIdList(schedDraft.action.devices))"), "thermost
 assert(/ac\.target === "thermostats"[\s\S]{0,300}thermostatSettingError\(ac\)/.test(js), "save must check thermostat setpoints before sending");
 assert(js.includes("schedTstatRangeError(ac)"), "save must check each thermostat's dial range");
 assert(/if \(!schedDraft\) renderSchedulerActive\(\)/.test(js), "poll refresh must not rebuild an open schedule editor");
+assert(js.includes("function holidaySubviewIsSettled("), "an open Shabbat screen must be recognized");
+{
+  const settled = js.slice(js.indexOf("function holidaySubviewIsSettled("), js.indexOf("function renderSchedulerView("));
+  assert(settled.includes("sched-section-head"), "the first open still hides the schedule list");
+  assert(settled.includes("shouldPreserve"), "only a covered holiday screen is left alone");
+}
+assert(/function renderSchedulerView\(\) \{\s*if \(holidaySubviewIsSettled\(\)\) return;/.test(js), "a poll must not reload schedules over an open Shabbat screen");
+assert(/function renderSchedulerActive\(\) \{\s*if \(!schedulerViewIsActive\(\)\) return;\s*if \(holidaySubviewIsSettled\(\)\) return;/.test(js), "a poll must not redraw an open Shabbat screen");
 assert(js.includes('bits.push("Fan " + fan)'), "Then line must show an explicit fan mode");
 assert(!js.includes('fan.toLowerCase() !== "auto"'), "Fan auto must not be hidden on the Then line");
 assert(/input\.addEventListener\("blur"[\s\S]{0,400}clampSetpoint\(/.test(js), "setpoint blur must snap into the dial range");
