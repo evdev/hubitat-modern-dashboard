@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.70
+
+- **Dashboard:** The first check after an update can still tell whether Shabbat and holidays are paused. Update Modern Dashboard.
+
 ## 0.4.69
 
 - **Dashboard:** The menu includes Install app. On Android it installs the app. On iPhone and iPad it shows how to add it to the Home Screen. The item stays hidden once the app is already open from the home screen. Update Modern Dashboard.

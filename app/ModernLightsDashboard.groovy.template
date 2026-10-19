@@ -8103,7 +8103,7 @@ def holidaySeedPauseFlag() {
     } catch (e) {
         // An older holiday app has no holidayUserPaused. A gate timeout must not
         // be followed by a second call into that app.
-        def missing = "${e?.getClass()?.name ?: ''} ${e}".contains("MissingMethodException")
+        def missing = "${e}".contains("MissingMethodException")
         if (!missing) {
             state.holidayPauseSeedAt = now()
             return
