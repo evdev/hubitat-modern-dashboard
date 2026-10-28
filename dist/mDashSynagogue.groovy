@@ -29,6 +29,7 @@ def mainPage() {
         section {
             paragraph synagogueStatusParagraph()
             input "debugLogging", "bool", title: "Debug logging", defaultValue: false, submitOnChange: true
+            input "alertDevices", "capability.notification", title: "Send problem alerts to", multiple: true, required: false
             input "btnSynagogueRefresh", "button", title: "Refresh times"
             input "btnSynagoguePause", "button", title: state?.config?.settings?.paused == true ? "Resume" : "Pause"
             paragraph "<small>Times come from <a href=\"https://www.hebcal.com\" target=\"_blank\">HebCal</a>. Programs are edited in the Synagogue tab. Pausing stops future actions and leaves devices as they are.</small>"
@@ -133,12 +134,15 @@ def synagogueMidnight() {
     if (state?.runtime?.hidden == true) return
     synagogueClearBuilt()
     synagogueFetch(true)
+    synagogueStoreSweep(synagogueSweep(state.config instanceof Map ? state.config : synagogueDefaultConfig(), now(), synagogueHubTz()))
     synagogueArm()
 }
 def synagogueWatch() {
     if (state?.runtime?.hidden == true) return
     synagogueFetchCalendars(false)
     synagogueCatchUp()
+    synagogueCheckStale()
+    synagogueFlushAlerts()
     synagogueArm()
 }
 
@@ -207,8 +211,12 @@ def synagogueDayLabel(String id) {
     return id ?: "Day"
 }
 
+def synagogueDefaultAlerts() {
+    return [device: true, unlock: true, stale: true]
+}
+
 def synagogueDefaultSettings() {
-    return [paused: false, israel: false, candleMin: 18, havdalahMinutes: 50, nightfall: "tzeit50min", heldModes: [], setupDone: false]
+    return [paused: false, israel: false, candleMin: 18, havdalahMinutes: 50, nightfall: "tzeit50min", heldModes: [], setupDone: false, alerts: synagogueDefaultAlerts()]
 }
 
 def synagogueEmptyChanges() { return [disabled: [], patched: [:], added: []] }
@@ -229,7 +237,7 @@ def synagogueDefaultDay(String id) {
 def synagogueDefaultConfig() {
     def days = [:]
     for (row in synagogueDayCatalog()) days[row.id] = synagogueDefaultDay(row.id)
-    return [settings: synagogueDefaultSettings(), spaces: [], days: days, dateOverrides: [:], skipped: [], overrides: [:], calendars: [], titleRules: [], bookings: []]
+    return [settings: synagogueDefaultSettings(), spaces: [], days: days, dateOverrides: [:], skipped: [], overrides: [:], calendars: [], titleRules: [], bookings: [], closures: []]
 }
 
 def synagogueEnsureState() {
@@ -247,13 +255,18 @@ def synagogueEnsureState() {
     try {
         shaped = state.config instanceof Map &&
             state.config.settings instanceof Map &&
+            state.config.settings.alerts instanceof Map &&
             state.config.days instanceof Map &&
             state.config.calendars instanceof List &&
             state.config.titleRules instanceof List &&
             state.config.bookings instanceof List &&
+            state.config.closures instanceof List &&
             state.runtime instanceof Map &&
             state.hebcal instanceof Map &&
-            state.ical instanceof Map
+            state.ical instanceof Map &&
+            state.alerts instanceof Map &&
+            state.alerts.sent instanceof Map &&
+            state.alerts.pending instanceof List
     } catch (e) { shaped = false }
     if (shaped && today && SYNAGOGUE_ENSURED.get(appId)?.toString() == stamp) return
     if (!(state.config instanceof Map)) {
@@ -267,14 +280,24 @@ def synagogueEnsureState() {
         if (!(config.settings instanceof Map)) config.settings = synagogueDefaultSettings()
         state.config = config
     }
-    if (!(state.config.calendars instanceof List) || !(state.config.titleRules instanceof List) || !(state.config.bookings instanceof List)) {
+    if (!(state.config.calendars instanceof List) || !(state.config.titleRules instanceof List) || !(state.config.bookings instanceof List) || !(state.config.closures instanceof List) || !(state.config.settings?.alerts instanceof Map)) {
         def config = synagogueCopy(state.config)
         if (!(config.calendars instanceof List)) config.calendars = []
         if (!(config.titleRules instanceof List)) config.titleRules = []
         if (!(config.bookings instanceof List)) config.bookings = []
+        if (!(config.closures instanceof List)) config.closures = []
+        if (!(config.settings instanceof Map)) config.settings = synagogueDefaultSettings()
+        if (!(config.settings.alerts instanceof Map)) config.settings.alerts = synagogueDefaultAlerts()
         state.config = config
     }
     if (!(state.runtime instanceof Map)) state.runtime = [revision: 0, hidden: false, fired: [:], history: []]
+    if (!(state.alerts instanceof Map) || !(state.alerts.sent instanceof Map) || !(state.alerts.pending instanceof List)) {
+        def alerts = state.alerts instanceof Map ? synagogueCopy(state.alerts) : [:]
+        if (!(alerts.sent instanceof Map)) alerts.sent = [:]
+        if (!(alerts.pending instanceof List)) alerts.pending = []
+        if (!(alerts.deliveries instanceof List)) alerts.deliveries = []
+        state.alerts = alerts
+    }
     if (!(state.hebcal instanceof Map)) state.hebcal = [zmanim: [:], flags: [:], fetchedAt: 0, error: "", query: ""]
     if (!(state.ical instanceof Map)) state.ical = [events: [], unsupported: [], fetchedAt: 0, error: ""]
     def todayAfter = ""
@@ -859,6 +882,222 @@ def synagogueEntriesFor(String winnerId, String date, String position, Map confi
     return out
 }
 
+def synagogueStoreSweep(Map swept) {
+    if (!(swept instanceof Map)) return 0
+    int removed = synagogueInt(swept.removed, 0)
+    if (removed > 0) {
+        state.config = swept.config
+        synagogueBump()
+        synagogueClearBuilt()
+    }
+    return removed
+}
+
+def synagogueStoredDate(String id, Map config, TimeZone tz) {
+    def text = id?.toString() ?: ""
+    if (!text) return null
+    if (text.startsWith("booking|")) {
+        def bookId = text.substring("booking|".length())
+        for (booking in (config?.bookings instanceof List ? config.bookings : [])) {
+            if (booking?.id?.toString() == bookId) {
+                def date = synagogueDateOnly(booking?.date?.toString())
+                return date ?: null
+            }
+        }
+        return null
+    }
+    def parts = text.split("\\|")
+    for (part in parts) {
+        def token = part?.toString() ?: ""
+        if (token ==~ /\d{4}-\d{2}-\d{2}/) {
+            def date = synagogueDateOnly(token)
+            if (date) return date
+        }
+    }
+    if (parts.length >= 2) {
+        def last = parts[parts.length - 1]?.toString() ?: ""
+        if (last ==~ /\d{12,}/) {
+            def ms = synagogueLong(last)
+            if (ms != null && ms > 0L) return synagogueDateOf(ms, tz)
+        }
+    }
+    return null
+}
+
+def synagogueSweep(Map config, long nowMs, TimeZone tz) {
+    def next = config instanceof Map ? synagogueCopy(config) : synagogueDefaultConfig()
+    if (!(next.skipped instanceof List)) next.skipped = []
+    if (!(next.overrides instanceof Map)) next.overrides = [:]
+    if (!(next.dateOverrides instanceof Map)) next.dateOverrides = [:]
+    if (!(next.bookings instanceof List)) next.bookings = []
+    if (!(next.closures instanceof List)) next.closures = []
+    def today = synagogueDateOf(nowMs, tz)
+    int removed = 0
+    def olderThan = { String date, int limit ->
+        def on = synagogueDateOnly(date)
+        if (!on) return false
+        int gap = synagogueEpochDay(today) - synagogueEpochDay(on)
+        return gap > limit
+    }
+    def skipped = []
+    for (id in next.skipped) {
+        def date = synagogueStoredDate(id?.toString(), next, tz)
+        if (date && olderThan(date, 2)) removed++
+        else skipped << id
+    }
+    next.skipped = skipped
+    def overrides = [:]
+    next.overrides.each { key, value ->
+        def date = synagogueStoredDate(key?.toString(), next, tz)
+        if (date && olderThan(date, 2)) removed++
+        else overrides[key] = value
+    }
+    next.overrides = overrides
+    def dates = [:]
+    next.dateOverrides.each { key, value ->
+        def date = synagogueDateOnly(key?.toString())
+        if (date && olderThan(date, 2)) removed++
+        else dates[key] = value
+    }
+    next.dateOverrides = dates
+    def bookings = []
+    for (booking in next.bookings) {
+        def date = synagogueDateOnly(booking?.date?.toString())
+        if (date && olderThan(date, 30)) removed++
+        else bookings << booking
+    }
+    next.bookings = bookings
+    def closures = []
+    for (row in next.closures) {
+        def to = synagogueDateOnly(row?.to?.toString())
+        if (to && olderThan(to, 7)) removed++
+        else closures << row
+    }
+    next.closures = closures
+    return [config: next, removed: removed]
+}
+
+def synagogueWeekdayStopped(String dayId) {
+    if (!dayId) return false
+    if (dayId == "shabbat" || dayId == "shabbatRoshChodesh" || dayId == "shabbatCholHaMoed") return false
+    if (synagogueYomTovIds().contains(dayId)) return false
+    return true
+}
+
+def synagogueClosureMatches(Map row, String date, String dayId, String spaceId, boolean forBooking) {
+    if (!(row instanceof Map)) return false
+    def from = synagogueDateOnly(row.from?.toString())
+    def to = synagogueDateOnly(row.to?.toString())
+    def on = synagogueDateOnly(date)
+    if (!from || !to || !on) return false
+    if (on < from || on > to) return false
+    if (forBooking && row.bookings != true) return false
+    def scope = row.scope?.toString() == "all" ? "all" : "weekdays"
+    if (scope == "weekdays" && !synagogueWeekdayStopped(dayId)) return false
+    def where = row.spaceId?.toString() ?: ""
+    def here = spaceId ?: ""
+    if (where && where != here) return false
+    return true
+}
+
+def synagogueClosedBy(Map config, String date, String dayId, String spaceId, boolean forBooking) {
+    for (row in (config?.closures instanceof List ? config.closures : [])) {
+        if (synagogueClosureMatches(row, date, dayId, spaceId, forBooking)) return row
+    }
+    return null
+}
+
+def synagogueSplitClosure(List entries, String jewishDate, String dayId, Map config) {
+    def keep = []
+    def drop = []
+    for (entry in (entries ?: [])) {
+        def spaceId = entry?.spaceId?.toString() ?: ""
+        if (synagogueClosedBy(config, jewishDate, dayId, spaceId, false)) drop << entry
+        else keep << entry
+    }
+    return [keep: keep, drop: drop]
+}
+
+def synagogueClosureKeeps(long start, List cues, long nowMs) {
+    if (start <= nowMs) return true
+    for (cue in (cues ?: [])) {
+        long at = synagogueLong(cue?.at) ?: 0L
+        if (at <= nowMs) return true
+    }
+    return false
+}
+
+def synagogueClosureNames(Map config, String date, String dayId) {
+    def names = []
+    for (row in (config?.closures instanceof List ? config.closures : [])) {
+        def where = row?.spaceId?.toString() ?: ""
+        if (!synagogueClosureMatches(row, date, dayId, where, false)) continue
+        def name = row?.name?.toString()?.trim() ?: "Closed"
+        if (!names.contains(name)) names << name
+    }
+    return names
+}
+
+def synagogueClosedWindow(Map config, Map ctx, String start, int days) {
+    def tz = synagogueTzFrom(ctx?.tz)
+    def flags = ctx?.flags instanceof Map ? ctx.flags : [:]
+    def out = []
+    int span = days > 0 ? days : 7
+    for (int i = 0; i < span; i++) {
+        def date = synagogueAddDays(start, i, tz)
+        def names = synagogueClosureNames(config, date, synagogueWinner(date, flags, tz))
+        if (names) out << [date: date, name: names.join(", ")]
+    }
+    return out
+}
+
+def synagogueCueAt(Map cue, long start, long end, int warmEarlierMin) {
+    int offset = synagogueInt(cue?.offsetMin, 0)
+    boolean endAnchor = cue?.anchor?.toString() == "end"
+    long at = endAnchor ? end : start
+    long shift = offset * 60000L
+    at += shift
+    if (!endAnchor && cue?.action?.toString() == "comfort" && warmEarlierMin > 0) {
+        long warmMs = warmEarlierMin * 60000L
+        at -= warmMs
+    }
+    return at
+}
+
+def synagogueWarmMinutes(Map ov) {
+    if (!(ov instanceof Map) || ov.warmEarlierMin == null || !ov.warmEarlierMin.toString().trim()) return 0
+    int warm = synagogueInt(ov.warmEarlierMin, 0)
+    if (warm < 0) return 0
+    if (warm > 180) return 180
+    return warm
+}
+
+def synagogueConfigWithoutClosure(Map config, String id) {
+    def copy = config instanceof Map ? synagogueCopy(config) : [:]
+    if (id && copy?.closures instanceof List) copy.closures = copy.closures.findAll { it?.id?.toString() != id }
+    return copy
+}
+
+def synagogueCountStops(Map before, Map after, Map ctx) {
+    def tz = synagogueTzFrom(ctx?.tz)
+    long nowMs = synagogueLong(ctx?.now) ?: 0L
+    def start = synagogueDateOf(nowMs, tz)
+    def end = synagogueAddDays(start, 21, tz)
+    def left = [] as Set
+    for (occ in (after?.occurrences instanceof List ? after.occurrences : [])) {
+        def date = occ?.date?.toString() ?: ""
+        if (date >= start && date < end && occ?.id) left.add(occ.id.toString())
+    }
+    int stops = 0
+    for (occ in (before?.occurrences instanceof List ? before.occurrences : [])) {
+        def date = occ?.date?.toString() ?: ""
+        if (date < start || date >= end) continue
+        def id = occ?.id?.toString()
+        if (id && !left.contains(id)) stops++
+    }
+    return stops
+}
+
 def synagogueExpand(Map config, Map ctx) {
     def tz = synagogueTzFrom(ctx?.tz)
     long nowMs = synagogueLong(ctx?.now) ?: 0L
@@ -893,15 +1132,29 @@ def synagogueExpand(Map config, Map ctx) {
         def eveList = []
         def dayOverride = dateOverrides[date]
         def nextOverride = dateOverrides[nextDate]
-        if (dayOverride instanceof List) {
+        boolean dayFixed = dayOverride instanceof List
+        boolean eveFixed = nextOverride instanceof List
+        if (dayFixed) {
             for (entry in dayOverride) if ((entry?.position?.toString() ?: "day") != "evening") dayList << entry
         } else {
             dayList = synagogueEntriesFor(winner, date, "day", config, ctx, first)
         }
-        if (nextOverride instanceof List) {
+        if (eveFixed) {
             for (entry in nextOverride) if (entry?.position?.toString() == "evening") eveList << entry
         } else {
             eveList = synagogueEntriesFor(nextWinner, nextDate, "evening", config, ctx, nextFirst)
+        }
+        def dayClosed = []
+        def eveClosed = []
+        if (!dayFixed) {
+            def split = synagogueSplitClosure(dayList, date, winner, config)
+            dayList = split.keep
+            dayClosed = split.drop
+        }
+        if (!eveFixed) {
+            def split = synagogueSplitClosure(eveList, nextDate, nextWinner, config)
+            eveList = split.keep
+            eveClosed = split.drop
         }
         def replacedIds = [] as Set
         for (entry in eveList) {
@@ -917,7 +1170,10 @@ def synagogueExpand(Map config, Map ctx) {
         def ordered = []
         for (entry in dayList) {
             if (replacedIds.contains(entry?.id?.toString())) continue
-            ordered << [entry: entry, position: "day", dayId: winner, fromOverride: dayOverride instanceof List]
+            ordered << [entry: entry, position: "day", dayId: winner, fromOverride: dayFixed, closed: false]
+        }
+        for (entry in dayClosed) {
+            ordered << [entry: entry, position: "day", dayId: winner, fromOverride: false, closed: true]
         }
         for (entry in eveList) {
             def name = entry?.name?.toString()?.trim()?.toLowerCase()
@@ -928,7 +1184,10 @@ def synagogueExpand(Map config, Map ctx) {
                 if (daySpace != spaceId) continue
                 if (dayEntry?.name?.toString()?.trim()?.toLowerCase() == name) replaced = "Replaces regular " + dayEntry.name
             }
-            ordered << [entry: entry, position: "evening", dayId: nextWinner, fromOverride: nextOverride instanceof List, replaced: replaced]
+            ordered << [entry: entry, position: "evening", dayId: nextWinner, fromOverride: eveFixed, replaced: replaced, closed: false]
+        }
+        for (entry in eveClosed) {
+            ordered << [entry: entry, position: "evening", dayId: nextWinner, fromOverride: false, replaced: "", closed: true]
         }
         for (item in ordered) {
             def entry = item.entry
@@ -967,6 +1226,7 @@ def synagogueExpand(Map config, Map ctx) {
                 if ((start as long) > cap) start = cap
             }
             def ov = overrides[occId] instanceof Map ? overrides[occId] : [:]
+            int warmEarlier = synagogueWarmMinutes(ov)
             if (ov.start) {
                 def clock = synagogueClock(ov.start.toString())
                 if (clock) start = synagogueZonedMs(date, clock, tz)
@@ -989,8 +1249,7 @@ def synagogueExpand(Map config, Map ctx) {
                 def control = null
                 if (space?.controls instanceof List) control = space.controls.find { it?.id?.toString() == cue.controlId?.toString() }
                 if (!(control instanceof Map)) continue
-                int offset = synagogueInt(cue.offsetMin, 0)
-                long at = ((cue.anchor?.toString() == "end" ? end : start) as long) + (offset as long) * 60000L
+                long at = synagogueCueAt(cue, start as long, end as long, warmEarlier)
                 def built = synagogueCueStates(control, cue)
                 if (built.held == true) {
                     def which = cue.action?.toString() == "setback" ? "Setback" : "Comfort"
@@ -1005,11 +1264,13 @@ def synagogueExpand(Map config, Map ctx) {
                     anchor: cue.anchor?.toString() == "end" ? "end" : "start",
                     offLike: synagogueOffLike(cue),
                     unlock: cue.action?.toString() == "unlock",
+                    controlId: cue.controlId?.toString() ?: "",
                     states: built.states,
                     suppressed: false
                 ]
             }
-            boolean changed = (ov.start || (ov.extendMin != null && ov.extendMin.toString().trim()) || (ov.durationMin != null && ov.durationMin.toString().trim())) ? true : false
+            if (item.closed == true && !synagogueClosureKeeps(start as long, cues, nowMs)) continue
+            boolean changed = (ov.start || warmEarlier > 0 || (ov.extendMin != null && ov.extendMin.toString().trim()) || (ov.durationMin != null && ov.durationMin.toString().trim())) ? true : false
             occurrences << [
                 id: occId,
                 name: entry.name?.toString() ?: "Service",
@@ -1026,6 +1287,7 @@ def synagogueExpand(Map config, Map ctx) {
                 skipped: skipped.contains(occId) || ov.cancel == true,
                 cancelled: ov.cancel == true,
                 changed: changed,
+                warmEarlierMin: warmEarlier,
                 dateChanged: item.fromOverride == true,
                 replaced: item.replaced ?: "",
                 stayOn: false,
@@ -1125,7 +1387,9 @@ def synagogueMaskSecret(String secret) {
 def synagoguePublicCalendars(Map config) {
     def out = []
     for (cal in (config?.calendars instanceof List ? config.calendars : [])) {
-        out << [id: cal?.id?.toString() ?: "", name: cal?.name?.toString() ?: "Calendar", mask: synagogueMaskSecret(cal?.url?.toString())]
+        def row = [id: cal?.id?.toString() ?: "", name: cal?.name?.toString() ?: "Calendar", mask: synagogueMaskSecret(cal?.url?.toString()), bookAll: cal?.bookAll == true, spaceId: cal?.spaceId?.toString() ?: ""]
+        if (cal?.needsLink == true) row.needsLink = true
+        out << row
     }
     return out
 }
@@ -1519,6 +1783,10 @@ def synagogueIngestIcs(Map config, ics, TimeZone tz, long nowMs) {
         def text = ics[cal?.id?.toString()]
         if (text == null) text = ""
         text = text.toString()
+        if (cal?.needsLink == true) {
+            errors << ((cal?.name?.toString() ?: "Calendar") + " needs its link again after a restore.")
+            continue
+        }
         if (!text.trim()) {
             errors << ((cal?.name?.toString() ?: "Calendar") + " could not be read.")
             continue
@@ -1537,15 +1805,14 @@ def synagogueIngestIcs(Map config, ics, TimeZone tz, long nowMs) {
     return [events: events, unsupported: unsupported, error: errors.join(" ")]
 }
 
-def synagogueCuesFor(Map space, String entryId, String entryName, long start, long end, boolean runCues, List warnings) {
+def synagogueCuesFor(Map space, String entryId, String entryName, long start, long end, boolean runCues, List warnings, int warmEarlierMin) {
     def cues = []
     if (!runCues || !(space?.cues instanceof List)) return cues
     for (cue in space.cues) {
         if (!(cue instanceof Map) || !synagogueApplies(cue, entryId, entryName)) continue
         def control = space?.controls instanceof List ? space.controls.find { it?.id?.toString() == cue.controlId?.toString() } : null
         if (!(control instanceof Map)) continue
-        int offset = synagogueInt(cue.offsetMin, 0)
-        long at = (cue.anchor?.toString() == "end" ? end : start) + (offset as long) * 60000L
+        long at = synagogueCueAt(cue, start, end, warmEarlierMin)
         def built = synagogueCueStates(control, cue)
         if (built.held == true) {
             def which = cue.action?.toString() == "setback" ? "Setback" : "Comfort"
@@ -1560,6 +1827,7 @@ def synagogueCuesFor(Map space, String entryId, String entryName, long start, lo
             anchor: cue.anchor?.toString() == "end" ? "end" : "start",
             offLike: synagogueOffLike(cue),
             unlock: cue.action?.toString() == "unlock",
+            controlId: cue.controlId?.toString() ?: "",
             states: built.states,
             suppressed: false
         ]
@@ -1644,9 +1912,13 @@ def synagogueAppendFeed(List occurrences, List warnings, Map config, Map ctx, Se
             }
         }
         if (ov.extendMin != null && ov.extendMin.toString().trim()) end += synagogueInt(ov.extendMin, 0) * 60000L
+        int warmEarlier = synagogueWarmMinutes(ov)
         boolean cancel = ov.cancel == true || skipped.contains(item.id.toString()) || item.cancelled == true
+        def civil = synagogueDateOf(start, tz)
+        def winnerId = synagogueWinner(civil, ctx?.flags instanceof Map ? ctx.flags : [:], tz)
+        if (synagogueClosedBy(config, civil, winnerId, item.spaceId?.toString() ?: "", true)) continue
         def space = synagogueSpaceById(config, item.spaceId?.toString())
-        def cues = (!cancel && space) ? synagogueCuesFor(space, item.entryId.toString(), item.name.toString(), start, end, item.runCues == true, warnings) : []
+        def cues = (!cancel && space) ? synagogueCuesFor(space, item.entryId.toString(), item.name.toString(), start, end, item.runCues == true, warnings, warmEarlier) : []
         def warning = (!item.spaceId && item.kind == "calendar" && item.cancelled != true) ? "This event has no space yet." : ""
         occurrences << [
             id: item.id.toString(),
@@ -1663,7 +1935,8 @@ def synagogueAppendFeed(List occurrences, List warnings, Map config, Map ctx, Se
             estimated: false,
             skipped: cancel,
             cancelled: item.cancelled == true || ov.cancel == true,
-            changed: (ov.start || (ov.extendMin != null && ov.extendMin.toString().trim())) ? true : false,
+            changed: (ov.start || warmEarlier > 0 || (ov.extendMin != null && ov.extendMin.toString().trim())) ? true : false,
+            warmEarlierMin: warmEarlier,
             dateChanged: false,
             replaced: "",
             stayOn: false,
@@ -1817,8 +2090,9 @@ def synagogueFetchCalendars(boolean force) {
         if (age >= 0L && age < 30L * 60L * 1000L) return
     }
     def calendars = state.config?.calendars instanceof List ? state.config.calendars : []
+    long previousOk = synagogueLong(state?.ical?.okAt) ?: 0L
     if (!calendars) {
-        state.ical = [events: [], unsupported: [], fetchedAt: now(), error: ""]
+        state.ical = [events: [], unsupported: [], fetchedAt: now(), error: "", okAt: now()]
         return
     }
     def events = []
@@ -1830,6 +2104,11 @@ def synagogueFetchCalendars(boolean force) {
         def id = cal?.id?.toString()
         def keepPrior = {
             prior.findAll { it?.calendarId?.toString() == id }.each { events << it }
+        }
+        if (cal?.needsLink == true) {
+            errors << (name + " needs its link again after a restore.")
+            keepPrior()
+            continue
         }
         def norm = synagogueNormalizeCalendarUrl(cal?.url?.toString())
         if (norm.ok != true) {
@@ -1875,7 +2154,10 @@ def synagogueFetchCalendars(boolean force) {
         events.sort { a, b -> (synagogueLong(a.start) ?: 0L) <=> (synagogueLong(b.start) ?: 0L) }
         events = events.take(500)
     }
-    state.ical = [events: events, unsupported: unsupported, fetchedAt: now(), error: errors.join(" ")]
+    def ical = [events: events, unsupported: unsupported, fetchedAt: now(), error: errors.join(" ")]
+    if (!errors) ical.okAt = now()
+    else if (previousOk) ical.okAt = previousOk
+    state.ical = ical
     log.info "mDash Synagogue: calendars updated"
 }
 
@@ -1923,6 +2205,9 @@ def synagogueActionsFrom(List occurrences) {
                 unlock: cue.unlock == true,
                 suppressed: cue.suppressed == true,
                 label: cue.label,
+                controlId: cue.controlId?.toString() ?: "",
+                cueId: cue.id?.toString() ?: "",
+                spaceName: occ.spaceName?.toString() ?: "",
                 states: cue.states ?: []
             ]
         }
@@ -2059,11 +2344,16 @@ def synagogueMenu(Map config, Map ctx) {
 }
 
 def synagogueNudges(List menu, long nowMs, TimeZone tz) {
+    return synagogueNudges(menu, nowMs, tz, null)
+}
+
+def synagogueNudges(List menu, long nowMs, TimeZone tz, Map config) {
     def out = []
     def today = synagogueDateOf(nowMs, tz)
     int todayEpoch = synagogueEpochDay(today)
     for (row in menu) {
         if (row.source != "unset" || !row.next) continue
+        if (config && synagogueClosedBy(config, row.next.toString(), row.id?.toString(), "", false)) continue
         int days = synagogueEpochDay(row.next.toString()) - todayEpoch
         if (days >= 0 && days <= 30) out << [id: row.id, label: row.label, inDays: days, next: row.next]
     }
@@ -2072,11 +2362,17 @@ def synagogueNudges(List menu, long nowMs, TimeZone tz) {
 
 def synagogueResultFor(String occId, history) {
     if (!occId || !(history instanceof List)) return ""
+    def rank = [failed: 4, partial: 3, late: 2, ran: 1]
     def hit = ""
+    int best = 0
     for (item in history) {
         if (item?.occId?.toString() != occId) continue
         def status = item?.status?.toString() ?: ""
-        if (status in ["ran", "late", "failed"]) hit = status
+        int score = rank.containsKey(status) ? (rank[status] as int) : 0
+        if (score > best) {
+            best = score
+            hit = status
+        }
     }
     return hit
 }
@@ -2143,7 +2439,7 @@ def synagogueProject(Map config, Map ctx, Map built = null) {
     }
     feed.sort { a, b -> (a.start as long) <=> (b.start as long) }
     if (feed.size() > 40) feed = feed.take(40)
-    return [apiVersion: synagogueApiVersion(), occurrences: agenda, warnings: built.warnings, actions: built.actions, menu: menu, nudges: synagogueNudges(menu, nowMs, tz), feed: feed, unsupported: ctx?.unsupported instanceof List ? ctx.unsupported : []]
+    return [apiVersion: synagogueApiVersion(), occurrences: agenda, warnings: built.warnings, actions: built.actions, menu: menu, nudges: synagogueNudges(menu, nowMs, tz, config), feed: feed, unsupported: ctx?.unsupported instanceof List ? ctx.unsupported : []]
 }
 
 def synagogueNormalizeEntry(Map raw) {
@@ -2289,6 +2585,9 @@ def synagogueSpaceUsers(Map config, String id) {
     for (cal in (config?.calendars instanceof List ? config.calendars : [])) {
         if (cal?.bookAll == true && cal?.spaceId?.toString() == id) names << (cal.name?.toString() ?: "A calendar")
     }
+    for (row in (config?.closures instanceof List ? config.closures : [])) {
+        if (row?.spaceId?.toString() == id) names << (row?.name?.toString() ?: "Closed dates")
+    }
     return names.unique()
 }
 
@@ -2303,12 +2602,15 @@ def synagogueApply(Map config, Map body) {
     if (!(next.calendars instanceof List)) next.calendars = []
     if (!(next.titleRules instanceof List)) next.titleRules = []
     if (!(next.bookings instanceof List)) next.bookings = []
+    if (!(next.closures instanceof List)) next.closures = []
+    if (!(next.settings.alerts instanceof Map)) next.settings.alerts = synagogueDefaultAlerts()
     def op = body?.op?.toString() ?: ""
     if (op == "settings") {
         def incoming = body.settings instanceof Map ? body.settings : [:]
-        ["paused", "israel", "candleMin", "havdalahMinutes", "nightfall", "heldModes", "setupDone"].each { key ->
+        ["paused", "israel", "candleMin", "havdalahMinutes", "nightfall", "heldModes", "setupDone", "alerts"].each { key ->
             if (incoming.containsKey(key)) next.settings[key] = incoming[key]
         }
+        next.settings.alerts = synagogueNormalizeAlerts(next.settings.alerts)
         def night = next.settings.nightfall?.toString()
         if (!(night in ["tzeit42min", "tzeit50min", "tzeit72min", "tzeit85deg"])) next.settings.nightfall = "tzeit50min"
     } else if (op == "pause") {
@@ -2384,6 +2686,11 @@ def synagogueApply(Map config, Map body) {
             if (body.containsKey("extendMin")) row.extendMin = synagogueInt(body.extendMin, 0)
             if (body.start) row.start = synagogueClock(body.start.toString())
             if (body.containsKey("durationMin")) row.durationMin = synagogueInt(body.durationMin, 60)
+            if (body.containsKey("warmEarlierMin")) {
+                int warm = synagogueInt(body.warmEarlierMin, 0)
+                if (warm <= 0) row.remove("warmEarlierMin")
+                else row.warmEarlierMin = Math.min(180, warm)
+            }
             next.overrides[id] = row
         }
     } else if (op == "dateProgram") {
@@ -2490,6 +2797,24 @@ def synagogueApply(Map config, Map body) {
     } else if (op == "deleteBooking") {
         def id = body.id?.toString()
         next.bookings = (next.bookings ?: []).findAll { it?.id?.toString() != id }
+    } else if (op == "closure") {
+        def norm = synagogueNormalizeClosure(body.closure instanceof Map ? body.closure : [:], next)
+        if (norm.error) return [ok: false, error: norm.error]
+        def row = norm.closure
+        def list = []
+        boolean found = false
+        for (existing in next.closures) {
+            if (existing?.id?.toString() == row.id) { list << row; found = true }
+            else list << existing
+        }
+        if (!found) list << row
+        next.closures = list
+    } else if (op == "deleteClosure") {
+        def id = body.id?.toString()
+        next.closures = (next.closures ?: []).findAll { it?.id?.toString() != id }
+    } else if (op == "restore") {
+        def err = synagogueRestoreInto(next, body.backup instanceof Map ? body.backup : [:])
+        if (err) return [ok: false, error: err]
     } else {
         return [ok: false, error: "Unknown save."]
     }
@@ -2610,10 +2935,16 @@ def synagogueCatchUp() {
         if (at > caught || caught <= at + 60000L) continue
         fired[id] = caught
         synagogueRemember((action.occName ?: "Service") + ": " + (action.label ?: "Unlock"), "unlock skipped, too late", action.occId?.toString() ?: "", "late")
+        def what = action.label?.toString()?.trim() ?: "Door unlock"
+        def space = action.spaceName?.toString()?.trim()
+        if (space && !what.toLowerCase().startsWith(space.toLowerCase())) what = space + " " + what
+        def cueKey = (action.controlId?.toString() ?: "lock") + "|" + (action.cueId?.toString() ?: "cue")
+        synagogueAlert("unlock|" + cueKey, "Synagogue: " + what + " was skipped.", true)
     }
     def rt = synagogueCopy(state.runtime)
     rt.fired = synagogueTrimFired(fired)
     state.runtime = rt
+    synagogueFlushAlerts()
 }
 
 def synagogueFire() { synagogueCatchUp(); synagogueArm() }
@@ -2627,23 +2958,432 @@ def synagogueNoteLateStart(Map action, long caught) {
     } catch (e) {}
 }
 
+def synagogueNormalizeAlerts(raw) {
+    def base = synagogueDefaultAlerts()
+    if (!(raw instanceof Map)) return base
+    if (raw.containsKey("device")) base.device = raw.device == true
+    if (raw.containsKey("unlock")) base.unlock = raw.unlock == true
+    if (raw.containsKey("stale")) base.stale = raw.stale == true
+    return base
+}
+
+def synagogueNormalizeClosure(Map raw, Map config) {
+    if (!(raw instanceof Map)) return [error: "Choose the closed dates."]
+    def from = synagogueDateOnly(raw.from?.toString())
+    def to = synagogueDateOnly(raw.to?.toString())
+    if (!from || !to) return [error: "Choose a start and an end date."]
+    if (from > to) return [error: "The end date is before the start."]
+    int span = synagogueEpochDay(to) - synagogueEpochDay(from)
+    span += 1
+    if (span > 400) return [error: "A closed stretch can be at most 400 days."]
+    def id = raw.id?.toString()?.trim() ?: synagogueNewId("cl")
+    def existing = (config?.closures instanceof List ? config.closures : []).find { it?.id?.toString() == id }
+    int count = config?.closures instanceof List ? config.closures.size() : 0
+    if (!existing && count >= 20) return [error: "You can have 20 closed dates. Remove one first."]
+    def name = raw.name?.toString()?.trim() ?: "Closed"
+    if (name.length() > 80) name = name.substring(0, 80)
+    def scope = raw.scope?.toString() == "all" ? "all" : "weekdays"
+    def spaceId = raw.spaceId?.toString()?.trim() ?: ""
+    return [closure: [id: id, name: name, from: from, to: to, scope: scope, spaceId: spaceId, bookings: raw.bookings == true]]
+}
+
+def synagogueRestoreInto(Map next, Map backup) {
+    if (backup?.app?.toString() != "mDash Synagogue") return "This is not a Synagogue backup."
+    int schema = synagogueInt(backup?.schema, -1)
+    if (schema > 1) return "This backup is from a newer version. Update mDash Synagogue."
+    if (schema != 1) return "This backup cannot be read."
+    def encoded = ""
+    try { encoded = groovy.json.JsonOutput.toJson(backup) } catch (e) { return "This backup cannot be read." }
+    int bytes = encoded.getBytes("UTF-8").length
+    if (bytes > 200 * 1024) return "That backup is too large."
+    def raw = backup.config instanceof Map ? backup.config : [:]
+    boolean paused = next?.settings?.paused == true
+    def settings = synagogueDefaultSettings()
+    if (raw.settings instanceof Map) {
+        ["israel", "candleMin", "havdalahMinutes", "nightfall", "heldModes"].each { key ->
+            if (raw.settings.containsKey(key)) settings[key] = raw.settings[key]
+        }
+        if (raw.settings.containsKey("alerts")) settings.alerts = synagogueNormalizeAlerts(raw.settings.alerts)
+    }
+    settings.paused = paused
+    settings.setupDone = true
+    def night = settings.nightfall?.toString()
+    if (!(night in ["tzeit42min", "tzeit50min", "tzeit72min", "tzeit85deg"])) settings.nightfall = "tzeit50min"
+    def spaces = []
+    for (space in (raw.spaces instanceof List ? raw.spaces : [])) {
+        if (!(space instanceof Map)) return "A space in the backup could not be read."
+        def norm = synagogueNormalizeSpace(space)
+        if (!norm) return "A space in the backup needs a name."
+        spaces << norm
+    }
+    def days = synagogueDefaultConfig().days
+    if (raw.days instanceof Map) {
+        raw.days.each { key, value ->
+            def id = key?.toString()
+            if (!id || !(value instanceof Map)) return
+            def day = synagogueCopy(value)
+            day.entries = (day.entries instanceof List ? day.entries : []).collect { synagogueNormalizeEntry(it instanceof Map ? it : [:]) }.findAll { it }
+            if (!(day.changes instanceof Map)) day.changes = synagogueEmptyChanges()
+            if (day.changes.added instanceof List) day.changes.added = day.changes.added.collect { synagogueNormalizeEntry(it instanceof Map ? it : [:]) }.findAll { it }
+            if (day.changes.patched instanceof Map) {
+                def patched = [:]
+                day.changes.patched.each { entryId, entry ->
+                    def kept = synagogueNormalizeEntry(entry instanceof Map ? entry : [:])
+                    if (kept) patched[entryId.toString()] = kept
+                }
+                day.changes.patched = patched
+            }
+            days[id] = day
+        }
+    }
+    for (row in synagogueDayCatalog()) {
+        if (!(days[row.id] instanceof Map)) days[row.id] = synagogueDefaultDay(row.id)
+    }
+    def dayConfig = [days: days]
+    def cycleError = ""
+    def checkCycle = { dayId ->
+        if (cycleError || !dayId) return
+        def cycle = synagogueCycleError(dayId.toString(), dayConfig)
+        if (cycle) cycleError = cycle
+    }
+    for (row in synagogueDayCatalog()) checkCycle(row.id)
+    if (raw.days instanceof Map) raw.days.keySet().each { checkCycle(it) }
+    if (cycleError) return cycleError
+    def dates = [:]
+    if (raw.dateOverrides instanceof Map) {
+        raw.dateOverrides.each { key, entries ->
+            def date = synagogueDateOnly(key?.toString())
+            if (!date) return
+            dates[date] = (entries instanceof List ? entries : []).collect { synagogueNormalizeEntry(it instanceof Map ? it : [:]) }.findAll { it }
+        }
+    }
+    def closures = []
+    for (row in (raw.closures instanceof List ? raw.closures : [])) {
+        def norm = synagogueNormalizeClosure(row instanceof Map ? row : [:], [closures: closures, spaces: spaces])
+        if (norm.error) return norm.error
+        closures << norm.closure
+    }
+    def rules = []
+    for (rule in (raw.titleRules instanceof List ? raw.titleRules : [])) {
+        if (!(rule instanceof Map)) return "A title rule in the backup could not be read."
+        def contains = rule.contains?.toString()?.trim()
+        def spaceId = rule.spaceId?.toString()?.trim()
+        if (!contains) return "A title rule needs words to match."
+        if (rule.ignore != true && !spaceId) return "A title rule needs a space."
+        rules << [
+            id: rule.id?.toString()?.trim() ?: synagogueNewId("rule"),
+            contains: contains,
+            spaceId: rule.ignore == true ? "" : spaceId,
+            field: rule.field?.toString() == "location" ? "location" : "title",
+            name: rule.name?.toString()?.trim() ?: "",
+            ignore: rule.ignore == true
+        ]
+    }
+    def bookings = []
+    for (booking in (raw.bookings instanceof List ? raw.bookings : [])) {
+        if (!(booking instanceof Map)) return "A booking in the backup could not be read."
+        def name = booking.name?.toString()?.trim()
+        def date = synagogueDateOnly(booking.date?.toString())
+        def start = synagogueClock(booking.start?.toString())
+        def spaceId = booking.spaceId?.toString()?.trim()
+        if (!name) return "A booking in the backup needs a name."
+        if (!date || !start) return "A booking in the backup needs a date and a start time."
+        if (!spaceId) return "A booking in the backup needs a space."
+        int minutes = Math.max(5, Math.min(720, synagogueInt(booking.minutes, 60)))
+        bookings << [id: booking.id?.toString()?.trim() ?: synagogueNewId("book"), name: name, spaceId: spaceId, date: date, start: start, minutes: minutes, runCues: booking.runCues != false]
+    }
+    def calendars = []
+    for (cal in (raw.calendars instanceof List ? raw.calendars : [])) {
+        if (!(cal instanceof Map)) return "A calendar in the backup could not be read."
+        def name = cal.name?.toString()?.trim()
+        if (!name) return "A calendar in the backup needs a name."
+        boolean bookAll = cal.bookAll == true
+        calendars << [id: cal.id?.toString()?.trim() ?: synagogueNewId("cal"), name: name, bookAll: bookAll, spaceId: bookAll ? (cal.spaceId?.toString() ?: "") : "", needsLink: true]
+    }
+    next.settings = settings
+    next.spaces = spaces
+    next.days = days
+    next.dateOverrides = dates
+    next.closures = closures
+    next.titleRules = rules
+    next.bookings = bookings
+    next.calendars = calendars
+    return ""
+}
+
+def synagogueBackup(Map config) {
+    def calendars = []
+    for (cal in (config?.calendars instanceof List ? config.calendars : [])) {
+        if (!(cal instanceof Map)) continue
+        calendars << [id: cal.id?.toString() ?: "", name: cal.name?.toString() ?: "", bookAll: cal.bookAll == true, spaceId: cal.spaceId?.toString() ?: ""]
+    }
+    def settings = config?.settings instanceof Map ? synagogueCopy(config.settings) : synagogueDefaultSettings()
+    return [
+        app: "mDash Synagogue",
+        schema: 1,
+        exportedAt: now(),
+        config: [
+            settings: settings,
+            spaces: config?.spaces instanceof List ? synagogueCopy(config.spaces) : [],
+            days: config?.days instanceof Map ? synagogueCopy(config.days) : [:],
+            dateOverrides: config?.dateOverrides instanceof Map ? synagogueCopy(config.dateOverrides) : [:],
+            closures: config?.closures instanceof List ? synagogueCopy(config.closures) : [],
+            titleRules: config?.titleRules instanceof List ? synagogueCopy(config.titleRules) : [],
+            bookings: config?.bookings instanceof List ? synagogueCopy(config.bookings) : [],
+            calendars: calendars
+        ]
+    ]
+}
+
+def synagogueZmanLabel(String id) {
+    for (row in synagogueZmanCatalog()) if (row.id == id) return row.label
+    return id ?: ""
+}
+
+def synagogueTodayTimes(Map ctx, Map config) {
+    def tz = synagogueTzFrom(ctx?.tz)
+    long nowMs = synagogueLong(ctx?.now) ?: 0L
+    def date = synagogueDateOf(nowMs, tz)
+    def flags = ctx?.flags instanceof Map ? ctx.flags : [:]
+    def flag = flags[date] instanceof Map ? flags[date] : [:]
+    def zmanim = ctx?.zmanim instanceof Map ? ctx.zmanim : [:]
+    def row = zmanim[date] instanceof Map ? zmanim[date] : null
+    boolean have = row instanceof Map && row.size() > 0
+    boolean estimated = !have
+    def rows = []
+    def add = { String id, String label, value ->
+        if (value == null || value.toString().trim() == "") return
+        def at = synagogueLong(value)
+        if (at == null) return
+        rows << [id: id, label: label, at: at]
+    }
+    if (!have) {
+        def sun = ctx?.sun instanceof Map && ctx.sun[date] instanceof Map ? ctx.sun[date] : [:]
+        if (sun.sunrise != null) add("sunrise", synagogueZmanLabel("sunrise"), sun.sunrise)
+        if (sun.sunset != null) add("sunset", synagogueZmanLabel("sunset"), sun.sunset)
+    } else {
+        for (id in ["sunrise", "sofZmanShma", "chatzot", "minchaGedola", "plagHaMincha", "sunset"]) {
+            if (row[id] != null) add(id, synagogueZmanLabel(id), row[id])
+        }
+        def night = config?.settings?.nightfall?.toString() ?: "tzeit50min"
+        if (!(night in ["tzeit42min", "tzeit50min", "tzeit72min", "tzeit85deg"])) night = "tzeit50min"
+        if (row[night] != null) add(night, synagogueZmanLabel(night), row[night])
+    }
+    if (flag.candles != null) add("candleLighting", synagogueZmanLabel("candleLighting"), flag.candles)
+    if (flag.havdalah != null) add("havdalah", synagogueZmanLabel("havdalah"), flag.havdalah)
+    return [date: date, dayLabel: synagogueDayLabel(synagogueWinner(date, flags, tz)), estimated: estimated, rows: rows]
+}
+
+def synagogueAlertDeviceList() {
+    def raw = null
+    try { raw = alertDevices } catch (e) { raw = null }
+    if (raw instanceof List) return raw.findAll { it }
+    if (raw) return [raw]
+    return []
+}
+
+def synagogueAlertDeviceCount() {
+    return synagogueAlertDeviceList().size()
+}
+
+def synagogueAlertText(String text) {
+    def clean = text?.toString()?.replaceAll("\\s+", " ")?.trim() ?: "Synagogue: something needs attention."
+    if (!clean.startsWith("Synagogue:")) clean = "Synagogue: " + clean
+    if (clean.length() > 200) clean = clean.substring(0, 200)
+    return clean
+}
+
+def synagogueAlertKind(String key) {
+    if (key?.startsWith("device|")) return "device"
+    if (key?.startsWith("unlock|")) return "unlock"
+    return "stale"
+}
+
+def synagogueNightHold(long nowMs, TimeZone tz) {
+    Calendar cal = Calendar.getInstance(tz ?: TimeZone.getDefault())
+    cal.setTimeInMillis(nowMs)
+    int hour = cal.get(Calendar.HOUR_OF_DAY)
+    return hour >= 21 || hour < 8
+}
+
+def synagogueAlertsBox() {
+    def alerts = state?.alerts instanceof Map ? synagogueCopy(state.alerts) : [:]
+    if (!(alerts.sent instanceof Map)) alerts.sent = [:]
+    if (!(alerts.pending instanceof List)) alerts.pending = []
+    if (!(alerts.deliveries instanceof List)) alerts.deliveries = []
+    return alerts
+}
+
+def synagogueDeliver(String text, int count) {
+    def devices = synagogueAlertDeviceList()
+    if (!devices) return false
+    def clean = synagogueAlertText(text)
+    int sent = 0
+    for (device in devices) {
+        try {
+            device.deviceNotification(clean)
+            sent++
+        } catch (e) {}
+    }
+    if (sent > 0) {
+        def noun = count == 1 ? "problem" : "problems"
+        log.info "alert sent, " + count + " " + noun + "."
+    }
+    return sent > 0
+}
+
+def synagogueAlert(String key, String text, boolean urgent) {
+    if (!key) return
+    if (state?.runtime?.hidden == true) return
+    if (state?.config?.settings?.paused == true) return
+    if (!synagogueAlertDeviceList()) return
+    def kind = synagogueAlertKind(key)
+    def toggles = synagogueNormalizeAlerts(state?.config?.settings?.alerts)
+    if (toggles[kind] != true) return
+    long nowMs = now()
+    def alerts = synagogueAlertsBox()
+    long previous = synagogueLong(alerts.sent?.get(key)) ?: 0L
+    long twelve = 12L * 60L * 60L * 1000L
+    if (previous && nowMs - previous < twelve) return
+    def ctx = synagogueContext()
+    if (synagogueQuietAt(nowMs, ctx, state?.config)) {
+        def pending = alerts.pending instanceof List ? alerts.pending : []
+        boolean queued = pending.any { it?.key?.toString() == key }
+        if (!queued) {
+            pending << [key: key, at: nowMs, text: synagogueAlertText(text)]
+            while (pending.size() > 10) pending.remove(0)
+            alerts.pending = pending
+            alerts.sent[key] = nowMs
+        }
+        state.alerts = alerts
+        return
+    }
+    if (!urgent && synagogueNightHold(nowMs, synagogueHubTz())) return
+    def recent = []
+    long day = 24L * 60L * 60L * 1000L
+    for (stamp in (alerts.deliveries instanceof List ? alerts.deliveries : [])) {
+        long at = synagogueLong(stamp) ?: 0L
+        if (at && nowMs - at < day) recent << at
+    }
+    if (recent.size() >= 6) {
+        long overflowAt = synagogueLong(alerts.overflowAt) ?: 0L
+        if (alerts.overflow == true && overflowAt && nowMs - overflowAt < day) {
+            alerts.deliveries = recent
+            state.alerts = alerts
+            return
+        }
+        int extra = recent.size() - 5
+        if (extra < 1) extra = 1
+        boolean sentOverflow = synagogueDeliver("Synagogue: and " + extra + " more problems. Open Synagogue.", extra)
+        alerts.deliveries = recent
+        if (sentOverflow) {
+            recent << nowMs
+            alerts.deliveries = recent
+            alerts.overflow = true
+            alerts.overflowAt = nowMs
+            alerts.sent[key] = nowMs
+        }
+        state.alerts = alerts
+        return
+    }
+    boolean sent = synagogueDeliver(text, 1)
+    alerts.deliveries = recent
+    if (sent) {
+        recent << nowMs
+        alerts.deliveries = recent
+        alerts.sent[key] = nowMs
+        alerts.overflow = false
+    }
+    state.alerts = alerts
+}
+
+def synagogueFlushAlerts() {
+    if (state?.runtime?.hidden == true || state?.config?.settings?.paused == true) return
+    if (!synagogueAlertDeviceList()) return
+    def ctx = synagogueContext()
+    long nowMs = now()
+    if (synagogueQuietAt(nowMs, ctx, state?.config)) return
+    def alerts = synagogueAlertsBox()
+    def pending = alerts.pending instanceof List ? alerts.pending : []
+    if (!pending) return
+    int count = pending.size()
+    def clauses = []
+    for (item in pending) {
+        def bit = item?.text?.toString() ?: ""
+        if (bit.startsWith("Synagogue:")) bit = bit.substring("Synagogue:".length()).trim()
+        if (bit) clauses << bit
+    }
+    def noun = count == 1 ? "problem" : "problems"
+    def text = "Synagogue: while Shabbat was on, " + count + " " + noun + "."
+    if (clauses) text = text + " " + clauses.take(3).join(" ")
+    text = text + " Open Synagogue for more."
+    if (!synagogueDeliver(text, count)) return
+    alerts.pending = []
+    def recent = alerts.deliveries instanceof List ? alerts.deliveries : []
+    recent << nowMs
+    alerts.deliveries = recent
+    state.alerts = alerts
+}
+
+def synagogueCheckStale() {
+    if (state?.runtime?.hidden == true || state?.config?.settings?.paused == true) return
+    long nowMs = now()
+    long fetched = synagogueLong(state?.hebcal?.fetchedAt) ?: 0L
+    long staleHebcal = 36L * 60L * 60L * 1000L
+    if (!fetched || nowMs - fetched >= staleHebcal) synagogueAlert("hebcal|stale", "Synagogue: prayer times have not updated for a day and a half.", false)
+    long okAt = synagogueLong(state?.ical?.okAt) ?: 0L
+    def calendars = state?.config?.calendars instanceof List ? state.config.calendars : []
+    long staleCal = 24L * 60L * 60L * 1000L
+    if (calendars && okAt && nowMs - okAt >= staleCal) {
+        def name = calendars[0]?.name?.toString()?.trim() ?: "A calendar"
+        synagogueAlert("calendar|stale", "Synagogue: " + name + " has not updated for a day.", false)
+    }
+}
+
 def synagogueRunAction(Map action, Map fired, boolean late) {
     def id = action.id?.toString()
     if (!id || fired.containsKey(id)) return
     fired[id] = now()
     def states = action.states instanceof List ? action.states : []
+    def nameOf = { deviceId, history ->
+        def st = states.find { it?.id?.toString() == deviceId?.toString() }
+        def label = st instanceof Map ? st.name?.toString()?.trim() : ""
+        if (label) return label
+        if (history) return deviceId?.toString()
+        return ""
+    }
     try {
         def result = parent?.holidayRunAction(states)
         def missing = result?.missing instanceof List ? result.missing.collect { it?.toString() }.findAll { it } : []
-        def named = missing.collect { mid ->
-            def st = states.find { it?.id?.toString() == mid }
-            def label = st?.name?.toString()?.trim()
-            return label ?: mid
-        }
-        def reason = late ? "ended late" : "ran"
-        if (named) reason = reason + ", missing " + named.join(", ")
+        def failedIds = result?.failed instanceof List ? result.failed.collect { it?.toString() }.findAll { it } : []
+        boolean trouble = missing || failedIds
+        int succeeded = synagogueInt(result?.succeeded, 0)
+        String status
+        if (result == null || (succeeded <= 0 && (trouble || !states))) status = "failed"
+        else if (trouble) status = "partial"
+        else status = late ? "late" : "ran"
+        def reason = status == "failed" ? "failed" : (status == "partial" ? (late ? "ended late" : "ran") : (late ? "ended late" : "ran"))
+        def parts = []
+        if (failedIds) parts << failedIds.collect { deviceId -> nameOf(deviceId, true) }.join(", ") + " did not respond"
+        if (missing) parts << missing.collect { deviceId -> nameOf(deviceId, true) }.join(", ") + " is missing"
+        if (parts) reason = reason + ", " + parts.join(", ")
         log.info "mDash Synagogue: ${action.label} — ${reason}"
-        synagogueRemember((action.occName ?: "Service") + ": " + action.label, reason, action.occId?.toString() ?: "", late ? "late" : "ran")
+        synagogueRemember((action.occName ?: "Service") + ": " + action.label, reason, action.occId?.toString() ?: "", status)
+        if (trouble) {
+            def spoken = []
+            failedIds.each { deviceId ->
+                def label = nameOf(deviceId, false)
+                spoken << ((label ?: "A device") + " did not respond")
+            }
+            missing.each { deviceId ->
+                def label = nameOf(deviceId, false)
+                spoken << ((label ?: "A device") + " is missing")
+            }
+            def where = action.spaceName?.toString()?.trim()
+            def clause = (where ? where + ": " : "") + spoken.join(", ")
+            def cueKey = (action.controlId?.toString() ?: "control") + "|" + (action.cueId?.toString() ?: "cue")
+            synagogueAlert("device|" + cueKey, "Synagogue: " + clause + ".", true)
+        }
     } catch (e) {
         log.warn "mDash Synagogue: ${action.label} failed — ${e}"
         synagogueRemember((action.occName ?: "Service") + ": " + action.label, "failed", action.occId?.toString() ?: "", "failed")
@@ -2837,7 +3577,11 @@ def synagogueStatusMap(Map projected, Map ctx, int days = 7) {
         zmanim: synagogueZmanCatalog(),
         impact: synagogueImpactMap(state?.config),
         impactShabbat: synagogueImpact("shabbat", state?.config),
-        ical: [fetchedAt: state?.ical?.fetchedAt ?: 0, error: state?.ical?.error ?: ""]
+        ical: [fetchedAt: state?.ical?.fetchedAt ?: 0, error: state?.ical?.error ?: ""],
+        closures: state?.config?.closures ?: [],
+        closed: synagogueClosedWindow(state?.config, ctx, synagogueDateOf(nowMs, tz), days),
+        today: synagogueTodayTimes(ctx, state?.config),
+        alerts: [deviceCount: synagogueAlertDeviceCount(), quiet: synagogueQuietAt(nowMs, ctx, state?.config)]
     ]
 }
 
@@ -2864,6 +3608,16 @@ def synagogueSave(Map body) {
     def rev = body?.revision
     if (rev != null && rev.toString() != (state.runtime?.revision ?: 0).toString()) {
         return [ok: false, error: "Changed on another device. Reload.", revision: state.runtime?.revision ?: 0]
+    }
+    if (body?.op?.toString() == "backup") {
+        return [ok: true, backup: synagogueBackup(state.config), revision: state.runtime?.revision ?: 0]
+    }
+    if (body?.op?.toString() == "testAlert") {
+        def ctx = synagogueContext()
+        if (synagogueQuietAt(now(), ctx, state.config)) return [ok: false, error: "Try it now is off during Shabbat and Yom Tov.", revision: state.runtime?.revision ?: 0]
+        if (!synagogueAlertDeviceList()) return [ok: false, error: "Choose a notification device in the Hubitat app, Synagogue.", revision: state.runtime?.revision ?: 0]
+        synagogueDeliver("Synagogue: test alert. Alerts are working.", 1)
+        return [ok: true, revision: state.runtime?.revision ?: 0]
     }
     if (body?.op?.toString() == "tryCue") {
         def ctx = synagogueContext()
@@ -2899,7 +3653,7 @@ def synagogueSave(Map body) {
     state.config = applied.config
     synagogueBump()
     if (body?.op?.toString() in ["settings", "pause"]) synagogueFetch(body?.op?.toString() == "settings")
-    if (body?.op?.toString() in ["calendar", "deleteCalendar"]) synagogueFetchCalendars(true)
+    if (body?.op?.toString() in ["calendar", "deleteCalendar", "restore"]) synagogueFetchCalendars(true)
     def armed = synagogueArm()
     def status = synagogueStatus()
     status.ok = true
@@ -2917,7 +3671,9 @@ def synagoguePreview(Map body) {
     if (applied.ok != true && body?.op) return applied
     def ctx = synagogueContext()
     synagogueFillSun(ctx)
+    def prior = op == "closure" ? synagogueExpand(synagogueConfigWithoutClosure(state.config, body?.closure?.id?.toString()), ctx) : null
     def built = synagogueExpand(config, ctx)
+    if (op == "closure") return [ok: true, apiVersion: synagogueApiVersion(), stops: synagogueCountStops(prior ?: [occurrences: []], built, ctx), warnings: built.warnings]
     def entryId = body?.entryId?.toString()
     def rows = built.occurrences ?: []
     if (entryId) rows = rows.findAll { it?.entryId?.toString() == entryId }
@@ -2939,16 +3695,21 @@ def synagogueDemoContext(String tzId, long nowMs) {
     boolean chol = false
     boolean fast = false
     boolean rosh = false
-    for (int i = 0; i < 40; i++) {
+    // Two days back, so Saturday afternoon still has Friday's sunset. The hub fetch starts yesterday.
+    for (int i = -2; i < 40; i++) {
         def date = synagogueAddDays(today, i, tz)
         long rise = synagogueZonedMs(date, "06:30", tz)
         long set = synagogueZonedMs(date, "18:03", tz)
+        long noon = synagogueZonedMs(date, "12:00", tz)
         zmanim[date] = [
             sunrise: rise,
             sunset: set,
             tzeit50min: set + 50L * 60000L,
             sofZmanShma: rise + 180L * 60000L,
-            sofZmanTfilla: rise + 240L * 60000L
+            sofZmanTfilla: rise + 240L * 60000L,
+            chatzot: noon,
+            minchaGedola: noon + 30L * 60000L,
+            plagHaMincha: set - 75L * 60000L
         ]
         int dow = synagogueDow(date, tz)
         def flag = [:]
@@ -2979,6 +3740,47 @@ def synagogueDemoContext(String tzId, long nowMs) {
     return [tz: tz.getID(), now: nowMs, zmanim: zmanim, flags: flags, sun: [:], horizon: 21]
 }
 
+def synagogueDemoConfig(String tzId, long nowMs) {
+    def tz = synagogueTzFrom(tzId)
+    def today = synagogueDateOf(nowMs, tz)
+    def config = synagogueDefaultConfig()
+    config.settings.setupDone = true
+    config.spaces = [[
+        id: "sanctuary", name: "Sanctuary", stayOnGapMin: 45,
+        controls: [
+            [id: "lights", name: "Lights", kind: "light", devices: [[id: "1", name: "Sanctuary lights", dimmer: true]]],
+            [id: "heat", name: "Heat", kind: "thermostat", devices: [[id: "30", name: "Sanctuary heat"]],
+                comfort: ["30": [mode: "heat", heat: 70]], setback: ["30": [mode: "heat", heat: 60]]]
+        ],
+        cues: [
+            [id: "heat-on", anchor: "start", offsetMin: -60, controlId: "heat", action: "comfort", appliesTo: []],
+            [id: "lights-on", anchor: "start", offsetMin: -2, controlId: "lights", action: "on", appliesTo: []],
+            [id: "lights-off", anchor: "end", offsetMin: 0, controlId: "lights", action: "off", appliesTo: []],
+            [id: "heat-off", anchor: "end", offsetMin: 0, controlId: "heat", action: "setback", appliesTo: []]
+        ]
+    ]]
+    config.days.shabbat.entries = [
+        [id: "shacharis", name: "Shacharis", spaceId: "sanctuary", position: "day", start: [type: "clock", time: "09:00"], end: [type: "duration", minutes: 150], runCues: true],
+        [id: "maariv", name: "Maariv", spaceId: "sanctuary", position: "evening", start: [type: "zman", zman: "tzeit50min", offsetMin: 0], end: [type: "duration", minutes: 20], runCues: true]
+    ]
+    config.days.monThu.entries = [[
+        id: "wd-mincha", name: "Mincha", spaceId: "sanctuary", position: "day",
+        start: [type: "zman", zman: "sunset", offsetMin: -15], end: [type: "duration", minutes: 25], roundTo: 5, runCues: true
+    ]]
+    config.days.friday.source = "same"
+    config.days.friday.follows = "monThu"
+    config.closures = [[id: "demo-closed", name: "Renovation", from: today, to: synagogueAddDays(today, 14, tz), scope: "weekdays", spaceId: "", bookings: false]]
+    def bookDate = today
+    for (int i = 0; i < 10; i++) {
+        def date = synagogueAddDays(today, i, tz)
+        int dow = synagogueDow(date, tz)
+        if (dow != Calendar.FRIDAY && dow != Calendar.SATURDAY) { bookDate = date; break }
+    }
+    config.bookings = [[id: "demo-book", name: "Hall rental", spaceId: "sanctuary", date: bookDate, start: "19:00", minutes: 120, runCues: true]]
+    config.calendars = [[id: "demo-cal", name: "Rentals", bookAll: true, spaceId: "sanctuary", url: "https://preview.local/shul.ics"]]
+    return config
+}
+
 def synagogueCli(Map req) {
     def tz = req?.tz?.toString() ?: "America/New_York"
     long nowMs = synagogueLong(req?.now) ?: System.currentTimeMillis()
@@ -2988,9 +3790,11 @@ def synagogueCli(Map req) {
         ctx.zmanim = demo.zmanim
         ctx.flags = demo.flags
     }
-    def config = req?.config instanceof Map ? req.config : synagogueDefaultConfig()
+    def config = req?.config instanceof Map ? req.config : (req?.demo == true ? synagogueDemoConfig(tz, nowMs) : synagogueDefaultConfig())
     def op = req?.op?.toString() ?: "status"
     def bodyOp = req?.body?.op?.toString() ?: ""
+    if (bodyOp == "backup" || op == "backup") return [ok: true, backup: synagogueBackup(config)]
+    if (bodyOp == "testAlert" || op == "testAlert") return [ok: true]
     if (req?.ics instanceof Map) {
         def ingested = synagogueIngestIcs(config, req.ics, synagogueTzFrom(tz), nowMs)
         ctx.events = ingested.events
@@ -3010,11 +3814,13 @@ def synagogueCli(Map req) {
     }
     synagogueMergeExtraZmanim(ctx)
     if (op == "save" || op == "skip" || op == "preview") {
+        def before = (op == "preview" && bodyOp == "closure") ? synagogueExpand(synagogueConfigWithoutClosure(config, req?.body?.closure?.id?.toString()), ctx) : null
         def applied = synagogueApply(op == "preview" ? synagogueCopy(config) : config, req?.body instanceof Map ? req.body : [:])
         if (applied.ok != true) return applied
         config = applied.config
         if (op == "preview") {
             def built = synagogueExpand(config, ctx)
+            if (bodyOp == "closure") return [ok: true, stops: synagogueCountStops(before ?: [occurrences: []], built, ctx), warnings: built.warnings, config: req?.config]
             def entryId = req?.body?.entryId?.toString()
             def rows = built.occurrences ?: []
             if (entryId) rows = rows.findAll { it?.entryId?.toString() == entryId }
@@ -3043,6 +3849,10 @@ def synagogueCli(Map req) {
         calendarError: ctx?.calendarError?.toString() ?: "",
         menu: projected.menu,
         nudges: projected.nudges,
+        closures: config.closures ?: [],
+        closed: synagogueClosedWindow(config, ctx, synagogueDateOf(nowMs, synagogueTzFrom(tz)), synagogueAgendaSpan(req?.agendaDays)),
+        today: synagogueTodayTimes(ctx, config),
+        alerts: [deviceCount: synagogueAlertDeviceCount(), quiet: synagogueQuietAt(nowMs, ctx, config)],
         agenda: synagogueAgendaWindow(projected.occurrences, synagogueDateOf(nowMs, synagogueTzFrom(tz)), synagogueAgendaSpan(req?.agendaDays), synagogueTzFrom(tz), nowMs),
         warnings: projected.warnings,
         history: [],

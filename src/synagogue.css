@@ -1,29 +1,45 @@
-.synagogue-slot { display: flex; flex-direction: column; gap: 12px; width: min(720px, 100%); margin: 0 auto; padding: 4px 2px 88px; text-align: left; }
+.synagogue-slot { display: flex; flex-direction: column; gap: 12px; width: min(720px, 100%); margin: 0 auto; padding: 0 12px calc(24px + env(safe-area-inset-bottom)); text-align: left; min-width: 0; box-sizing: border-box; }
+.synagogue-stack { display: flex; flex-direction: column; align-items: stretch; gap: 12px; min-width: 0; }
+.synagogue-stack > .ghost-btn:not(.sched-primary-btn) { align-self: flex-start; }
+.synagogue-stack > .sched-primary-btn { min-height: 46px; border-radius: 14px; }
+.synagogue-slot .sched-section-head { padding: 0; }
+.synagogue-slot .sched-section-head .sched-segment { flex-wrap: nowrap; width: 100%; gap: 6px; }
+.synagogue-slot .sched-section-head .sched-seg {
+  flex: 1 1 0; min-width: 0; min-height: 42px; padding: 8px 2px; border-radius: 12px;
+  font-size: .74rem; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .quick-body-synagogue { text-align: left; }
-.synagogue-hero { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 16px; background: var(--panel-2, #151922); border: 1px solid var(--stroke, #334); }
+.synagogue-hero { display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: 16px; background: var(--panel-2, #151922); border: 1px solid var(--stroke, #334); min-width: 0; }
 .synagogue-kicker { margin: 0; font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #9aa); }
-.synagogue-hero-time { margin: 0; font-size: 1.55rem; font-weight: 750; letter-spacing: -0.02em; }
+.synagogue-hero-time { margin: 0; font-size: 1.2rem; font-weight: 750; letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .synagogue-health { margin: 0; color: var(--muted, #9aa); font-size: .9rem; line-height: 1.4; }
-.synagogue-banner { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, #ff5c7a 16%, transparent); }
-.synagogue-note { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent, #7b5cff) 14%, transparent); line-height: 1.4; }
-.synagogue-group { margin: 10px 2px 0; font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #9aa); }
-.synagogue-occ { display: grid; grid-template-columns: 5.4rem 1fr; gap: 8px 12px; align-items: start; }
-.synagogue-clock { font-size: 1.05rem; font-weight: 750; line-height: 1.2; }
-.synagogue-sub { color: var(--muted, #9aa); font-size: .88rem; }
+.synagogue-banner { margin: 0; padding: 8px 10px; border-radius: 12px; background: color-mix(in srgb, #ff5c7a 16%, transparent); overflow-wrap: anywhere; }
+.synagogue-note { margin: 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent, #7b5cff) 14%, transparent); line-height: 1.35; overflow-wrap: anywhere; }
+.synagogue-group { margin: 2px 2px 0; font-size: .78rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #9aa); }
+.synagogue-occ { display: grid; grid-template-columns: 4.7rem minmax(0, 1fr); gap: 4px 10px; align-items: start; min-width: 0; }
+.synagogue-occ > * { min-width: 0; }
+.synagogue-detail { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; }
+.synagogue-clock { font-size: .95rem; font-weight: 750; line-height: 1.2; white-space: nowrap; }
+.synagogue-sub { margin: 0; color: var(--muted, #9aa); font-size: .88rem; }
 .synagogue-pills, .synagogue-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.synagogue-pill { display: inline-flex; align-items: center; min-height: 26px; padding: 0 8px; border-radius: 999px; font-size: .78rem; font-weight: 700; background: rgba(255,255,255,.08); color: inherit; }
+.synagogue-pills { min-width: 0; max-width: 100%; }
+.synagogue-pill { display: inline-flex; align-items: center; max-width: 100%; min-width: 0; min-height: 26px; padding: 0 8px; border-radius: 999px; font-size: .78rem; font-weight: 700; background: rgba(255,255,255,.08); color: inherit; white-space: normal; }
 .synagogue-pill.is-unset, .synagogue-pill.is-bad { background: #3a2a14; color: #ffb86b; }
 .synagogue-pill.is-same { background: #1a2744; color: #9eb6ff; }
 .synagogue-pill.is-own, .synagogue-pill.is-ok { background: #163024; color: #9d7; }
 .synagogue-pill.is-late { background: #3a1822; color: #ff8aa0; }
-.synagogue-name-row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
-.synagogue-he { direction: rtl; color: var(--muted, #9aa); font-size: .95rem; }
-.synagogue-field { display: flex; flex-direction: column; gap: 4px; }
+.synagogue-name-row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; min-width: 0; width: 100%; }
+.synagogue-name-row .sched-row-name { min-width: 0; }
+.synagogue-name-row .synagogue-pills { flex-shrink: 1; min-width: 0; justify-content: flex-end; }
+.synagogue-he { direction: rtl; color: var(--muted, #9aa); font-size: .95rem; flex: 0 1 auto; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.synagogue-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .synagogue-field input, .synagogue-field select, .synagogue-find {
   min-height: 44px; border-radius: 12px; border: 1px solid var(--stroke, #334);
   background: var(--panel-2, #10141c); color: inherit; padding: 0 10px; width: 100%; box-sizing: border-box;
 }
-.synagogue-check { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.synagogue-check { display: flex; align-items: flex-start; gap: 8px; min-height: 40px; min-width: 0; }
+.synagogue-check input { flex-shrink: 0; margin-top: 3px; }
+.synagogue-check span { flex: 1; min-width: 0; line-height: 1.3; }
 .synagogue-kind { flex-shrink: 0; font-size: .85rem; font-weight: 600; color: var(--muted, #9aa); }
 .synagogue-bar { position: sticky; bottom: 0; display: flex; gap: 8px; padding: 12px 0 calc(8px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--bg, #0e1116) 28%); z-index: 2; }
 .synagogue-bar > .synagogue-grow { flex: 1; }
@@ -37,6 +53,37 @@
 .synagogue-undo { position: sticky; bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--panel-solid, #10141c); border: 1px solid var(--stroke, #334); }
 .synagogue-cues { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .synagogue-cues li { color: var(--muted, #9aa); font-size: .9rem; }
+.synagogue-closed { margin: 0; color: var(--muted, #9aa); }
+.synagogue-today { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 16px; background: var(--panel-2, #151922); border: 1px solid var(--stroke, #334); }
+.synagogue-today-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.synagogue-today-summary { margin: 0; line-height: 1.4; }
+.synagogue-today-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; }
+.synagogue-muted { opacity: .55; }
+.synagogue-choice { text-align: left; min-height: 44px; white-space: normal; }
+.synagogue-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+.synagogue-filters .sched-seg { width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; font-size: .84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.synagogue-slot .sched-row, .synagogue-slot .sched-type-card { width: 100%; gap: 12px; padding: 14px; min-width: 0; text-align: left; box-sizing: border-box; }
+.synagogue-slot .sched-row > .ghost-btn:not(.sched-primary-btn) { align-self: flex-start; }
+.synagogue-cue {
+  display: block; width: 100%; max-width: 100%; box-sizing: border-box; min-width: 0;
+  min-height: 36px; margin-top: 2px; padding: 8px 12px; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .82rem;
+}
+.synagogue-nudge { flex-direction: row; align-items: center; }
+.synagogue-nudge .synagogue-note { flex: 1; min-width: 0; }
+.synagogue-nudge .ghost-btn { flex: 0 0 auto; align-self: center; }
+.synagogue-actions .ghost-btn {
+  flex: 1 1 calc(50% - 6px); min-width: 0; max-width: 100%;
+  min-height: 36px; padding: 6px 10px; font-size: .82rem; white-space: normal; line-height: 1.2; text-align: center;
+}
+.synagogue-tools .ghost-btn { flex: 0 1 auto; white-space: nowrap; }
+.synagogue-sub, .synagogue-health, .synagogue-closed { overflow-wrap: anywhere; }
+.synagogue-today-line { flex-wrap: nowrap; min-width: 0; }
+.synagogue-today-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.synagogue-today-line .ghost-btn { flex: 0 0 auto; min-height: 34px; padding: 6px 10px; }
+.synagogue-slot .sched-type-card { min-height: 48px; padding: 12px 14px; font-size: .95rem; text-align: left; white-space: normal; }
+.synagogue-sheet { box-sizing: border-box; max-width: 100%; gap: 14px; }
+.synagogue-sheet .sched-seg { flex: 1 1 calc(50% - 8px); min-width: 0; min-height: 44px; white-space: normal; padding: 10px; font-size: .85rem; line-height: 1.2; }
 @media (min-width: 800px) {
   .synagogue-sheet-back { align-items: center; }
   .synagogue-sheet { border-radius: 18px; }

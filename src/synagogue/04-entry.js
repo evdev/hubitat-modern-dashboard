@@ -33,7 +33,7 @@ function renderEntry() {
   const entry = editingEntry;
   const day = dayRecord(editingDay);
   const origin = entryOrigin(day, entry);
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   const sentence = ce("p", "synagogue-note");
   sentence.textContent = entrySentence(entry);
   box.appendChild(sentence);
@@ -310,7 +310,7 @@ function openDate(date) {
   render();
 }
 function renderDate() {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   box.appendChild(ghost("Back", () => { view = "day"; render(); }));
   box.appendChild(note("This changes only " + fmtDate(dateDraft.date) + ", including the evening before. The regular schedule stays as it is."));
   dateDraft.entries.forEach((entry, index) => {

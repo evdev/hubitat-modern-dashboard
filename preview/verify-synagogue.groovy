@@ -18,6 +18,9 @@ class SynagogueHubStub extends Script {
     def href(Object... args) {}
     def log = [info: { }, warn: { }, debug: { }, error: { }]
     def state = [:]
+    List httpLog = []
+    long clock = 0L
+    def alertDevices = []
     def location = [timeZone: TimeZone.getTimeZone("America/New_York"), latitude: 40.71, longitude: -74.0, zipCode: "10001", mode: "Day", modes: ["Day", "Night"]]
     int parentSunCalls = 0
     def parent = [
@@ -41,8 +44,8 @@ class SynagogueHubStub extends Script {
         }
         return [sunrise: at(6), sunset: at(18)]
     }
-    long now() { System.currentTimeMillis() }
-    def httpGet(Map m, Closure c) {}
+    long now() { return clock ? clock : System.currentTimeMillis() }
+    def httpGet(Map m, Closure c) { httpLog << String.valueOf(m?.uri) }
     def unschedule(Object... args) {}
     def schedule(Object... args) {}
     def runOnce(Object... args) {}
@@ -334,6 +337,9 @@ flags["2026-10-09"] = [candles: app.synagogueZonedMs("2026-10-09", "18:00", tz)]
 flags["2026-10-10"] = [yomTov: "yomKippur", havdalah: app.synagogueZonedMs("2026-10-10", "19:00", tz)]
 check(app.synagogueQuietAt(ykAfternoon, [tz: tz, flags: flags, zmanim: zmanim], config), "Yom Kippur afternoon is quiet")
 check(!app.synagogueQuietAt(app.synagogueZonedMs("2026-10-08", "12:00", tz), [tz: tz, flags: flags, zmanim: zmanim], config), "a weekday before the candles is not quiet")
+def satAfternoon = app.synagogueZonedMs("2026-07-11", "15:00", TimeZone.getTimeZone("America/Denver"))
+def satDemo = app.synagogueDemoContext("America/Denver", satAfternoon)
+check(app.synagogueQuietAt(satAfternoon, satDemo, app.synagogueDefaultConfig()), "Saturday afternoon in the demo fixture is quiet")
 
 def menuCtx = [tz: tz, now: app.synagogueZonedMs("2026-09-01", "08:00", tz), flags: flags, zmanim: [:]]
 def menu = app.synagogueMenu(config, menuCtx)
@@ -699,8 +705,424 @@ check(sunCtx.sun["2026-10-16"]?.sunrise == app.synagogueZonedMs("2026-10-16", "0
 check(sunCtx.sun["2026-10-16"]?.sunset == app.synagogueZonedMs("2026-10-16", "18:00", tz), "the app's own sunset is used")
 check(app.parentSunCalls == 0, "a fire asked the dashboard app for sun times")
 
+def phase3Tz = TimeZone.getTimeZone("America/New_York")
+def phase3Today = "2026-10-28"
+long phase3Now = app.synagogueZonedMs(phase3Today, "12:00", phase3Tz)
+def sweepCfg = app.synagogueDefaultConfig()
+sweepCfg.skipped = ["monThu|2026-10-20|old|day", "monThu|" + phase3Today + "|now|day", "not-a-date"]
+sweepCfg.overrides = [
+    ("monThu|2026-10-20|old|day"): [warmEarlierMin: 30],
+    ("monThu|" + phase3Today + "|now|day"): [extendMin: 15],
+    "weird": [extendMin: 1]
+]
+sweepCfg.dateOverrides = ["2026-10-20": [], (phase3Today): [[name: "Keep"]]]
+sweepCfg.dateOverrides["nope"] = []
+sweepCfg.bookings = [
+    [id: "old-book", name: "Old", spaceId: "s", date: "2026-09-01", start: "19:00", minutes: 60],
+    [id: "soon-book", name: "Soon", spaceId: "s", date: phase3Today, start: "19:00", minutes: 60]
+]
+sweepCfg.closures = [
+    [id: "old-close", name: "Old", from: "2026-09-01", to: "2026-09-02", scope: "weekdays", spaceId: "", bookings: false],
+    [id: "now-close", name: "Now", from: phase3Today, to: "2026-11-01", scope: "weekdays", spaceId: "", bookings: false]
+]
+app.state.runtime = [revision: 4, hidden: false, fired: [keep: 9L], history: []]
+app.state.config = sweepCfg
+def swept = app.synagogueSweep(sweepCfg, phase3Now, phase3Tz)
+check(swept.removed > 0, "old schedule rows are removed")
+check(!swept.config.skipped.contains("monThu|2026-10-20|old|day"), "a skipped service from last week is removed")
+check(swept.config.skipped.contains("monThu|" + phase3Today + "|now|day"), "today's skip stays")
+check(swept.config.skipped.contains("not-a-date"), "an id that cannot be read stays")
+check(swept.config.overrides["monThu|2026-10-20|old|day"] == null, "an old warm-up is removed with its override")
+check(swept.config.overrides["monThu|" + phase3Today + "|now|day"] != null, "today's override stays")
+check(swept.config.overrides["weird"] != null, "an override id that cannot be read stays")
+check(swept.config.dateOverrides[phase3Today] != null, "today's date program stays")
+check(swept.config.dateOverrides["2026-10-20"] == null, "an old date program is removed")
+check(swept.config.dateOverrides.containsKey("nope"), "a date program key that is not a date stays")
+check(swept.config.bookings.size() == 1 && swept.config.bookings[0].id == "soon-book", "a booking older than 30 days is removed")
+check(swept.config.closures.size() == 1 && swept.config.closures[0].id == "now-close", "a closure that ended more than 7 days ago is removed")
+check(app.state.runtime.fired.keep == 9L, "the sweep does not touch fired")
+def quietSweep = app.synagogueSweep(app.synagogueDefaultConfig(), phase3Now, phase3Tz)
+check(quietSweep.removed == 0, "a clean schedule removes nothing")
+app.synagogueStoreSweep(quietSweep)
+check(app.state.runtime.revision == 4, "the revision does not change when nothing was removed")
+check(app.state.runtime.fired.keep == 9L, "a quiet sweep leaves fired alone")
+app.synagogueStoreSweep(swept)
+check(app.state.runtime.revision == 5, "a sweep that removed rows advances the revision")
+check(app.state.runtime.fired.keep == 9L, "advancing the revision still leaves fired alone")
+
+def runMessages = []
+def runDevice = { bucket -> [deviceNotification: { text -> bucket << text.toString() }] }
+def leftMessages = []
+def rightMessages = []
+app.alertDevices = [runDevice(leftMessages), runDevice(rightMessages)]
+app.state.runtime = [revision: 1, hidden: false, fired: [:], history: []]
+app.state.config = app.synagogueDefaultConfig()
+app.state.hebcal = [zmanim: [:], flags: [:], fetchedAt: phase3Now, error: "", query: ""]
+app.state.ical = [events: [], unsupported: [], fetchedAt: phase3Now, error: "", okAt: phase3Now]
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+app.clock = phase3Now
+app.parent.holidayRunAction = { states -> [attempted: 3, succeeded: 1, missing: ["dev-light"], failed: ["dev-heat"]] }
+def partialAction = [id: "act-1", label: "Heat comfort", occId: "monThu|2026-10-28|mincha|day", occName: "Mincha", spaceName: "Sanctuary", controlId: "heat", cueId: "heat-on", states: [[id: "dev-heat", name: "Thermostat 2"], [id: "dev-light", name: "Back door light"], [id: "dev-ok", name: "Lights"]]]
+def partialFired = [:]
+app.synagogueRunAction(partialAction, partialFired, false)
+def partialHistory = app.state.runtime.history[-1]
+check(partialHistory.status == "partial", "a cue that partly worked is partial")
+check(partialHistory.reason.contains("ran, Thermostat 2 did not respond"), "a partial run names the device that did not respond")
+check(partialHistory.reason.contains("Back door light is missing"), "a partial run names the missing device")
+check(leftMessages.size() == 1 && rightMessages.size() == 1 && leftMessages[0] == rightMessages[0], "a failed device sends one message through each device")
+check(!leftMessages[0].contains("dev-heat") && !leftMessages[0].contains("dev-light") && !leftMessages[0].contains("http"), "an alert does not include a device id or a link")
+app.synagogueAlert("device|heat|heat-on", "Synagogue: Sanctuary: Thermostat 2 did not respond.", true)
+check(leftMessages.size() == 1, "the same problem does not send again within 12 hours")
+app.parent.holidayRunAction = { states -> [attempted: 1, succeeded: 0, missing: [], failed: ["dev-heat"]] }
+def failedFired = [:]
+app.synagogueRunAction([id: "act-2", label: "Heat", occId: "monThu|2026-10-28|other|day", occName: "Mincha", controlId: "other", cueId: "other-cue", states: [[id: "dev-heat", name: "Thermostat 2"]]], failedFired, false)
+check(app.state.runtime.history[-1].status == "failed", "a cue where nothing worked is failed")
+app.parent.holidayRunAction = { states -> [attempted: 1, succeeded: 1, missing: [], failed: []] }
+def cleanFired = [:]
+app.synagogueRunAction([id: "act-3", label: "Lights", occId: "clean", occName: "Mincha", states: [[id: "dev-ok", name: "Lights"]]], cleanFired, false)
+check(app.state.runtime.history[-1].status == "ran", "a clean run is ran")
+app.parent.holidayRunAction = { states -> [attempted: 2, succeeded: 1, missing: [], failed: ["dev-heat"]] }
+def lateFired = [:]
+app.synagogueRunAction([id: "act-4", label: "Heat", occId: "late-one", occName: "Mincha", controlId: "late", cueId: "late-cue", states: [[id: "dev-heat", name: "Thermostat 2"], [id: "dev-ok", name: "Lights"]]], lateFired, true)
+check(app.state.runtime.history[-1].status == "partial" && app.state.runtime.history[-1].reason.contains("ended late"), "a late partial run stays partial and says it ended late")
+def ranked = [[occId: "o", status: "ran"], [occId: "o", status: "late"], [occId: "o", status: "partial"], [occId: "o", status: "failed"]]
+check(app.synagogueResultFor("o", ranked) == "failed", "failed wins over partial, late, and ran")
+check(app.synagogueResultFor("o", [[occId: "o", status: "ran"], [occId: "o", status: "partial"], [occId: "o", status: "late"]]) == "partial", "partial wins over late and ran")
+
+def room = { id, name, controlId, deviceId, deviceName ->
+    return [id: id, name: name, stayOnGapMin: 45, controls: [[id: controlId, name: deviceName, kind: "light", devices: [[id: deviceId, name: deviceName]]]], cues: [[id: controlId + "-on", anchor: "start", offsetMin: 0, controlId: controlId, action: "on", appliesTo: []]]]
+}
+def closureCfg = app.synagogueDefaultConfig()
+closureCfg.spaces = [
+    [id: "sanctuary", name: "Sanctuary", stayOnGapMin: 45, controls: [
+        [id: "heat", name: "Heat", kind: "thermostat", devices: [[id: "30", name: "Sanctuary heat"]], comfort: ["30": [mode: "heat", heat: 70]], setback: ["30": [mode: "heat", heat: 60]]],
+        [id: "lights", name: "Lights", kind: "light", devices: [[id: "1", name: "Sanctuary lights"]]],
+        [id: "door", name: "Door", kind: "lock", devices: [[id: "40", name: "Hall door"]]]
+    ], cues: [
+        [id: "heat-on", anchor: "start", offsetMin: -60, controlId: "heat", action: "comfort", appliesTo: []],
+        [id: "lights-on", anchor: "start", offsetMin: -2, controlId: "lights", action: "on", appliesTo: []],
+        [id: "lights-off", anchor: "end", offsetMin: 0, controlId: "lights", action: "off", appliesTo: []],
+        [id: "heat-off", anchor: "end", offsetMin: 0, controlId: "heat", action: "setback", appliesTo: []]
+    ]],
+    room("hall", "Hall", "hlights", "2", "Hall lights")
+]
+closureCfg.days.monThu.source = "own"
+closureCfg.days.monThu.entries = [[id: "mincha", name: "Mincha", spaceId: "sanctuary", position: "day", start: [type: "clock", time: "13:00"], end: [type: "duration", minutes: 30]]]
+closureCfg.days.friday.source = "own"
+closureCfg.days.friday.entries = [[id: "fmincha", name: "Mincha", spaceId: "sanctuary", position: "day", start: [type: "clock", time: "17:00"], end: [type: "duration", minutes: 30]]]
+closureCfg.days.shabbat.source = "own"
+closureCfg.days.shabbat.entries = [
+    [id: "shacharis", name: "Shacharis", spaceId: "sanctuary", position: "day", start: [type: "clock", time: "09:00"], end: [type: "duration", minutes: 120]],
+    [id: "eve-mincha", name: "Maariv", spaceId: "sanctuary", position: "evening", start: [type: "clock", time: "19:00"], end: [type: "duration", minutes: 25]]
+]
+closureCfg.days.sun.source = "own"
+closureCfg.days.sun.entries = [
+    [id: "hall-mincha", name: "Mincha", spaceId: "hall", position: "day", start: [type: "clock", time: "13:00"], end: [type: "duration", minutes: 30]],
+    [id: "sun-shacharis", name: "Shacharis", spaceId: "sanctuary", position: "day", start: [type: "clock", time: "08:30"], end: [type: "duration", minutes: 60]]
+]
+closureCfg.days.yomKippur.source = "own"
+closureCfg.days.yomKippur.entries = [[id: "yk", name: "Shacharis", spaceId: "sanctuary", position: "day", start: [type: "clock", time: "08:00"], end: [type: "duration", minutes: 60]]]
+def closureNow = app.synagogueZonedMs("2026-10-02", "08:00", phase3Tz)
+def closureCtx = { dayFlags, dayEvents, at ->
+    return [tz: phase3Tz, now: at ?: closureNow, zmanim: [:], flags: dayFlags ?: [:], horizon: 10, events: dayEvents ?: []]
+}
+closureCfg.closures = [[id: "week", name: "Snow day", from: "2026-10-02", to: "2026-10-08", scope: "weekdays", spaceId: "", bookings: false]]
+def weekBuilt = app.synagogueExpand(closureCfg, closureCtx([:], [], closureNow))
+check(!weekBuilt.occurrences.any { it.date == "2026-10-05" && it.entryId == "mincha" }, "a weekday closure removes Monday")
+check(!weekBuilt.occurrences.any { it.date == "2026-10-02" && it.entryId == "fmincha" }, "a weekday closure removes Friday daytime")
+check(weekBuilt.occurrences.any { it.date == "2026-10-03" && it.entryId == "shacharis" }, "a weekday closure keeps Shabbat")
+check(weekBuilt.occurrences.any { it.date == "2026-10-02" && it.entryId == "eve-mincha" }, "Friday night Mincha belongs to Shabbat and stays")
+def yomFlags = ["2026-10-07": [yomTov: "yomKippur"]]
+def yomBuilt = app.synagogueExpand(closureCfg, closureCtx(yomFlags, [], closureNow))
+check(yomBuilt.occurrences.any { it.date == "2026-10-07" && it.entryId == "yk" }, "a weekday closure keeps a Yom Tov row")
+closureCfg.closures = [[id: "all", name: "Closed", from: "2026-10-03", to: "2026-10-03", scope: "all", spaceId: "", bookings: false]]
+def allBuilt = app.synagogueExpand(closureCfg, closureCtx([:], [], closureNow))
+check(!allBuilt.occurrences.any { it.date == "2026-10-03" && it.entryId == "shacharis" }, "an all-services closure removes Shabbat")
+check(!allBuilt.occurrences.any { it.date == "2026-10-02" && it.entryId == "eve-mincha" }, "an all-services closure removes Shabbat's evening service")
+closureCfg.closures = [[id: "hall-only", name: "Hall work", from: "2026-10-04", to: "2026-10-04", scope: "weekdays", spaceId: "hall", bookings: false]]
+def hallBuilt = app.synagogueExpand(closureCfg, closureCtx([:], [], closureNow))
+check(!hallBuilt.occurrences.any { it.date == "2026-10-04" && it.entryId == "hall-mincha" }, "a space closure removes that space")
+check(hallBuilt.occurrences.any { it.date == "2026-10-04" && it.entryId == "sun-shacharis" }, "a space closure leaves the other space")
+closureCfg.closures = [[id: "sat", name: "Saturday", from: "2026-10-03", to: "2026-10-03", scope: "all", spaceId: "", bookings: false]]
+closureCfg.days.shabbat.entries.find { it.id == "eve-mincha" }.name = "Mincha"
+def replaceBuilt = app.synagogueExpand(closureCfg, closureCtx([:], [], closureNow))
+closureCfg.days.shabbat.entries.find { it.id == "eve-mincha" }.name = "Maariv"
+check(replaceBuilt.occurrences.any { it.date == "2026-10-02" && it.entryId == "fmincha" }, "a closed evening service does not hide Friday's Mincha")
+long closedPublished = app.synagogueZonedMs("2026-10-05", "17:41", phase3Tz)
+closureCfg.days.monThu.entries = [[id: "calmincha", name: "Mincha", spaceId: "sanctuary", position: "day", start: [type: "calendar", contains: "Mincha", ifMissing: "skip"], end: [type: "duration", minutes: 30]]]
+closureCfg.calendars = [[id: "cal", name: "Rentals", bookAll: true, spaceId: "sanctuary"]]
+closureCfg.closures = [[id: "mon", name: "Monday", from: "2026-10-05", to: "2026-10-05", scope: "weekdays", spaceId: "", bookings: false]]
+def consumed = app.synagogueExpand(closureCfg, closureCtx([:], [[calendarId: "cal", uid: "mincha", title: "Weekday Mincha", start: closedPublished, end: closedPublished + 30L * 60000L]], closureNow))
+check(!consumed.occurrences.any { it.entryId == "calmincha" }, "a closed calendar start does not run")
+check(!consumed.occurrences.any { it.kind == "calendar" && it.date == "2026-10-05" }, "a closed calendar start still consumes the event")
+closureCfg.dateOverrides = ["2026-10-05": [[id: "special", name: "Special", spaceId: "sanctuary", position: "day", start: [type: "clock", time: "10:00"], end: [type: "duration", minutes: 30]]]]
+def special = app.synagogueExpand(closureCfg, closureCtx([:], [], closureNow))
+check(special.occurrences.any { it.date == "2026-10-05" && it.entryId == "special" }, "just this date still runs on a closed date")
+closureCfg.dateOverrides = [:]
+closureCfg.days.monThu.entries = [[id: "mincha", name: "Mincha", spaceId: "sanctuary", position: "day", start: [type: "clock", time: "13:00"], end: [type: "duration", minutes: 30]]]
+closureCfg.closures = [[id: "mon", name: "Monday", from: "2026-10-05", to: "2026-10-05", scope: "weekdays", spaceId: "", bookings: false]]
+def beforeCue = app.synagogueExpand(closureCfg, closureCtx([:], [], app.synagogueZonedMs("2026-10-05", "11:00", phase3Tz)))
+def afterCue = app.synagogueExpand(closureCfg, closureCtx([:], [], app.synagogueZonedMs("2026-10-05", "12:30", phase3Tz)))
+check(!beforeCue.occurrences.any { it.date == "2026-10-05" && it.entryId == "mincha" }, "a service that has not started is dropped")
+check(afterCue.occurrences.any { it.date == "2026-10-05" && it.entryId == "mincha" }, "a service with a cue already due is kept")
+closureCfg.bookings = [
+    [id: "san-book", name: "Sanctuary rental", spaceId: "sanctuary", date: "2026-10-05", start: "19:00", minutes: 60],
+    [id: "hall-book", name: "Hall rental", spaceId: "hall", date: "2026-10-05", start: "19:00", minutes: 60],
+    [id: "shab-book", name: "Shabbat rental", spaceId: "sanctuary", date: "2026-10-03", start: "20:00", minutes: 60]
+]
+closureCfg.closures = [[id: "mon", name: "Monday", from: "2026-10-02", to: "2026-10-08", scope: "weekdays", spaceId: "sanctuary", bookings: false]]
+def keptBooks = app.synagogueExpand(closureCfg, closureCtx([:], [], closureNow))
+check(keptBooks.occurrences.any { it.id == "booking|san-book" }, "bookings stay when the closure does not stop them")
+closureCfg.closures[0].bookings = true
+def droppedBooks = app.synagogueExpand(closureCfg, closureCtx([:], [], closureNow))
+check(!droppedBooks.occurrences.any { it.id == "booking|san-book" }, "a booking in the closed space is dropped")
+check(droppedBooks.occurrences.any { it.id == "booking|hall-book" }, "a booking in another space stays")
+check(droppedBooks.occurrences.any { it.id == "booking|shab-book" }, "a Shabbat booking stays during a weekday closure")
+def nudgeMenu = [[id: "fastGedaliah", source: "unset", next: "2026-10-05", label: "Fast of Gedaliah"], [id: "yomKippur", source: "unset", next: "2026-10-05", label: "Yom Kippur"]]
+closureCfg.closures = [[id: "mon", name: "Monday", from: "2026-10-05", to: "2026-10-05", scope: "weekdays", spaceId: "", bookings: false]]
+def closedNudges = app.synagogueNudges(nudgeMenu, app.synagogueZonedMs("2026-10-01", "12:00", phase3Tz), phase3Tz, closureCfg)
+check(!closedNudges.any { it.id == "fastGedaliah" }, "a nudge skips a closed date")
+check(closedNudges.any { it.id == "yomKippur" }, "a weekday closure does not hide a Yom Tov nudge")
+def closedDates = app.synagogueClosedWindow(closureCfg, [tz: phase3Tz, flags: [:]], "2026-10-05", 7)
+check(closedDates.any { it.date == "2026-10-05" && it.name == "Monday" }, "the agenda names the closed date")
+check(!closedDates.any { it.date == "2026-10-10" }, "an open Saturday is not listed as closed")
+def backwards = app.synagogueApply(closureCfg, [op: "closure", closure: [name: "Backwards", from: "2026-10-08", to: "2026-10-01"]])
+check(backwards.ok == false, "a closure that ends before it starts is rejected")
+def tooLongEnd = app.synagogueDateFromEpoch(app.synagogueEpochDay("2026-01-01") + 400)
+def tooLong = app.synagogueApply(app.synagogueDefaultConfig(), [op: "closure", closure: [name: "Long", from: "2026-01-01", to: tooLongEnd]])
+check(tooLong.ok == false, "a closure longer than 400 days is rejected")
+def many = app.synagogueDefaultConfig()
+for (int i = 0; i < 20; i++) {
+    def on = app.synagogueDateFromEpoch(app.synagogueEpochDay("2026-11-01") + i)
+    def added = app.synagogueApply(many, [op: "closure", closure: [name: "C" + i, from: on, to: on]])
+    check(added.ok == true, "closure " + i + " is saved")
+    many = added.config
+}
+def twentyFirst = app.synagogueApply(many, [op: "closure", closure: [name: "Too many", from: "2026-12-20", to: "2026-12-20"]])
+check(twentyFirst.ok == false, "a 21st closure is rejected")
+closureCfg.closures = [[id: "hall-only", name: "Hall work", from: "2026-10-04", to: "2026-10-08", scope: "weekdays", spaceId: "hall", bookings: false]]
+check(app.synagogueSpaceUsers(closureCfg, "hall").contains("Hall work"), "a space closure counts as using that space")
+def openCopy = app.synagogueCopy(closureCfg)
+openCopy.closures = []
+def closedCopy = app.synagogueCopy(openCopy)
+closedCopy.closures = [[id: "week", name: "Snow day", from: "2026-10-02", to: "2026-10-08", scope: "weekdays", spaceId: "", bookings: false]]
+def stopCtx = [tz: phase3Tz, now: closureNow, zmanim: [:], flags: [:], horizon: 21, events: []]
+def openBuilt = app.synagogueExpand(openCopy, stopCtx)
+def shutBuilt = app.synagogueExpand(closedCopy, stopCtx)
+def cliStops = app.synagogueCli([op: "preview", tz: "America/New_York", now: closureNow, zmanim: [:], flags: [:], horizon: 21, config: openCopy, body: [op: "closure", closure: [name: "Snow day", from: "2026-10-02", to: "2026-10-08", scope: "weekdays", spaceId: "", bookings: false]]])
+check(cliStops.stops == app.synagogueCountStops(openBuilt, shutBuilt, stopCtx), "the preview stop count equals the services removed")
+def editStops = app.synagogueCli([op: "preview", tz: "America/New_York", now: closureNow, zmanim: [:], flags: [:], horizon: 21, config: closedCopy, body: [op: "closure", closure: [id: "week", name: "Snow day", from: "2026-10-02", to: "2026-10-08", scope: "weekdays", spaceId: "", bookings: false]]])
+check(editStops.stops == cliStops.stops && editStops.stops > 0, "editing a closed range still counts the services it stops")
+def dst = app.synagogueDefaultConfig()
+dst.spaces = [[id: "s", name: "Sanctuary", stayOnGapMin: 45, controls: [], cues: []]]
+dst.days.monThu.entries = [[id: "m", name: "Mincha", spaceId: "s", position: "day", start: [type: "clock", time: "18:00"], end: [type: "duration", minutes: 30]]]
+dst.days.shabbat.entries = [[id: "s1", name: "Mincha", spaceId: "s", position: "day", start: [type: "clock", time: "18:00"], end: [type: "duration", minutes: 30]]]
+dst.closures = [[id: "dst", name: "Closed", from: "2026-03-06", to: "2026-03-10", scope: "weekdays", spaceId: "", bookings: false]]
+def dstBuilt = app.synagogueExpand(dst, [tz: phase3Tz, now: app.synagogueZonedMs("2026-03-06", "08:00", phase3Tz), zmanim: [:], flags: [:], horizon: 8])
+check(!dstBuilt.occurrences.any { it.date == "2026-03-09" && it.entryId == "m" }, "a closure still removes the Monday after the clock change")
+def dstSat = dstBuilt.occurrences.find { it.date == "2026-03-07" && it.entryId == "s1" }
+check(dstSat != null && dstSat.start == app.synagogueZonedMs("2026-03-07", "18:00", phase3Tz), "a clock time inside the closure range stays on local time")
+
+def warmCfg = app.synagogueCopy(closureCfg)
+warmCfg.closures = []
+warmCfg.days.monThu.entries = [[id: "mincha", name: "Mincha", spaceId: "sanctuary", position: "day", start: [type: "clock", time: "13:00"], end: [type: "duration", minutes: 30]]]
+warmCfg.overrides = ["monThu|2026-10-05|mincha|day": [warmEarlierMin: 30]]
+def warmBuilt = app.synagogueExpand(warmCfg, closureCtx([:], [], closureNow))
+def warmOcc = warmBuilt.occurrences.find { it.date == "2026-10-05" && it.entryId == "mincha" }
+def warmHeat = warmOcc?.cues?.find { it.id == "heat-on" }
+def warmLights = warmOcc?.cues?.find { it.id == "lights-on" }
+def warmEnd = warmOcc?.cues?.find { it.id == "heat-off" }
+check(warmHeat != null && warmHeat.at == app.synagogueZonedMs("2026-10-05", "11:30", phase3Tz), "comfort starts 30 minutes earlier")
+check(warmLights != null && warmLights.at == app.synagogueZonedMs("2026-10-05", "12:58", phase3Tz), "a lights cue does not move")
+check(warmEnd != null && warmEnd.at == warmOcc.end, "an end cue does not move")
+check(warmOcc.changed == true && warmOcc.warmEarlierMin == 30, "warming up earlier marks the service changed")
+def clearedWarm = app.synagogueApply(warmCfg, [op: "override", occurrenceId: "monThu|2026-10-05|mincha|day", warmEarlierMin: 0])
+def clearedBuilt = app.synagogueExpand(clearedWarm.config, closureCtx([:], [], closureNow))
+def clearedHeat = clearedBuilt.occurrences.find { it.entryId == "mincha" && it.date == "2026-10-05" }?.cues?.find { it.id == "heat-on" }
+check(clearedHeat != null && clearedHeat.at == app.synagogueZonedMs("2026-10-05", "12:00", phase3Tz), "clearing the warm-up puts the heat back")
+warmCfg.bookings = [[id: "warm-book", name: "Rental", spaceId: "sanctuary", date: "2026-10-06", start: "19:00", minutes: 60, runCues: true]]
+warmCfg.overrides = ["booking|warm-book": [warmEarlierMin: 30]]
+def warmBook = app.synagogueExpand(warmCfg, closureCtx([:], [], closureNow)).occurrences.find { it.id == "booking|warm-book" }
+check(warmBook?.cues?.find { it.id == "heat-on" }?.at == app.synagogueZonedMs("2026-10-06", "17:30", phase3Tz), "a booking can warm up earlier")
+long rentStart = app.synagogueZonedMs("2026-10-06", "18:00", phase3Tz)
+warmCfg.calendars = [[id: "cal", name: "Rentals", bookAll: true, spaceId: "sanctuary"]]
+warmCfg.overrides = [("ical|cal|rent|" + rentStart): [warmEarlierMin: 30]]
+def warmCal = app.synagogueExpand(warmCfg, closureCtx([:], [[calendarId: "cal", uid: "rent", title: "Rental", start: rentStart, end: rentStart + 60L * 60000L]], closureNow)).occurrences.find { it.kind == "calendar" && it.date == "2026-10-06" }
+check(warmCal?.changed == true && warmCal?.cues?.find { it.id == "heat-on" }?.at == rentStart - 90L * 60000L, "a calendar event can warm up earlier")
+
+def todayCtx = [tz: phase3Tz, now: app.synagogueZonedMs("2026-10-02", "10:00", phase3Tz), flags: ["2026-10-02": [candles: app.synagogueZonedMs("2026-10-02", "18:10", phase3Tz)], "2026-10-03": [havdalah: app.synagogueZonedMs("2026-10-03", "19:05", phase3Tz), cholHaMoed: "cholHaMoedSukkot"]], zmanim: ["2026-10-02": [sunrise: 11L, sofZmanShma: 22L, chatzot: 33L, minchaGedola: 44L, plagHaMincha: 55L, sunset: 66L, tzeit50min: 77L, tzeit72min: 88L]], sun: [:]]
+def todayTimes = app.synagogueTodayTimes(todayCtx, app.synagogueDefaultConfig())
+def todayIds = todayTimes.rows.collect { it.id }
+check(todayIds == ["sunrise", "sofZmanShma", "chatzot", "minchaGedola", "plagHaMincha", "sunset", "tzeit50min", "candleLighting"], "today's times stay in order and skip a nightfall that was not chosen")
+check(todayTimes.rows.find { it.id == "candleLighting" }?.at == app.synagogueZonedMs("2026-10-02", "18:10", phase3Tz), "candle lighting is on Friday")
+def saturdayCtx = [tz: phase3Tz, now: app.synagogueZonedMs("2026-10-03", "10:00", phase3Tz), flags: todayCtx.flags, zmanim: ["2026-10-03": [sunset: 66L]], sun: [:]]
+def saturdayTimes = app.synagogueTodayTimes(saturdayCtx, app.synagogueDefaultConfig())
+check(saturdayTimes.rows.any { it.id == "havdalah" }, "havdalah is on Saturday")
+check(saturdayTimes.dayLabel == "Shabbat Chol HaMoed", "a Chol HaMoed Shabbat uses that label")
+int callsBefore = app.httpLog.size()
+def estimatedToday = app.synagogueTodayTimes([tz: phase3Tz, now: app.synagogueZonedMs("2026-10-04", "10:00", phase3Tz), flags: [:], zmanim: [:], sun: ["2026-10-04": [sunrise: 5L, sunset: 6L]]], app.synagogueDefaultConfig())
+check(estimatedToday.estimated == true && estimatedToday.rows.collect { it.id } == ["sunrise", "sunset"], "a missing day uses hub sun times and says estimated")
+check(app.httpLog.size() == callsBefore, "today's times do not fetch")
+
+def secretCfg = app.synagogueCopy(warmCfg)
+secretCfg.calendars = [[id: "cal", name: "Rentals", bookAll: true, spaceId: "sanctuary", url: "https://calendar.google.com/secret-token-abc123"]]
+secretCfg.skipped = ["keep-skip"]
+secretCfg.overrides = [keep: [extendMin: 5]]
+secretCfg.settings.paused = false
+def backup = app.synagogueBackup(secretCfg)
+def backupText = JsonOutput.toJson(backup)
+check(backup.app == "mDash Synagogue" && backup.schema == 1, "a backup names the app and schema")
+check(!backupText.contains("secret-token") && !backupText.contains("https://") && !backupText.toLowerCase().contains("mask"), "a backup has no calendar link or mask")
+def roundLive = app.synagogueCopy(secretCfg)
+roundLive.settings.paused = true
+roundLive.skipped = ["keep-skip"]
+roundLive.overrides = [keep: [extendMin: 5]]
+def round = app.synagogueApply(roundLive, [op: "restore", backup: backup])
+check(round.ok == true, "a backup restores")
+check(round.config.spaces[0].name == "Sanctuary", "spaces come back")
+check(round.config.days.monThu.entries[0].name == "Mincha", "days come back")
+check(round.config.bookings.any { it.id == "warm-book" }, "bookings come back")
+check(round.config.calendars[0].needsLink == true && round.config.calendars[0].url == null, "a restored calendar needs its link and does not keep an address")
+check(round.config.skipped == ["keep-skip"], "restore keeps skipped services")
+check(round.config.overrides.keep.extendMin == 5, "restore keeps overrides")
+check(round.config.settings.paused == true, "restore keeps paused")
+check(round.config.settings.setupDone == true, "restore marks setup done")
+def unknown = app.synagogueCopy(backup)
+unknown.config.spaces[0].note = "drop-me"
+def unknownApplied = app.synagogueApply(roundLive, [op: "restore", backup: unknown])
+check(unknownApplied.ok == true && unknownApplied.config.spaces[0].note == null, "an unknown key is dropped")
+def newer = app.synagogueCopy(backup)
+newer.schema = 2
+def newerApplied = app.synagogueApply(roundLive, [op: "restore", backup: newer])
+check(newerApplied.ok == false && newerApplied.error.toString().contains("newer version"), "a newer backup is rejected")
+check(roundLive.spaces[0].name == "Sanctuary", "a rejected restore changes nothing")
+def wrongApp = app.synagogueCopy(backup)
+wrongApp.app = "Other"
+check(app.synagogueApply(roundLive, [op: "restore", backup: wrongApp]).ok == false, "the wrong app is rejected")
+def huge = app.synagogueCopy(backup)
+huge.padding = "x" * 210000
+check(app.synagogueApply(roundLive, [op: "restore", backup: huge]).ok == false, "a backup over 200 KB is rejected")
+def cycleBackup = app.synagogueCopy(backup)
+cycleBackup.config.days.shabbat.source = "same"
+cycleBackup.config.days.shabbat.follows = "friday"
+cycleBackup.config.days.friday.source = "same"
+cycleBackup.config.days.friday.follows = "shabbat"
+cycleBackup.config.days.shabbat.entries = []
+cycleBackup.config.days.friday.entries = []
+check(app.synagogueApply(roundLive, [op: "restore", backup: cycleBackup]).ok == false, "a cycle in a backup is rejected")
+app.state.config = round.config
+app.state.ical = [events: [[calendarId: "cal"]], unsupported: [], fetchedAt: 1, error: "", okAt: 1]
+app.httpLog.clear()
+app.synagogueFetchCalendars(true)
+check(app.httpLog.isEmpty(), "a restored calendar is not fetched")
+check(app.state.ical.error.toString().contains("needs its link again after a restore"), "a restored calendar asks for its link")
+def unread = app.synagogueIngestIcs([calendars: [[id: "cal", name: "Rentals", needsLink: true]]], [:], phase3Tz, closureNow)
+check(unread.error.toString().contains("needs its link again after a restore"), "preview says to paste the link after a restore")
+app.state.ical = [events: [[calendarId: "gone", title: "Old rent", start: 5L, end: 9L]], unsupported: [], fetchedAt: 1, error: "", okAt: 1]
+app.state.config = app.synagogueCopy(round.config)
+app.state.config.calendars = []
+if (!(app.state.runtime instanceof Map)) app.state.runtime = [revision: 4, hidden: false, fired: [:], history: []]
+app.state.runtime.revision = 4
+def cleared = app.synagogueSave([op: "restore", revision: 4, backup: app.synagogueBackup(app.state.config)])
+check(cleared.ok == true && !(app.state.ical.events ?: []).any { it?.calendarId?.toString() == "gone" }, "restore drops events from a calendar that is gone")
+
+app.clock = phase3Now
+app.state.runtime = [revision: 2, hidden: false, fired: [:], history: []]
+app.state.config = app.synagogueDefaultConfig()
+app.state.config.settings.alerts = [device: true, unlock: true, stale: true]
+app.state.hebcal = [zmanim: [:], flags: [:], fetchedAt: phase3Now, error: "", query: ""]
+app.state.ical = [events: [], unsupported: [], fetchedAt: phase3Now, error: "", okAt: phase3Now]
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+leftMessages.clear()
+rightMessages.clear()
+app.alertDevices = [runDevice(leftMessages), runDevice(rightMessages)]
+app.synagogueAlert("device|heat|c1", "Synagogue: Sanctuary heat did not respond.", true)
+check(leftMessages.size() == 1 && rightMessages.size() == 1, "both devices receive the alert")
+long friCandles = app.synagogueZonedMs("2026-10-30", "18:00", phase3Tz)
+long satHav = app.synagogueZonedMs("2026-10-31", "19:00", phase3Tz)
+app.clock = app.synagogueZonedMs("2026-10-31", "15:00", phase3Tz)
+app.state.hebcal.flags = ["2026-10-30": [candles: friCandles], "2026-10-31": [havdalah: satHav]]
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+leftMessages.clear()
+rightMessages.clear()
+app.synagogueAlert("device|heat|c1", "Synagogue: Sanctuary heat did not respond at 4:37 PM.", true)
+app.synagogueAlert("unlock|door|unlock", "Synagogue: Hall door unlock was skipped.", true)
+check(leftMessages.isEmpty() && app.state.alerts.pending.size() == 2, "alerts during Shabbat wait")
+app.clock = app.synagogueZonedMs("2026-11-01", "08:05", phase3Tz)
+app.state.hebcal.flags = [:]
+app.state.hebcal.fetchedAt = app.clock
+app.state.ical.fetchedAt = app.clock
+app.state.ical.okAt = app.clock
+app.synagogueWatch()
+check(leftMessages.size() == 1 && leftMessages[0].contains("while Shabbat was on") && leftMessages[0].contains("Sanctuary heat") && leftMessages[0].contains("Hall door"), "the first watch after Shabbat sends one digest")
+check(app.state.alerts.pending.isEmpty(), "the digest clears the waiting alerts")
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+app.clock = app.synagogueZonedMs("2026-10-28", "15:00", phase3Tz)
+for (int i = 0; i < 12; i++) app.synagogueAlert("device|heat|c" + i, "Synagogue: problem " + i + ".", true)
+app.clock = app.synagogueZonedMs("2026-10-31", "15:00", phase3Tz)
+app.state.hebcal.flags = ["2026-10-30": [candles: friCandles], "2026-10-31": [havdalah: satHav]]
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+for (int i = 0; i < 12; i++) app.synagogueAlert("device|heat|p" + i, "Synagogue: problem " + i + ".", true)
+check(app.state.alerts.pending.size() == 10, "waiting alerts stop at 10")
+check(app.state.alerts.pending[0].key == "device|heat|p2", "the oldest waiting alert is dropped")
+app.state.hebcal.flags = [:]
+app.clock = phase3Now
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+leftMessages.clear()
+for (int i = 0; i < 8; i++) app.synagogueAlert("device|heat|n" + i, "Synagogue: problem " + i + ".", true)
+check(leftMessages.size() == 7 && leftMessages[6].contains("and ") && leftMessages[6].contains(" more"), "the seventh alert becomes one and more line")
+check(leftMessages.size() == 7, "alerts after the cap do not send another message")
+app.clock = app.synagogueZonedMs("2026-10-28", "23:00", phase3Tz)
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+leftMessages.clear()
+app.synagogueAlert("hebcal|stale", "Synagogue: prayer times have not updated.", false)
+check(leftMessages.isEmpty() && app.state.alerts.pending.isEmpty(), "an out of date alert waits until morning")
+app.clock = app.synagogueZonedMs("2026-10-29", "08:05", phase3Tz)
+app.synagogueAlert("hebcal|stale", "Synagogue: prayer times have not updated.", false)
+check(leftMessages.size() == 1, "an out of date alert sends at 8:05 AM")
+app.state.config.settings.paused = true
+leftMessages.clear()
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+app.synagogueAlert("device|heat|paused", "Synagogue: paused.", true)
+check(leftMessages.isEmpty(), "nothing is sent while paused")
+app.state.config.settings.paused = false
+app.state.runtime.hidden = true
+app.synagogueAlert("device|heat|hidden", "Synagogue: hidden.", true)
+check(leftMessages.isEmpty(), "nothing is sent while hidden")
+app.state.runtime.hidden = false
+app.alertDevices = []
+app.synagogueAlert("device|heat|none", "Synagogue: none.", true)
+check(leftMessages.isEmpty(), "nothing is sent without a device")
+app.alertDevices = [runDevice(leftMessages)]
+app.state.config.settings.alerts.device = false
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+app.synagogueAlert("device|heat|off", "Synagogue: off.", true)
+check(leftMessages.isEmpty(), "nothing is sent when that alert is off")
+app.state.config.settings.alerts.device = true
+def quietSave = app.synagogueSave([op: "testAlert"])
+app.clock = app.synagogueZonedMs("2026-10-31", "15:00", phase3Tz)
+app.state.hebcal.flags = ["2026-10-30": [candles: friCandles], "2026-10-31": [havdalah: satHav]]
+leftMessages.clear()
+def refused = app.synagogueSave([op: "testAlert"])
+check(refused.ok == false && refused.error.toString().contains("Shabbat"), "a test alert is refused on Shabbat")
+check(leftMessages.isEmpty(), "a refused test alert sends nothing")
+app.clock = phase3Now
+app.state.hebcal.flags = [:]
+app.state.alerts = [sent: [:], pending: [], deliveries: []]
+leftMessages.clear()
+def tested = app.synagogueSave([op: "testAlert"])
+check(tested.ok == true && leftMessages[0].contains("test alert"), "a test alert sends")
+for (int i = 0; i < 6; i++) app.synagogueAlert("device|heat|cap" + i, "Synagogue: problem " + i + ".", true)
+check(leftMessages.size() == 7 && !leftMessages[6].contains(" more"), "a test alert does not use up the cap")
+app.state.config.spaces = [[id: "s", name: "Sanctuary", stayOnGapMin: 45, controls: [[id: "heat", name: "Heat", kind: "thermostat", devices: [[id: "30", name: "Thermostat 2"]], comfort: ["30": [mode: "heat", heat: 70]], setback: [:]]], cues: []]]
+app.parent.holidayRunAction = { states -> [attempted: 1, succeeded: 0, missing: [], failed: ["30"]] }
+leftMessages.clear()
+def tried = app.synagogueSave([op: "tryCue", controlId: "heat", action: "comfort"])
+check(tried.ok == true && leftMessages.isEmpty(), "try it now does not send an alert")
+app.clock = 0L
+
 if (failed) {
     println failed + " failed"
     System.exit(1)
 }
-println "synagogue phase 1 ok"
+println "synagogue ok"

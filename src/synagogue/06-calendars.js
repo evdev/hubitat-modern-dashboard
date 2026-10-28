@@ -1,5 +1,5 @@
 function renderCalendars() {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   if (!(model.calendars || []).length && !checkResult) {
     box.appendChild(note("Paste the secret iCal link from Google Calendar. In Google Calendar, open the calendar's settings and copy the secret address in iCal format. The hub stores it and does not show it again."));
   }
@@ -10,11 +10,12 @@ function renderCalendars() {
     title.textContent = cal.name || "Calendar";
     head.appendChild(title);
     card.appendChild(head);
-    card.appendChild(noteLine((cal.mask || "••••••") + (model.ical?.fetchedAt ? " · Updated " + ago(model.ical.fetchedAt) : "") + (cal.bookAll ? " · Every event is a booking" : "")));
-    card.appendChild(ghost("Remove", () => {
+    if (cal.needsLink) card.appendChild(note("Paste the link again."));
+    else card.appendChild(noteLine((cal.mask || "••••••") + (model.ical?.fetchedAt ? " · Updated " + ago(model.ical.fetchedAt) : "") + (cal.bookAll ? " · Every event is a booking" : "")));
+    card.appendChild(ghost("Remove", async () => {
       const previous = { ...cal };
-      offerUndo("Removed " + (cal.name || "that calendar") + ".", () => saveOp({ op: "calendar", calendar: previous }));
-      saveOp({ op: "deleteCalendar", id: cal.id });
+      const ok = await saveOp({ op: "deleteCalendar", id: cal.id });
+      if (ok) offerUndo("Removed " + (cal.name || "that calendar") + ".", () => saveOp({ op: "calendar", calendar: previous }));
     }, true));
     box.appendChild(card);
   }
@@ -92,9 +93,9 @@ function renderCalendars() {
     const space = (model.spaces || []).find((item) => item.id === booking.spaceId);
     const card = ce("div", "sched-row");
     card.appendChild(note(booking.name + " · " + fmtDate(booking.date) + " " + booking.start + " · " + (space?.name || "")));
-    card.appendChild(ghost("Remove", () => {
-      offerUndo("Removed " + booking.name + ".", () => saveOp({ op: "booking", booking }));
-      saveOp({ op: "deleteBooking", id: booking.id });
+    card.appendChild(ghost("Remove", async () => {
+      const ok = await saveOp({ op: "deleteBooking", id: booking.id });
+      if (ok) offerUndo("Removed " + booking.name + ".", () => saveOp({ op: "booking", booking }));
     }, true));
     box.appendChild(card);
   }

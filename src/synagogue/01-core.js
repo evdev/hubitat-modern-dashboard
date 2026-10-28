@@ -38,6 +38,9 @@ let selectedDays = [];
 let askedFollow = {};
 let checkResult = null;
 let focusKeep = "";
+let timesOpen = false;
+let closureDraft = null;
+let closureSeq = 0;
 
 function catalog() {
   const api = M();
@@ -87,6 +90,8 @@ function fmtClock(ms) {
   return (parts.find((p) => p.type === "hour")?.value || "00") + ":" + (parts.find((p) => p.type === "minute")?.value || "00");
 }
 function hubToday() {
+  const fromHub = model?.today?.date;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(fromHub || ""))) return String(fromHub);
   try {
     const zone = tz() || "";
     return dateFormatter("today|" + zone, "en-CA", {
@@ -102,6 +107,17 @@ function addIso(iso, n) {
   if (!y) return "";
   const dt = new Date(Date.UTC(y, m - 1, d + n));
   return dt.toISOString().slice(0, 10);
+}
+function fmtMonthDay(iso) {
+  if (!iso) return "";
+  const [y, m, d] = String(iso).split("-").map(Number);
+  if (!y) return "";
+  const zone = tz() || "";
+  return dateFormatter("month|" + zone, "en-US", {
+    timeZone: zone || undefined,
+    month: "short",
+    day: "numeric",
+  }).format(new Date(Date.UTC(y, m - 1, d, 16)));
 }
 function fmtDate(iso) {
   if (!iso) return "";
@@ -257,11 +273,13 @@ function checkField(label, on, toggle) {
   input.type = "checkbox";
   input.checked = !!on;
   input.addEventListener("change", () => toggle(input.checked));
-  row.append(input, document.createTextNode(label));
+  const words = ce("span");
+  words.textContent = label;
+  row.append(input, words);
   return row;
 }
-function chips(options, selected, onPick) {
-  const seg = ce("div", "sched-segment");
+function chips(options, selected, onPick, extra) {
+  const seg = ce("div", "sched-segment" + (extra ? " " + extra : ""));
   for (const [id, label] of options) {
     const b = ce("button", "sched-seg" + (String(selected) === String(id) ? " is-active" : ""));
     b.type = "button";
@@ -313,10 +331,12 @@ function sheetNode() {
   back.appendChild(box);
   return back;
 }
-function offerUndo(label, restore) {
+function offerUndo(label, restore, duration) {
   undo = { label, restore };
   clearTimeout(undoTimer);
-  undoTimer = setTimeout(() => { undo = null; if (hostEl) render(); }, 8000);
+  const wait = Number(duration) > 0 ? Number(duration) : 8000;
+  undoTimer = setTimeout(() => { undo = null; if (hostEl) render(); }, wait);
+  if (hostEl) render();
 }
 function undoNode() {
   if (!undo) return null;
@@ -327,11 +347,16 @@ function undoNode() {
 }
 
 function renderShell() {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   const head = ce("div", "sched-section-head");
-  const section = view === "space" ? "spaces" : (view === "day" || view === "entry" || view === "date") ? "days" : view === "settings" ? "agenda" : view;
-  head.appendChild(chips([["agenda", "Agenda"], ["days", "Days"], ["spaces", "Spaces"], ["calendars", "Calendars"]], section, (id) => { view = id; render(); }));
-  head.appendChild(ghost(model.paused ? "Paused" : "Settings", () => { view = "settings"; render(); }));
+  const section = view === "space" ? "spaces" : (view === "day" || view === "entry" || view === "date") ? "days" : view;
+  head.appendChild(chips([
+    ["agenda", "Agenda"],
+    ["days", "Days"],
+    ["spaces", "Spaces"],
+    ["calendars", "Calendars"],
+    ["settings", model.paused ? "Paused" : "Settings"],
+  ], section, (id) => { view = id; render(); }));
   box.appendChild(head);
   if (model.locationProblem) box.appendChild(banner(model.locationProblem));
   else if (model.hebcal?.error) box.appendChild(banner(model.hebcal.error));
@@ -395,7 +420,8 @@ async function saveOp(body, nextView) {
     if (saved.settings || saved.agenda || saved.menu) model = saved;
     else if (saved.revision != null) model.revision = saved.revision;
     if (nextView) view = nextView;
-    if (body.op !== "tryCue") flash("Saved");
+    if (body.op === "testAlert") flash("Test alert sent.");
+    else if (body.op !== "tryCue" && body.op !== "backup") flash("Saved");
     render();
     return true;
   } catch (e) {

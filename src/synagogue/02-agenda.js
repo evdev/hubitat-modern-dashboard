@@ -1,5 +1,5 @@
 function renderAgenda() {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   const rows = model.agenda || [];
   const next = rows.find((row) => !row.skipped && Number(row.start) > Date.now() - 60 * 60000);
   if (next) {
@@ -12,21 +12,32 @@ function renderAgenda() {
     hero.appendChild(noteLine(next.spaceName + (first ? " · First action: " + first.label + " at " + fmtTime(first.at) : "")));
     box.appendChild(hero);
   }
+  const todayCard = renderToday();
+  if (todayCard) box.appendChild(todayCard);
   const health = healthLine();
   if (health) box.appendChild(healthNote(health));
   for (const nudge of model.nudges || []) {
-    const card = ce("div", "sched-row");
+    const card = ce("div", "sched-row synagogue-nudge");
     card.appendChild(note(nudge.label + " is in " + nudge.inDays + " days and has no schedule."));
-    card.appendChild(primary("Set up", () => openDay(nudge.id)));
+    card.appendChild(ghost("Set up", () => openDay(nudge.id)));
     box.appendChild(card);
   }
-  let last = "";
+  const closed = {};
+  for (const row of model.closed || []) closed[row.date] = row.name;
+  const groups = new Map();
   for (const row of rows) {
-    if (row.date !== last) {
-      last = row.date;
-      box.appendChild(sectionTitle(fmtDate(row.date)));
+    if (!groups.has(row.date)) groups.set(row.date, []);
+    groups.get(row.date).push(row);
+  }
+  for (const date of Object.keys(closed)) if (!groups.has(date)) groups.set(date, []);
+  for (const date of [...groups.keys()].sort()) {
+    box.appendChild(sectionTitle(fmtDate(date)));
+    if (closed[date]) {
+      const line = ce("p", "synagogue-closed");
+      line.textContent = "Closed: " + closed[date];
+      box.appendChild(line);
     }
-    box.appendChild(renderOcc(row));
+    for (const row of groups.get(date)) box.appendChild(renderOcc(row));
   }
   if (!rows.length) box.appendChild(note("No services in the next week yet. Add one from Days."));
   if (agendaDays < 21) {
@@ -53,7 +64,7 @@ function renderOcc(row) {
   const grid = ce("div", "synagogue-occ");
   const clock = ce("div", "synagogue-clock");
   clock.textContent = fmtTime(row.start);
-  const main = ce("div");
+  const main = ce("div", "synagogue-detail");
   const name = ce("strong");
   name.textContent = row.name || "Service";
   main.appendChild(name);
@@ -61,6 +72,7 @@ function renderOcc(row) {
   const pills = ce("div", "synagogue-pills");
   if (row.skipped) pills.appendChild(pill("Skipped", "bad"));
   if (row.changed) pills.appendChild(pill("Changed this time", "unset"));
+  if (Number(row.warmEarlierMin) > 0) pills.appendChild(pill("Warms up earlier, " + row.warmEarlierMin + " min", "unset"));
   if (row.dateChanged) pills.appendChild(pill("Changed this date", "unset"));
   if (row.estimated) pills.appendChild(pill("Estimated", "unset"));
   if (row.replaced) pills.appendChild(pill(row.replaced, "same"));
@@ -68,12 +80,13 @@ function renderOcc(row) {
   if (row.overlap) pills.appendChild(pill(row.warning || "Overlaps another service", "late"));
   if (row.result === "ran") pills.appendChild(pill("Ran", "ok"));
   if (row.result === "late") pills.appendChild(pill("Late", "late"));
+  if (row.result === "partial") pills.appendChild(pill("Ran, some devices skipped", "late"));
   if (row.result === "failed") pills.appendChild(pill("Failed", "late"));
   if (pills.childNodes.length) main.appendChild(pills);
-  const cueLine = ce("button", "ghost-btn");
+  const cueLine = ce("button", "ghost-btn synagogue-cue");
   cueLine.type = "button";
   const cues = row.cues || [];
-  cueLine.textContent = cues.length ? cues.map((c) => c.label + " " + fmtTime(c.at)).join(" · ") : "No device cues";
+  cueLine.textContent = !cues.length ? "No device cues" : expanded[row.id] ? "Hide actions" : cues.map((c) => c.label + " " + fmtTime(c.at)).join(" · ");
   cueLine.addEventListener("click", () => { expanded[row.id] = !expanded[row.id]; render(); });
   main.appendChild(cueLine);
   if (expanded[row.id] && cues.length) {
@@ -110,6 +123,19 @@ function openMore(row) {
     let custom = "45";
     box.appendChild(field("Other minutes", "number", custom, (v) => { custom = v; }, "extend"));
     box.appendChild(ghost("Extend by that many", () => { closeSheet(); saveOp({ op: "override", occurrenceId: row.id, extendMin: Number(custom) || 0 }); }));
+    box.appendChild(note("Heat starts this much sooner for this time only."));
+    const warm = ce("div", "sched-segment");
+    for (const minutes of [15, 30, 60, 90]) {
+      const b = ce("button", "sched-seg");
+      b.type = "button";
+      b.textContent = "Warm up earlier " + minutes;
+      b.addEventListener("click", () => { closeSheet(); saveOp({ op: "override", occurrenceId: row.id, warmEarlierMin: minutes }); });
+      warm.appendChild(b);
+    }
+    box.appendChild(warm);
+    if (Number(row.warmEarlierMin) > 0) {
+      box.appendChild(ghost("Use the regular warm-up", () => { closeSheet(); saveOp({ op: "override", occurrenceId: row.id, warmEarlierMin: 0 }); }));
+    }
     let start = fmtClock(row.start);
     box.appendChild(field("New start", "time", start, (v) => { start = v; }, "change"));
     box.appendChild(ghost("Change this time", () => { closeSheet(); saveOp({ op: "override", occurrenceId: row.id, start }); }));
@@ -131,4 +157,55 @@ function openMore(row) {
       box.appendChild(ghost("Edit day", () => { closeSheet(); openDay(row.dayId); }));
     }
   });
+}
+
+function shortZman(row) {
+  const id = String(row?.id || "");
+  if (id === "sunset") return "Shkiah";
+  if (id === "sunrise") return "Netz";
+  if (id === "nightfall" || id.startsWith("tzeit")) return "Tzeis";
+  if (id === "candleLighting") return "Candles";
+  if (id === "havdalah") return "Havdalah";
+  if (id === "plagHaMincha") return "Plag";
+  if (id === "sofZmanShma") return "Latest Shema";
+  return row?.label || "Time";
+}
+
+function renderToday() {
+  const today = model.today;
+  const rows = today?.rows || [];
+  if (!rows.length) return null;
+  const card = ce("section", "synagogue-today");
+  card.setAttribute("aria-label", "Today's times");
+  const shkiah = rows.find((row) => row.id === "sunset");
+  const tzeis = rows.find((row) => row.id === "nightfall" || String(row.id || "").startsWith("tzeit"));
+  const summary = ["Today"];
+  if (shkiah) summary.push("Shkiah " + fmtTime(shkiah.at));
+  if (tzeis) summary.push("Tzeis " + fmtTime(tzeis.at));
+  if (!shkiah && !tzeis) {
+    for (const row of rows.slice(0, 2)) summary.push(shortZman(row) + " " + fmtTime(row.at));
+  }
+  if (today.estimated) summary.push("Estimated");
+  const head = ce("div", "synagogue-today-line");
+  const line = ce("p", "synagogue-today-summary");
+  line.textContent = summary.join(" · ");
+  const toggle = ce("button", "ghost-btn");
+  toggle.type = "button";
+  toggle.textContent = timesOpen ? "Show less" : "Show all";
+  toggle.addEventListener("click", () => { timesOpen = !timesOpen; render(); });
+  head.append(line, toggle);
+  card.appendChild(head);
+  if (timesOpen) {
+    card.appendChild(noteLine((today.dayLabel || "Today") + (today.estimated ? " · Estimated" : "")));
+    const grid = ce("div", "synagogue-today-grid");
+    for (const row of rows) {
+      const lab = ce("span");
+      lab.textContent = row.label || shortZman(row);
+      const time = ce("span");
+      time.textContent = fmtTime(row.at);
+      grid.append(lab, time);
+    }
+    card.appendChild(grid);
+  }
+  return card;
 }

@@ -521,6 +521,30 @@ those events join the same timeline as the services, including the stay-on gap.
 One-time bookings do too. All-day events are ignored. A repeat the hub cannot
 apply is named and skipped.
 
+**Closed dates** stop services for a stretch, such as a renovation or a summer
+weekday break. Weekday closures leave Shabbat and Yom Tov running. A service
+that has already started keeps its end cues, so a room is not left on. A closure
+can also stop bookings and calendar events. Guest door codes are not stored
+here. Put those in Hubitat's lock code tools. A booking still unlocks at the
+start and locks at the end through the space's cues.
+
+**Warm up earlier** moves only the heat for one service. It does not change the
+saved program, and it does not move lights.
+
+**Today's times** is a strip at the top of Agenda. It uses the times the hub
+already loaded. It does not add a tile to the main dashboard.
+
+**Alerts** are for problems only: a device did not respond, a scheduled unlock
+was skipped because it was too late, or the times or a calendar are out of date.
+Choose the phones in the Hubitat app, under Synagogue, not in the dashboard.
+Nothing is sent during Shabbat or Yom Tov. If something goes wrong then, one
+message is sent after it ends. Nothing is sent overnight for an out-of-date
+calendar or times.
+
+**Backup** downloads the schedule so it can be restored after a hub reset or a
+bad edit. Calendar links are not in the backup. After a restore, paste each
+link again. Restoring replaces the schedule and can be undone for a short time.
+
 **AI assistant (MCP)**
 
 In the Hubitat app, turn on **Allow an AI assistant to create schedules**. The

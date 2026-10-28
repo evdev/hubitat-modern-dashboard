@@ -1,6 +1,5 @@
 function renderSettings() {
-  const box = ce("div");
-  box.appendChild(ghost("Back", () => { view = "agenda"; render(); }));
+  const box = ce("div", "synagogue-stack");
   const s = model.settings || {};
   box.appendChild(sectionTitle("Times"));
   box.appendChild(field("Candle lighting minutes", "number", String(s.candleMin ?? 18), (v) => { s.candleMin = Number(v); }));
@@ -31,6 +30,30 @@ function renderSettings() {
       }));
     }
   }
+  box.appendChild(sectionTitle("Alerts"));
+  const alerts = s.alerts || { device: true, unlock: true, stale: true };
+  s.alerts = alerts;
+  const deviceCount = Number(model.alerts?.deviceCount) || 0;
+  const alertBox = ce("div", deviceCount ? "" : "synagogue-muted");
+  alertBox.appendChild(checkField("A device did not respond", alerts.device !== false, (on) => { alerts.device = on; }));
+  alertBox.appendChild(checkField("A door did not unlock", alerts.unlock !== false, (on) => { alerts.unlock = on; }));
+  alertBox.appendChild(checkField("Times or a calendar are out of date", alerts.stale !== false, (on) => { alerts.stale = on; }));
+  box.appendChild(alertBox);
+  box.appendChild(note(deviceCount
+    ? "Alerts go to " + deviceCount + (deviceCount === 1 ? " device." : " devices.") + " Change them in the Hubitat app, Synagogue."
+    : "No notification devices are chosen, so nothing will be sent. Choose them in the Hubitat app, Synagogue."));
+  box.appendChild(note("Nothing is sent during Shabbat or Yom Tov. If something goes wrong then, you get one message after it ends."));
+  const test = primary("Send a test alert", () => saveOp({ op: "testAlert" }, "settings"));
+  if (model.quiet || !deviceCount) test.disabled = true;
+  box.appendChild(test);
+  if (model.quiet) box.appendChild(note("Try it now is off during Shabbat and Yom Tov."));
+  box.appendChild(sectionTitle("Backup"));
+  box.appendChild(note("A backup keeps the schedule. Calendar links are not included."));
+  const backup = ce("div", "synagogue-actions");
+  backup.appendChild(ghost("Download a backup", () => downloadBackup()));
+  backup.appendChild(ghost("Copy the backup", () => copyBackup()));
+  backup.appendChild(ghost("Restore from a backup", () => openRestore()));
+  box.appendChild(backup);
   box.appendChild(sectionTitle("Pause"));
   box.appendChild(ghost(model.paused ? "Resume" : "Pause", () => saveOp({ op: "pause", paused: !model.paused }, "settings")));
   const history = (model.history || []).slice(-8).reverse();
@@ -40,6 +63,7 @@ function renderSettings() {
       const card = ce("div", "sched-row");
       const pills = ce("div", "synagogue-pills");
       if (item.status === "ran") pills.appendChild(pill("Ran", "ok"));
+      else if (item.status === "partial") pills.appendChild(pill("Ran, some devices skipped", "late"));
       else if (item.status === "late") pills.appendChild(pill("Late", "late"));
       else if (item.status === "failed") pills.appendChild(pill("Failed", "late"));
       card.appendChild(pills);
@@ -49,6 +73,134 @@ function renderSettings() {
   }
   box.appendChild(primary("Save settings", () => saveOp({ op: "settings", settings: s }, "settings")));
   return box;
+}
+
+async function fetchBackup() {
+  return post("synagogue/save", { op: "backup", revision: model.revision });
+}
+
+function backupFileName() {
+  return "synagogue-backup-" + (hubToday() || "today") + ".json";
+}
+
+async function downloadBackup() {
+  try {
+    const data = await fetchBackup();
+    const blob = new Blob([JSON.stringify(data.backup, null, 2)], { type: "application/json" });
+    const link = ce("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = backupFileName();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  } catch (e) { flash(e.message, true); }
+}
+
+async function copyBackup() {
+  try {
+    const data = await fetchBackup();
+    await navigator.clipboard.writeText(JSON.stringify(data.backup, null, 2));
+    flash("Copied the backup");
+  } catch (e) { flash(e.message || "Could not copy the backup.", true); }
+}
+
+function daysWithSchedule(days) {
+  let n = 0;
+  for (const day of Object.values(days || {})) {
+    const source = day?.source || "unset";
+    if (source === "unset" || source === "none") continue;
+    n += 1;
+  }
+  return n;
+}
+
+function missingDeviceCount(backup) {
+  const known = new Set();
+  const cat = catalog();
+  for (const key of ["lights", "outlets", "locks", "thermostats"]) {
+    for (const device of cat[key] || []) known.add(String(device.id));
+  }
+  const missing = new Set();
+  for (const space of backup?.config?.spaces || []) {
+    for (const control of space.controls || []) {
+      for (const device of control.devices || []) {
+        const id = String(device?.id ?? device ?? "");
+        if (id && !known.has(id)) missing.add(id);
+      }
+    }
+  }
+  return missing.size;
+}
+
+function countWord(n, one, many) {
+  return n + " " + (n === 1 ? one : many);
+}
+
+function openRestore() {
+  let backup = null;
+  openSheet("Restore from a backup", (box) => {
+    box.appendChild(note("This replaces the schedule. Calendar links are not in backups, so paste those again after."));
+    const file = ce("input");
+    file.type = "file";
+    file.accept = "application/json,.json";
+    file.setAttribute("aria-label", "Backup file");
+    file.className = "synagogue-find";
+    file.addEventListener("change", () => {
+      const item = file.files && file.files[0];
+      if (!item) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try { showRestoreSummary(JSON.parse(String(reader.result || "")), box); }
+        catch (e) { flash("That file could not be read.", true); }
+      };
+      reader.readAsText(item);
+    });
+    box.appendChild(file);
+    let pasted = "";
+    box.appendChild(field("Or paste the backup", "text", "", (v) => { pasted = v; }, "restore-paste"));
+    box.appendChild(ghost("Use the pasted backup", () => {
+      try { showRestoreSummary(JSON.parse(pasted), box); }
+      catch (e) { flash("That backup could not be read.", true); }
+    }));
+    const summary = ce("div", "synagogue-stack");
+    summary.dataset.restoreSummary = "1";
+    box.appendChild(summary);
+    box.appendChild(primary("Restore", async () => {
+      if (!backup) { flash("Choose a backup first.", true); return; }
+      closeSheet();
+      await applyRestore(backup);
+    }));
+    function showRestoreSummary(next, host) {
+      backup = next;
+      const slot = host.querySelector("[data-restore-summary]");
+      if (!slot) return;
+      slot.textContent = "";
+      const config = next?.config || {};
+      const line = [
+        countWord((config.spaces || []).length, "space", "spaces"),
+        countWord(daysWithSchedule(config.days), "day with a schedule", "days with a schedule"),
+        countWord((config.closures || []).length, "closed date", "closed dates"),
+        countWord((config.calendars || []).length, "calendar", "calendars") + " (links are not in backups).",
+      ].join(", ");
+      slot.appendChild(note(line));
+      const missing = missingDeviceCount(next);
+      if (missing) {
+        slot.appendChild(note(missing + (missing === 1 ? " device in this backup is" : " devices in this backup are") + " not on this hub. Those cues will skip them."));
+      }
+    }
+  });
+}
+
+async function applyRestore(backup) {
+  let previous = null;
+  try { previous = await fetchBackup(); }
+  catch (e) { flash(e.message, true); return; }
+  const ok = await saveOp({ op: "restore", backup }, "settings");
+  if (ok && previous?.backup) {
+    offerUndo("Restored the backup.", () => saveOp({ op: "restore", backup: previous.backup }, "settings"), 30000);
+    render();
+  }
 }
 
 function defaultTimes() {
@@ -241,13 +393,13 @@ function weekdayMaarivStart(times) {
 }
 function minuteChoices(minutes, onPick) {
   const n = Math.abs(Number(minutes) || 0);
-  const wrap = ce("div");
+  const wrap = ce("div", "synagogue-stack");
   wrap.appendChild(chips([["10", "10"], ["15", "15"], ["20", "20"]], [10, 15, 20].includes(n) ? String(n) : "", (id) => { onPick(Number(id)); render(); }));
   wrap.appendChild(field("Minutes before sunset", "number", String(n), (v) => onPick(Math.abs(Number(v) || 0))));
   return wrap;
 }
 function calendarChoice(on, contains, onMode, onContains) {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   box.appendChild(checkField("Use the calendar instead", on, (checked) => onMode(checked)));
   if (on) box.appendChild(field("Title contains", "text", contains || "", (v) => onContains(v)));
   return box;

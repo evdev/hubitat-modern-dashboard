@@ -2535,7 +2535,7 @@ const server = createServer(async (req, res) => {
       const data = await synagoguePreviewCall({
         op,
         tz: state.hubTimeZone,
-        now: Date.now(),
+        now: Number(process.env.SYNAGOGUE_PREVIEW_AT) || Date.now(),
         revision: synagoguePreviewState.revision,
         config: synagoguePreviewState.config,
         body,

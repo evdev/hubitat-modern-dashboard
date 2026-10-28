@@ -44,4 +44,27 @@ assert(groovy.includes("synagogueMaskSecret"), "calendar links are masked");
   const poll = parent.slice(parent.indexOf("def renderData()"), parent.indexOf("def pollSlotId()"));
   assert(!poll.includes("synagogueSyncChild()") && !poll.includes("synagogueIsHidden"), "the dashboard poll must not enter the synagogue app");
 }
+assert(!groovy.includes("java.time"), "the child does not use java.time");
+for (const line of groovy.split("\n")) {
+  if (!/log\.(info|warn|debug|error|trace)/.test(line)) continue;
+  assert(!/url/i.test(line), "a log line mentions a url: " + line.trim());
+}
+assert(groovy.includes('input "alertDevices"'), "alert devices are chosen in the child");
+assert(!parent.includes("alertDevices"), "the parent does not pick alert devices");
+const routeBlock = parent.slice(parent.indexOf('path("/synagogue")'), parent.indexOf('path("/notifications")'));
+for (const route of routeBlock.match(/path\("([^"]+)"\)/g) || []) {
+  assert(/\/synagogue(\/(days|save|preview|skip|refresh))?/.test(route), "unexpected synagogue route " + route);
+}
+assert(!assets.includes("mld-synagogue.js"), "mld-synagogue.js stays out of the main asset list");
+assert(build.includes('HPM_SYNAGOGUE_APP_ID = "b7e1c4a2-6d8f-4b31-9a70-2c5e8f1d4a63"'), "synagogue app id is unchanged");
+assert(build.includes('HPM_SYNAGOGUE_PACKAGE_ID = "c6d5e4f3-a2b1-4098-8c7d-6e5f4a3b2c1d"'), "synagogue package id is unchanged");
+assert(build.includes('HPM_SYNAGOGUE_FILE_ID = "e1f2a3b4-c5d6-4789-a012-3456789abcde"'), "synagogue file id is unchanged");
+assert(/def synagogueApiVersion\(\) \{ return 1 \}/.test(groovy), "api version stays 1");
+assert(ui.includes("const API = 1"), "the tab api stays 1");
+for (const phrase of ["Closed dates", "Warm up earlier", "Today's times", "Download a backup", "Send a test alert"]) {
+  assert(ui.includes(phrase), "the tab says " + phrase);
+}
+assert(!ui.includes("prompt(") && !ui.includes("confirm("), "the tab does not use prompt or confirm");
+const backupFn = groovy.slice(groovy.indexOf("def synagogueBackup("), groovy.indexOf("def synagogueZmanLabel("));
+assert(backupFn.includes("def synagogueBackup(") && !/\burl\b/i.test(backupFn), "the backup builder does not copy a calendar link");
 console.log("synagogue source ok");

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.71
+
+- **Synagogue:** Closed dates stop services for a stretch, such as a renovation or a summer weekday break. Weekday closures leave Shabbat and Yom Tov running. A service that has already started still gets its end cues. Update mDash Synagogue.
+
+- **Synagogue:** One service can warm up earlier without changing the saved program or moving the lights. Agenda shows today's times from the times the hub already loaded. Update mDash Synagogue.
+
+- **Synagogue:** Problem alerts go to the phones chosen in the Synagogue app. Nothing is sent during Shabbat or Yom Tov, and an overnight calendar or times problem waits until morning. A backup downloads the schedule so it can be restored. Calendar links are left out of the backup. Update mDash Synagogue.
+
 ## 0.4.70
 
 - **Dashboard:** The first check after an update can still tell whether Shabbat and holidays are paused. Update Modern Dashboard.

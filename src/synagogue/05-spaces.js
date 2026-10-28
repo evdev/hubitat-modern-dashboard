@@ -1,5 +1,5 @@
 function renderSpaces() {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   if (!(model.spaces || []).length) box.appendChild(note("Add a room, then choose the lights, locks, and thermostats it should run."));
   for (const space of model.spaces || []) {
     const b = ce("button", "sched-row");
@@ -42,7 +42,7 @@ function spaceUserNames(id) {
 
 function renderSpace() {
   const space = editingSpace;
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   box.appendChild(field("Name", "text", space.name, (v) => { space.name = v; }, "space-name"));
   box.appendChild(field("Stay on if the next event is within minutes", "number", String(space.stayOnGapMin ?? 45), (v) => { space.stayOnGapMin = Number(v); }));
   box.appendChild(note("If the next event in this room starts within that many minutes, the lights stay on."));
@@ -68,7 +68,7 @@ function renderSpace() {
   return box;
 }
 
-function removeSpace(space) {
+async function removeSpace(space) {
   const users = spaceUserNames(space.id);
   if (users.length) {
     openSheet(space.name + " is still in use", (box) => {
@@ -77,8 +77,8 @@ function removeSpace(space) {
     return;
   }
   const previous = structuredClone(space);
-  offerUndo("Removed " + (space.name || "that space") + ".", () => saveOp({ op: "space", space: previous }, "spaces"));
-  saveOp({ op: "deleteSpace", id: space.id }, "spaces");
+  const ok = await saveOp({ op: "deleteSpace", id: space.id }, "spaces");
+  if (ok) offerUndo("Removed " + (space.name || "that space") + ".", () => saveOp({ op: "space", space: previous }, "spaces"));
 }
 
 function controlCard(control) {
@@ -195,7 +195,7 @@ function serviceNames() {
 }
 
 function spaceDevicePicker() {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   const selected = new Set((editingSpace.controls || []).flatMap((c) => (c.devices || []).map((d) => String(d.id))));
   box.appendChild(roomDevicePicker(
     (item) => selected.has(String(item.device.i)),
@@ -333,7 +333,7 @@ function pickCheck(on, toggle) {
   return check;
 }
 function presetFields(control, id, device) {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   const modes = modeList(device);
   const fans = fanList(device);
   control.comfort = control.comfort || {};

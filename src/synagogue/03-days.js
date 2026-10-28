@@ -1,5 +1,13 @@
 function renderDays() {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
+  const closedRow = ce("button", "sched-row");
+  closedRow.type = "button";
+  const closedTitle = ce("span", "sched-row-name");
+  closedTitle.textContent = "Closed dates";
+  closedRow.appendChild(closedTitle);
+  closedRow.appendChild(noteLine(closureSummary()));
+  closedRow.addEventListener("click", () => openClosures());
+  box.appendChild(closedRow);
   const unset = (model.menu || []).filter((row) => row.source === "unset").length;
   const total = (model.menu || []).length || 1;
   const done = total - unset;
@@ -12,11 +20,11 @@ function renderDays() {
   progress.appendChild(fill);
   box.appendChild(progress);
   box.appendChild(healthNote(done + " of " + total + " set up"));
-  const tools = ce("div", "synagogue-actions");
+  const tools = ce("div", "synagogue-actions synagogue-tools");
   tools.appendChild(ghost(selecting ? "Done selecting" : "Select", () => { selecting = !selecting; selectedDays = []; render(); }));
   tools.appendChild(ghost("Use Shabbat for all Yom Tov", () => openYomTov()));
   box.appendChild(tools);
-  box.appendChild(chips([["all", "All"], ["unset", "Needs setup"], ["same", "Uses Shabbat"], ["own", "Own schedule"]], dayFilter, (id) => { dayFilter = id; render(); }));
+  box.appendChild(chips([["all", "All"], ["unset", "Needs setup"], ["same", "Uses Shabbat"], ["own", "Own schedule"]], dayFilter, (id) => { dayFilter = id; render(); }, "synagogue-filters"));
   const search = ce("input");
   search.type = "search";
   search.className = "synagogue-find";
@@ -111,7 +119,7 @@ function openDay(id) { editingDay = id; view = "day"; render(); }
 function renderDay() {
   const row = (model.menu || []).find((item) => item.id === editingDay) || { id: editingDay, label: editingDay, he: "" };
   const day = dayRecord(editingDay);
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   box.appendChild(ghost("Back", () => { view = "days"; render(); }));
   const head = ce("div", "synagogue-name-row");
   const h = ce("h2", "sched-section-title");
@@ -205,7 +213,7 @@ function entryOrigin(day, entry) {
   return "inherited";
 }
 function entryGroup(label, entries, day) {
-  const box = ce("div");
+  const box = ce("div", "synagogue-stack");
   box.appendChild(sectionTitle(label));
   if (!entries.length) box.appendChild(note("None yet."));
   for (const entry of entries) {
@@ -236,7 +244,7 @@ function openInherited(entry, day) {
     box.appendChild(ghost("Turn off for this day", () => { closeSheet(); turnOff(entry); }, true));
   });
 }
-function turnOff(entry) {
+async function turnOff(entry) {
   const day = structuredClone(dayRecord(editingDay));
   const previous = structuredClone(day);
   if (day.source === "same") {
@@ -246,8 +254,8 @@ function turnOff(entry) {
   }
   day.changes = day.changes || { disabled: [], patched: {}, added: [] };
   day.changes.disabled = (day.changes.disabled || []).concat(entry.id);
-  offerUndo("Turned off " + entry.name + " for this day.", () => saveOp({ op: "day", dayId: editingDay, day: previous }));
-  saveOp({ op: "day", dayId: editingDay, day });
+  const ok = await saveOp({ op: "day", dayId: editingDay, day });
+  if (ok) offerUndo("Turned off " + entry.name + " for this day.", () => saveOp({ op: "day", dayId: editingDay, day: previous }));
 }
 function resetChange(entry) {
   const day = structuredClone(dayRecord(editingDay));
@@ -255,7 +263,7 @@ function resetChange(entry) {
   if (day.changes?.added) day.changes.added = day.changes.added.filter((e) => e.id !== entry.id);
   saveOp({ op: "day", dayId: editingDay, day }, "day");
 }
-function removeOwn(entry) {
+async function removeOwn(entry) {
   const day = structuredClone(dayRecord(editingDay));
   const previous = structuredClone(day);
   if (day.source === "changes") {
@@ -264,6 +272,149 @@ function removeOwn(entry) {
   } else {
     day.entries = (day.entries || []).filter((e) => e.id !== entry.id);
   }
-  offerUndo("Removed " + entry.name + ".", () => saveOp({ op: "day", dayId: editingDay, day: previous }, "day"));
-  saveOp({ op: "day", dayId: editingDay, day }, "day");
+  const ok = await saveOp({ op: "day", dayId: editingDay, day }, "day");
+  if (ok) offerUndo("Removed " + entry.name + ".", () => saveOp({ op: "day", dayId: editingDay, day: previous }, "day"));
+}
+
+function closureSummary() {
+  const today = hubToday();
+  const upcoming = (model.closures || []).filter((row) => String(row.to || "") >= String(today || ""));
+  if (!upcoming.length) return "None";
+  const first = upcoming[0];
+  const phrase = (first.name || "Closed") + ", " + fmtMonthDay(first.from) + " to " + fmtMonthDay(first.to);
+  if (upcoming.length === 1) return phrase;
+  return phrase + " · " + upcoming.length + " upcoming";
+}
+
+function closureWhere(row) {
+  if (!row?.spaceId) return "Everywhere";
+  return (model.spaces || []).find((space) => space.id === row.spaceId)?.name || "One space";
+}
+
+function closureDetail(row) {
+  const what = row.scope === "all" ? "All services" : "Weekday services only, Shabbat and Yom Tov still run";
+  const extra = row.bookings ? " · bookings and calendar events stop too" : "";
+  return fmtMonthDay(row.from) + " to " + fmtMonthDay(row.to) + " · " + what + " · " + closureWhere(row) + extra;
+}
+
+function openClosures() {
+  openSheet("Closed dates", (box) => {
+    const list = model.closures || [];
+    if (!list.length) box.appendChild(note("None yet. Add the dates the building is closed."));
+    for (const row of list) {
+      const card = ce("div", "sched-row");
+      const title = ce("strong");
+      title.textContent = row.name || "Closed";
+      card.appendChild(title);
+      card.appendChild(noteLine(closureDetail(row)));
+      const actions = ce("div", "synagogue-actions");
+      actions.appendChild(ghost("Edit", () => openClosure(row)));
+      actions.appendChild(ghost("Remove", async () => {
+        const previous = { ...row };
+        closeSheet();
+        const ok = await saveOp({ op: "deleteClosure", id: row.id }, "days");
+        if (ok) offerUndo("Removed " + (row.name || "closed dates") + ".", () => saveOp({ op: "closure", closure: previous }, "days"));
+      }, true));
+      card.appendChild(actions);
+      box.appendChild(card);
+    }
+    box.appendChild(primary("+ Add closed dates", () => openClosure(null)));
+  });
+}
+
+function openClosure(row) {
+  closureDraft = row ? { ...row } : {
+    id: "",
+    name: "",
+    from: hubToday(),
+    to: addIso(hubToday(), 14),
+    scope: "weekdays",
+    spaceId: "",
+    bookings: false,
+  };
+  closureSeq += 1;
+  openSheet(row ? "Edit closed dates" : "Add closed dates", (box) => {
+    box.appendChild(field("Name", "text", closureDraft.name, (v) => { closureDraft.name = v; refreshClosureStops(); }, "closure-name"));
+    const nameInput = box.querySelector("input");
+    if (nameInput && !closureDraft.name) nameInput.placeholder = "Summer break";
+    box.appendChild(field("From", "date", closureDraft.from, (v) => { closureDraft.from = v; refreshClosureStops(); }, "closure-from"));
+    box.appendChild(field("To", "date", closureDraft.to, (v) => { closureDraft.to = v; refreshClosureStops(); }, "closure-to"));
+    box.appendChild(note("What closes"));
+    box.appendChild(choiceButton("Weekday services only, Shabbat and Yom Tov still run", closureDraft.scope !== "all", () => {
+      closureDraft.scope = "weekdays";
+      openClosure(closureDraft);
+    }));
+    box.appendChild(choiceButton("All services", closureDraft.scope === "all", () => {
+      closureDraft.scope = "all";
+      openClosure(closureDraft);
+    }));
+    box.appendChild(note("Where"));
+    const places = [["", "Everywhere"]].concat((model.spaces || []).map((space) => [space.id, space.name || "Space"]));
+    box.appendChild(chips(places, closureDraft.spaceId || "", (id) => {
+      closureDraft.spaceId = id;
+      openClosure(closureDraft);
+    }));
+    box.appendChild(checkField("Also stop bookings and calendar events", !!closureDraft.bookings, (on) => {
+      closureDraft.bookings = on;
+      refreshClosureStops();
+    }));
+    const preview = ce("p", "synagogue-sub");
+    preview.dataset.closurePreview = "1";
+    preview.textContent = "Checking the next 3 weeks…";
+    box.appendChild(preview);
+    box.appendChild(primary("Save", () => {
+      const closure = {
+        id: closureDraft.id || undefined,
+        name: closureDraft.name,
+        from: closureDraft.from,
+        to: closureDraft.to,
+        scope: closureDraft.scope === "all" ? "all" : "weekdays",
+        spaceId: closureDraft.spaceId || "",
+        bookings: !!closureDraft.bookings,
+      };
+      closeSheet();
+      saveOp({ op: "closure", closure }, "days");
+    }));
+    refreshClosureStops();
+  });
+}
+
+function choiceButton(label, on, pick) {
+  const b = ce("button", "ghost-btn synagogue-choice" + (on ? " sched-primary-btn" : ""));
+  b.type = "button";
+  b.textContent = label;
+  b.addEventListener("click", pick);
+  return b;
+}
+
+async function refreshClosureStops() {
+  const seq = ++closureSeq;
+  const preview = document.querySelector("[data-closure-preview]");
+  if (!preview || !closureDraft?.from || !closureDraft?.to) return;
+  try {
+    const res = await post("synagogue/preview", {
+      op: "closure",
+      revision: model.revision,
+      closure: {
+        id: closureDraft.id || undefined,
+        name: closureDraft.name,
+        from: closureDraft.from,
+        to: closureDraft.to,
+        scope: closureDraft.scope === "all" ? "all" : "weekdays",
+        spaceId: closureDraft.spaceId || "",
+        bookings: !!closureDraft.bookings,
+      },
+    });
+    if (seq !== closureSeq) return;
+    const live = document.querySelector("[data-closure-preview]");
+    if (!live) return;
+    const n = Number(res.stops) || 0;
+    live.textContent = n
+      ? "In the next 3 weeks this stops " + n + (n === 1 ? " service." : " services.")
+      : "Nothing in the next 3 weeks. It will apply when the dates arrive.";
+  } catch (e) {
+    if (seq !== closureSeq) return;
+    const live = document.querySelector("[data-closure-preview]");
+    if (live) live.textContent = e.message || "Could not check those dates.";
+  }
 }
