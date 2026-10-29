@@ -42,6 +42,10 @@ const APP_DISPLAY_NAME = "Modern Dashboard";
 const HPM_BASE_URL =
   process.env.HPM_BASE_URL ??
   "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist";
+// Package title in HPM. Match Up uses the app name and namespace, which stay
+// "Modern Dashboard" / mDash. A master build keeps the release title.
+const HPM_IS_BETA = /\/beta(\/|$)/.test(HPM_BASE_URL);
+const HPM_PACKAGE_NAME = HPM_IS_BETA ? "mDash beta" : APP_DISPLAY_NAME;
 
 const APP_AUTHOR = "Ephrayim (evdev)";
 const GITHUB_URL = "https://github.com/evdev/hubitat-modern-dashboard";
@@ -817,7 +821,7 @@ THEN (required — bundles cannot install File Manager files or enable OAuth):
   Apps → Add User App → ${APP_DISPLAY_NAME} → select devices → Done
 
 HPM INSTALL (recommended):
-  Hubitat Package Manager → search for Modern Dashboard → Install
+  Hubitat Package Manager → search for ${HPM_PACKAGE_NAME} → Install
   OAuth and File Manager files are handled automatically.
   Listed in the default HPM repository (no custom repo URL required).
 `
@@ -828,7 +832,7 @@ rmSync(bundleZip, { force: true });
 execSync(`cd "${staging}" && zip -rq "${bundleZip}" .`, { stdio: "inherit" });
 
 const hpmManifest = {
-  packageName: APP_DISPLAY_NAME,
+  packageName: HPM_PACKAGE_NAME,
   minimumHEVersion: "2.3.0",
   author: APP_AUTHOR,
   version: pkg.version,
@@ -926,7 +930,7 @@ try {
 } catch {}
 const currentRepositoryPackage = {
   id: HPM_REPO_PACKAGE_ID,
-  name: APP_DISPLAY_NAME,
+  name: HPM_PACKAGE_NAME,
   category: "Convenience",
   location: PACKAGE_MANIFEST_URL,
   description: PACKAGE_DESCRIPTION,
