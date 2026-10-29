@@ -45,7 +45,14 @@ def appButtonHandler(btn) {
 def installed() { synagogueClearEnsured(); synagogueEnsureState(); initialize() }
 def updated() { synagogueClearEnsured(); synagogueEnsureState(); initialize() }
 
+def synagogueEnsureCaches() {
+    if (SYNAGOGUE_BUILT == null) SYNAGOGUE_BUILT = new java.util.concurrent.ConcurrentHashMap()
+    if (SYNAGOGUE_ENSURED == null) SYNAGOGUE_ENSURED = new java.util.concurrent.ConcurrentHashMap()
+    if (SYNAGOGUE_ENSURE_RUN == null) SYNAGOGUE_ENSURE_RUN = new java.util.concurrent.ConcurrentHashMap()
+}
+
 def synagogueClearEnsured() {
+    synagogueEnsureCaches()
     try { SYNAGOGUE_ENSURED.remove(synagogueAppId()) } catch (e) {}
     try { SYNAGOGUE_ENSURE_RUN.remove(synagogueAppId()) } catch (e) {}
 }
@@ -241,6 +248,7 @@ def synagogueDefaultConfig() {
 }
 
 def synagogueEnsureState() {
+    synagogueEnsureCaches()
     def appId = synagogueAppId()
     long runAt = 0L
     try { runAt = now() as long } catch (e) { runAt = 0L }
@@ -309,7 +317,24 @@ def synagogueEnsureState() {
 
 def synagogueCopy(obj) {
     if (obj == null) return null
-    return new groovy.json.JsonSlurper().parseText(groovy.json.JsonOutput.toJson(obj))
+    return synagoguePlain(new groovy.json.JsonSlurper().parseText(groovy.json.JsonOutput.toJson(obj)))
+}
+
+// Hubitat state cannot store JsonSlurper LazyMaps or GStrings.
+def synagoguePlain(value) {
+    if (value instanceof Map) {
+        def out = [:]
+        value.each { k, v -> out[k == null ? "null" : k.toString()] = synagoguePlain(v) }
+        return out
+    }
+    if (value instanceof Collection) {
+        def out = []
+        value.each { v -> out << synagoguePlain(v) }
+        return out
+    }
+    if (value instanceof GString) return value.toString()
+    if (value instanceof Number || value instanceof Boolean || value == null || value instanceof String) return value
+    return value.toString()
 }
 
 def synagogueBump() {
@@ -1328,6 +1353,7 @@ def synagogueSunIncomplete(Map ctx) {
 }
 
 def synagogueClearBuilt() {
+    synagogueEnsureCaches()
     try { SYNAGOGUE_BUILT.remove(synagogueAppId()) } catch (e) {}
 }
 
@@ -2014,7 +2040,8 @@ def synagogueFetchFarZman(Map body) {
     if (!synagogueLocationProblem()) {
         try {
             String geo = synagogueCoordsOk(place) ? "geo=pos&latitude=${place.lat}&longitude=${place.lon}&tzid=${java.net.URLEncoder.encode(tz.getID(), 'UTF-8')}" : "geo=zip&zip=${place.zip}"
-            httpGet([uri: "https://www.hebcal.com/zmanim?cfg=json&${geo}&date=${date}", timeout: 20]) { resp ->
+            String zUrl = "https://www.hebcal.com/zmanim?cfg=json&${geo}&date=${date}"
+            httpGet([uri: zUrl, timeout: 20]) { resp ->
                 if (resp?.status == 200) {
                     def parsed = synagogueParseZmanim(resp.data instanceof Map ? resp.data : [:])
                     if (parsed[date] instanceof Map) row = parsed[date]
@@ -2523,7 +2550,7 @@ def synagogueNormalizeSpace(Map raw) {
 }
 
 def synagogueNewId(String prefix) {
-    return prefix + "-" + System.currentTimeMillis() + "-" + Math.abs(new Random().nextInt() % 100000)
+    return prefix + "-" + now() + "-" + Math.abs(new Random().nextInt() % 100000)
 }
 
 def synagogueEntryNames(Map day) {
@@ -3446,7 +3473,7 @@ def synagogueLocationProblem() {
     if (synagogueCoordsOk(place)) return ""
     def zip = place.zip?.toString() ?: ""
     if (zip ==~ /\d{5}(-\d{4})?/ && !(zip ==~ /0+(-\d+)?/)) return ""
-    if (zip ==~ /0+(-\d+)?/) return "The hub postal code is still ${zip}, which is not a location. Enter your postal code under Settings, Hub Details, so prayer times can be loaded."
+    if (zip ==~ /0+(-\d+)?/) return "The hub postal code is still ${zip}, which is not a location. Enter your postal code under Settings, Hub Details, so prayer times can be loaded.".toString()
     return "Enter your postal code under Settings, Hub Details. Outside the United States, set the latitude, longitude, and time zone there instead."
 }
 
@@ -3458,7 +3485,7 @@ def synagogueLocationNotice() {
 def synagogueQueryKey() {
     def s = state.config?.settings ?: [:]
     def place = synagogueHubPlace()
-    return "${s.israel == true}|${s.candleMin}|${s.havdalahMinutes}|${place.lat}|${place.lon}|${place.tz?.getID()}|${place.zip}"
+    return "${s.israel == true}|${s.candleMin}|${s.havdalahMinutes}|${place.lat}|${place.lon}|${place.tz?.getID()}|${place.zip}".toString()
 }
 
 def synagogueFetch(boolean force) {
@@ -3498,12 +3525,12 @@ def synagogueFetch(boolean force) {
     def box = [zmanim: null, flags: null, error: ""]
     try {
         httpGet([uri: zUrl, timeout: 30]) { resp ->
-            if (resp.status != 200) box.error = "HebCal returned ${resp.status}."
+            if (resp.status != 200) box.error = "HebCal returned ${resp.status}.".toString()
             else box.zmanim = synagogueParseZmanim(resp.data instanceof Map ? resp.data : [:])
         }
         if (!box.error) {
             httpGet([uri: hUrl, timeout: 30]) { resp ->
-                if (resp.status != 200) box.error = "HebCal returned ${resp.status}."
+                if (resp.status != 200) box.error = "HebCal returned ${resp.status}.".toString()
                 else box.flags = synagogueParseItems(resp.data?.items instanceof List ? resp.data.items : [])
             }
         }
@@ -3783,7 +3810,7 @@ def synagogueDemoConfig(String tzId, long nowMs) {
 
 def synagogueCli(Map req) {
     def tz = req?.tz?.toString() ?: "America/New_York"
-    long nowMs = synagogueLong(req?.now) ?: System.currentTimeMillis()
+    long nowMs = synagogueLong(req?.now) ?: now()
     def ctx = [tz: tz, now: nowMs, zmanim: req?.zmanim ?: [:], flags: req?.flags ?: [:], sun: req?.sun ?: [:], scheduleNames: req?.scheduleNames ?: [:], horizon: req?.horizon ?: 21]
     if (req?.demo == true) {
         def demo = synagogueDemoContext(tz, nowMs)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.72
+
+- **Dashboard:** After an update, the dashboard can still read its files from the hub. A schedule import and a test action stay saved. Update Modern Dashboard.
+
+- **Shabbat & holidays:** A saved schedule stays as data the hub can keep. If an update clears the remembered sunrise and sunset, the next check loads them again. Update mDash Shabbat and Holidays.
+
+- **Synagogue:** A saved schedule stays as data the hub can keep. Prayer times still load after an update, and a cleared schedule memory is rebuilt. Update mDash Synagogue.
+
 ## 0.4.71
 
 - **Synagogue:** Closed dates stop services for a stretch, such as a renovation or a summer weekday break. Weekday closures leave Shabbat and Yom Tov running. A service that has already started still gets its end cues. Update mDash Synagogue.

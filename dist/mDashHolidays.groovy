@@ -458,7 +458,15 @@ def holidayNotScheduledReason() {
 // --- state ---
 
 // One repair per hub run, and then once per day until a save bumps the revision.
+def holidayEnsureCaches() {
+    if (HOLIDAY_BUILT == null) HOLIDAY_BUILT = new java.util.concurrent.ConcurrentHashMap()
+    if (HOLIDAY_ENSURED == null) HOLIDAY_ENSURED = new java.util.concurrent.ConcurrentHashMap()
+    if (HOLIDAY_ENSURE_RUN == null) HOLIDAY_ENSURE_RUN = new java.util.concurrent.ConcurrentHashMap()
+    if (HOLIDAY_SUN == null) HOLIDAY_SUN = new java.util.concurrent.ConcurrentHashMap()
+}
+
 def holidayEnsureState() {
+    holidayEnsureCaches()
     def appId = holidayAppId()
     long runAt = 0L
     try { runAt = now() as long } catch (e) { runAt = 0L }
@@ -537,7 +545,7 @@ def holidayEmptyTemplate() {
 
 def holidayConfigCopy() {
     def raw = groovy.json.JsonOutput.toJson(state.config)
-    return new groovy.json.JsonSlurper().parseText(raw)
+    return holidayPlain(new groovy.json.JsonSlurper().parseText(raw))
 }
 
 def holidayMergeSettings(current, incoming) {
@@ -641,6 +649,7 @@ def holidayAppId() {
 }
 
 def holidayClearMemos() {
+    holidayEnsureCaches()
     def id = holidayAppId()
     try { HOLIDAY_BUILT.remove(id) } catch (e) {}
     try { HOLIDAY_ENSURED.remove(id) } catch (e) {}
@@ -649,6 +658,7 @@ def holidayClearMemos() {
 }
 
 def holidayDropBuilt() {
+    holidayEnsureCaches()
     try { HOLIDAY_BUILT.remove(holidayAppId()) } catch (e) {}
 }
 
@@ -974,6 +984,7 @@ def holidayCacheable(config) {
 }
 
 def holidayBuiltSlot() {
+    holidayEnsureCaches()
     def id = holidayAppId()
     def key = holidayShellKey()
     def hit = HOLIDAY_BUILT.get(id)
@@ -1730,6 +1741,7 @@ def holidayCustomAt(entry, day, TimeZone tz) {
 }
 
 def holidaySun(String date) {
+    holidayEnsureCaches()
     def appId = holidayAppId()
     long runAt = 0L
     try { runAt = now() as long } catch (e) { runAt = 0L }

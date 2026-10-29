@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.71
+// Modern Dashboard v0.4.72
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.71"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.72"
 @Field private static List LOCAL_FILE_NAME_CACHE = null
 @Field private static long LOCAL_FILE_NAME_CACHE_AT = 0L
 @Field private static final long LOCAL_FILE_NAME_CACHE_TTL = 30000L
@@ -87,7 +87,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.71 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.72 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -810,7 +810,7 @@ def schedImportClearPaste() {
 def schedImportRunFromUi() {
     def preview = schedImportPreviewFromSettings()
     if (preview.error) {
-        state.schedImportResult = "Import failed: ${preview.error}"
+        state.schedImportResult = "Import failed: ${preview.error}".toString()
         state.schedImportSkipped = null
         return
     }
@@ -821,11 +821,11 @@ def schedImportRunFromUi() {
     }
     def applied = schedImportApplyOk(preview.ok)
     if (applied.error) {
-        state.schedImportResult = "Import failed: ${applied.error}"
+        state.schedImportResult = "Import failed: ${applied.error}".toString()
         state.schedImportSkipped = schedImportFormatSkippedHtml(preview.skipped)
         return
     }
-    state.schedImportResult = "Imported ${applied.count} schedule(s)."
+    state.schedImportResult = "Imported ${applied.count} schedule(s).".toString()
     state.schedImportSkipped = schedImportFormatSkippedHtml(preview.skipped)
     try {
         log.info "Modern Dashboard: imported ${applied.count} schedule(s) from Simple Automation export" +
@@ -1594,7 +1594,7 @@ def schedUploadFormatSavedHtml(rows) {
         lines << "<li><b>${name}</b>${text ? " — ${text}" : ""}</li>"
     }
     if (!lines) return null
-    return "<ul style='margin:6px 0 0;padding-left:18px;color:#1f7a45'>${lines.join('')}</ul>"
+    return "<ul style='margin:6px 0 0;padding-left:18px;color:#1f7a45'>${lines.join('')}</ul>".toString()
 }
 
 def schedUploadLoadFromUi() {
@@ -1675,7 +1675,7 @@ def schedUploadFormatSkippedHtml(skipped) {
         "<li><b>${htmlEsc(row.name ?: "Untitled")}</b>: ${htmlEsc(row.error)}</li>"
     }
     if (!lines) return null
-    return "<ul style='margin:6px 0 0;padding-left:18px;color:#b8324a'>${lines.join('')}</ul>"
+    return "<ul style='margin:6px 0 0;padding-left:18px;color:#b8324a'>${lines.join('')}</ul>".toString()
 }
 
 def holidayUploadRun(body) {
@@ -2959,7 +2959,13 @@ def assetBodyByteLength(String body) {
     return body ? body.getBytes("UTF-8").length : 0
 }
 
+def ensureLocalAssetCache() {
+    if (LOCAL_ASSET_CACHE == null) LOCAL_ASSET_CACHE = [:]
+    if (LOCAL_ASSET_CACHE_VERSION == null) LOCAL_ASSET_CACHE_VERSION = ""
+}
+
 def clearLocalAssetCache(boolean keepGeneration = false) {
+    ensureLocalAssetCache()
     def gen = LOCAL_ASSET_CACHE_VERSION
     LOCAL_ASSET_CACHE.clear()
     LOCAL_ASSET_CACHE_BYTES = 0
@@ -2983,6 +2989,7 @@ def ensureAssetCacheVersion() {
 
 def rememberCachedAsset(String fileName, String body) {
     if (!body || !isCacheableAsset(fileName)) return
+    ensureLocalAssetCache()
     ensureAssetCacheVersion()
     def key = assetCacheKey(fileName)
     def bytes = assetBodyByteLength(body)
@@ -2998,6 +3005,7 @@ def rememberCachedAsset(String fileName, String body) {
 
 def readCachedAsset(String fileName) {
     if (!isCacheableAsset(fileName)) return null
+    ensureLocalAssetCache()
     ensureAssetCacheVersion()
     return LOCAL_ASSET_CACHE[assetCacheKey(fileName)]
 }
@@ -3016,7 +3024,7 @@ def fetchLocalAssetUncached(String fileName) {
     def result = ""
     try {
         def params = [
-            uri: "${hubBaseUri()}/local/${fileName}",
+            uri: "${hubBaseUri()}/local/${fileName}".toString(),
             contentType: "text/plain",
             textParser: true,
             timeout: 30,
@@ -3106,7 +3114,7 @@ def requiredAssetFiles() {
 }
 
 def hubBaseUri() {
-    return "http://${location.hub.localIP}:8080"
+    return "http://${location.hub.localIP}:8080".toString()
 }
 
 def hubLoginUri() {
@@ -3250,7 +3258,7 @@ def fetchLocalFileNames() {
     def names = []
     try {
         def params = [
-            uri: "${hubBaseUri()}/hub/fileManager/json",
+            uri: "${hubBaseUri()}/hub/fileManager/json".toString(),
             timeout: 15,
             ignoreSSLIssues: true
         ]
@@ -3434,7 +3442,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.71.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.72.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -3533,7 +3541,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.71.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.72.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -9025,7 +9033,7 @@ def triggerSaveRuleFromUi() {
     }
     def map = parseTriggerRulesMap()
     if (!existingId && map.size() >= maxTriggerRules()) {
-        state.triggerEditError = "Rule limit reached (${maxTriggerRules()})"
+        state.triggerEditError = "Rule limit reached (${maxTriggerRules()})".toString()
         return
     }
     def rule = result.rule
@@ -9372,9 +9380,9 @@ def triggerSendTestAction() {
     ]
     enqueueTriggerActionFromRule(fake)
     def dur = triggerDefaultDurationSec()
-    state.triggerTestOk = cameraId ?
+    state.triggerTestOk = (cameraId ?
         "Queued test action (camera ${cameraId}, ${dur}s overlay${toneId ? ", tone" : ", no tone (shunted)"}, notification)." :
-        "Queued test action (no camera configured; notification${toneId ? " + tone" : ""}; default overlay ${dur}s)."
+        "Queued test action (no camera configured; notification${toneId ? " + tone" : ""}; default overlay ${dur}s).").toString()
 }
 
 def triggerActionsGet() {

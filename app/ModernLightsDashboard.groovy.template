@@ -810,7 +810,7 @@ def schedImportClearPaste() {
 def schedImportRunFromUi() {
     def preview = schedImportPreviewFromSettings()
     if (preview.error) {
-        state.schedImportResult = "Import failed: ${preview.error}"
+        state.schedImportResult = "Import failed: ${preview.error}".toString()
         state.schedImportSkipped = null
         return
     }
@@ -821,11 +821,11 @@ def schedImportRunFromUi() {
     }
     def applied = schedImportApplyOk(preview.ok)
     if (applied.error) {
-        state.schedImportResult = "Import failed: ${applied.error}"
+        state.schedImportResult = "Import failed: ${applied.error}".toString()
         state.schedImportSkipped = schedImportFormatSkippedHtml(preview.skipped)
         return
     }
-    state.schedImportResult = "Imported ${applied.count} schedule(s)."
+    state.schedImportResult = "Imported ${applied.count} schedule(s).".toString()
     state.schedImportSkipped = schedImportFormatSkippedHtml(preview.skipped)
     try {
         log.info "Modern Dashboard: imported ${applied.count} schedule(s) from Simple Automation export" +
@@ -1594,7 +1594,7 @@ def schedUploadFormatSavedHtml(rows) {
         lines << "<li><b>${name}</b>${text ? " — ${text}" : ""}</li>"
     }
     if (!lines) return null
-    return "<ul style='margin:6px 0 0;padding-left:18px;color:#1f7a45'>${lines.join('')}</ul>"
+    return "<ul style='margin:6px 0 0;padding-left:18px;color:#1f7a45'>${lines.join('')}</ul>".toString()
 }
 
 def schedUploadLoadFromUi() {
@@ -1675,7 +1675,7 @@ def schedUploadFormatSkippedHtml(skipped) {
         "<li><b>${htmlEsc(row.name ?: "Untitled")}</b>: ${htmlEsc(row.error)}</li>"
     }
     if (!lines) return null
-    return "<ul style='margin:6px 0 0;padding-left:18px;color:#b8324a'>${lines.join('')}</ul>"
+    return "<ul style='margin:6px 0 0;padding-left:18px;color:#b8324a'>${lines.join('')}</ul>".toString()
 }
 
 def holidayUploadRun(body) {
@@ -2959,7 +2959,13 @@ def assetBodyByteLength(String body) {
     return body ? body.getBytes("UTF-8").length : 0
 }
 
+def ensureLocalAssetCache() {
+    if (LOCAL_ASSET_CACHE == null) LOCAL_ASSET_CACHE = [:]
+    if (LOCAL_ASSET_CACHE_VERSION == null) LOCAL_ASSET_CACHE_VERSION = ""
+}
+
 def clearLocalAssetCache(boolean keepGeneration = false) {
+    ensureLocalAssetCache()
     def gen = LOCAL_ASSET_CACHE_VERSION
     LOCAL_ASSET_CACHE.clear()
     LOCAL_ASSET_CACHE_BYTES = 0
@@ -2983,6 +2989,7 @@ def ensureAssetCacheVersion() {
 
 def rememberCachedAsset(String fileName, String body) {
     if (!body || !isCacheableAsset(fileName)) return
+    ensureLocalAssetCache()
     ensureAssetCacheVersion()
     def key = assetCacheKey(fileName)
     def bytes = assetBodyByteLength(body)
@@ -2998,6 +3005,7 @@ def rememberCachedAsset(String fileName, String body) {
 
 def readCachedAsset(String fileName) {
     if (!isCacheableAsset(fileName)) return null
+    ensureLocalAssetCache()
     ensureAssetCacheVersion()
     return LOCAL_ASSET_CACHE[assetCacheKey(fileName)]
 }
@@ -3016,7 +3024,7 @@ def fetchLocalAssetUncached(String fileName) {
     def result = ""
     try {
         def params = [
-            uri: "${hubBaseUri()}/local/${fileName}",
+            uri: "${hubBaseUri()}/local/${fileName}".toString(),
             contentType: "text/plain",
             textParser: true,
             timeout: 30,
@@ -3106,7 +3114,7 @@ def requiredAssetFiles() {
 }
 
 def hubBaseUri() {
-    return "http://${location.hub.localIP}:8080"
+    return "http://${location.hub.localIP}:8080".toString()
 }
 
 def hubLoginUri() {
@@ -3250,7 +3258,7 @@ def fetchLocalFileNames() {
     def names = []
     try {
         def params = [
-            uri: "${hubBaseUri()}/hub/fileManager/json",
+            uri: "${hubBaseUri()}/hub/fileManager/json".toString(),
             timeout: 15,
             ignoreSSLIssues: true
         ]
@@ -9025,7 +9033,7 @@ def triggerSaveRuleFromUi() {
     }
     def map = parseTriggerRulesMap()
     if (!existingId && map.size() >= maxTriggerRules()) {
-        state.triggerEditError = "Rule limit reached (${maxTriggerRules()})"
+        state.triggerEditError = "Rule limit reached (${maxTriggerRules()})".toString()
         return
     }
     def rule = result.rule
@@ -9372,9 +9380,9 @@ def triggerSendTestAction() {
     ]
     enqueueTriggerActionFromRule(fake)
     def dur = triggerDefaultDurationSec()
-    state.triggerTestOk = cameraId ?
+    state.triggerTestOk = (cameraId ?
         "Queued test action (camera ${cameraId}, ${dur}s overlay${toneId ? ", tone" : ", no tone (shunted)"}, notification)." :
-        "Queued test action (no camera configured; notification${toneId ? " + tone" : ""}; default overlay ${dur}s)."
+        "Queued test action (no camera configured; notification${toneId ? " + tone" : ""}; default overlay ${dur}s).").toString()
 }
 
 def triggerActionsGet() {
