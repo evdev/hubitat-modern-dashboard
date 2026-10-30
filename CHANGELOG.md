@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.73
+
+- **Dashboard:** Clocks show the hub's time. Schedules, notifications, and the time tile stay on that clock when the phone is in another time zone. Update Modern Dashboard.
+
+- **Shabbat & holidays:** Candle lighting and the other times stay on the hub's clock. Update mDash Shabbat and Holidays.
+
+- **Synagogue:** Service times stay on the hub's clock. Update mDash Synagogue.
+
 ## 0.4.72
 
 - **Dashboard:** After an update, the dashboard can still read its files from the hub. A schedule import and a test action stay saved. Update Modern Dashboard.
