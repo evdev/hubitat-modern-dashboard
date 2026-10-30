@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.76
+
+- **Dashboard:** A clock that a phone refuses to move still shows the hub's hour and date. Shabbat timeline days keep the hub's date. Update Modern Dashboard.
+
+- **Shabbat & holidays:** Day headings stay on the hub's calendar when the phone is in another time zone. Update mDash Shabbat and Holidays.
+
+- **Synagogue:** Calendar link times stay on the hub's calendar day. Update mDash Synagogue.
+
 ## 0.4.75
 
 - **Dashboard:** A schedule keeps the hub's date with its hour. The time tile uses the hub's clock and the phone's 12-hour or 24-hour choice. Update Modern Dashboard.

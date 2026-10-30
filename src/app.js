@@ -12154,36 +12154,9 @@
   function formatTimeCardParts(style, now = new Date()) {
     const withSeconds = style === "time_seconds";
     const hour24 = typeof browserHour24 === "function" && browserHour24();
-    let offset = null;
-    try {
-      const raw = globalThis.__MLD?.holidayBridge?.().offsetMin;
-      if (raw != null && raw !== "") offset = Number(raw);
-    } catch (e) {}
-    if (Number.isFinite(offset)) {
-      const shifted = new Date(now.getTime() + offset * 60000);
-      const hh = shifted.getUTCHours();
-      const minute = String(shifted.getUTCMinutes()).padStart(2, "0");
-      let time;
-      let ampm = "";
-      if (hour24) time = String(hh).padStart(2, "0") + ":" + minute;
-      else {
-        ampm = hh >= 12 ? "PM" : "AM";
-        time = (hh % 12 || 12) + ":" + minute;
-      }
-      if (withSeconds) time += ":" + String(shifted.getUTCSeconds()).padStart(2, "0");
-      let date = "";
-      if (style === "time_date") {
-        try {
-          date = new Intl.DateTimeFormat(undefined, {
-            timeZone: "UTC",
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-          }).format(shifted);
-        } catch (e) { date = ""; }
-      }
-      return { time, ampm, date, showDate: style === "time_date" };
-    }
+    // One path for every clock: the hub's zone, or the hub's offset when a
+    // phone ignores that zone. Never a second, offset-only path that would
+    // skip daylight saving.
     const zone = typeof hubClockZone === "function" ? hubClockZone() : "";
     const bag = typeof hubWallBag === "function" ? hubWallBag(now.getTime(), zone, withSeconds) : null;
     if (!bag) return { time: "", ampm: "", date: "", showDate: style === "time_date" };
@@ -17188,7 +17161,7 @@
   let sunTimes = { sunrise: null, sunset: null };
   let schedUse24Hour = false;
   let holidaysAvailable = false;
-  globalThis.__MLD.holidayBridge = () => ({ schedules, use24: schedUse24Hour, tz: hubTimeZone, offsetMin: hubOffsetMin });
+  globalThis.__MLD.holidayBridge = () => ({ schedules, use24: schedUse24Hour, tz: hubTimeZone, offsetMin: hubOffsetMin, now: hubNowMs });
   let schedDraft = null;     // in-progress create/edit draft
   let parkedHoliday = null;  // holiday view kept while a schedule editor is open
   let schedStep = 1;         // 1 | 2 | 3
@@ -18612,11 +18585,16 @@
       const p = {};
       for (const x of new Intl.DateTimeFormat("en-US", o).formatToParts(new Date(ms))) p[x.type] = x.value;
       return p.year + "-" + p.month + "-" + p.day + "T" + p.hour + ":" + p.minute;
-    } catch {
-      const d = new Date(ms);
-      const z = (n) => String(n).padStart(2, "0");
-      return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + "T" + z(d.getHours()) + ":" + z(d.getMinutes());
+    } catch {}
+    const bag = typeof hubWallBag === "function" ? hubWallBag(ms, zone, false) : null;
+    if (bag) {
+      const month = String(HUB_MONTHS.indexOf(String(bag.month)) + 1).padStart(2, "0");
+      return bag.year + "-" + month + "-" + String(bag.day).padStart(2, "0") + "T" +
+        String(bag.hour24).padStart(2, "0") + ":" + bag.minute;
     }
+    const d = new Date(ms);
+    const z = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + "T" + z(d.getHours()) + ":" + z(d.getMinutes());
   }
 
   function renderSchedOncePicker(tr) {

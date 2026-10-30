@@ -429,8 +429,6 @@ function usableTimeZone(value) {
   const candidates = [];
   if (HUB_ZONE_ALIASES[raw]) candidates.push(HUB_ZONE_ALIASES[raw]);
   candidates.push(raw);
-  let device = "";
-  try { device = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) {}
   for (const id of candidates) {
     try {
       const resolved = new Intl.DateTimeFormat("en-US", {
@@ -439,9 +437,7 @@ function usableTimeZone(value) {
         minute: "2-digit",
         hourCycle: "h23",
       }).resolvedOptions().timeZone;
-      if (!resolved) continue;
-      if (resolved === device && id !== device) continue;
-      return resolved;
+      if (resolved) return resolved;
     } catch (e) {}
   }
   return "";
@@ -458,6 +454,95 @@ function hubClockZone() {
   }
 }
 
+function hubClockInfo() {
+  try {
+    const bridge = globalThis.__MLD && globalThis.__MLD.holidayBridge;
+    if (typeof bridge !== "function") return null;
+    const data = bridge() || {};
+    const zone = usableTimeZone(data.tz);
+    let offsetMin = null;
+    if (data.offsetMin != null && data.offsetMin !== "") {
+      const n = Number(data.offsetMin);
+      if (Number.isFinite(n)) offsetMin = n;
+    }
+    const now = Number(data.now);
+    return { zone, offsetMin, now: Number.isFinite(now) && now > 0 ? now : 0 };
+  } catch (e) {
+    return null;
+  }
+}
+
+function zoneOffsetMinAt(zone, ms) {
+  if (!zone) return null;
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    const bag = {};
+    for (const part of fmt.formatToParts(new Date(ms))) {
+      if (part.type !== "literal") bag[part.type] = part.value;
+    }
+    let hour = Number(bag.hour);
+    if (hour === 24) hour = 0;
+    const stamp = Date.UTC(
+      Number(bag.year),
+      Number(bag.month) - 1,
+      Number(bag.day),
+      hour,
+      Number(bag.minute),
+      Number(bag.second)
+    );
+    return Math.round((stamp - Math.floor(ms / 1000) * 1000) / 60000);
+  } catch (e) {
+    return null;
+  }
+}
+
+// A phone can quietly ignore a time zone and use its own. Compare the zone
+// against the offset the hub reported for its current time; only trust the zone
+// when they agree, so future dates still follow daylight saving.
+let hubZoneCheck = { key: "", ok: false };
+function hubZoneHonored(info) {
+  if (!info || !info.zone || info.offsetMin == null) return false;
+  const key = info.zone + "|" + info.offsetMin + "|" + Math.floor((info.now || 0) / 60000);
+  if (hubZoneCheck.key === key) return hubZoneCheck.ok;
+  const at = info.now || Date.now();
+  const got = zoneOffsetMinAt(info.zone, at);
+  const ok = got != null && Math.abs(got - info.offsetMin) <= 1;
+  hubZoneCheck = { key, ok };
+  return ok;
+}
+
+const HUB_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const HUB_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Fallback for a phone that ignores the time zone: shift the instant by the
+// offset the hub reported, then read the parts as if they were UTC.
+function offsetWallBag(ms, offsetMin, withSeconds) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || !Number.isFinite(offsetMin)) return null;
+  const d = new Date(n + offsetMin * 60000);
+  const bag = {
+    year: String(d.getUTCFullYear()),
+    month: HUB_MONTHS[d.getUTCMonth()],
+    day: String(d.getUTCDate()),
+    weekday: HUB_WEEKDAYS[d.getUTCDay()],
+    hour: String(d.getUTCHours()).padStart(2, "0"),
+    minute: String(d.getUTCMinutes()).padStart(2, "0"),
+    hour24: d.getUTCHours(),
+    fromOffset: true,
+  };
+  if (withSeconds) bag.second = String(d.getUTCSeconds()).padStart(2, "0");
+  return bag;
+}
+
 const hubWallFormatters = new Map();
 
 function hubWallFormatter(zone, withSeconds) {
@@ -465,6 +550,7 @@ function hubWallFormatter(zone, withSeconds) {
   let fmt = hubWallFormatters.get(key);
   if (fmt) return fmt;
   const options = {
+    year: "numeric",
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -479,7 +565,6 @@ function hubWallFormatter(zone, withSeconds) {
   hubWallFormatters.set(key, fmt);
   return fmt;
 }
-
 function hubHour24(bag) {
   let hour = Number(bag.hour);
   if (!Number.isFinite(hour)) return null;
@@ -496,9 +581,22 @@ function hubHour24(bag) {
 function hubWallBag(ms, zone, withSeconds) {
   const n = Number(ms);
   if (!Number.isFinite(n)) return null;
+  const info = hubClockInfo();
+  let resolved = zone || "";
+  if (info && info.zone) {
+    if (!resolved) resolved = info.zone;
+    else if (resolved === info.zone && !hubZoneHonored(info) && info.offsetMin != null) {
+      const shifted = offsetWallBag(n, info.offsetMin, withSeconds);
+      if (shifted) return shifted;
+    }
+  }
+  if (!resolved && info && info.offsetMin != null) {
+    const shifted = offsetWallBag(n, info.offsetMin, withSeconds);
+    if (shifted) return shifted;
+  }
   let parts;
   try {
-    parts = hubWallFormatter(zone, withSeconds).formatToParts(new Date(n));
+    parts = hubWallFormatter(resolved, withSeconds).formatToParts(new Date(n));
   } catch (e) {
     return null;
   }
@@ -531,6 +629,12 @@ function formatHubDate(ms, zone) {
   const bag = hubWallBag(ms, zone, false);
   if (!bag || !bag.month) return "";
   return bag.month + " " + bag.day;
+}
+
+function formatHubDay(ms, zone) {
+  const bag = hubWallBag(ms, zone, false);
+  if (!bag || !bag.month) return "";
+  return (bag.weekday ? bag.weekday + ", " : "") + bag.month + " " + bag.day;
 }
 
 function browserHour24() {
@@ -571,13 +675,10 @@ function formatSensorLastEvent(ms) {
 }
 
 function hubDayKey(ms, zone) {
-  const opts = { year: "numeric", month: "2-digit", day: "2-digit" };
-  if (zone) opts.timeZone = zone;
-  try {
-    return new Intl.DateTimeFormat("en-CA", opts).format(new Date(ms));
-  } catch (e) {
-    return "";
-  }
+  const bag = hubWallBag(ms, zone, false);
+  if (!bag || !bag.day) return "";
+  const month = String(HUB_MONTHS.indexOf(String(bag.month)) + 1).padStart(2, "0");
+  return bag.year + "-" + month + "-" + String(bag.day).padStart(2, "0");
 }
 
 function sensorLastEventLine(dev) {

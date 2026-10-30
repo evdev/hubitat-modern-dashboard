@@ -123,12 +123,8 @@ function groupChoice(title) {
   return checkResult.choices[title];
 }
 function isoFromMs(ms) {
-  try {
-    const zone = tz();
-    const opts = { year: "numeric", month: "2-digit", day: "2-digit" };
-    if (zone) opts.timeZone = zone;
-    return new Intl.DateTimeFormat("en-CA", opts).format(new Date(Number(ms)));
-  } catch (e) { return ""; }
+  if (typeof hubDayKey !== "function") return "";
+  return hubDayKey(Number(ms), tz());
 }
 async function checkLink() {
   if (!calendarDraft.url.trim()) { flash("Paste the secret iCal link.", true); return; }

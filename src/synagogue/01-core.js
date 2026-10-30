@@ -89,12 +89,8 @@ function fmtClock(ms, hm) {
 function hubToday() {
   const fromHub = model?.today?.date;
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(fromHub || ""))) return String(fromHub);
-  try {
-    const zone = tz() || "";
-    const opts = { year: "numeric", month: "2-digit", day: "2-digit" };
-    if (zone) opts.timeZone = zone;
-    return dateFormatter("today|" + zone, "en-CA", opts).format(new Date());
-  } catch (e) { return ""; }
+  const key = typeof hubDayKey === "function" ? hubDayKey(Date.now(), tz()) : "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(key) ? key : "";
 }
 function addIso(iso, n) {
   const [y, m, d] = String(iso || "").split("-").map(Number);

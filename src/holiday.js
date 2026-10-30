@@ -1260,16 +1260,32 @@ function zoomSlices(span) {
 }
 
 function fmtClock(ms) {
-  const parts = zonedParts(ms, hubTz());
+  const zone = hubTz();
+  if (typeof formatHubWall === "function") {
+    const text = formatHubWall(ms, zone, { hour24: catalog().use24 === true });
+    if (text) return text;
+  }
+  const parts = zonedParts(ms, zone);
   const minute = String(parts.minute).padStart(2, "0");
   if (catalog().use24 === true) return String(parts.hour).padStart(2, "0") + ":" + minute;
   return (parts.hour % 12 || 12) + ":" + minute + " " + (parts.hour >= 12 ? "PM" : "AM");
 }
 
-function fmtDay(ms) {
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "short", month: "short", day: "numeric", timeZone: hubTz(),
-  }).format(new Date(ms));
+const HOLIDAY_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function fmtDay(ms, zoneOverride) {
+  const zone = zoneOverride || hubTz();
+  if (typeof formatHubDay === "function") {
+    const text = formatHubDay(ms, zone);
+    if (text) return text;
+  }
+  try {
+    const parts = zonedParts(ms, zone);
+    const month = HOLIDAY_MONTHS[parts.month - 1] || String(parts.month);
+    return (parts.weekday ? parts.weekday + ", " : "") + month + " " + parts.day;
+  } catch (e) {
+    return "";
+  }
 }
 
 function openTimelinePopup(span, id, actions) {
