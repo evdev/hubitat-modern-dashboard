@@ -12153,15 +12153,44 @@
 
   function formatTimeCardParts(style, now = new Date()) {
     const withSeconds = style === "time_seconds";
-    let use24 = false;
-    try { use24 = globalThis.__MLD?.holidayBridge?.().use24 === true; } catch (e) {}
+    const hour24 = typeof browserHour24 === "function" && browserHour24();
+    let offset = null;
+    try {
+      const raw = globalThis.__MLD?.holidayBridge?.().offsetMin;
+      if (raw != null && raw !== "") offset = Number(raw);
+    } catch (e) {}
+    if (Number.isFinite(offset)) {
+      const shifted = new Date(now.getTime() + offset * 60000);
+      const hh = shifted.getUTCHours();
+      const minute = String(shifted.getUTCMinutes()).padStart(2, "0");
+      let time;
+      let ampm = "";
+      if (hour24) time = String(hh).padStart(2, "0") + ":" + minute;
+      else {
+        ampm = hh >= 12 ? "PM" : "AM";
+        time = (hh % 12 || 12) + ":" + minute;
+      }
+      if (withSeconds) time += ":" + String(shifted.getUTCSeconds()).padStart(2, "0");
+      let date = "";
+      if (style === "time_date") {
+        try {
+          date = new Intl.DateTimeFormat(undefined, {
+            timeZone: "UTC",
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          }).format(shifted);
+        } catch (e) { date = ""; }
+      }
+      return { time, ampm, date, showDate: style === "time_date" };
+    }
     const zone = typeof hubClockZone === "function" ? hubClockZone() : "";
     const bag = typeof hubWallBag === "function" ? hubWallBag(now.getTime(), zone, withSeconds) : null;
     if (!bag) return { time: "", ampm: "", date: "", showDate: style === "time_date" };
     const minute = bag.minute || "00";
     let time;
     let ampm = "";
-    if (use24) time = String(bag.hour24).padStart(2, "0") + ":" + minute;
+    if (hour24) time = String(bag.hour24).padStart(2, "0") + ":" + minute;
     else {
       ampm = bag.hour24 >= 12 ? "PM" : "AM";
       time = (bag.hour24 % 12 || 12) + ":" + minute;
@@ -17154,11 +17183,12 @@
   let schedSaveInFlight = false;
   const schedRowInFlight = new Set();
   let hubTimeZone = "";
+  let hubOffsetMin = null;
   let hubNowMs = 0;
   let sunTimes = { sunrise: null, sunset: null };
   let schedUse24Hour = false;
   let holidaysAvailable = false;
-  globalThis.__MLD.holidayBridge = () => ({ schedules, use24: schedUse24Hour, tz: hubTimeZone });
+  globalThis.__MLD.holidayBridge = () => ({ schedules, use24: schedUse24Hour, tz: hubTimeZone, offsetMin: hubOffsetMin });
   let schedDraft = null;     // in-progress create/edit draft
   let parkedHoliday = null;  // holiday view kept while a schedule editor is open
   let schedStep = 1;         // 1 | 2 | 3
@@ -17179,6 +17209,10 @@
     if (typeof data.hubTimeZone === "string") {
       const raw = data.hubTimeZone.trim();
       hubTimeZone = typeof usableTimeZone === "function" ? (usableTimeZone(raw) || "") : raw;
+    }
+    if (data.hubOffsetMin != null && data.hubOffsetMin !== "") {
+      const off = Number(data.hubOffsetMin);
+      hubOffsetMin = Number.isFinite(off) ? off : null;
     }
     const hn = Number(data.hubNow);
     if (hn > 0) hubNowMs = hn;
@@ -17589,16 +17623,23 @@
     return hint;
   }
 
-  function fmtSchedTime(ms, hm) {
-    const stamped = typeof formatHubHm === "function" ? formatHubHm(hm, schedUse24Hour) : "";
-    if (stamped) return stamped;
+  function fmtSchedTime(ms, hm, on) {
+    const clock = typeof formatHubHm === "function" ? formatHubHm(hm, schedUse24Hour) : "";
+    if (clock) {
+      const day = String(on || "").trim();
+      if (day) return day + ", " + clock;
+      const n = Number(ms);
+      const zone = typeof usableTimeZone === "function" ? usableTimeZone(hubTimeZone) : hubTimeZone;
+      const date = Number.isFinite(n) && typeof formatHubDate === "function" ? formatHubDate(n, zone) : "";
+      return date ? date + ", " + clock : clock;
+    }
     if (ms == null) return "\u2014";
     try {
-      const d = new Date(Number(ms));
-      if (isNaN(d.getTime())) return "\u2014";
+      const n = Number(ms);
+      if (!Number.isFinite(n)) return "\u2014";
       const zone = typeof usableTimeZone === "function" ? usableTimeZone(hubTimeZone) : hubTimeZone;
       const text = typeof formatHubWall === "function"
-        ? formatHubWall(d.getTime(), zone, { month: true, hour24: schedUse24Hour })
+        ? formatHubWall(n, zone, { month: true, hour24: schedUse24Hour })
         : "";
       return text || "\u2014";
     } catch { return "\u2014"; }
@@ -17813,7 +17854,7 @@
     }
     if (s.nextFire != null) {
       const rel = fmtSchedRelativeFuture(s.nextFire);
-      const abs = fmtSchedTime(s.nextFire, s.nextFireHm);
+      const abs = fmtSchedTime(s.nextFire, s.nextFireHm, s.nextFireOn);
       if (restriction === "blocked") {
         return {
           primary: "Won't run in " + currentHubMode + " mode",
@@ -17856,7 +17897,7 @@
   function schedLastRunText(s) {
     if (s?.lastResult?.skipped === "mode" && s.lastFired != null) {
       const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
-      const when = fmtSchedTime(s.lastFired, s.lastFiredHm);
+      const when = fmtSchedTime(s.lastFired, s.lastFiredHm, s.lastFiredOn);
       return {
         primary: "Skipped",
         secondary: [rel || when, rel ? when : "", "Hub mode was not allowed"].filter(Boolean).join(" \u00b7 "),
@@ -17867,8 +17908,8 @@
     if (s.lastFired == null) return { primary: "Not yet run", secondary: "", muted: false };
     const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
     const note = schedLastResultNote(s);
-    const secondary = [rel ? fmtSchedTime(s.lastFired, s.lastFiredHm) : "", note].filter(Boolean).join(" \u00b7 ");
-    return { primary: rel || fmtSchedTime(s.lastFired, s.lastFiredHm), secondary, muted: !!note };
+    const secondary = [rel ? fmtSchedTime(s.lastFired, s.lastFiredHm, s.lastFiredOn) : "", note].filter(Boolean).join(" \u00b7 ");
+    return { primary: rel || fmtSchedTime(s.lastFired, s.lastFiredHm, s.lastFiredOn), secondary, muted: !!note };
   }
 
   function schedSearchText(s) {
@@ -17889,10 +17930,10 @@
       if (atFmt && atFmt !== tr.at) parts.push(atFmt);
     }
     if (s?.nextFire != null) {
-      parts.push(fmtSchedTime(s.nextFire, s.nextFireHm));
+      parts.push(fmtSchedTime(s.nextFire, s.nextFireHm, s.nextFireOn));
       parts.push(fmtSchedRelativeFuture(s.nextFire));
     }
-    if (s?.lastFired != null) parts.push(fmtSchedTime(s.lastFired, s.lastFiredHm));
+    if (s?.lastFired != null) parts.push(fmtSchedTime(s.lastFired, s.lastFiredHm, s.lastFiredOn));
     parts.push(schedActionDescription(s.action, { thermostats, locks, windowShades, ceilingFans }));
     const actionTarget = String(s?.action?.target || "");
     const nameCatalog = actionTarget === "locks" ? locks

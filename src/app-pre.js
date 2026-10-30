@@ -516,15 +516,29 @@ function formatHubWall(ms, zone, opts) {
   const bag = hubWallBag(ms, zone, !!(opts && opts.seconds));
   if (!bag) return "";
   const minute = bag.minute || "00";
+  const second = opts && opts.seconds && bag.second ? ":" + bag.second : "";
   let time;
-  if (opts && opts.hour24) time = String(bag.hour24).padStart(2, "0") + ":" + minute;
-  else time = (bag.hour24 % 12 || 12) + ":" + minute + " " + (bag.hour24 >= 12 ? "PM" : "AM");
-  if (opts && opts.seconds && bag.second) time += ":" + bag.second;
+  if (opts && opts.hour24) time = String(bag.hour24).padStart(2, "0") + ":" + minute + second;
+  else time = (bag.hour24 % 12 || 12) + ":" + minute + second + " " + (bag.hour24 >= 12 ? "PM" : "AM");
   const bits = [];
   if (opts && opts.weekday && bag.weekday) bits.push(bag.weekday);
   if (opts && opts.month && bag.month) bits.push(bag.month + " " + bag.day);
   if (!bits.length) return time;
   return bits.join(", ") + ", " + time;
+}
+
+function formatHubDate(ms, zone) {
+  const bag = hubWallBag(ms, zone, false);
+  if (!bag || !bag.month) return "";
+  return bag.month + " " + bag.day;
+}
+
+function browserHour24() {
+  try {
+    return new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hour12 === false;
+  } catch (e) {
+    return false;
+  }
 }
 
 function formatHubHm(hm, hour24) {
@@ -553,7 +567,7 @@ function formatSensorLastEvent(ms) {
   }
   const zone = hubClockZone();
   const sameDay = hubDayKey(n, zone) === hubDayKey(now, zone);
-  return formatHubWall(n, zone, sameDay ? {} : { month: true });
+  return formatHubWall(n, zone, sameDay ? { hour24: browserHour24() } : { month: true, hour24: browserHour24() });
 }
 
 function hubDayKey(ms, zone) {

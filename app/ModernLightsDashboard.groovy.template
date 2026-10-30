@@ -3879,6 +3879,8 @@ def renderData() {
     out << ",\"synagogueAvailable\":" << (synagogueAvailable() ? "true" : "false")
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
     out << ",\"hubTimeZone\":" << jsonStr(hubTimeZoneId())
+    def offsetMin = hubOffsetMin()
+    out << ",\"hubOffsetMin\":" << (offsetMin == null ? "null" : offsetMin.toString())
     out << ",\"hubNow\":" << now().toString()
     out << ",\"triggersEnabled\":" << (triggersIsEnabled() ? "true" : "false")
     out << ",\"alertsArmed\":" << (readAlertsArmed() ? "true" : "false")
@@ -10838,18 +10840,42 @@ def hubTimeZoneId() {
     return ""
 }
 
-def hubWallHm(ms) {
+def hubZone() {
+    try {
+        def tz = location?.timeZone
+        if (tz instanceof java.util.TimeZone) return tz
+        def id = hubTimeZoneId()
+        if (id) return TimeZone.getTimeZone(id)
+    } catch (e) {}
+    return TimeZone.getDefault()
+}
+
+def hubOffsetMin() {
+    try {
+        long offMs = hubZone().getOffset(now()) as long
+        return (int) Math.floor(offMs / 60000d)
+    } catch (e) {
+        return null
+    }
+}
+
+def hubWallText(ms, String pattern) {
     if (ms == null) return ""
     try {
-        long n = (ms as long)
-        def fmt = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
-        def tz = null
-        try { tz = location?.timeZone } catch (e) { tz = null }
-        if (tz instanceof java.util.TimeZone) fmt.setTimeZone(tz)
-        return fmt.format(new Date(n))
+        def fmt = new java.text.SimpleDateFormat(pattern, java.util.Locale.US)
+        fmt.setTimeZone(hubZone())
+        return fmt.format(new Date(ms as long))
     } catch (e) {
         return ""
     }
+}
+
+def hubWallHm(ms) {
+    return hubWallText(ms, "HH:mm")
+}
+
+def hubWallOn(ms) {
+    return hubWallText(ms, "MMM d")
 }
 
 def saveSchedulesMap(map) {
@@ -11150,9 +11176,11 @@ def schedulesJsonFragment() {
         def lastFired = s?.lastFired
         out << ",\"lastFired\":" << (lastFired == null ? "null" : lastFired.toString())
         out << ",\"lastFiredHm\":" << jsonStr(lastFired == null ? "" : hubWallHm(lastFired))
+        out << ",\"lastFiredOn\":" << jsonStr(lastFired == null ? "" : hubWallOn(lastFired))
         def nextFire = s?.nextFire
         out << ",\"nextFire\":" << (nextFire == null ? "null" : nextFire.toString())
         out << ",\"nextFireHm\":" << jsonStr(nextFire == null ? "" : hubWallHm(nextFire))
+        out << ",\"nextFireOn\":" << jsonStr(nextFire == null ? "" : hubWallOn(nextFire))
         out << ",\"trigger\":" << groovy.json.JsonOutput.toJson(s?.trigger ?: [:])
         out << ",\"action\":" << groovy.json.JsonOutput.toJson(s?.action ?: [:])
         out << ",\"onlyInModes\":["
@@ -12185,8 +12213,10 @@ def schedulesListForClient(mapIn = null) {
             summary: scheduleSummary(s),
             lastFired: s?.lastFired,
             lastFiredHm: s?.lastFired == null ? "" : hubWallHm(s.lastFired),
+            lastFiredOn: s?.lastFired == null ? "" : hubWallOn(s.lastFired),
             nextFire: s?.nextFire,
             nextFireHm: s?.nextFire == null ? "" : hubWallHm(s.nextFire),
+            nextFireOn: s?.nextFire == null ? "" : hubWallOn(s.nextFire),
             lastResult: (s?.lastResult instanceof Map) ? s.lastResult : null,
             trigger: s?.trigger,
             action: s?.action,

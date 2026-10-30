@@ -102,14 +102,14 @@ function addIso(iso, n) {
   const dt = new Date(Date.UTC(y, m - 1, d + n));
   return dt.toISOString().slice(0, 10);
 }
+function civilDate(y, m, d) {
+  return new Date(y, m - 1, d);
+}
 function fmtMonthDay(iso) {
   if (!iso) return "";
   const [y, m, d] = String(iso).split("-").map(Number);
   if (!y) return "";
-  const zone = tz() || "";
-  const opts = { month: "short", day: "numeric" };
-  if (zone) opts.timeZone = zone;
-  return dateFormatter("month|" + zone, "en-US", opts).format(new Date(Date.UTC(y, m - 1, d, 16)));
+  return dateFormatter("month", "en-US", { month: "short", day: "numeric" }).format(civilDate(y, m, d));
 }
 function fmtDate(iso) {
   if (!iso) return "";
@@ -117,10 +117,8 @@ function fmtDate(iso) {
   if (iso === today) return "Today";
   if (iso === addIso(today, 1)) return "Tomorrow";
   const [y, m, d] = String(iso).split("-").map(Number);
-  const zone = tz() || "";
-  const opts = { weekday: "short", month: "short", day: "numeric" };
-  if (zone) opts.timeZone = zone;
-  return dateFormatter("date|" + zone, "en-US", opts).format(new Date(Date.UTC(y, m - 1, d, 16)));
+  if (!y) return "";
+  return dateFormatter("date", "en-US", { weekday: "short", month: "short", day: "numeric" }).format(civilDate(y, m, d));
 }
 function ago(ms) {
   const n = Date.now() - Number(ms);

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.75
+
+- **Dashboard:** A schedule keeps the hub's date with its hour. The time tile uses the hub's clock and the phone's 12-hour or 24-hour choice. Update Modern Dashboard.
+
+- **Synagogue:** A service date stays on the hub's calendar day. Update mDash Synagogue.
+
 ## 0.4.74
 
 - **Dashboard:** A clock on the phone no longer replaces the hub's hour. Schedules and notifications stay on the time the hub will use. Update Modern Dashboard.
