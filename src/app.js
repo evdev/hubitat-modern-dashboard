@@ -10147,15 +10147,7 @@
     if (!Number.isFinite(n) || n <= 0) return "";
     try {
       const zone = typeof hubClockZone === "function" ? hubClockZone() : "";
-      const opts = {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        hourCycle: "h12",
-      };
-      if (zone) opts.timeZone = zone;
-      return new Intl.DateTimeFormat(undefined, opts).format(new Date(n));
+      return typeof formatHubWall === "function" ? formatHubWall(n, zone, { month: true }) : "";
     } catch {
       return "";
     }
@@ -12164,27 +12156,21 @@
     let use24 = false;
     try { use24 = globalThis.__MLD?.holidayBridge?.().use24 === true; } catch (e) {}
     const zone = typeof hubClockZone === "function" ? hubClockZone() : "";
-    const opts = {
-      hour: use24 ? "2-digit" : "numeric",
-      minute: "2-digit",
-      hourCycle: use24 ? "h23" : "h12",
-      ...(withSeconds ? { second: "2-digit" } : {}),
-    };
-    if (zone) opts.timeZone = zone;
-    const parts = new Intl.DateTimeFormat(undefined, opts).formatToParts(now);
-    const nums = [];
-    let dayPeriod = "";
-    for (const p of parts) {
-      if (p.type === "hour" || p.type === "minute" || p.type === "second") nums.push(p.value);
-      else if (p.type === "dayPeriod") dayPeriod = p.value;
+    const bag = typeof hubWallBag === "function" ? hubWallBag(now.getTime(), zone, withSeconds) : null;
+    if (!bag) return { time: "", ampm: "", date: "", showDate: style === "time_date" };
+    const minute = bag.minute || "00";
+    let time;
+    let ampm = "";
+    if (use24) time = String(bag.hour24).padStart(2, "0") + ":" + minute;
+    else {
+      ampm = bag.hour24 >= 12 ? "PM" : "AM";
+      time = (bag.hour24 % 12 || 12) + ":" + minute;
     }
-    const time = nums.join(":");
-    const dateOpts = { weekday: "short", month: "short", day: "numeric" };
-    if (zone) dateOpts.timeZone = zone;
-    const date = style === "time_date"
-      ? now.toLocaleDateString(undefined, dateOpts)
+    if (withSeconds && bag.second) time += ":" + bag.second;
+    const date = style === "time_date" && bag.weekday
+      ? bag.weekday + ", " + bag.month + " " + bag.day
       : "";
-    return { time, ampm: dayPeriod, date, showDate: style === "time_date" };
+    return { time, ampm, date, showDate: style === "time_date" };
   }
 
   function paintTimeCardElements(root, style, now = new Date()) {
@@ -17603,17 +17589,18 @@
     return hint;
   }
 
-  function fmtSchedTime(ms) {
+  function fmtSchedTime(ms, hm) {
+    const stamped = typeof formatHubHm === "function" ? formatHubHm(hm, schedUse24Hour) : "";
+    if (stamped) return stamped;
     if (ms == null) return "\u2014";
     try {
       const d = new Date(Number(ms));
       if (isNaN(d.getTime())) return "\u2014";
       const zone = typeof usableTimeZone === "function" ? usableTimeZone(hubTimeZone) : hubTimeZone;
-      const opts = schedUse24Hour
-        ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }
-        : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: "h12" };
-      if (zone) opts.timeZone = zone;
-      return new Intl.DateTimeFormat(undefined, opts).format(d);
+      const text = typeof formatHubWall === "function"
+        ? formatHubWall(d.getTime(), zone, { month: true, hour24: schedUse24Hour })
+        : "";
+      return text || "\u2014";
     } catch { return "\u2014"; }
   }
 
@@ -17826,7 +17813,7 @@
     }
     if (s.nextFire != null) {
       const rel = fmtSchedRelativeFuture(s.nextFire);
-      const abs = fmtSchedTime(s.nextFire);
+      const abs = fmtSchedTime(s.nextFire, s.nextFireHm);
       if (restriction === "blocked") {
         return {
           primary: "Won't run in " + currentHubMode + " mode",
@@ -17869,7 +17856,7 @@
   function schedLastRunText(s) {
     if (s?.lastResult?.skipped === "mode" && s.lastFired != null) {
       const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
-      const when = fmtSchedTime(s.lastFired);
+      const when = fmtSchedTime(s.lastFired, s.lastFiredHm);
       return {
         primary: "Skipped",
         secondary: [rel || when, rel ? when : "", "Hub mode was not allowed"].filter(Boolean).join(" \u00b7 "),
@@ -17880,8 +17867,8 @@
     if (s.lastFired == null) return { primary: "Not yet run", secondary: "", muted: false };
     const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
     const note = schedLastResultNote(s);
-    const secondary = [rel ? fmtSchedTime(s.lastFired) : "", note].filter(Boolean).join(" \u00b7 ");
-    return { primary: rel || fmtSchedTime(s.lastFired), secondary, muted: !!note };
+    const secondary = [rel ? fmtSchedTime(s.lastFired, s.lastFiredHm) : "", note].filter(Boolean).join(" \u00b7 ");
+    return { primary: rel || fmtSchedTime(s.lastFired, s.lastFiredHm), secondary, muted: !!note };
   }
 
   function schedSearchText(s) {
@@ -17902,10 +17889,10 @@
       if (atFmt && atFmt !== tr.at) parts.push(atFmt);
     }
     if (s?.nextFire != null) {
-      parts.push(fmtSchedTime(s.nextFire));
+      parts.push(fmtSchedTime(s.nextFire, s.nextFireHm));
       parts.push(fmtSchedRelativeFuture(s.nextFire));
     }
-    if (s?.lastFired != null) parts.push(fmtSchedTime(s.lastFired));
+    if (s?.lastFired != null) parts.push(fmtSchedTime(s.lastFired, s.lastFiredHm));
     parts.push(schedActionDescription(s.action, { thermostats, locks, windowShades, ceilingFans }));
     const actionTarget = String(s?.action?.target || "");
     const nameCatalog = actionTarget === "locks" ? locks

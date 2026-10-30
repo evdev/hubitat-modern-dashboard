@@ -10825,10 +10825,31 @@ def renderSchedulesStoreError(parsed) {
 
 def hubTimeZoneId() {
     try {
-        def tz = location.timeZone
-        if (tz?.ID) return tz.ID.toString()
+        def tz = location?.timeZone
+        if (tz instanceof java.util.TimeZone) {
+            def id = tz.getID()?.toString()?.trim()
+            if (id) return id
+        }
+        def id = tz?.ID?.toString()?.trim()
+        if (id) return id
+        def text = tz?.toString()?.trim()
+        if (text && text.matches("[A-Za-z0-9_+/-]+")) return text
     } catch (e) {}
     return ""
+}
+
+def hubWallHm(ms) {
+    if (ms == null) return ""
+    try {
+        long n = (ms as long)
+        def fmt = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+        def tz = null
+        try { tz = location?.timeZone } catch (e) { tz = null }
+        if (tz instanceof java.util.TimeZone) fmt.setTimeZone(tz)
+        return fmt.format(new Date(n))
+    } catch (e) {
+        return ""
+    }
 }
 
 def saveSchedulesMap(map) {
@@ -11128,8 +11149,10 @@ def schedulesJsonFragment() {
         out << ",\"summary\":" << jsonStr(scheduleSummary(s))
         def lastFired = s?.lastFired
         out << ",\"lastFired\":" << (lastFired == null ? "null" : lastFired.toString())
+        out << ",\"lastFiredHm\":" << jsonStr(lastFired == null ? "" : hubWallHm(lastFired))
         def nextFire = s?.nextFire
         out << ",\"nextFire\":" << (nextFire == null ? "null" : nextFire.toString())
+        out << ",\"nextFireHm\":" << jsonStr(nextFire == null ? "" : hubWallHm(nextFire))
         out << ",\"trigger\":" << groovy.json.JsonOutput.toJson(s?.trigger ?: [:])
         out << ",\"action\":" << groovy.json.JsonOutput.toJson(s?.action ?: [:])
         out << ",\"onlyInModes\":["
@@ -12161,7 +12184,9 @@ def schedulesListForClient(mapIn = null) {
             enabled: (s?.enabled == true),
             summary: scheduleSummary(s),
             lastFired: s?.lastFired,
+            lastFiredHm: s?.lastFired == null ? "" : hubWallHm(s.lastFired),
             nextFire: s?.nextFire,
+            nextFireHm: s?.nextFire == null ? "" : hubWallHm(s.nextFire),
             lastResult: (s?.lastResult instanceof Map) ? s.lastResult : null,
             trigger: s?.trigger,
             action: s?.action,

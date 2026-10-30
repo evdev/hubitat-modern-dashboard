@@ -1260,13 +1260,10 @@ function zoomSlices(span) {
 }
 
 function fmtClock(ms) {
-  const tz = hubTz();
-  const use24 = catalog().use24 === true;
-  const opts = use24
-    ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }
-    : { hour: "numeric", minute: "2-digit", hourCycle: "h12" };
-  if (tz) opts.timeZone = tz;
-  return new Intl.DateTimeFormat("en-US", opts).format(new Date(ms));
+  const parts = zonedParts(ms, hubTz());
+  const minute = String(parts.minute).padStart(2, "0");
+  if (catalog().use24 === true) return String(parts.hour).padStart(2, "0") + ":" + minute;
+  return (parts.hour % 12 || 12) + ":" + minute + " " + (parts.hour >= 12 ? "PM" : "AM");
 }
 
 function fmtDay(ms) {

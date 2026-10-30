@@ -72,25 +72,19 @@ function dateFormatter(key, locale, options) {
   }
   return fmt;
 }
-function fmtTime(ms) {
+function fmtTime(ms, hm) {
+  const stamped = typeof formatHubHm === "function" ? formatHubHm(hm, use24()) : "";
+  if (stamped) return stamped;
   if (ms == null || !Number.isFinite(Number(ms))) return "";
-  const hour24 = use24();
-  const zone = tz() || "";
-  const opts = {
-    hour: hour24 ? "2-digit" : "numeric",
-    minute: "2-digit",
-    hourCycle: hour24 ? "h23" : "h12",
-  };
-  if (zone) opts.timeZone = zone;
-  return dateFormatter("time|" + zone + "|" + (hour24 ? "24" : "12"), "en-US", opts).format(new Date(Number(ms)));
+  if (typeof formatHubWall === "function") return formatHubWall(ms, tz(), { hour24: use24() });
+  return "";
 }
-function fmtClock(ms) {
+function fmtClock(ms, hm) {
+  const stamped = /^(\d{2}):(\d{2})$/.exec(String(hm || ""));
+  if (stamped) return stamped[1] + ":" + stamped[2];
   if (ms == null || !Number.isFinite(Number(ms))) return "12:00";
-  const zone = tz() || "";
-  const opts = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
-  if (zone) opts.timeZone = zone;
-  const parts = dateFormatter("clock|" + zone, "en-GB", opts).formatToParts(new Date(Number(ms)));
-  return (parts.find((p) => p.type === "hour")?.value || "00") + ":" + (parts.find((p) => p.type === "minute")?.value || "00");
+  if (typeof formatHubWall === "function") return formatHubWall(ms, tz(), { hour24: true }) || "12:00";
+  return "12:00";
 }
 function hubToday() {
   const fromHub = model?.today?.date;
@@ -387,7 +381,7 @@ function formatWhy(why) {
   if (why.kind === "clock") return why.time || "";
   if (why.kind === "zman") {
     const off = Number(why.offsetMin) || 0;
-    const base = why.base ? " " + fmtTime(why.base) : "";
+    const base = why.base ? " " + fmtTime(why.base, why.baseHm) : "";
     const label = zmanLabel(why.zman);
     if (!off) return label + base;
     return label + base + (off < 0 ? " − " : " + ") + Math.abs(off) + " min";

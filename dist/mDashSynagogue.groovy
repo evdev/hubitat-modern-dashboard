@@ -366,6 +366,44 @@ def synagogueHubTz() {
     return TimeZone.getDefault()
 }
 
+def synagogueZoneId(value = null) {
+    def tz = value ?: synagogueHubTz()
+    try {
+        if (tz instanceof TimeZone) {
+            def id = tz.getID()?.toString()?.trim()
+            if (id) return id
+        }
+    } catch (e) {}
+    try {
+        def id = tz?.ID?.toString()?.trim()
+        if (id) return id
+    } catch (e) {}
+    def text = tz?.toString()?.trim()
+    if (text && text.matches("[A-Za-z0-9_+/-]+")) return text
+    return ""
+}
+
+def synagogueHm(value, TimeZone tz) {
+    def n = synagogueLong(value)
+    if (n == null) return ""
+    def zone = tz instanceof TimeZone ? tz : synagogueTzFrom(tz)
+    def fmt = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+    fmt.setTimeZone(zone)
+    return fmt.format(new Date(n))
+}
+
+def synagogueStampClocks(Map row, TimeZone tz) {
+    if (!(row instanceof Map)) return
+    if (row.start != null) row.startHm = synagogueHm(row.start, tz)
+    if (row.at != null) row.hm = synagogueHm(row.at, tz)
+    if (row.why instanceof Map && row.why.base != null) row.why.baseHm = synagogueHm(row.why.base, tz)
+    if (row.cues instanceof List) {
+        for (cue in row.cues) {
+            if (cue instanceof Map && cue.at != null) cue.hm = synagogueHm(cue.at, tz)
+        }
+    }
+}
+
 def synagogueLong(value) {
     if (value == null) return null
     if (value instanceof Number) return (value as long)
@@ -1327,6 +1365,7 @@ def synagogueExpand(Map config, Map ctx) {
     synagogueAppendFeed(occurrences, warnings, config, ctx, consumedEvents)
     synagogueApplyStayOn(occurrences, config)
     synagogueMarkOverlap(occurrences)
+    for (occ in occurrences) synagogueStampClocks(occ, tz)
     return [occurrences: occurrences, warnings: warnings.unique(), actions: synagogueActionsFrom(occurrences)]
 }
 
@@ -3182,7 +3221,7 @@ def synagogueTodayTimes(Map ctx, Map config) {
         if (value == null || value.toString().trim() == "") return
         def at = synagogueLong(value)
         if (at == null) return
-        rows << [id: id, label: label, at: at]
+        rows << [id: id, label: label, at: at, hm: synagogueHm(at, tz)]
     }
     if (!have) {
         def sun = ctx?.sun instanceof Map && ctx.sun[date] instanceof Map ? ctx.sun[date] : [:]
@@ -3609,7 +3648,7 @@ def synagogueStatusMap(Map projected, Map ctx, int days = 7) {
         closed: synagogueClosedWindow(state?.config, ctx, synagogueDateOf(nowMs, tz), days),
         today: synagogueTodayTimes(ctx, state?.config),
         alerts: [deviceCount: synagogueAlertDeviceCount(), quiet: synagogueQuietAt(nowMs, ctx, state?.config)],
-        tz: (tz?.getID() ?: "")
+        tz: synagogueZoneId(tz)
     ]
 }
 
@@ -3620,7 +3659,7 @@ def synagogueStatus(Object days = null) {
     def status = synagogueStatusMap(synagogueProject(state.config, ctx, built), ctx, synagogueAgendaSpan(days))
     status.locationProblem = synagogueLocationProblem()
     status.hebcal = [fetchedAt: state.hebcal?.fetchedAt ?: 0, error: state.hebcal?.error ?: ""]
-    try { status.tz = synagogueHubTz().getID() } catch (e) { status.tz = "" }
+    status.tz = synagogueZoneId()
     return status
 }
 

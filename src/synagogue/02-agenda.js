@@ -6,10 +6,10 @@ function renderAgenda() {
     const hero = ce("div", "synagogue-hero");
     hero.appendChild(kicker("Next · " + countdown(next.start)));
     const time = ce("p", "synagogue-hero-time");
-    time.textContent = next.name + " · " + fmtTime(next.start);
+    time.textContent = next.name + " · " + fmtTime(next.start, next.startHm);
     hero.appendChild(time);
     const first = (next.cues || []).slice().sort((a, b) => a.at - b.at)[0];
-    hero.appendChild(noteLine(next.spaceName + (first ? " · First action: " + first.label + " at " + fmtTime(first.at) : "")));
+    hero.appendChild(noteLine(next.spaceName + (first ? " · First action: " + first.label + " at " + fmtTime(first.at, first.hm) : "")));
     box.appendChild(hero);
   }
   const todayCard = renderToday();
@@ -63,7 +63,7 @@ function renderOcc(row) {
   const card = ce("article", "sched-row");
   const grid = ce("div", "synagogue-occ");
   const clock = ce("div", "synagogue-clock");
-  clock.textContent = fmtTime(row.start);
+  clock.textContent = fmtTime(row.start, row.startHm);
   const main = ce("div", "synagogue-detail");
   const name = ce("strong");
   name.textContent = row.name || "Service";
@@ -86,7 +86,7 @@ function renderOcc(row) {
   const cueLine = ce("button", "ghost-btn synagogue-cue");
   cueLine.type = "button";
   const cues = row.cues || [];
-  cueLine.textContent = !cues.length ? "No device cues" : expanded[row.id] ? "Hide actions" : cues.map((c) => c.label + " " + fmtTime(c.at)).join(" · ");
+  cueLine.textContent = !cues.length ? "No device cues" : expanded[row.id] ? "Hide actions" : cues.map((c) => c.label + " " + fmtTime(c.at, c.hm)).join(" · ");
   cueLine.addEventListener("click", () => { expanded[row.id] = !expanded[row.id]; render(); });
   main.appendChild(cueLine);
   if (expanded[row.id] && cues.length) {
@@ -94,7 +94,7 @@ function renderOcc(row) {
     for (const cue of cues) {
       const li = ce("li");
       const devices = (cue.states || []).map((st) => st.name).filter(Boolean).join(", ");
-      li.textContent = cue.label + " at " + fmtTime(cue.at) + (devices ? " · " + devices : "") + (cue.suppressed ? " · stays on" : "");
+      li.textContent = cue.label + " at " + fmtTime(cue.at, cue.hm) + (devices ? " · " + devices : "") + (cue.suppressed ? " · stays on" : "");
       list.appendChild(li);
     }
     main.appendChild(list);
@@ -136,7 +136,7 @@ function openMore(row) {
     if (Number(row.warmEarlierMin) > 0) {
       box.appendChild(ghost("Use the regular warm-up", () => { closeSheet(); saveOp({ op: "override", occurrenceId: row.id, warmEarlierMin: 0 }); }));
     }
-    let start = fmtClock(row.start);
+    let start = fmtClock(row.start, row.startHm);
     box.appendChild(field("New start", "time", start, (v) => { start = v; }, "change"));
     box.appendChild(ghost("Change this time", () => { closeSheet(); saveOp({ op: "override", occurrenceId: row.id, start }); }));
     const started = occStarted(row);
@@ -180,10 +180,10 @@ function renderToday() {
   const shkiah = rows.find((row) => row.id === "sunset");
   const tzeis = rows.find((row) => row.id === "nightfall" || String(row.id || "").startsWith("tzeit"));
   const summary = ["Today"];
-  if (shkiah) summary.push("Shkiah " + fmtTime(shkiah.at));
-  if (tzeis) summary.push("Tzeis " + fmtTime(tzeis.at));
+  if (shkiah) summary.push("Shkiah " + fmtTime(shkiah.at, shkiah.hm));
+  if (tzeis) summary.push("Tzeis " + fmtTime(tzeis.at, tzeis.hm));
   if (!shkiah && !tzeis) {
-    for (const row of rows.slice(0, 2)) summary.push(shortZman(row) + " " + fmtTime(row.at));
+    for (const row of rows.slice(0, 2)) summary.push(shortZman(row) + " " + fmtTime(row.at, row.hm));
   }
   if (today.estimated) summary.push("Estimated");
   const head = ce("div", "synagogue-today-line");
@@ -202,7 +202,7 @@ function renderToday() {
       const lab = ce("span");
       lab.textContent = row.label || shortZman(row);
       const time = ce("span");
-      time.textContent = fmtTime(row.at);
+      time.textContent = fmtTime(row.at, row.hm);
       grid.append(lab, time);
     }
     card.appendChild(grid);

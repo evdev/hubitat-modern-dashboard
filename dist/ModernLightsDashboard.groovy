@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.73
+// Modern Dashboard v0.4.74
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.73"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.74"
 @Field private static List LOCAL_FILE_NAME_CACHE = null
 @Field private static long LOCAL_FILE_NAME_CACHE_AT = 0L
 @Field private static final long LOCAL_FILE_NAME_CACHE_TTL = 30000L
@@ -87,7 +87,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.73 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.74 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -3442,7 +3442,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.73.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.74.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -3541,7 +3541,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.73.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.74.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -10825,10 +10825,31 @@ def renderSchedulesStoreError(parsed) {
 
 def hubTimeZoneId() {
     try {
-        def tz = location.timeZone
-        if (tz?.ID) return tz.ID.toString()
+        def tz = location?.timeZone
+        if (tz instanceof java.util.TimeZone) {
+            def id = tz.getID()?.toString()?.trim()
+            if (id) return id
+        }
+        def id = tz?.ID?.toString()?.trim()
+        if (id) return id
+        def text = tz?.toString()?.trim()
+        if (text && text.matches("[A-Za-z0-9_+/-]+")) return text
     } catch (e) {}
     return ""
+}
+
+def hubWallHm(ms) {
+    if (ms == null) return ""
+    try {
+        long n = (ms as long)
+        def fmt = new java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+        def tz = null
+        try { tz = location?.timeZone } catch (e) { tz = null }
+        if (tz instanceof java.util.TimeZone) fmt.setTimeZone(tz)
+        return fmt.format(new Date(n))
+    } catch (e) {
+        return ""
+    }
 }
 
 def saveSchedulesMap(map) {
@@ -11128,8 +11149,10 @@ def schedulesJsonFragment() {
         out << ",\"summary\":" << jsonStr(scheduleSummary(s))
         def lastFired = s?.lastFired
         out << ",\"lastFired\":" << (lastFired == null ? "null" : lastFired.toString())
+        out << ",\"lastFiredHm\":" << jsonStr(lastFired == null ? "" : hubWallHm(lastFired))
         def nextFire = s?.nextFire
         out << ",\"nextFire\":" << (nextFire == null ? "null" : nextFire.toString())
+        out << ",\"nextFireHm\":" << jsonStr(nextFire == null ? "" : hubWallHm(nextFire))
         out << ",\"trigger\":" << groovy.json.JsonOutput.toJson(s?.trigger ?: [:])
         out << ",\"action\":" << groovy.json.JsonOutput.toJson(s?.action ?: [:])
         out << ",\"onlyInModes\":["
@@ -12161,7 +12184,9 @@ def schedulesListForClient(mapIn = null) {
             enabled: (s?.enabled == true),
             summary: scheduleSummary(s),
             lastFired: s?.lastFired,
+            lastFiredHm: s?.lastFired == null ? "" : hubWallHm(s.lastFired),
             nextFire: s?.nextFire,
+            nextFireHm: s?.nextFire == null ? "" : hubWallHm(s.nextFire),
             lastResult: (s?.lastResult instanceof Map) ? s.lastResult : null,
             trigger: s?.trigger,
             action: s?.action,

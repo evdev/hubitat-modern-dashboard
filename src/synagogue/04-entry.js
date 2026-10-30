@@ -261,7 +261,7 @@ async function runPreview(preview, endWarn, seq) {
   try {
     const res = await post("synagogue/preview", { revision: model.revision, op: "day", dayId: editingDay, day, entryId: editingEntry.id });
     if (seq !== previewSeq || !preview.isConnected) return;
-    const lines = (res.preview || []).map((row) => fmtDate(row.date) + " " + fmtTime(row.start) + (formatWhy(row.why) ? " · " + formatWhy(row.why) : "") + (row.replaced ? " · " + row.replaced : ""));
+    const lines = (res.preview || []).map((row) => fmtDate(row.date) + " " + fmtTime(row.start, row.startHm) + (formatWhy(row.why) ? " · " + formatWhy(row.why) : "") + (row.replaced ? " · " + row.replaced : ""));
     const notes = (res.warnings || []).filter((line) => String(line).includes(editingEntry.name || "A service"));
     const ended = notes.find((line) => String(line).includes("ends before"));
     if (endWarn) endWarn.textContent = ended ? "That ends before it starts." : "";

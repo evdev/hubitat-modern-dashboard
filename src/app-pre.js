@@ -429,10 +429,19 @@ function usableTimeZone(value) {
   const candidates = [];
   if (HUB_ZONE_ALIASES[raw]) candidates.push(HUB_ZONE_ALIASES[raw]);
   candidates.push(raw);
+  let device = "";
+  try { device = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) {}
   for (const id of candidates) {
     try {
-      new Intl.DateTimeFormat("en-US", { timeZone: id, hour: "numeric" }).format(0);
-      return id;
+      const resolved = new Intl.DateTimeFormat("en-US", {
+        timeZone: id,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).resolvedOptions().timeZone;
+      if (!resolved) continue;
+      if (resolved === device && id !== device) continue;
+      return resolved;
     } catch (e) {}
   }
   return "";
@@ -449,6 +458,85 @@ function hubClockZone() {
   }
 }
 
+const hubWallFormatters = new Map();
+
+function hubWallFormatter(zone, withSeconds) {
+  const key = (zone || "") + (withSeconds ? "|s" : "");
+  let fmt = hubWallFormatters.get(key);
+  if (fmt) return fmt;
+  const options = {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    dayPeriod: "short",
+  };
+  if (withSeconds) options.second = "2-digit";
+  if (zone) options.timeZone = zone;
+  fmt = new Intl.DateTimeFormat("en-US", options);
+  hubWallFormatters.set(key, fmt);
+  return fmt;
+}
+
+function hubHour24(bag) {
+  let hour = Number(bag.hour);
+  if (!Number.isFinite(hour)) return null;
+  if (hour === 24) hour = 0;
+  const period = String(bag.dayPeriod || "");
+  if (period) {
+    const pm = /^p/i.test(period);
+    if (pm && hour < 12) hour += 12;
+    if (!pm && hour === 12) hour = 0;
+  }
+  return hour;
+}
+
+function hubWallBag(ms, zone, withSeconds) {
+  const n = Number(ms);
+  if (!Number.isFinite(n)) return null;
+  let parts;
+  try {
+    parts = hubWallFormatter(zone, withSeconds).formatToParts(new Date(n));
+  } catch (e) {
+    return null;
+  }
+  const bag = {};
+  for (const part of parts) if (part.type !== "literal") bag[part.type] = part.value;
+  const hour = hubHour24(bag);
+  if (hour == null) return null;
+  bag.hour24 = hour;
+  return bag;
+}
+
+// 12-hour text is built here. Asking the browser for a 12-hour clock makes some
+// phones ignore the hub time zone and show their own hour.
+function formatHubWall(ms, zone, opts) {
+  const bag = hubWallBag(ms, zone, !!(opts && opts.seconds));
+  if (!bag) return "";
+  const minute = bag.minute || "00";
+  let time;
+  if (opts && opts.hour24) time = String(bag.hour24).padStart(2, "0") + ":" + minute;
+  else time = (bag.hour24 % 12 || 12) + ":" + minute + " " + (bag.hour24 >= 12 ? "PM" : "AM");
+  if (opts && opts.seconds && bag.second) time += ":" + bag.second;
+  const bits = [];
+  if (opts && opts.weekday && bag.weekday) bits.push(bag.weekday);
+  if (opts && opts.month && bag.month) bits.push(bag.month + " " + bag.day);
+  if (!bits.length) return time;
+  return bits.join(", ") + ", " + time;
+}
+
+function formatHubHm(hm, hour24) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(hm || "").trim());
+  if (!match) return "";
+  const hh = Number(match[1]);
+  if (hh > 23) return "";
+  const minute = match[2];
+  if (hour24) return String(hh).padStart(2, "0") + ":" + minute;
+  return (hh % 12 || 12) + ":" + minute + " " + (hh >= 12 ? "PM" : "AM");
+}
+
 function formatSensorLastEvent(ms) {
   const n = Number(ms);
   if (ms == null || isNaN(n)) return "";
@@ -463,19 +551,9 @@ function formatSensorLastEvent(ms) {
     const hrs = Math.max(1, Math.floor(diff / 3600000));
     return hrs + " hr ago";
   }
-  const d = new Date(n);
-  if (isNaN(d.getTime())) return "";
   const zone = hubClockZone();
   const sameDay = hubDayKey(n, zone) === hubDayKey(now, zone);
-  const opts = sameDay
-    ? { hour: "numeric", minute: "2-digit", hourCycle: "h12" }
-    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: "h12" };
-  if (zone) opts.timeZone = zone;
-  try {
-    return new Intl.DateTimeFormat(undefined, opts).format(d);
-  } catch (e) {
-    return "";
-  }
+  return formatHubWall(n, zone, sameDay ? {} : { month: true });
 }
 
 function hubDayKey(ms, zone) {
