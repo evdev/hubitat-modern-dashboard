@@ -3608,7 +3608,8 @@ def synagogueStatusMap(Map projected, Map ctx, int days = 7) {
         closures: state?.config?.closures ?: [],
         closed: synagogueClosedWindow(state?.config, ctx, synagogueDateOf(nowMs, tz), days),
         today: synagogueTodayTimes(ctx, state?.config),
-        alerts: [deviceCount: synagogueAlertDeviceCount(), quiet: synagogueQuietAt(nowMs, ctx, state?.config)]
+        alerts: [deviceCount: synagogueAlertDeviceCount(), quiet: synagogueQuietAt(nowMs, ctx, state?.config)],
+        tz: (tz?.getID() ?: "")
     ]
 }
 

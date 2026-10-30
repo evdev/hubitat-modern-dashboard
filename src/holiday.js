@@ -204,7 +204,8 @@ function fmt(ms) {
 }
 
 function hubTz() {
-  return model?.tz || catalog().tz || "UTC";
+  const pick = (value) => (typeof usableTimeZone === "function" ? usableTimeZone(value) : String(value || "").trim());
+  return pick(model?.tz) || pick(catalog().tz) || (typeof hubClockZone === "function" ? hubClockZone() : "") || "UTC";
 }
 
 function offeredKinds() {
@@ -1262,8 +1263,9 @@ function fmtClock(ms) {
   const tz = hubTz();
   const use24 = catalog().use24 === true;
   const opts = use24
-    ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: tz }
-    : { hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz };
+    ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }
+    : { hour: "numeric", minute: "2-digit", hourCycle: "h12" };
+  if (tz) opts.timeZone = tz;
   return new Intl.DateTimeFormat("en-US", opts).format(new Date(ms));
 }
 

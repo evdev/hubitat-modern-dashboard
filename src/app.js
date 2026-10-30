@@ -10146,13 +10146,16 @@
     const n = Number(ts);
     if (!Number.isFinite(n) || n <= 0) return "";
     try {
-      return new Date(n).toLocaleString([], {
+      const zone = typeof hubClockZone === "function" ? hubClockZone() : "";
+      const opts = {
         month: "short",
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
-        hour12: true,
-      });
+        hourCycle: "h12",
+      };
+      if (zone) opts.timeZone = zone;
+      return new Intl.DateTimeFormat(undefined, opts).format(new Date(n));
     } catch {
       return "";
     }
@@ -12158,11 +12161,17 @@
 
   function formatTimeCardParts(style, now = new Date()) {
     const withSeconds = style === "time_seconds";
-    const parts = new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
+    let use24 = false;
+    try { use24 = globalThis.__MLD?.holidayBridge?.().use24 === true; } catch (e) {}
+    const zone = typeof hubClockZone === "function" ? hubClockZone() : "";
+    const opts = {
+      hour: use24 ? "2-digit" : "numeric",
       minute: "2-digit",
+      hourCycle: use24 ? "h23" : "h12",
       ...(withSeconds ? { second: "2-digit" } : {}),
-    }).formatToParts(now);
+    };
+    if (zone) opts.timeZone = zone;
+    const parts = new Intl.DateTimeFormat(undefined, opts).formatToParts(now);
     const nums = [];
     let dayPeriod = "";
     for (const p of parts) {
@@ -12170,8 +12179,10 @@
       else if (p.type === "dayPeriod") dayPeriod = p.value;
     }
     const time = nums.join(":");
+    const dateOpts = { weekday: "short", month: "short", day: "numeric" };
+    if (zone) dateOpts.timeZone = zone;
     const date = style === "time_date"
-      ? now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+      ? now.toLocaleDateString(undefined, dateOpts)
       : "";
     return { time, ampm: dayPeriod, date, showDate: style === "time_date" };
   }
@@ -17179,7 +17190,10 @@
   function applySchedulesFromData(data, requestEpoch) {
     if (!data) return;
     schedulerEnabled = data.schedulerEnabled !== false;
-    if (typeof data.hubTimeZone === "string") hubTimeZone = data.hubTimeZone.trim();
+    if (typeof data.hubTimeZone === "string") {
+      const raw = data.hubTimeZone.trim();
+      hubTimeZone = typeof usableTimeZone === "function" ? (usableTimeZone(raw) || "") : raw;
+    }
     const hn = Number(data.hubNow);
     if (hn > 0) hubNowMs = hn;
     if (!schedulerEnabled) {
@@ -17594,11 +17608,12 @@
     try {
       const d = new Date(Number(ms));
       if (isNaN(d.getTime())) return "\u2014";
+      const zone = typeof usableTimeZone === "function" ? usableTimeZone(hubTimeZone) : hubTimeZone;
       const opts = schedUse24Hour
-        ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
-        : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true };
-      if (hubTimeZone) opts.timeZone = hubTimeZone;
-      return d.toLocaleString([], opts);
+        ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }
+        : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: "h12" };
+      if (zone) opts.timeZone = zone;
+      return new Intl.DateTimeFormat(undefined, opts).format(d);
     } catch { return "\u2014"; }
   }
 
@@ -18563,7 +18578,8 @@
   function defaultOnceAt() {
     const ms = (hubNowMs || Date.now()) + 36e5;
     const o = { hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" };
-    if (hubTimeZone) o.timeZone = hubTimeZone;
+    const zone = typeof usableTimeZone === "function" ? usableTimeZone(hubTimeZone) : hubTimeZone;
+    if (zone) o.timeZone = zone;
     try {
       const p = {};
       for (const x of new Intl.DateTimeFormat("en-US", o).formatToParts(new Date(ms))) p[x.type] = x.value;

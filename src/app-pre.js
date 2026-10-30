@@ -390,6 +390,65 @@ function parseSensorEventTimeMsClient(raw) {
   return isNaN(t) ? null : t;
 }
 
+// Java zone ids Hubitat still returns. Browsers want the IANA name.
+const HUB_ZONE_ALIASES = {
+  "US/Eastern": "America/New_York",
+  "US/Central": "America/Chicago",
+  "US/Mountain": "America/Denver",
+  "US/Pacific": "America/Los_Angeles",
+  "US/Alaska": "America/Anchorage",
+  "US/Aleutian": "America/Adak",
+  "US/Hawaii": "Pacific/Honolulu",
+  "US/Arizona": "America/Phoenix",
+  "US/East-Indiana": "America/Indiana/Indianapolis",
+  "US/Michigan": "America/Detroit",
+  "US/Samoa": "Pacific/Pago_Pago",
+  EST5EDT: "America/New_York",
+  CST6CDT: "America/Chicago",
+  MST7MDT: "America/Denver",
+  PST8PDT: "America/Los_Angeles",
+  "SystemV/EST5EDT": "America/New_York",
+  "SystemV/CST6CDT": "America/Chicago",
+  "SystemV/MST7MDT": "America/Denver",
+  "SystemV/PST8PDT": "America/Los_Angeles",
+  "SystemV/AST4ADT": "America/Halifax",
+  "SystemV/YST9YDT": "America/Anchorage",
+  "SystemV/HST10": "Pacific/Honolulu",
+  EST: "America/New_York",
+  CST: "America/Chicago",
+  MST: "America/Denver",
+  PST: "America/Los_Angeles",
+  HST: "Pacific/Honolulu",
+  AST: "America/Halifax",
+  AKST: "America/Anchorage",
+};
+
+function usableTimeZone(value) {
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw) return "";
+  const candidates = [];
+  if (HUB_ZONE_ALIASES[raw]) candidates.push(HUB_ZONE_ALIASES[raw]);
+  candidates.push(raw);
+  for (const id of candidates) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: id, hour: "numeric" }).format(0);
+      return id;
+    } catch (e) {}
+  }
+  return "";
+}
+
+// The hub stays put. Clock displays use its zone, not the phone's UTC offset.
+function hubClockZone() {
+  try {
+    const bridge = globalThis.__MLD && globalThis.__MLD.holidayBridge;
+    const tz = typeof bridge === "function" ? bridge().tz : "";
+    return usableTimeZone(tz);
+  } catch (e) {
+    return "";
+  }
+}
+
 function formatSensorLastEvent(ms) {
   const n = Number(ms);
   if (ms == null || isNaN(n)) return "";
@@ -406,11 +465,27 @@ function formatSensorLastEvent(ms) {
   }
   const d = new Date(n);
   if (isNaN(d.getTime())) return "";
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) {
-    return d.toLocaleString([], { hour: "numeric", minute: "2-digit" });
+  const zone = hubClockZone();
+  const sameDay = hubDayKey(n, zone) === hubDayKey(now, zone);
+  const opts = sameDay
+    ? { hour: "numeric", minute: "2-digit", hourCycle: "h12" }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hourCycle: "h12" };
+  if (zone) opts.timeZone = zone;
+  try {
+    return new Intl.DateTimeFormat(undefined, opts).format(d);
+  } catch (e) {
+    return "";
   }
-  return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function hubDayKey(ms, zone) {
+  const opts = { year: "numeric", month: "2-digit", day: "2-digit" };
+  if (zone) opts.timeZone = zone;
+  try {
+    return new Intl.DateTimeFormat("en-CA", opts).format(new Date(ms));
+  } catch (e) {
+    return "";
+  }
 }
 
 function sensorLastEventLine(dev) {

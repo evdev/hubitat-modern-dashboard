@@ -53,7 +53,13 @@ function catalog() {
   };
 }
 
-function tz() { return model?.tz || undefined; }
+function tz() {
+  const raw = model?.tz;
+  if (typeof usableTimeZone === "function") {
+    return usableTimeZone(raw) || (typeof hubClockZone === "function" ? hubClockZone() : "");
+  }
+  return String(raw || "").trim();
+}
 function use24() {
   try { return M().holidayBridge?.().use24 === true; } catch (e) { return false; }
 }
@@ -70,23 +76,20 @@ function fmtTime(ms) {
   if (ms == null || !Number.isFinite(Number(ms))) return "";
   const hour24 = use24();
   const zone = tz() || "";
-  return dateFormatter("time|" + zone + "|" + (hour24 ? "24" : "12"), "en-US", {
-    timeZone: zone || undefined,
+  const opts = {
     hour: hour24 ? "2-digit" : "numeric",
     minute: "2-digit",
-    hour12: !hour24,
-    hourCycle: hour24 ? "h23" : undefined,
-  }).format(new Date(Number(ms)));
+    hourCycle: hour24 ? "h23" : "h12",
+  };
+  if (zone) opts.timeZone = zone;
+  return dateFormatter("time|" + zone + "|" + (hour24 ? "24" : "12"), "en-US", opts).format(new Date(Number(ms)));
 }
 function fmtClock(ms) {
   if (ms == null || !Number.isFinite(Number(ms))) return "12:00";
   const zone = tz() || "";
-  const parts = dateFormatter("clock|" + zone, "en-GB", {
-    timeZone: zone || undefined,
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(Number(ms)));
+  const opts = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+  if (zone) opts.timeZone = zone;
+  const parts = dateFormatter("clock|" + zone, "en-GB", opts).formatToParts(new Date(Number(ms)));
   return (parts.find((p) => p.type === "hour")?.value || "00") + ":" + (parts.find((p) => p.type === "minute")?.value || "00");
 }
 function hubToday() {
@@ -94,12 +97,9 @@ function hubToday() {
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(fromHub || ""))) return String(fromHub);
   try {
     const zone = tz() || "";
-    return dateFormatter("today|" + zone, "en-CA", {
-      timeZone: zone || undefined,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
+    const opts = { year: "numeric", month: "2-digit", day: "2-digit" };
+    if (zone) opts.timeZone = zone;
+    return dateFormatter("today|" + zone, "en-CA", opts).format(new Date());
   } catch (e) { return ""; }
 }
 function addIso(iso, n) {
@@ -113,11 +113,9 @@ function fmtMonthDay(iso) {
   const [y, m, d] = String(iso).split("-").map(Number);
   if (!y) return "";
   const zone = tz() || "";
-  return dateFormatter("month|" + zone, "en-US", {
-    timeZone: zone || undefined,
-    month: "short",
-    day: "numeric",
-  }).format(new Date(Date.UTC(y, m - 1, d, 16)));
+  const opts = { month: "short", day: "numeric" };
+  if (zone) opts.timeZone = zone;
+  return dateFormatter("month|" + zone, "en-US", opts).format(new Date(Date.UTC(y, m - 1, d, 16)));
 }
 function fmtDate(iso) {
   if (!iso) return "";
@@ -126,12 +124,9 @@ function fmtDate(iso) {
   if (iso === addIso(today, 1)) return "Tomorrow";
   const [y, m, d] = String(iso).split("-").map(Number);
   const zone = tz() || "";
-  return dateFormatter("date|" + zone, "en-US", {
-    timeZone: zone || undefined,
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(new Date(Date.UTC(y, m - 1, d, 16)));
+  const opts = { weekday: "short", month: "short", day: "numeric" };
+  if (zone) opts.timeZone = zone;
+  return dateFormatter("date|" + zone, "en-US", opts).format(new Date(Date.UTC(y, m - 1, d, 16)));
 }
 function ago(ms) {
   const n = Date.now() - Number(ms);
