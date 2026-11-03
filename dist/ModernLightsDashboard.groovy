@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.76
+// Modern Dashboard v0.4.77
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.76"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.77"
 @Field private static List LOCAL_FILE_NAME_CACHE = null
 @Field private static long LOCAL_FILE_NAME_CACHE_AT = 0L
 @Field private static final long LOCAL_FILE_NAME_CACHE_TTL = 30000L
@@ -87,7 +87,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.76 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.77 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -2883,6 +2883,7 @@ def appendAudioDeviceJson(out, d, roomsList) {
     out << ",\"tr\":" << jsonStr(track ?: "")
     out << ",\"m\":" << jsonStr(muteVal ?: "unmuted")
     out << ",\"f\":" << flags.toString()
+    out << pollFlagJson(d)
     out << "}"
 }
 
@@ -3442,7 +3443,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.76.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-192-0.4.77.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -3541,7 +3542,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.76.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/beta/dist/upload/mld-icon-${size}-0.4.77.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -3643,6 +3644,7 @@ def renderData() {
             out << ",\"h\":" << (hue == null ? "null" : hue.toString())
             out << ",\"sat\":" << (sat == null ? "null" : sat.toString())
             out << ",\"cm\":" << jsonStr(cmode)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -3693,6 +3695,7 @@ def renderData() {
             out << ",\"supFM\":" << jsonListAttr(supFanModes)
             out << ",\"fsLev\":" << jsonListAttr(fsLevels)
             appendTstatComfortJson(out, d)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -3779,6 +3782,7 @@ def renderData() {
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
             out << ",\"st\":" << jsonStr(lockSt)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -3793,6 +3797,7 @@ def renderData() {
             out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"st\":" << jsonStr(doorSt)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -3810,6 +3815,7 @@ def renderData() {
         out << ",\"pos\":" << numOrNull(shadePos)
         out << ",\"hasPos\":" << (shadeSupportsPosition(d) ? 1 : 0)
         out << ",\"hasStop\":" << (shadeSupportsStop(d) ? 1 : 0)
+        out << pollFlagJson(d)
         out << "}"
     }
     out << "],\"ceilingFans\":["
@@ -3832,6 +3838,7 @@ def renderData() {
             out << ",\"sp\":" << jsonStr(speed)
             out << ",\"supSp\":" << jsonListAttr(supSpeeds)
             out << ",\"hasSw\":" << (hasSw ? 1 : 0)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -3846,6 +3853,7 @@ def renderData() {
             out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"st\":" << jsonStr(valveSt)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -4122,6 +4130,19 @@ def deviceHasAttribute(d, String attr) {
     } == true
 }
 
+// WiFi drivers that drop their own live socket. A command confirm asks these to Refresh.
+def deviceNeedsCommandPoll(d) {
+    def tn = ""
+    try { tn = (d?.typeName ?: "").toString().toLowerCase() } catch (e) { tn = "" }
+    if (!tn) return false
+    if (tn.contains("blu") || tn.contains("bthome")) return false
+    return tn.contains("shelly") || tn.contains("tasmota") || tn.contains("esphome")
+}
+
+def pollFlagJson(d) {
+    return deviceNeedsCommandPoll(d) ? ",\"poll\":1" : ""
+}
+
 def pollDisplayName(d) {
     if (d == null) return null
     if (!pollFactsOn()) {
@@ -4183,6 +4204,7 @@ def appendOnOffDeviceJson(out, d, roomsList) {
     out << ",\"n\":" << jsonStr(pollDisplayName(d))
     out << ",\"r\":" << (rid == null ? "null" : rid.toString())
     out << ",\"s\":" << (sw == "on" ? 1 : 0)
+    out << pollFlagJson(d)
     out << "}"
 }
 
@@ -4699,6 +4721,12 @@ def appendTstatComfortJson(out, d) {
     out << ",\"vpLev\":" << jsonListAttr(vpLev)
 }
 
+// refresh=0 reads the hub cache. Anything else (including refresh=1) asks the driver to poll.
+def maybeRefreshDevice(dev) {
+    if (params?.refresh?.toString() == "0") return
+    try { dev?.refresh() } catch (e) {}
+}
+
 // ---------------------------------------------------------------------------
 // /device?id=.. - single-device state (reconcile dimmer level after "on")
 // ---------------------------------------------------------------------------
@@ -4714,7 +4742,7 @@ def renderDevice() {
         def isDim = dev.hasCapability("SwitchLevel")
         def hasCt = dev.hasCapability("ColorTemperature")
         def hasRgb = dev.hasCapability("ColorControl")
-        try { dev.refresh() } catch (e) {}
+        maybeRefreshDevice(dev)
         def sw = safeCurrent(dev, "switch")
         def lvl = isDim ? safeCurrent(dev, "level") : null
         def kelvin = hasCt ? safeCurrent(dev, "colorTemperature") : null
@@ -4730,7 +4758,7 @@ def renderDevice() {
         out << ",\"h\":" << (hue == null ? "null" : hue.toString())
         out << ",\"sat\":" << (sat == null ? "null" : sat.toString())
         if (shadeForDev != null) {
-            try { shadeForDev.refresh() } catch (e) {}
+            maybeRefreshDevice(shadeForDev)
             out << ",\"st\":" << jsonStr(shadeStatus(shadeForDev))
             out << ",\"pos\":" << numOrNull(shadePosition(shadeForDev))
             out << ",\"hasPos\":" << (shadeSupportsPosition(shadeForDev) ? 1 : 0)
@@ -4739,10 +4767,20 @@ def renderDevice() {
         out << "}"
         return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
+    def outlet = outletSwitches?.find { it.id.toString() == id.toString() }
+    if (outlet != null) {
+        maybeRefreshDevice(outlet)
+        def sw = safeCurrent(outlet, "switch")
+        def out = new StringBuilder()
+        out << "{\"i\":" << outlet.id
+        out << ",\"s\":" << (sw == "on" ? 1 : 0)
+        out << "}"
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
+    }
     // thermostat?
     def t = thermostats?.find { it.id.toString() == id.toString() }
     if (t != null) {
-        try { t.refresh() } catch (e) {}
+        maybeRefreshDevice(t)
         def hasFanMode = t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode")
         def hasFanSpeed = t.hasAttribute("fanSpeed") || t.hasCommand("setFanSpeed") || t.hasAttribute("fanSpeedLevels")
         def out = new StringBuilder()
@@ -4770,7 +4808,7 @@ def renderDevice() {
         allAudioDevices()?.any { it.id.toString() == id.toString() }
     def s = tempSensors?.find { it.id.toString() == id.toString() }
     if (s != null && senEntry == null && !hasControlRole) {
-        try { s.refresh() } catch (e) {}
+        maybeRefreshDevice(s)
         def out = new StringBuilder()
         def extras = sensorExtraAttrs(s, "temperature", sensorExMaxForType("temp"), "temp")
         out << "{\"i\":" << s.id
@@ -4782,7 +4820,7 @@ def renderDevice() {
     }
     if (senEntry != null && !hasControlRole) {
         def sd = senEntry.device
-        try { sd.refresh() } catch (e) {}
+        maybeRefreshDevice(sd)
         def roomsList = app.getRooms() ?: []
         def out = new StringBuilder()
         appendSensorJson(out, sd, senEntry, roomsList)
@@ -4790,7 +4828,7 @@ def renderDevice() {
     }
     def lk = locks?.find { it.id.toString() == id.toString() }
     if (lk != null) {
-        try { lk.refresh() } catch (e) {}
+        maybeRefreshDevice(lk)
         def lockSt = safeCurrent(lk, "lock")
         def out = new StringBuilder()
         out << "{\"i\":" << lk.id
@@ -4800,7 +4838,7 @@ def renderDevice() {
     }
     def garage = garageDoors?.find { it.id.toString() == id.toString() }
     if (garage != null) {
-        try { garage.refresh() } catch (e) {}
+        maybeRefreshDevice(garage)
         def out = new StringBuilder()
         out << "{\"i\":" << garage.id
         out << ",\"st\":" << jsonStr(safeCurrent(garage, "door")) << "}"
@@ -4808,7 +4846,7 @@ def renderDevice() {
     }
     def shade = allWindowShades()?.find { it.id.toString() == id.toString() }
     if (shade != null) {
-        try { shade.refresh() } catch (e) {}
+        maybeRefreshDevice(shade)
         def shadeSt = shadeStatus(shade)
         def shadePos = shadePosition(shade)
         def out = new StringBuilder()
@@ -4822,7 +4860,7 @@ def renderDevice() {
     }
     def fan = ceilingFans?.find { it.id.toString() == id.toString() }
     if (fan != null) {
-        try { fan.refresh() } catch (e) {}
+        maybeRefreshDevice(fan)
         def speed = safeCurrent(fan, "speed")
         def sw = safeCurrent(fan, "switch")
         def on = false
@@ -4836,7 +4874,7 @@ def renderDevice() {
     }
     def valve = valves?.find { it.id.toString() == id.toString() }
     if (valve != null) {
-        try { valve.refresh() } catch (e) {}
+        maybeRefreshDevice(valve)
         def out = new StringBuilder()
         out << "{\"i\":" << valve.id
         out << ",\"st\":" << jsonStr(safeCurrent(valve, "valve"))
@@ -4845,7 +4883,7 @@ def renderDevice() {
     }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
     if (mp != null) {
-        try { mp.refresh() } catch (e) {}
+        maybeRefreshDevice(mp)
         def out = new StringBuilder()
         out << "{\"i\":" << mp.id
         out << ",\"st\":" << jsonStr(normalizeAudioStatus(mp) ?: "idle")

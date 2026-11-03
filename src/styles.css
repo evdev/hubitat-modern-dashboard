@@ -4205,8 +4205,9 @@ body.reorder-dragging .favorites-reorder-mode .quick-body-favorites .quick-fav-g
 .tile.off .slider-thumb { border-color: var(--text-faint); }
 
 /* Status / states */
-.status { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--panel-solid); border: 1px solid var(--stroke-2); color: var(--text); padding: 10px 16px; border-radius: 999px; font-size: 13px; font-weight: 600; box-shadow: var(--shadow); z-index: 50; animation: fadein .2s var(--ease); }
+.status { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: min(420px, calc(100vw - 32px)); background: var(--panel-solid); border: 1px solid var(--stroke-2); color: var(--text); padding: 10px 16px; border-radius: 16px; font-size: 13px; font-weight: 600; line-height: 1.35; text-align: center; box-shadow: var(--shadow); z-index: 78; pointer-events: none; animation: fadein .2s var(--ease); }
 .status.error { border-color: var(--danger); color: var(--danger); }
+.status.status-front { z-index: 82; }
 
 .local-mode-banner {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

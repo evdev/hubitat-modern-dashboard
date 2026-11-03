@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.77
+
+- **Dashboard:** After you change a device, the tile stays on that state only if the device changed. If it did not, the tile goes back and a message says to check the device. Update Modern Dashboard.
+
+- **Dashboard:** Shelly, Tasmota, and ESPHome devices are asked again after a command, so the hub learns the new state when their live connection drops. Update Modern Dashboard.
+
 ## 0.4.76
 
 - **Dashboard:** A clock that a phone refuses to move still shows the hub's hour and date. Shabbat timeline days keep the hub's date. Update Modern Dashboard.

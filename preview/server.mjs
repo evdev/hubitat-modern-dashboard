@@ -1292,6 +1292,11 @@ const server = createServer(async (req, res) => {
         s: dev.s, l: dev.l, k: dev.k ?? null, h: dev.h ?? null, sat: dev.sat ?? null,
       }));
     }
+    const outlet = state.outlets?.find(d => d.i === id);
+    if (outlet) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ i: outlet.i, s: outlet.s }));
+    }
     const t = state.thermostats?.find(d => d.i === id);
     if (t) {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });

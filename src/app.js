@@ -824,59 +824,273 @@
   let tstatsPopupMap = new Map();
   let tstatsPopupSig = "";
 
+  const optimisticSettle = new Map(); // id -> { gen, timer, pollTimer, inflight }
+  const OPTIMISTIC_FAIL_CMDS = new Set([
+    "on", "off", "setLevel", "lock", "unlock", "open", "close", "setPosition", "stop",
+    "setSpeed", "play", "pause", "setVolume", "mute", "unmute",
+    "setHeat", "setCool", "setMode", "modeAuto", "modeHeat", "modeCool", "off",
+    "setFanMode", "setComfortMode", "setComfortFanSpeed", "setVanePosition",
+  ]);
+
+  function optimisticNumsClose(a, b, tol) {
+    const na = Number(a);
+    const nb = Number(b);
+    if (!Number.isFinite(na) || !Number.isFinite(nb)) return false;
+    return Math.abs(na - nb) <= (tol == null ? 0 : tol);
+  }
+
+  function deviceReportsSlow(id) {
+    const n = Number(id);
+    const lists = [devices, outlets, thermostats, locks, garageDoors, windowShades, ceilingFans, valves, music];
+    for (const list of lists) {
+      if (!list) continue;
+      const hit = list.find((d) => d && Number(d.i) === n);
+      if (hit) return !!hit.poll;
+    }
+    return false;
+  }
+
+  function hasOptimisticHold(id) {
+    if (switchOptimistic.has(id) || levelOptimistic.has(id) || lockOptimistic.has(id)) return true;
+    if (garageOptimistic.has(id) || shadeOptimistic.has(id) || fanOptimistic.has(id)) return true;
+    if (valveOptimistic.has(id) || musicOptimistic.has(id) || setpointOptimistic.has(id)) return true;
+    if (tstatDeviceModeLock.has(id) || tstatFanModeLock.has(id) || tstatVaneLock.has(id)) return true;
+    return !!(tstatSession?.modeLockUntil > Date.now() && tstatSession.ids?.includes(id));
+  }
+
+  function optimisticHoldMaps() {
+    return [
+      switchOptimistic, levelOptimistic, lockOptimistic, garageOptimistic, shadeOptimistic,
+      fanOptimistic, valveOptimistic, musicOptimistic, setpointOptimistic,
+      tstatDeviceModeLock, tstatFanModeLock, tstatVaneLock,
+    ];
+  }
+
+  function armOptimisticSettle(id, ms) {
+    let slot = optimisticSettle.get(id);
+    if (!slot) {
+      slot = { gen: 0, timer: null, pollTimer: null, inflight: null };
+      optimisticSettle.set(id, slot);
+    }
+    slot.gen += 1;
+    const gen = slot.gen;
+    if (slot.timer) clearTimeout(slot.timer);
+    if (slot.pollTimer) clearTimeout(slot.pollTimer);
+    slot.timer = setTimeout(() => {
+      slot.timer = null;
+      postCall("settleOptimisticDevice", id, gen);
+    }, ms);
+    if (deviceReportsSlow(id)) {
+      slot.pollTimer = setTimeout(() => {
+        slot.pollTimer = null;
+        if (optimisticSettle.get(id)?.gen !== gen) return;
+        if (!hasOptimisticHold(id)) return;
+        postCall("kickDevicePoll", id);
+      }, 1000);
+    }
+  }
+
+  function releaseOptimisticHold(id) {
+    if (hasOptimisticHold(id)) return;
+    const slot = optimisticSettle.get(id);
+    if (!slot) return;
+    slot.gen += 1;
+    if (slot.timer) clearTimeout(slot.timer);
+    if (slot.pollTimer) clearTimeout(slot.pollTimer);
+    slot.timer = null;
+    slot.pollTimer = null;
+  }
+
+  function noteOptimisticExpiry(id, opt) {
+    if (!opt || opt.checking) return;
+    opt.checking = true;
+    opt.until = Date.now() + 20000;
+    postCall("settleOptimisticDevice", id);
+  }
+
+  function captureOptimistic(id) {
+    const session = (tstatSession?.modeLockUntil > Date.now() && tstatSession.ids?.includes(id))
+      ? { mode: tstatSession.lockedMode }
+      : null;
+    const snap = {
+      sw: switchOptimistic.get(id) ? { ...switchOptimistic.get(id) } : null,
+      lv: levelOptimistic.get(id) ? { ...levelOptimistic.get(id) } : null,
+      lock: lockOptimistic.get(id) ? { ...lockOptimistic.get(id) } : null,
+      garage: garageOptimistic.get(id) ? { ...garageOptimistic.get(id) } : null,
+      shade: shadeOptimistic.get(id) ? { ...shadeOptimistic.get(id) } : null,
+      fan: fanOptimistic.get(id) ? { ...fanOptimistic.get(id) } : null,
+      valve: valveOptimistic.get(id) ? { ...valveOptimistic.get(id) } : null,
+      music: musicOptimistic.get(id) ? { ...musicOptimistic.get(id) } : null,
+      sp: setpointOptimistic.get(id) ? { ...setpointOptimistic.get(id) } : null,
+      mode: tstatDeviceModeLock.get(id) ? { ...tstatDeviceModeLock.get(id) } : null,
+      fanMode: tstatFanModeLock.get(id) ? { ...tstatFanModeLock.get(id) } : null,
+      vane: tstatVaneLock.get(id) ? { ...tstatVaneLock.get(id) } : null,
+      session,
+    };
+    if (!snap.sw && !snap.lv && !snap.lock && !snap.garage && !snap.shade && !snap.fan && !snap.valve && !snap.music && !snap.sp && !snap.mode && !snap.fanMode && !snap.vane && !snap.session) {
+      return null;
+    }
+    return snap;
+  }
+
+  function restoreOptimisticSnapshot(id, snap) {
+    if (!snap) return;
+    if (snap.sw || snap.lv) {
+      const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
+      if (dev) {
+        const prevS = snap.sw && snap.sw.prevS !== undefined ? snap.sw.prevS : snap.lv?.prevS;
+        const prevL = snap.sw && snap.sw.prevL !== undefined ? snap.sw.prevL : snap.lv?.prevL;
+        if (prevS !== undefined) dev.s = prevS;
+        if (prevL !== undefined) dev.l = prevL;
+      }
+    }
+    if (snap.lock) {
+      const lock = locks.find((l) => l.i === id);
+      if (lock) {
+        if (snap.lock.prevLk !== undefined) lock.lk = snap.lock.prevLk;
+        if (snap.lock.prevSt !== undefined) lock.st = snap.lock.prevSt;
+      }
+    }
+    if (snap.garage) {
+      const door = garageDoors.find((g) => g.i === id);
+      if (door && snap.garage.prevSt !== undefined) door.st = snap.garage.prevSt;
+    }
+    if (snap.shade) {
+      const shade = windowShades.find((s) => s.i === id);
+      if (shade) {
+        if (snap.shade.prevSt !== undefined) shade.st = snap.shade.prevSt;
+        if (snap.shade.prevPos !== undefined) shade.pos = snap.shade.prevPos;
+      }
+    }
+    if (snap.fan) {
+      const fan = ceilingFans.find((f) => f.i === id);
+      if (fan) {
+        if (snap.fan.prevS !== undefined) fan.s = snap.fan.prevS;
+        if (snap.fan.prevSp !== undefined) fan.sp = snap.fan.prevSp;
+      }
+    }
+    if (snap.valve) {
+      const valve = valves.find((v) => v.i === id);
+      if (valve && snap.valve.prevSt !== undefined) valve.st = snap.valve.prevSt;
+    }
+    if (snap.music) {
+      const dev = music.find((m) => m.i === id);
+      if (dev) {
+        if (snap.music.prevSt !== undefined) dev.st = snap.music.prevSt;
+        if (snap.music.prevV !== undefined) dev.v = snap.music.prevV;
+      }
+    }
+    if (snap.sp) {
+      const t = thermostats.find((x) => x.i === id);
+      if (t) {
+        if (snap.sp.prevHsp !== undefined) t.hsp = snap.sp.prevHsp;
+        if (snap.sp.prevCsp !== undefined) t.csp = snap.sp.prevCsp;
+      }
+    }
+    const t = thermostats.find((x) => x.i === id);
+    if (t && snap.mode) {
+      if (snap.mode.prevTm !== undefined) t.tm = snap.mode.prevTm;
+      if (snap.mode.prevOs !== undefined) t.os = snap.mode.prevOs;
+    }
+    if (t && snap.fanMode) {
+      if (snap.fanMode.prevFm !== undefined) t.fm = snap.fanMode.prevFm;
+      if (snap.fanMode.prevCfs !== undefined) t.cfs = snap.fanMode.prevCfs;
+      if (snap.fanMode.prevOs !== undefined) t.os = snap.fanMode.prevOs;
+    }
+    if (t && snap.vane && snap.vane.prevVp !== undefined) t.vp = snap.vane.prevVp;
+  }
+
+  function dropOptimisticHolds(id, snap) {
+    if (!snap || snap.sw) switchOptimistic.delete(id);
+    if (!snap || snap.lv) levelOptimistic.delete(id);
+    if (!snap || snap.lock) lockOptimistic.delete(id);
+    if (!snap || snap.garage) garageOptimistic.delete(id);
+    if (!snap || snap.shade) shadeOptimistic.delete(id);
+    if (!snap || snap.fan) fanOptimistic.delete(id);
+    if (!snap || snap.valve) valveOptimistic.delete(id);
+    if (!snap || snap.music) musicOptimistic.delete(id);
+    if (!snap || snap.sp) setpointOptimistic.delete(id);
+    if (!snap || snap.mode) tstatDeviceModeLock.delete(id);
+    if (!snap || snap.fanMode) tstatFanModeLock.delete(id);
+    if (!snap || snap.vane) tstatVaneLock.delete(id);
+    if (snap && (snap.mode || snap.session) && tstatSession?.ids?.includes(id)) tstatSession.modeLockUntil = 0;
+  }
+
+  function abandonOptimistic(id) {
+    const snap = captureOptimistic(id);
+    if (!snap) {
+      releaseOptimisticHold(id);
+      return;
+    }
+    restoreOptimisticSnapshot(id, snap);
+    dropOptimisticHolds(id, null);
+    if (tstatSession?.ids?.includes(id)) tstatSession.modeLockUntil = 0;
+    const slot = optimisticSettle.get(id);
+    if (slot) {
+      slot.gen += 1;
+      if (slot.timer) clearTimeout(slot.timer);
+      if (slot.pollTimer) clearTimeout(slot.pollTimer);
+      slot.timer = null;
+      slot.pollTimer = null;
+    }
+    postCall("repaintOptimisticViews", id);
+  }
+
   function setLevelOptimistic(id, level) {
     const prev = levelOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
-    const until = Date.now() + LEVEL_OPTIMISTIC_MS;
-    const timer = setTimeout(() => {
-      levelOptimistic.delete(id);
-      postCall("updateStates");
-    }, LEVEL_OPTIMISTIC_MS);
-    levelOptimistic.set(id, { level, until, timer });
+    const sw = switchOptimistic.get(id);
+    const dev = devices.find((d) => d.i === id);
+    levelOptimistic.set(id, {
+      level,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      prevL: prev ? prev.prevL : (sw && sw.prevL !== undefined ? sw.prevL : dev?.l),
+      prevS: prev ? prev.prevS : (sw && sw.prevS !== undefined ? sw.prevS : dev?.s),
+    });
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function setSwitchOptimistic(id, s, l) {
     const prev = switchOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
-    const dev = devices.find((d) => d.i === id);
+    const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
+    const entry = {
+      s,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      prevS: prev ? prev.prevS : dev?.s,
+      prevL: prev ? prev.prevL : (dev && "l" in dev ? dev.l : undefined),
+    };
+    if (l !== undefined) entry.l = l;
     if (dev) {
       dev.s = s;
-      if (l !== undefined) dev.l = l;
-    } else {
-      const out = outlets.find((d) => d.i === id);
-      if (out) out.s = s;
+      if (l !== undefined && "l" in dev) dev.l = l;
     }
-    const entry = { s, until: Date.now() + LEVEL_OPTIMISTIC_MS, timer: null };
-    if (l !== undefined) entry.l = l;
-    entry.timer = setTimeout(() => {
-      switchOptimistic.delete(id);
-      postCall("updateStates");
-    }, LEVEL_OPTIMISTIC_MS);
     switchOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearSwitchOptimistic(id) {
-    const prev = switchOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     switchOptimistic.delete(id);
+    releaseOptimisticHold(id);
+  }
+
+  function clearLevelOptimistic(id) {
+    levelOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplySwitchOptimistic() {
     for (const [id, opt] of switchOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        switchOptimistic.delete(id);
+      const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
+      if (!dev) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
-      const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
-      if (!dev) continue;
       const sMatch = !!dev.s === !!opt.s;
       const lMatch = opt.l === undefined || (opt.l === null && opt.s === 1) || dev.l === opt.l;
       if (sMatch && lMatch) {
-        if (opt.timer) clearTimeout(opt.timer);
-        switchOptimistic.delete(id);
+        clearSwitchOptimistic(id);
         continue;
       }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       dev.s = opt.s;
       if (opt.l !== undefined && "l" in dev) dev.l = opt.l;
     }
@@ -884,42 +1098,38 @@
 
   function effectiveSwitch(dev) {
     const opt = switchOptimistic.get(dev.i);
-    if (opt && Date.now() < opt.until) return !!opt.s;
+    if (opt && (opt.checking || Date.now() < opt.until)) return !!opt.s;
     return !!dev.s;
   }
 
   function effectiveLevel(dev) {
     const swOpt = switchOptimistic.get(dev.i);
-    if (swOpt && Date.now() < swOpt.until && swOpt.l === null) return null;
+    if (swOpt && (swOpt.checking || Date.now() < swOpt.until) && swOpt.l === null) return null;
     const opt = levelOptimistic.get(dev.i);
-    if (opt && Date.now() < opt.until) return opt.level;
+    if (opt && (opt.checking || Date.now() < opt.until)) return opt.level;
     return dev.l;
   }
 
   function setLockOptimistic(id, lk, st) {
     const prev = lockOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const lock = locks.find((l) => l.i === id);
+    lockOptimistic.set(id, {
+      lk,
+      st,
+      until: Date.now() + LOCK_OPTIMISTIC_MS,
+      prevLk: prev ? prev.prevLk : lock?.lk,
+      prevSt: prev ? prev.prevSt : lock?.st,
+    });
     if (lock) {
       lock.lk = lk;
       lock.st = st;
     }
-    const timer = setTimeout(() => {
-      lockOptimistic.delete(id);
-      const cur = locks.find((l) => l.i === id);
-      if (cur && (cur.st === "locking" || cur.st === "unlocking")) {
-        cur.st = cur.lk ? "locked" : "unlocked";
-      }
-      if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, LOCK_OPTIMISTIC_MS);
-    lockOptimistic.set(id, { lk, st, until: Date.now() + LOCK_OPTIMISTIC_MS, timer });
+    armOptimisticSettle(id, LOCK_OPTIMISTIC_MS);
   }
 
   function clearLockOptimistic(id) {
-    const prev = lockOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     lockOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function lockOptimisticSatisfied(opt, lock) {
@@ -934,18 +1144,16 @@
 
   function reapplyLockOptimistic() {
     for (const [id, opt] of lockOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        lockOptimistic.delete(id);
-        continue;
-      }
       const lock = locks.find((l) => l.i === id);
-      if (!lock) continue;
-      if (lockOptimisticSatisfied(opt, lock)) {
-        if (opt.timer) clearTimeout(opt.timer);
-        lockOptimistic.delete(id);
+      if (!lock) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
+      if (lockOptimisticSatisfied(opt, lock)) {
+        clearLockOptimistic(id);
+        continue;
+      }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       lock.lk = opt.lk;
       lock.st = opt.st;
     }
@@ -953,7 +1161,7 @@
 
   function effectiveLockState(lock) {
     const opt = lockOptimistic.get(lock.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return lock.st || "";
   }
 
@@ -983,63 +1191,51 @@
 
   function setGarageOptimistic(id, patch) {
     const prev = garageOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const door = garageDoors.find((g) => g.i === id);
-    if (door && patch.st != null) door.st = patch.st;
     const entry = {
       st: patch.st != null ? patch.st : prev?.st,
       until: Date.now() + GARAGE_OPTIMISTIC_MS,
-      timer: null,
+      prevSt: prev ? prev.prevSt : door?.st,
     };
-    entry.timer = setTimeout(() => {
-      garageOptimistic.delete(id);
-      const cur = garageDoors.find((g) => g.i === id);
-      if (cur && (cur.st === "opening" || cur.st === "closing")) {
-        // Fall back to last known direction if hub never settled in time.
-        cur.st = cur.st === "opening" ? "open" : "closed";
-      }
-      if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, GARAGE_OPTIMISTIC_MS);
+    if (door && patch.st != null) door.st = patch.st;
     garageOptimistic.set(id, entry);
+    armOptimisticSettle(id, GARAGE_OPTIMISTIC_MS);
   }
 
   function clearGarageOptimistic(id) {
-    const prev = garageOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     garageOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function garageOptimisticSatisfied(opt, door) {
     if (!opt || !door || opt.st == null) return false;
     const want = String(opt.st);
     const got = String(door.st || "");
-    if (want === got) return true;
-    // Hub often reports the settled state while we still hold opening/closing.
-    return (want === "opening" && got === "open") || (want === "closing" && got === "closed");
+    // Opening/closing is still travel. Only the settled end releases the hold.
+    if (want === "opening") return got === "open";
+    if (want === "closing") return got === "closed";
+    return want === got;
   }
 
   function reapplyGarageOptimistic() {
     for (const [id, opt] of garageOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        garageOptimistic.delete(id);
-        continue;
-      }
       const door = garageDoors.find((g) => g.i === id);
-      if (!door) continue;
-      if (garageOptimisticSatisfied(opt, door)) {
-        if (opt.timer) clearTimeout(opt.timer);
-        garageOptimistic.delete(id);
+      if (!door) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
+      if (garageOptimisticSatisfied(opt, door)) {
+        clearGarageOptimistic(id);
+        continue;
+      }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.st != null) door.st = opt.st;
     }
   }
 
   function effectiveGarageState(door) {
     const opt = garageOptimistic.get(door.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return door.st || "unknown";
   }
 
@@ -1065,31 +1261,25 @@
 
   function setShadeOptimistic(id, patch) {
     const prev = shadeOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const shade = windowShades.find((s) => s.i === id);
-    if (shade) {
-      if (patch.st != null) shade.st = patch.st;
-      if (patch.pos != null) shade.pos = patch.pos;
-    }
     const entry = {
       st: patch.st != null ? patch.st : prev?.st,
       pos: patch.pos != null ? patch.pos : prev?.pos,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevSt: prev ? prev.prevSt : shade?.st,
+      prevPos: prev ? prev.prevPos : shade?.pos,
     };
-    entry.timer = setTimeout(() => {
-      shadeOptimistic.delete(id);
-      if (postCall("currentCategory") === "blinds") postCall("refreshBlindsPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-      if (shadeMasterPopup?.classList.contains("open")) postCall("updateShadeMasterBody");
-    }, LEVEL_OPTIMISTIC_MS);
+    if (shade) {
+      if (patch.st != null) shade.st = patch.st;
+      if (patch.pos != null) shade.pos = patch.pos;
+    }
     shadeOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearShadeOptimistic(id) {
-    const prev = shadeOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     shadeOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function shadeOptimisticSatisfied(opt, shade) {
@@ -1110,18 +1300,16 @@
 
   function reapplyShadeOptimistic() {
     for (const [id, opt] of shadeOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        shadeOptimistic.delete(id);
-        continue;
-      }
       const shade = windowShades.find((s) => s.i === id);
-      if (!shade) continue;
-      if (shadeOptimisticSatisfied(opt, shade)) {
-        if (opt.timer) clearTimeout(opt.timer);
-        shadeOptimistic.delete(id);
+      if (!shade) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
+      if (shadeOptimisticSatisfied(opt, shade)) {
+        clearShadeOptimistic(id);
+        continue;
+      }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.st != null) shade.st = opt.st;
       if (opt.pos != null) shade.pos = opt.pos;
     }
@@ -1129,13 +1317,13 @@
 
   function effectiveShadeState(shade) {
     const opt = shadeOptimistic.get(shade.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return shade.st || "unknown";
   }
 
   function effectiveShadePosition(shade) {
     const opt = shadeOptimistic.get(shade.i);
-    if (opt && Date.now() < opt.until && opt.pos != null) return opt.pos;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.pos != null) return opt.pos;
     return shade.pos;
   }
 
@@ -1195,49 +1383,42 @@
 
   function setFanOptimistic(id, patch) {
     const prev = fanOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const fan = ceilingFans.find((f) => f.i === id);
-    if (fan) {
-      if (patch.s != null) fan.s = patch.s ? 1 : 0;
-      if (patch.sp != null) fan.sp = patch.sp;
-    }
     const entry = {
       s: patch.s != null ? (patch.s ? 1 : 0) : prev?.s,
       sp: patch.sp != null ? patch.sp : prev?.sp,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevS: prev ? prev.prevS : fan?.s,
+      prevSp: prev ? prev.prevSp : fan?.sp,
     };
-    entry.timer = setTimeout(() => {
-      fanOptimistic.delete(id);
-      if (postCall("currentCategory") === "fans") postCall("refreshFansPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, LEVEL_OPTIMISTIC_MS);
+    if (fan) {
+      if (patch.s != null) fan.s = patch.s ? 1 : 0;
+      if (patch.sp != null) fan.sp = patch.sp;
+    }
     fanOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearFanOptimistic(id) {
-    const prev = fanOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     fanOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplyFanOptimistic() {
     for (const [id, opt] of fanOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        fanOptimistic.delete(id);
+      const fan = ceilingFans.find((f) => f.i === id);
+      if (!fan) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
-      const fan = ceilingFans.find((f) => f.i === id);
-      if (!fan) continue;
       let matched = true;
       if (opt.s != null && !!fan.s !== !!opt.s) matched = false;
       if (opt.sp != null && String(fan.sp || "").toLowerCase() !== String(opt.sp).toLowerCase()) matched = false;
       if (matched) {
-        if (opt.timer) clearTimeout(opt.timer);
-        fanOptimistic.delete(id);
+        clearFanOptimistic(id);
         continue;
       }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.s != null) fan.s = opt.s ? 1 : 0;
       if (opt.sp != null) fan.sp = opt.sp;
     }
@@ -1245,13 +1426,13 @@
 
   function effectiveFanOn(fan) {
     const opt = fanOptimistic.get(fan.i);
-    if (opt && Date.now() < opt.until && opt.s != null) return !!opt.s;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.s != null) return !!opt.s;
     return !!fan.s;
   }
 
   function effectiveFanSpeed(fan) {
     const opt = fanOptimistic.get(fan.i);
-    if (opt && Date.now() < opt.until && opt.sp != null) return opt.sp;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.sp != null) return opt.sp;
     return fan.sp;
   }
 
@@ -1380,49 +1561,41 @@
 
   function setValveOptimistic(id, patch) {
     const prev = valveOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const valve = valves.find((v) => v.i === id);
-    if (valve && patch.st != null) valve.st = patch.st;
     const entry = {
       st: patch.st != null ? patch.st : prev?.st,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevSt: prev ? prev.prevSt : valve?.st,
     };
-    entry.timer = setTimeout(() => {
-      valveOptimistic.delete(id);
-      if (postCall("currentCategory") === "sensors") postCall("refreshSensorsPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, LEVEL_OPTIMISTIC_MS);
+    if (valve && patch.st != null) valve.st = patch.st;
     valveOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearValveOptimistic(id) {
-    const prev = valveOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     valveOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplyValveOptimistic() {
     for (const [id, opt] of valveOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        valveOptimistic.delete(id);
-        continue;
-      }
       const valve = valves.find((v) => v.i === id);
-      if (!valve) continue;
-      if (opt.st != null && valve.st === opt.st) {
-        if (opt.timer) clearTimeout(opt.timer);
-        valveOptimistic.delete(id);
+      if (!valve) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
+      if (opt.st != null && valve.st === opt.st) {
+        clearValveOptimistic(id);
+        continue;
+      }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.st != null) valve.st = opt.st;
     }
   }
 
   function effectiveValveState(valve) {
     const opt = valveOptimistic.get(valve.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return valve.st || "unknown";
   }
 
@@ -1460,13 +1633,13 @@
 
   function effectiveMusicStatus(dev) {
     const opt = musicOptimistic.get(dev.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return dev.st || "idle";
   }
 
   function effectiveMusicVolume(dev) {
     const opt = musicOptimistic.get(dev.i);
-    if (opt && Date.now() < opt.until && opt.v != null) return opt.v;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.v != null) return opt.v;
     return dev.v == null ? null : dev.v;
   }
 
@@ -1481,47 +1654,41 @@
 
   function setMusicOptimistic(id, patch) {
     const prev = musicOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const dev = music.find((m) => m.i === id);
-    if (dev) {
-      if (patch.st != null) dev.st = patch.st;
-      if (patch.v != null) dev.v = patch.v;
-    }
     const entry = {
       st: patch.st ?? null,
       v: patch.v ?? null,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevSt: prev ? prev.prevSt : dev?.st,
+      prevV: prev ? prev.prevV : dev?.v,
     };
-    entry.timer = setTimeout(() => {
-      musicOptimistic.delete(id);
-      if (postCall("currentCategory") === "music") postCall("renderMusicPopup");
-    }, LEVEL_OPTIMISTIC_MS);
+    if (dev) {
+      if (patch.st != null) dev.st = patch.st;
+      if (patch.v != null) dev.v = patch.v;
+    }
     musicOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearMusicOptimistic(id) {
-    const prev = musicOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     musicOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplyMusicOptimistic() {
     for (const [id, opt] of musicOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        musicOptimistic.delete(id);
+      const dev = music.find((m) => m.i === id);
+      if (!dev) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
-      const dev = music.find((m) => m.i === id);
-      if (!dev) continue;
       const stMatch = opt.st == null || dev.st === opt.st;
       const vMatch = opt.v == null || dev.v === opt.v;
       if (stMatch && vMatch) {
-        if (opt.timer) clearTimeout(opt.timer);
-        musicOptimistic.delete(id);
+        clearMusicOptimistic(id);
         continue;
       }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.st != null) dev.st = opt.st;
       if (opt.v != null) dev.v = opt.v;
     }
@@ -1530,52 +1697,41 @@
 
   function setSetpointOptimistic(id, patch) {
     const prev = setpointOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const t = thermostats.find((x) => x.i === id);
-    if (t) {
-      if (patch.hsp != null) t.hsp = patch.hsp;
-      if (patch.csp != null) t.csp = patch.csp;
-    }
     const entry = {
       hsp: patch.hsp ?? null,
       csp: patch.csp ?? null,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevHsp: prev ? prev.prevHsp : t?.hsp,
+      prevCsp: prev ? prev.prevCsp : t?.csp,
     };
-    entry.timer = setTimeout(() => {
-      setpointOptimistic.delete(id);
-      if (tstatSession?.ids?.includes(id)) {
-        postCall("renderTstatDial");
-        postCall("updateClimateWidgets");
-      }
-      postCall("refreshOpenTstatQuickPopups");
-      postCall("refreshDevice", id);
-    }, LEVEL_OPTIMISTIC_MS);
+    if (t) {
+      if (patch.hsp != null) t.hsp = patch.hsp;
+      if (patch.csp != null) t.csp = patch.csp;
+    }
     setpointOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearSetpointOptimistic(id) {
-    const prev = setpointOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     setpointOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplySetpointOptimistic() {
     for (const [id, opt] of setpointOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        setpointOptimistic.delete(id);
+      const t = thermostats.find((x) => x.i === id);
+      if (!t) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
-      const t = thermostats.find((x) => x.i === id);
-      if (!t) continue;
       const hspMatch = opt.hsp == null || t.hsp === opt.hsp;
       const cspMatch = opt.csp == null || t.csp === opt.csp;
       if (hspMatch && cspMatch) {
-        if (opt.timer) clearTimeout(opt.timer);
-        setpointOptimistic.delete(id);
+        clearSetpointOptimistic(id);
         continue;
       }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.hsp != null) t.hsp = opt.hsp;
       if (opt.csp != null) t.csp = opt.csp;
     }
@@ -2123,6 +2279,12 @@
   }
 
   async function sendCmd(id, cmd, val, pin, authPass) {
+    const holdGen = OPTIMISTIC_FAIL_CMDS.has(cmd) ? optimisticSettle.get(id)?.gen : undefined;
+    const dropHold = () => {
+      if (holdGen == null) return;
+      if (optimisticSettle.get(id)?.gen !== holdGen) return;
+      abandonOptimistic(id);
+    };
     let url = "cmd?id=" + id + "&c=" + encodeURIComponent(cmd);
     if (val != null) url += "&v=" + encodeURIComponent(val);
     if (pin != null && pin !== "") url += "&pin=" + encodeURIComponent(pin);
@@ -2130,6 +2292,7 @@
       const r = await fetch(withToken(url), { cache: "no-store" });
       if (r.status === 401) {
         if (await continueAfterDashboard401(authPass)) return sendCmd(id, cmd, val, pin, (authPass || 0) + 1);
+        dropHold();
         return { ok: false, status: 401, error: "auth required" };
       }
       if (!r.ok) {
@@ -2138,11 +2301,17 @@
           const body = await r.json();
           if (body?.error) msg = String(body.error);
         } catch {}
-        if (r.status !== 403 && msg !== "wrong pin") postCall("flash", msg, true);
+        if (msg === "wrong pin") postCall("flash", "Wrong PIN. Try again.", true, true);
+        else if (r.status !== 403) postCall("flash", msg, true);
+        dropHold();
         return { ok: false, status: r.status, error: msg };
       }
       return { ok: true };
-    } catch (e) { postCall("flash", "Command failed", true); return { ok: false }; }
+    } catch (e) {
+      postCall("flash", "Command failed", true);
+      dropHold();
+      return { ok: false };
+    }
   }
 
   async function sendCmdBatch(commands) {
@@ -3246,7 +3415,6 @@
     refreshOpenTstatQuickPopups();
     const results = await Promise.all(ids.map((id) => sendCmd(id, cmd, val)));
     if (results.some((r) => !r?.ok)) {
-      for (const id of ids) clearSetpointOptimistic(id);
       renderTstatDial();
       updateClimateWidgets();
       refreshOpenTstatQuickPopups();
@@ -3547,23 +3715,25 @@
 
   function tstatModeLocked(id) {
     const devLock = tstatDeviceModeLock.get(Number(id));
-    if (devLock?.until > Date.now()) return true;
+    if (devLock && (devLock.checking || devLock.until > Date.now())) return true;
     return !!(tstatSession?.modeLockUntil > Date.now() && tstatSession.ids?.includes(Number(id)));
   }
 
   function tstatFanModeLocked(id) {
     const devLock = tstatFanModeLock.get(Number(id));
-    return !!(devLock?.until > Date.now());
+    return !!(devLock && (devLock.checking || devLock.until > Date.now()));
   }
 
   function reapplyTstatDeviceModeLocks() {
     const now = Date.now();
     for (const [id, lock] of tstatDeviceModeLock) {
-      if (lock.until <= now) {
+      const t = thermostats.find(x => x.i === id);
+      if (t && String(t.tm || "").toLowerCase() === String(lock.mode || "").toLowerCase()) {
         tstatDeviceModeLock.delete(id);
+        releaseOptimisticHold(id);
         continue;
       }
-      const t = thermostats.find(x => x.i === id);
+      if (lock.until <= now) noteOptimisticExpiry(id, lock);
       if (t) t.tm = lock.mode;
     }
   }
@@ -3571,11 +3741,13 @@
   function reapplyTstatFanModeLocks() {
     const now = Date.now();
     for (const [id, lock] of tstatFanModeLock) {
-      if (lock.until <= now) {
+      const t = thermostats.find(x => x.i === id);
+      if (t && String(t.fm || "").toLowerCase() === String(lock.mode || "").toLowerCase()) {
         tstatFanModeLock.delete(id);
+        releaseOptimisticHold(id);
         continue;
       }
-      const t = thermostats.find(x => x.i === id);
+      if (lock.until <= now) noteOptimisticExpiry(id, lock);
       if (t) {
         t.fm = lock.mode;
         if (t.hasCfs) t.cfs = lock.mode;
@@ -3585,17 +3757,19 @@
 
   function tstatVaneLocked(id) {
     const devLock = tstatVaneLock.get(Number(id));
-    return !!(devLock?.until > Date.now());
+    return !!(devLock && (devLock.checking || devLock.until > Date.now()));
   }
 
   function reapplyTstatVaneLocks() {
     const now = Date.now();
     for (const [id, lock] of tstatVaneLock) {
-      if (lock.until <= now) {
+      const t = thermostats.find(x => x.i === id);
+      if (t && String(t.vp || "").toLowerCase() === String(lock.position || "").toLowerCase()) {
         tstatVaneLock.delete(id);
+        releaseOptimisticHold(id);
         continue;
       }
-      const t = thermostats.find(x => x.i === id);
+      if (lock.until <= now) noteOptimisticExpiry(id, lock);
       if (t) t.vp = lock.position;
     }
   }
@@ -3851,13 +4025,17 @@
     for (const id of ids) {
       const t = thermostats.find(x => x.i === id);
       if (!t) continue;
+      const prev = tstatDeviceModeLock.get(id);
+      const prevTm = prev ? prev.prevTm : t.tm;
+      const prevOs = prev ? prev.prevOs : t.os;
       t.tm = key;
       if (key === "heat") t.os = "heating";
       else if (key === "cool" || tstatDryMode(key)) t.os = "cooling";
       else if (key === "off") t.os = "idle";
       else if (key === "auto") t.os = "idle";
       else if (tstatFanOnlyMode(key)) t.os = "fan";
-      tstatDeviceModeLock.set(id, { until: Date.now() + 4000, mode: key });
+      tstatDeviceModeLock.set(id, { until: Date.now() + 4000, mode: key, prevTm, prevOs });
+      armOptimisticSettle(id, 4000);
     }
     refreshOpenTstatQuickPopups();
   }
@@ -3867,6 +4045,10 @@
     for (const id of ids) {
       const t = thermostats.find(x => x.i === id);
       if (!t || !(t.hasFm || deviceHasComfortFan(t))) continue;
+      const prev = tstatFanModeLock.get(id);
+      const prevFm = prev ? prev.prevFm : t.fm;
+      const prevCfs = prev ? prev.prevCfs : t.cfs;
+      const prevOs = prev ? prev.prevOs : t.os;
       t.fm = key;
       if (t.hasCfs) t.cfs = key;
       const tm = String(t.tm || "").toLowerCase();
@@ -3874,7 +4056,8 @@
         if (key === "on" || key === "circulate") t.os = "fan";
         else if (key === "auto") t.os = "idle";
       }
-      tstatFanModeLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, mode: key });
+      tstatFanModeLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, mode: key, prevFm, prevCfs, prevOs });
+      armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
     }
     refreshOpenTstatQuickPopups();
   }
@@ -4263,8 +4446,11 @@
     for (const id of ids) {
       const t = thermostats.find((x) => x.i === id);
       if (!t) continue;
+      const prev = tstatVaneLock.get(id);
+      const prevVp = prev ? prev.prevVp : t.vp;
       t.vp = pos;
-      tstatVaneLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, position: pos });
+      tstatVaneLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, position: pos, prevVp });
+      armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
     }
     renderTstatControls();
     if (tstatSession.central) tstatSession.centralTstat.vp = pos;
@@ -5144,7 +5330,15 @@
     STATUS_EL.textContent = msg;
     STATUS_EL.classList.toggle("error", !!isErr);
   }
-  function flash(msg, isErr) { setStatus(msg, isErr); clearTimeout(flash._t); flash._t = setTimeout(() => setStatus(""), 2200); }
+  function flash(msg, isErr, front) {
+    setStatus(msg, isErr);
+    STATUS_EL.classList.toggle("status-front", !!front);
+    clearTimeout(flash._t);
+    flash._t = setTimeout(() => {
+      setStatus("");
+      STATUS_EL.classList.remove("status-front");
+    }, 2200);
+  }
 
   function hapticTap(pattern) {
     if (!cfg.enableHaptics) return;
@@ -6652,6 +6846,7 @@
       if (currentCategory() === "security") renderSecurityPopup();
       if (result.status === 403 || result.error === "wrong pin") {
         padApi?.shake();
+        flash("Wrong PIN. Try again.", true, true);
         return false;
       }
       if (result.status === 401) {
@@ -8914,7 +9109,7 @@
     setSwitchOptimistic(id, next === "on" ? 1 : 0);
     updateStates();
     sendCmd(id, next).then((r) => {
-      if (!r?.ok) { clearSwitchOptimistic(id); refreshDevice(id); }
+      if (!r?.ok) refreshDevice(id);
     });
   }
 
@@ -8927,7 +9122,7 @@
     setSwitchOptimistic(id, next === "on" ? 1 : 0);
     updateStates();
     sendCmd(id, next).then((r) => {
-      if (!r?.ok) { clearSwitchOptimistic(id); refresh(); }
+      if (!r?.ok) refresh();
     });
   }
 
@@ -8940,13 +9135,13 @@
       setLevelOptimistic(id, 0);
       updateStates();
       sendCmd(id, "off").then((r) => {
-        if (!r?.ok) { clearSwitchOptimistic(id); refreshDevice(id); }
+        if (!r?.ok) refreshDevice(id);
       });
     } else {
       setSwitchOptimistic(id, 1, null);
       updateStates();
       sendCmd(id, "on").then((r) => {
-        if (!r?.ok) { clearSwitchOptimistic(id); refreshDevice(id); }
+        if (!r?.ok) refreshDevice(id);
       });
       reconcileDevice(id);
     }
@@ -8959,10 +9154,245 @@
     setTimeout(() => refreshDevice(id), 1500); // retry once in case the hub is slow
   }
 
-  async function refreshDevice(id) {
+  let commandMissToastAt = 0;
+
+  function flashCommandMiss() {
+    const now = Date.now();
+    if (now - commandMissToastAt < 2000) return;
+    commandMissToastAt = now;
+    flash("Command did not execute. Check the connectivity of the device.", true);
+  }
+
+  function kickDevicePoll(id) {
+    void getJson("device?id=" + id + "&refresh=1").catch(() => {});
+  }
+
+  function reopenOptimisticHold(id) {
+    const until = Date.now();
+    for (const map of optimisticHoldMaps()) {
+      const opt = map.get(id);
+      if (!opt) continue;
+      opt.checking = false;
+      opt.until = until;
+    }
+    if (tstatSession?.ids?.includes(id) && tstatSession.modeLockUntil) tstatSession.modeLockUntil = until;
+  }
+
+  function extendOptimisticHold(id) {
+    const until = Date.now() + 20000;
+    for (const map of optimisticHoldMaps()) {
+      const opt = map.get(id);
+      if (!opt) continue;
+      opt.until = until;
+      opt.checking = true;
+    }
+    if (tstatSession?.ids?.includes(id) && tstatSession.modeLockUntil) tstatSession.modeLockUntil = until;
+  }
+
+  function judgeOptimisticHold(id, snap) {
+    let progress = false;
+    let miss = false;
+    const mark = (result) => {
+      if (result === "progress") progress = true;
+      else if (result === "miss") miss = true;
+    };
+    if (snap.sw) {
+      const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
+      if (!dev || !!dev.s !== !!snap.sw.s) mark("miss");
+      else if (snap.sw.l != null && !optimisticNumsClose(dev.l, snap.sw.l, 2)) mark("miss");
+    }
+    if (snap.lv) {
+      const dev = devices.find((d) => d.i === id);
+      if (!dev || !optimisticNumsClose(dev.l, snap.lv.level, 2)) mark("miss");
+    }
+    if (snap.lock) {
+      const lock = locks.find((l) => l.i === id);
+      if (!lock) mark("miss");
+      else {
+        const want = String(snap.lock.st || "").toLowerCase();
+        const got = String(lock.st || "").toLowerCase();
+        if ((want === "locking" && got === "locking") || (want === "unlocking" && got === "unlocking")) mark("progress");
+        else mark(lockOptimisticSatisfied(snap.lock, lock) ? "ok" : "miss");
+      }
+    }
+    if (snap.garage) {
+      const door = garageDoors.find((g) => g.i === id);
+      if (!door) mark("miss");
+      else {
+        const want = String(snap.garage.st || "");
+        const got = String(door.st || "");
+        if ((want === "opening" || want === "open") && got === "opening") mark("progress");
+        else if ((want === "closing" || want === "closed") && got === "closing") mark("progress");
+        else mark(garageOptimisticSatisfied(snap.garage, door) ? "ok" : "miss");
+      }
+    }
+    if (snap.shade) {
+      const shade = windowShades.find((s) => s.i === id);
+      if (!shade) mark("miss");
+      else {
+        const want = snap.shade.st != null ? String(snap.shade.st) : "";
+        const got = String(shade.st || "");
+        if (got === "opening" && (want === "opening" || want === "open" || snap.shade.pos != null)) mark("progress");
+        else if (got === "closing" && (want === "closing" || want === "closed" || snap.shade.pos != null)) mark("progress");
+        else {
+          let ok = !want || want === got || (want === "opening" && got === "open") || (want === "closing" && got === "closed");
+          if (ok && snap.shade.pos != null && !optimisticNumsClose(shade.pos, snap.shade.pos, 2)) ok = false;
+          if (!ok) mark("miss");
+        }
+      }
+    }
+    if (snap.fan) {
+      const fan = ceilingFans.find((f) => f.i === id);
+      if (!fan) mark("miss");
+      else if (snap.fan.s != null && !!fan.s !== !!snap.fan.s) mark("miss");
+      else if (snap.fan.sp != null && String(fan.sp || "").toLowerCase() !== String(snap.fan.sp).toLowerCase()) mark("miss");
+    }
+    if (snap.valve) {
+      const valve = valves.find((v) => v.i === id);
+      if (!valve) mark("miss");
+      else {
+        const want = String(snap.valve.st || "");
+        const got = String(valve.st || "");
+        if ((want === "open" || want === "opening") && got === "opening") mark("progress");
+        else if ((want === "closed" || want === "closing") && got === "closing") mark("progress");
+        else if (got !== want) mark("miss");
+      }
+    }
+    if (snap.music) {
+      const dev = music.find((m) => m.i === id);
+      if (!dev) mark("miss");
+      else if (snap.music.st != null && dev.st !== snap.music.st) mark("miss");
+      else if (snap.music.v != null && !optimisticNumsClose(dev.v, snap.music.v, 2)) mark("miss");
+    }
+    if (snap.sp) {
+      const t = thermostats.find((x) => x.i === id);
+      if (!t) mark("miss");
+      else if (snap.sp.hsp != null && Number(t.hsp) !== Number(snap.sp.hsp)) mark("miss");
+      else if (snap.sp.csp != null && Number(t.csp) !== Number(snap.sp.csp)) mark("miss");
+    }
+    if (snap.mode || snap.session) {
+      const t = thermostats.find((x) => x.i === id);
+      const want = String((snap.mode && snap.mode.mode) || snap.session?.mode || "").toLowerCase();
+      if (!t || String(t.tm || "").toLowerCase() !== want) mark("miss");
+    }
+    if (snap.fanMode) {
+      const t = thermostats.find((x) => x.i === id);
+      const want = String(snap.fanMode.mode || "").toLowerCase();
+      if (!t || String(t.fm || "").toLowerCase() !== want) mark("miss");
+      else if (t.hasCfs && String(t.cfs || "").toLowerCase() !== want) mark("miss");
+    }
+    if (snap.vane) {
+      const t = thermostats.find((x) => x.i === id);
+      if (!t || String(t.vp || "").toLowerCase() !== String(snap.vane.position || "").toLowerCase()) mark("miss");
+    }
+    if (miss) return "miss";
+    if (progress) return "progress";
+    return "ok";
+  }
+
+  function finishTravelOptimistic(id, snap) {
+    if (snap.lock) {
+      const cur = locks.find((l) => l.i === id);
+      if (cur && (String(cur.st) === "locking" || String(cur.st) === "unlocking")) {
+        cur.lk = snap.lock.lk ? 1 : 0;
+        cur.st = snap.lock.lk ? "locked" : "unlocked";
+      }
+    }
+    if (snap.garage) {
+      const cur = garageDoors.find((g) => g.i === id);
+      if (cur && (cur.st === "opening" || cur.st === "closing")) {
+        cur.st = cur.st === "opening" ? "open" : "closed";
+      }
+    }
+  }
+
+  function repaintOptimisticViews(id) {
+    updateStates();
+    const n = Number(id);
+    let cat = "";
+    try { cat = currentCategory(); } catch { cat = ""; }
+    if (locks.some((l) => l.i === n) || garageDoors.some((g) => g.i === n)) {
+      if (cat === "locks") renderLocksPopup();
+      else if (cat === "favorites") postCall("refreshFavoritesPopup");
+    }
+    if (windowShades.some((s) => s.i === n)) {
+      refreshShadeViews();
+      if (shadeMasterPopup?.classList.contains("open")) postCall("updateShadeMasterBody");
+    }
+    if (ceilingFans.some((f) => f.i === n)) {
+      const fan = ceilingFans.find((f) => f.i === n);
+      if (fan) updateFanTile(fan);
+      if (cat === "fans") postCall("refreshFansPopup");
+      else if (cat === "favorites") postCall("refreshFavoritesPopup");
+    }
+    if (valves.some((v) => v.i === n)) {
+      if (cat === "sensors") postCall("refreshSensorsPopup");
+      else if (cat === "favorites") postCall("refreshFavoritesPopup");
+    }
+    if (music.some((m) => m.i === n)) {
+      if (cat === "music") postCall("renderMusicPopup");
+      else if (cat === "favorites") postCall("refreshFavoritesPopup");
+    }
+    if (thermostats.some((t) => t.i === n)) {
+      postCall("renderTstatDial");
+      updateClimateWidgets();
+      postCall("refreshOpenTstatQuickPopups");
+    }
+  }
+
+  async function settleOptimisticDevice(id, gen) {
+    const slot = optimisticSettle.get(id);
+    if (!slot) return;
+    const expect = gen == null ? slot.gen : gen;
+    if (slot.gen !== expect) return;
+    if (slot.inflight) return slot.inflight;
+    const job = runSettleOptimistic(id, expect);
+    slot.inflight = job;
     try {
-      const d = await getJson("device?id=" + id);
-      if (!d || d.i == null) return;
+      await job;
+    } finally {
+      if (slot.inflight === job) slot.inflight = null;
+    }
+  }
+
+  async function runSettleOptimistic(id, expect) {
+    const snap = captureOptimistic(id);
+    if (!snap) return;
+    extendOptimisticHold(id);
+    let data = null;
+    try {
+      data = await refreshDevice(id, {
+        refresh: deviceReportsSlow(id) ? false : undefined,
+        forceHub: true,
+      });
+    } catch (e) {
+      if (e?.code === "auth_required") {
+        reopenOptimisticHold(id);
+        return;
+      }
+      data = null;
+    }
+    if (optimisticSettle.get(id)?.gen !== expect) return;
+    if (!data) {
+      restoreOptimisticSnapshot(id, snap);
+      dropOptimisticHolds(id, snap);
+      repaintOptimisticViews(id);
+      flashCommandMiss();
+      return;
+    }
+    const result = judgeOptimisticHold(id, snap);
+    if (result === "progress") finishTravelOptimistic(id, snap);
+    dropOptimisticHolds(id, snap);
+    repaintOptimisticViews(id);
+    if (result === "miss") flashCommandMiss();
+  }
+
+  async function refreshDevice(id, opts) {
+    const skipRefresh = !!(opts && opts.refresh === false);
+    const forceHub = !!(opts && opts.forceHub);
+    try {
+      const d = await getJson("device?id=" + id + (skipRefresh ? "&refresh=0" : ""));
+      if (!d || d.i == null) return null;
       const numId = Number(d.i);
 
       const shade = windowShades.find(x => x.i === numId);
@@ -8970,7 +9400,7 @@
         if (d.st != null) shade.st = d.st;
         if (d.pos != null) shade.pos = d.pos;
         const opt = shadeOptimistic.get(numId);
-        if (opt && shadeOptimisticSatisfied(opt, shade)) clearShadeOptimistic(numId);
+        if (!forceHub && opt && shadeOptimisticSatisfied(opt, shade)) clearShadeOptimistic(numId);
         refreshShadeViews();
       }
 
@@ -8985,21 +9415,38 @@
           if (rec.data.rgb && d.sat != null) dev.sat = d.sat;
         }
         const opt = switchOptimistic.get(numId);
-        if (opt && !!dev?.s === !!opt.s) clearSwitchOptimistic(numId);
+        if (!forceHub && opt && !!dev?.s === !!opt.s) clearSwitchOptimistic(numId);
         updateStates();
-        if (shade && (d.st != null || d.pos != null)) return;
-        return;
+        return d;
+      }
+      const out = outlets.find((x) => x.i === numId);
+      if (out && d.s != null) {
+        out.s = d.s ? 1 : 0;
+        const opt = switchOptimistic.get(numId);
+        if (!forceHub && opt && !!out.s === !!opt.s) clearSwitchOptimistic(numId);
+        updateStates();
+        return d;
+      }
+      const bare = devices.find((x) => x.i === numId);
+      if (bare && (d.s != null || d.l != null)) {
+        if (d.s != null) bare.s = d.s ? 1 : 0;
+        if (d.l != null) bare.l = d.l;
       }
       // thermostat reconcile
       const t = thermostats.find(x => x.i === Number(d.i));
       if (t) {
-        const modeLocked = tstatModeLocked(t.i);
+        const modeLocked = !forceHub && tstatModeLocked(t.i);
         if (d.tm != null && !modeLocked) t.tm = d.tm;
         if (d.os != null && !modeLocked) t.os = d.os;
-        applyTstatSetpoints(t, { hsp: d.hsp, csp: d.csp });
+        if (forceHub) {
+          if (d.hsp != null) t.hsp = Number(d.hsp);
+          if (d.csp != null) t.csp = Number(d.csp);
+        } else {
+          applyTstatSetpoints(t, { hsp: d.hsp, csp: d.csp });
+        }
         if (d.temp != null) t.temp = Number(d.temp);
         if (d.hasFm != null) t.hasFm = d.hasFm;
-        if (d.fm != null && !tstatFanModeLocked(t.i)) {
+        if (d.fm != null && (forceHub || !tstatFanModeLocked(t.i))) {
           t.fm = d.fm;
           if (t.hasCfs) t.cfs = d.fm;
         }
@@ -9007,17 +9454,17 @@
         if (d.fs != null) t.fs = d.fs;
         if (d.hasCm != null) t.hasCm = d.hasCm;
         if (d.hasCfs != null) t.hasCfs = d.hasCfs;
-        if (d.cfs != null && !tstatFanModeLocked(t.i)) {
+        if (d.cfs != null && (forceHub || !tstatFanModeLocked(t.i))) {
           t.cfs = d.cfs;
           t.fm = d.cfs;
         }
         if (d.hasVp != null) t.hasVp = d.hasVp;
-        if (d.vp != null && !tstatVaneLocked(t.i)) t.vp = d.vp;
+        if (d.vp != null && (forceHub || !tstatVaneLocked(t.i))) t.vp = d.vp;
         if (d.vpLev != null) t.vpLev = d.vpLev;
         updateClimateWidgets();
         updateRoomMeta();
         refreshOpenTstatQuickPopups();
-        return;
+        return d;
       }
       const s = tempSensors.find(x => x.i === Number(d.i));
       const sen = sensors.find(x => x.i === Number(d.i));
@@ -9032,43 +9479,43 @@
         updateClimateWidgets();
         updateRoomMeta();
         refreshSensorViews();
-        return;
+        return d;
       }
       if (s && !sen && !hasControlRole) {
         applyTempSensorPayload(s, d);
         updateClimateWidgets();
         updateRoomMeta();
         refreshSensorViews();
-        return;
+        return d;
       }
       if (sen && !hasControlRole) {
         applySensorPayload(sen, d);
         refreshSensorViews();
-        return;
+        return d;
       }
       if (lock) {
         if (d.lk != null) lock.lk = d.lk ? 1 : 0;
         if (d.st != null) lock.st = d.st;
         const opt = lockOptimistic.get(Number(d.i));
-        if (opt && lockOptimisticSatisfied(opt, lock)) clearLockOptimistic(Number(d.i));
+        if (!forceHub && opt && lockOptimisticSatisfied(opt, lock)) clearLockOptimistic(Number(d.i));
         if (currentCategory() === "locks") renderLocksPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
+        return d;
       }
       if (garage) {
         if (d.st != null) garage.st = d.st;
         const opt = garageOptimistic.get(Number(d.i));
-        if (opt && garageOptimisticSatisfied(opt, garage)) clearGarageOptimistic(Number(d.i));
+        if (!forceHub && opt && garageOptimisticSatisfied(opt, garage)) clearGarageOptimistic(Number(d.i));
         if (currentCategory() === "locks") renderLocksPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
+        return d;
       }
-      if (shade && (d.st != null || d.pos != null)) return;
+      if (shade && (d.st != null || d.pos != null)) return d;
       if (fan) {
         if (d.s != null) fan.s = d.s ? 1 : 0;
         if (d.sp != null) fan.sp = d.sp;
         const opt = fanOptimistic.get(Number(d.i));
-        if (opt) {
+        if (!forceHub && opt) {
           let matched = true;
           if (opt.s != null && !!fan.s !== !!opt.s) matched = false;
           if (opt.sp != null && String(fan.sp || "").toLowerCase() !== String(opt.sp).toLowerCase()) matched = false;
@@ -9076,15 +9523,15 @@
         }
         updateFanTile(fan);
         if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
+        return d;
       }
       if (valve) {
         if (d.st != null) valve.st = d.st;
         const opt = valveOptimistic.get(Number(d.i));
-        if (opt?.st != null && valve.st === opt.st) clearValveOptimistic(Number(d.i));
+        if (!forceHub && opt?.st != null && valve.st === opt.st) clearValveOptimistic(Number(d.i));
         if (currentCategory() === "sensors") refreshSensorsPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
+        return d;
       }
       if (mp) {
         if (d.st != null) mp.st = d.st;
@@ -9093,13 +9540,18 @@
         if (d.m != null) mp.m = d.m;
         if (d.f != null) mp.f = d.f;
         const mopt = musicOptimistic.get(Number(d.i));
-        if (mopt && (mopt.st == null || mp.st === mopt.st) && (mopt.v == null || mp.v === mopt.v)) {
+        if (!forceHub && mopt && (mopt.st == null || mp.st === mopt.st) && (mopt.v == null || mp.v === mopt.v)) {
           clearMusicOptimistic(Number(d.i));
         }
         if (currentCategory() === "music") renderMusicPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        return d;
       }
-    } catch {}
+      return d;
+    } catch (e) {
+      if (e?.code === "auth_required") throw e;
+      return null;
+    }
   }
 
   function reconcileLock(id) {
@@ -9145,7 +9597,6 @@
     }
     const result = await sendCmd(id, cmd, val);
     if (!result.ok) {
-      clearMusicOptimistic(id);
       reconcileMusic(id);
       if (currentCategory() === "music") renderMusicPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -9175,7 +9626,7 @@
       const next = Math.max(0, Math.min(100, base + delta));
       setMusicOptimistic(dev.i, { v: next });
       sendCmd(dev.i, "setVolume", next).then((result) => {
-        if (!result.ok) { clearMusicOptimistic(dev.i); reconcileMusic(dev.i); }
+        if (!result.ok) reconcileMusic(dev.i);
         else reconcileMusic(dev.i);
         if (currentCategory() === "music") renderMusicPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -9204,7 +9655,6 @@
     }
     const result = await sendCmd(id, cmd, null, pin);
     if (!result.ok) {
-      clearGarageOptimistic(id);
       reconcileGarage(id);
       if (currentCategory() === "locks") renderLocksPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -9225,7 +9675,6 @@
     else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
     const result = await sendCmd(id, cmd, null, pin);
     if (!result.ok) {
-      clearLockOptimistic(id);
       reconcileLock(id);
       if (currentCategory() === "locks") renderLocksPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -9256,7 +9705,6 @@
     }
     const result = await sendCmd(id, cmd, val);
     if (!result.ok) {
-      clearShadeOptimistic(id);
       reconcileShade(id);
       if (!quiet) {
         if (currentCategory() === "blinds") refreshBlindsPopup();
@@ -9288,7 +9736,6 @@
     }
     const result = await sendCmd(id, cmd, val);
     if (!result.ok) {
-      clearFanOptimistic(id);
       reconcileFan(id);
       updateFanTile(fan);
       if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -9391,18 +9838,26 @@
     const devs = devicesByRoom.get(rid) || [];
     if (!devs.length) return;
     const hasDimmer = devs.some(d => d.d);
+    const ids = devs.map((d) => d.i);
     for (const dev of devs) applySwitchCmdOptimistic(dev, cmd);
     updateStates();
-    bulkLightsApi(cmd, "room", rid);
+    void bulkLightsApi(cmd, "room", rid).then((ok) => {
+      if (ok) return;
+      for (const id of ids) abandonOptimistic(id);
+    });
     if (cmd === "on" && hasDimmer) setTimeout(refresh, 900); // reconcile restored levels
   }
 
   function allLights(cmd) {
     if (!devices.length) return;
     const hasDimmer = devices.some(d => d.d);
+    const ids = devices.map((d) => d.i);
     for (const dev of devices) applySwitchCmdOptimistic(dev, cmd);
     updateStates();
-    bulkLightsApi(cmd, "house");
+    void bulkLightsApi(cmd, "house").then((ok) => {
+      if (ok) return;
+      for (const id of ids) abandonOptimistic(id);
+    });
     if (cmd === "on" && hasDimmer) setTimeout(refresh, 900);
   }
 
@@ -14150,15 +14605,30 @@
           const dev = devices.find((x) => x.i === Number(m.deviceId));
           if (m.name === "switch") {
             const s = (m.value === "on") ? 1 : 0;
+            const id = Number(m.deviceId);
+            const opt = switchOptimistic.get(id);
+            if (opt && !!s !== !!opt.s) return;
             if (dev) dev.s = s;
-            clearSwitchOptimistic(Number(m.deviceId));
+            if (opt) clearSwitchOptimistic(id);
             updateStates();
           }
           else if (m.name === "level" && rec.isDim) {
             const lvl = Math.round(Number(m.value));
             if (!isNaN(lvl)) {
+              const id = Number(m.deviceId);
+              const lv = levelOptimistic.get(id);
+              const opt = switchOptimistic.get(id);
+              if (lv && !optimisticNumsClose(lvl, lv.level, 2)) return;
+              if (opt && opt.l != null && !optimisticNumsClose(lvl, opt.l, 2)) return;
+              if (opt && opt.l == null && !!opt.s !== (lvl > 0)) return;
               if (dev) dev.l = lvl;
-              clearSwitchOptimistic(Number(m.deviceId));
+              if (lv) clearLevelOptimistic(id);
+              if (opt) {
+                const agrees = opt.l != null
+                  ? optimisticNumsClose(lvl, opt.l, 2)
+                  : (!!opt.s === (lvl > 0));
+                if (agrees) clearSwitchOptimistic(id);
+              }
               if (!rec.el.classList.contains("dragging")) updateStates();
             }
           }
@@ -14187,9 +14657,13 @@
         }
         const outletRec = outletMap.get(Number(m.deviceId)) || favDevMap.get(Number(m.deviceId));
         if (outletRec?.isOutlet && m.name === "switch") {
-          const out = outlets.find((x) => x.i === Number(m.deviceId));
-          if (out) out.s = (m.value === "on") ? 1 : 0;
-          clearSwitchOptimistic(Number(m.deviceId));
+          const s = (m.value === "on") ? 1 : 0;
+          const id = Number(m.deviceId);
+          const opt = switchOptimistic.get(id);
+          if (opt && !!s !== !!opt.s) return;
+          const out = outlets.find((x) => x.i === id);
+          if (out) out.s = s;
+          if (opt) clearSwitchOptimistic(id);
           updateStates();
           return;
         }
@@ -16120,7 +16594,6 @@
     }
     const result = await sendCmd(id, cmd);
     if (!result.ok) {
-      clearValveOptimistic(id);
       reconcileValve(id);
       if (currentCategory() === "sensors") refreshSensorsPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
