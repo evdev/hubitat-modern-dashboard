@@ -257,6 +257,7 @@ function buildMockData(count) {
     { i: 1003, n: "Office Thermostat", r: 4, tm: "off", os: "idle", hsp: 65, csp: 75, temp: 70, u: "F", hasFm: 1, fm: "circulate", hasFs: 0, fs: null, supM: "heat,off", supFM: "", fsLev: null },
     { i: 1004, n: "Basement Thermostat", r: 9, tm: "heat", os: "idle", hsp: 68, csp: 72, temp: 67, u: "F", hasFm: 1, fm: "auto", hasFs: 0, fs: null, supM: "heat,off", fsLev: null },
     { i: 1005, n: "Dining Mini-Split", r: 10, tm: "cool", os: "cooling", hsp: 68, csp: 72, temp: 73, u: "F", hasFm: 1, fm: "auto", hasFs: 0, fs: null, supM: "off,heat,cool,dry,fan,auto", supFM: "auto,quiet,low,medium,high,powerful", fsLev: null, hasCm: 1, hasCfs: 1, cfs: "auto", hasVp: 1, vp: "auto", vpLev: "auto,swing,lowest,low,middle,high,highest" },
+    { i: 1006, n: "Hall Nest", r: 5, tm: "cool", os: "idle", hsp: 68, csp: 72, temp: 71, u: "F", hasFm: 1, fm: "auto", hasFs: 0, fs: null, supM: "heat,cool,auto,off", supFM: "auto,on", fsLev: null, hasEco: 1, eco: "MANUAL_ECO", ehsp: 60, ecsp: 76 },
   ];
   const tempSensors = [
     { i: 2001, n: "Kitchen Sensor", r: 2, temp: 71, u: "F", bat: 85, ex: [{ k: "battery", v: 85, u: "%" }, { k: "humidity", v: 48, u: null }] },
@@ -694,6 +695,14 @@ function applyCmd(id, c, v, pin) {
       else if (c === "modeCool") t.tm = "cool";
       else if (c === "off") t.tm = "off";
       t.os = tstatOstateForMode(t.tm);
+    } else if (c === "setEcoMode" && t.hasEco) {
+      if (v === "MANUAL_ECO" || v === "OFF") {
+        if (String(t.tm || "").toLowerCase() === "off" && v === "MANUAL_ECO") return { ok: false, error: "Command not allowed in current thermostat mode." };
+        t.eco = v;
+        if (v !== "OFF") t.os = "idle";
+      }
+    } else if ((c === "setHeat" || c === "setCool") && t.hasEco && t.eco && String(t.eco).toUpperCase() !== "OFF") {
+      return { ok: true };
     } else if (c === "setHeat") { t.hsp = Math.round(Number(v)); if (t.tm === "heat") t.os = t.temp < t.hsp ? "heating" : "idle"; }
     else if (c === "setCool") { t.csp = Math.round(Number(v)); if (t.tm === "cool" || t.tm === "dry") t.os = t.temp > t.csp ? "cooling" : "idle"; }
     else if (c === "setFanMode" && t.hasFm) {
@@ -1229,7 +1238,10 @@ const server = createServer(async (req, res) => {
     // nudge thermostats so the room icon color / temp change during preview
     if (state.thermostats?.length && Math.random() < 0.25) {
       const t = state.thermostats[Math.floor(Math.random() * state.thermostats.length)];
-      if (t.tm === "heat") { t.temp = Math.max(t.hsp - 4, t.temp + (Math.random() < 0.5 ? -1 : 1)); t.os = t.temp >= t.hsp ? "idle" : "heating"; }
+      const ecoOn = t.hasEco && String(t.eco || "").toUpperCase() !== "OFF" && t.eco;
+      if (ecoOn) {
+        t.os = "idle";
+      } else if (t.tm === "heat") { t.temp = Math.max(t.hsp - 4, t.temp + (Math.random() < 0.5 ? -1 : 1)); t.os = t.temp >= t.hsp ? "idle" : "heating"; }
       else if (t.tm === "cool") { t.temp = Math.min(t.csp + 4, t.temp + (Math.random() < 0.5 ? -1 : 1)); t.os = t.temp <= t.csp ? "idle" : "cooling"; }
       else if (t.fm === "on" || t.fm === "circulate") { t.os = "fan"; }
       else { t.os = "idle"; }
@@ -1305,6 +1317,8 @@ const server = createServer(async (req, res) => {
         hasFm: t.hasFm, fm: t.fm, hasFs: t.hasFs, fs: t.fs,
         hasCm: t.hasCm || 0, hasCfs: t.hasCfs || 0, cfs: t.cfs ?? null,
         hasVp: t.hasVp || 0, vp: t.vp ?? null, vpLev: t.vpLev ?? null,
+        hasEco: t.hasEco || 0,
+        ...(t.hasEco ? { eco: t.eco ?? null, ehsp: t.ehsp ?? null, ecsp: t.ecsp ?? null } : {}),
       }));
     }
     const s = state.tempSensors?.find(d => d.i === id);

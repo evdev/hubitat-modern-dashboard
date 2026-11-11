@@ -4719,6 +4719,21 @@ def appendTstatComfortJson(out, d) {
     out << ",\"cfs\":" << jsonStr(cfs)
     out << ",\"vp\":" << jsonStr(vp)
     out << ",\"vpLev\":" << jsonListAttr(vpLev)
+    appendTstatEcoJson(out, d)
+}
+
+def tstatHasEco(d) {
+    return deviceHasAttribute(d, "ecoMode") || deviceHasCommand(d, "setEcoMode")
+}
+
+// Eco is a Nest overlay, not a thermostat mode. Omit the points when the device has neither.
+def appendTstatEcoJson(out, d) {
+    def hasEco = tstatHasEco(d)
+    out << ",\"hasEco\":" << (hasEco ? 1 : 0)
+    if (!hasEco) return
+    out << ",\"eco\":" << jsonStr(safeCurrent(d, "ecoMode"))
+    out << ",\"ehsp\":" << numOrNull(safeCurrent(d, "ecoHeatPoint"))
+    out << ",\"ecsp\":" << numOrNull(safeCurrent(d, "ecoCoolPoint"))
 }
 
 // refresh=0 reads the hub cache. Anything else (including refresh=1) asks the driver to poll.
@@ -4956,9 +4971,21 @@ def runThermostatCmd(t, c, v) {
         case "setVanePosition":
             if (v != null && t.hasCommand("setVanePosition")) t.setVanePosition(v.toString())
             break
+        case "setEcoMode":
+            setEcoModeCmd(t, v)
+            break
         default:
             throw new IllegalArgumentException("unknown command")
     }
+}
+
+// Google SDM: setEcoMode takes OFF or MANUAL_ECO. Do not fall through to setThermostatMode.
+def setEcoModeCmd(t, modeStr) {
+    if (modeStr == null) return
+    if (!t.hasCommand("setEcoMode")) return
+    def mode = modeStr.toString()
+    if (!(mode == "OFF" || mode == "MANUAL_ECO")) return
+    t.setEcoMode(mode)
 }
 
 def setComfortModeCmd(t, modeStr) {

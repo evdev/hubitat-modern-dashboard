@@ -681,6 +681,7 @@
   const tstatDeviceModeLock = new Map(); // id -> { until, mode }
   const tstatFanModeLock = new Map(); // id -> { until, mode }
   const tstatVaneLock = new Map(); // id -> { until, position }
+  const tstatEcoLock = new Map(); // id -> { until, mode, prevEco }
 
   let musicMasterPopup = null;
   let fanMasterPopup = null;
@@ -830,6 +831,7 @@
     "setSpeed", "play", "pause", "setVolume", "mute", "unmute",
     "setHeat", "setCool", "setMode", "modeAuto", "modeHeat", "modeCool", "off",
     "setFanMode", "setComfortMode", "setComfortFanSpeed", "setVanePosition",
+    "setEcoMode",
   ]);
 
   function optimisticNumsClose(a, b, tol) {
@@ -854,7 +856,7 @@
     if (switchOptimistic.has(id) || levelOptimistic.has(id) || lockOptimistic.has(id)) return true;
     if (garageOptimistic.has(id) || shadeOptimistic.has(id) || fanOptimistic.has(id)) return true;
     if (valveOptimistic.has(id) || musicOptimistic.has(id) || setpointOptimistic.has(id)) return true;
-    if (tstatDeviceModeLock.has(id) || tstatFanModeLock.has(id) || tstatVaneLock.has(id)) return true;
+    if (tstatDeviceModeLock.has(id) || tstatFanModeLock.has(id) || tstatVaneLock.has(id) || tstatEcoLock.has(id)) return true;
     return !!(tstatSession?.modeLockUntil > Date.now() && tstatSession.ids?.includes(id));
   }
 
@@ -862,7 +864,7 @@
     return [
       switchOptimistic, levelOptimistic, lockOptimistic, garageOptimistic, shadeOptimistic,
       fanOptimistic, valveOptimistic, musicOptimistic, setpointOptimistic,
-      tstatDeviceModeLock, tstatFanModeLock, tstatVaneLock,
+      tstatDeviceModeLock, tstatFanModeLock, tstatVaneLock, tstatEcoLock,
     ];
   }
 
@@ -925,6 +927,7 @@
       mode: tstatDeviceModeLock.get(id) ? { ...tstatDeviceModeLock.get(id) } : null,
       fanMode: tstatFanModeLock.get(id) ? { ...tstatFanModeLock.get(id) } : null,
       vane: tstatVaneLock.get(id) ? { ...tstatVaneLock.get(id) } : null,
+      eco: tstatEcoLock.get(id) ? { ...tstatEcoLock.get(id) } : null,
       session,
     };
     if (!snap.sw && !snap.lv && !snap.lock && !snap.garage && !snap.shade && !snap.fan && !snap.valve && !snap.music && !snap.sp && !snap.mode && !snap.fanMode && !snap.vane && !snap.session) {
@@ -998,6 +1001,7 @@
       if (snap.fanMode.prevOs !== undefined) t.os = snap.fanMode.prevOs;
     }
     if (t && snap.vane && snap.vane.prevVp !== undefined) t.vp = snap.vane.prevVp;
+    if (t && snap.eco && snap.eco.prevEco !== undefined) t.eco = snap.eco.prevEco;
   }
 
   function dropOptimisticHolds(id, snap) {
@@ -1013,6 +1017,7 @@
     if (!snap || snap.mode) tstatDeviceModeLock.delete(id);
     if (!snap || snap.fanMode) tstatFanModeLock.delete(id);
     if (!snap || snap.vane) tstatVaneLock.delete(id);
+    if (!snap || snap.eco) tstatEcoLock.delete(id);
     if (snap && (snap.mode || snap.session) && tstatSession?.ids?.includes(id)) tstatSession.modeLockUntil = 0;
   }
 
@@ -3221,7 +3226,11 @@
     const spBlock = ce("div", "tstat-readout");
     const spLbl = ce("div", "tstat-readout-label");
     spLbl.textContent = "Setpoint:";
+    const ecoBadge = ce("span", "tstat-eco-badge");
+    ecoBadge.textContent = "Eco";
+    ecoBadge.hidden = true;
     const spEl = ce("div", "tstat-sp");
+    spBlock.appendChild(ecoBadge);
     spBlock.appendChild(spLbl);
     spBlock.appendChild(spEl);
     center.appendChild(curBlock);
@@ -3291,6 +3300,24 @@
     const modes = ce("div", "tstat-modes");
     modeSection.appendChild(modes);
 
+    const ecoSection = ce("div", "tstat-section");
+    ecoSection.style.display = "none";
+    ecoSection.appendChild(tstatSectionLabel("Eco"));
+    const ecoModes = ce("div", "tstat-modes");
+    const ecoBtn = ce("button", "tstat-mode");
+    ecoBtn.type = "button";
+    ecoBtn.textContent = "Eco";
+    ecoBtn.setAttribute("aria-pressed", "false");
+    ecoBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const current = activeTstat();
+      if (!current || tstatSession?.ids?.length !== 1) return;
+      setEcoMode(!tstatEcoOn(current));
+    });
+    ecoModes.appendChild(ecoBtn);
+    ecoSection.appendChild(ecoModes);
+
     const fanModeSection = ce("div", "tstat-section");
     fanModeSection.appendChild(tstatSectionLabel("Fan mode"));
     const fanModes = ce("div", "tstat-modes");
@@ -3339,6 +3366,7 @@
     panel.appendChild(dialWrap);
     panel.appendChild(chips);
     panel.appendChild(modeSection);
+    panel.appendChild(ecoSection);
     panel.appendChild(fanModeSection);
     panel.appendChild(fanSpeedSection);
     panel.appendChild(comfortFanSection);
@@ -3364,6 +3392,8 @@
     tstatPopup._coolKnob = coolKnob;
     tstatPopup._tempEl = tempEl;
     tstatPopup._spEl = spEl;
+    tstatPopup._spLbl = spLbl;
+    tstatPopup._ecoBadge = ecoBadge;
     tstatPopup._minusBtn = minusBtn;
     tstatPopup._plusBtn = plusBtn;
     tstatPopup._chips = chips;
@@ -3372,6 +3402,8 @@
     tstatPopup._modeSection = modeSection;
     tstatPopup._modes = modes;
     tstatPopup._modeBtns = {};
+    tstatPopup._ecoSection = ecoSection;
+    tstatPopup._ecoBtn = ecoBtn;
     tstatPopup._fanModeSection = fanModeSection;
     tstatPopup._fanModes = fanModes;
     tstatPopup._fanModeBtns = fanModeBtns;
@@ -3406,27 +3438,30 @@
   }
 
   async function commitTstatSetpoint(ids, target, val, { haptic = true } = {}) {
+    const live = tstatSetpointIds(ids);
+    if (!live.length) return false;
     const patch = target === "heat" ? { hsp: val } : { csp: val };
     const cmd = target === "heat" ? "setHeat" : "setCool";
-    for (const id of ids) setSetpointOptimistic(id, patch);
+    for (const id of live) setSetpointOptimistic(id, patch);
     if (haptic) hapticTap();
     renderTstatDial();
     updateClimateWidgets();
     refreshOpenTstatQuickPopups();
-    const results = await Promise.all(ids.map((id) => sendCmd(id, cmd, val)));
+    const results = await Promise.all(live.map((id) => sendCmd(id, cmd, val)));
     if (results.some((r) => !r?.ok)) {
       renderTstatDial();
       updateClimateWidgets();
       refreshOpenTstatQuickPopups();
-      for (const id of ids) reconcileTstat(id);
+      for (const id of live) reconcileTstat(id);
       return false;
     }
-    for (const id of ids) reconcileTstat(id);
+    for (const id of live) reconcileTstat(id);
     return true;
   }
 
   function adjustTstatSetpoint(delta) {
     if (!tstatSession?.ids?.length) return;
+    if (tstatSessionEcoHold()) return;
     const t = activeTstat();
     if (!t) return;
     const target = tstatSetpointTarget(t);
@@ -3458,13 +3493,21 @@
       popup._title.textContent = t.n || "Thermostat";
     }
 
-    const showHeat = (tm === "heat" || tm === "auto" || tm === "emergency heat");
-    const showCool = (tm === "cool" || tm === "auto" || tstatDryMode(tm));
-    const editHeat = tm === "heat" || tm === "emergency heat"
-      || (tm === "auto" && tstatSession.edit !== "cool");
+    const ecoSingle = tstatSession?.ids?.length === 1 && tstatEcoOn(t) && tm !== "off";
+    const ecoHold = tstatSessionEcoHold() && tm !== "off" && !tstatFanOnlyMode(tm);
+    const { heat: ecoHeat, cool: ecoCool } = tstatEcoPoints(t);
 
-    const hsp = t.hsp != null ? Number(t.hsp) : null;
-    const csp = t.csp != null ? Number(t.csp) : null;
+    const showHeat = ecoSingle
+      ? ecoHeat != null
+      : (tm === "heat" || tm === "auto" || tm === "emergency heat");
+    const showCool = ecoSingle
+      ? ecoCool != null
+      : (tm === "cool" || tm === "auto" || tstatDryMode(tm));
+    const editHeat = !ecoSingle && (tm === "heat" || tm === "emergency heat"
+      || (tm === "auto" && tstatSession.edit !== "cool"));
+
+    const hsp = ecoSingle ? ecoHeat : (t.hsp != null ? Number(t.hsp) : null);
+    const csp = ecoSingle ? ecoCool : (t.csp != null ? Number(t.csp) : null);
 
     // heat arc
     if (showHeat && hsp != null) {
@@ -3472,7 +3515,7 @@
       const kp = polar(cx, cy, TSTAT_DIAL_R, valToAngle(hsp, unit));
       popup._heatKnob.setAttribute("cx", kp.x.toFixed(2));
       popup._heatKnob.setAttribute("cy", kp.y.toFixed(2));
-      popup._heatKnob.setAttribute("data-active", editHeat ? "1" : "0");
+      popup._heatKnob.setAttribute("data-active", (!ecoSingle && editHeat) ? "1" : "0");
     } else {
       popup._heatArc.setAttribute("d", "");
       popup._heatKnob.setAttribute("cx", -100);
@@ -3483,7 +3526,7 @@
       const kp = polar(cx, cy, TSTAT_DIAL_R, valToAngle(csp, unit));
       popup._coolKnob.setAttribute("cx", kp.x.toFixed(2));
       popup._coolKnob.setAttribute("cy", kp.y.toFixed(2));
-      popup._coolKnob.setAttribute("data-active", !editHeat ? "1" : "0");
+      popup._coolKnob.setAttribute("data-active", (!ecoSingle && !editHeat) ? "1" : "0");
     } else {
       popup._coolArc.setAttribute("d", "");
       popup._coolKnob.setAttribute("cx", -100);
@@ -3491,28 +3534,41 @@
 
     // setpoint readout
     let spText;
-    if (tm === "off") spText = "Off";
+    if (ecoSingle) spText = tstatEcoRangeLabel(t) === "Eco" ? "Eco" : tstatEcoRangeLabel(t) + deg;
+    else if (ecoHold) spText = "Eco";
+    else if (tm === "off") spText = "Off";
     else if (tstatFanOnlyMode(tm)) spText = "Fan";
     else if (tm === "heat" || tm === "emergency heat") spText = hsp != null ? hsp + deg : "—";
     else if (tm === "cool" || tstatDryMode(tm)) spText = csp != null ? csp + deg : "—";
     else if (tm === "auto") spText = (editHeat ? hsp : csp) != null ? (editHeat ? hsp : csp) + deg : "—";
     else spText = "—";
     popup._spEl.textContent = spText;
+    if (popup._spLbl) popup._spLbl.textContent = ecoSingle ? "Eco range:" : "Setpoint:";
+    if (popup._ecoBadge) popup._ecoBadge.hidden = !(ecoSingle || ecoHold);
 
-    // chips only in auto
-    popup._chips.style.display = (tm === "auto") ? "" : "none";
+    // chips only in auto, and not while Eco is holding the range
+    popup._chips.style.display = (tm === "auto" && !ecoSingle && !ecoHold) ? "" : "none";
     popup._heatChip.classList.toggle("active", editHeat);
     popup._coolChip.classList.toggle("active", !editHeat);
 
     // disabled look when off or none selected for bulk
     const noneSelected = !!(tstatTargetPickerEnabled() && !tstatSession.ids?.length);
     popup._svg.classList.toggle("disabled", tm === "off" || tstatFanOnlyMode(tm) || noneSelected);
+    popup._svg.classList.toggle("eco-hold", ecoHold);
     // Several thermostats in one room still share this dial's setpoint.
     // All-thermostats has no setpoint until a shared mode is chosen.
+    // Eco holds its own range, so the normal dial stays put.
     const noMode = !!(tstatSession?.central && !tm);
-    const canAdjust = tm !== "off" && !tstatFanOnlyMode(tm) && !noMode && !noneSelected;
-    if (popup._minusBtn) popup._minusBtn.disabled = !canAdjust;
-    if (popup._plusBtn) popup._plusBtn.disabled = !canAdjust;
+    const canAdjust = tm !== "off" && !tstatFanOnlyMode(tm) && !noMode && !noneSelected && !ecoHold;
+    const stepLabel = ecoHold ? "Setpoint locked while Eco is on" : null;
+    if (popup._minusBtn) {
+      popup._minusBtn.disabled = !canAdjust;
+      popup._minusBtn.setAttribute("aria-label", stepLabel || "Decrease setpoint by 1 degree");
+    }
+    if (popup._plusBtn) {
+      popup._plusBtn.disabled = !canAdjust;
+      popup._plusBtn.setAttribute("aria-label", stepLabel || "Increase setpoint by 1 degree");
+    }
   }
 
   function renderTstatModeButtons(popup, supported, tm, noneSelected) {
@@ -3576,6 +3632,7 @@
     const roomMultiTarget = !!(tstatSession?.roomGroup && tstatSession.ids?.length !== 1);
     if (roomMultiTarget) {
       popup._modeSection.style.display = "none";
+      popup._ecoSection.style.display = "none";
       popup._fanModeSection.style.display = "none";
       popup._fanSpeedSection.style.display = "none";
       popup._comfortFanSection.style.display = "none";
@@ -3586,6 +3643,20 @@
     const tm = String(t.tm || "").toLowerCase();
     renderTstatModeButtons(popup, supM, tm, noneSelected);
     popup._modeSection.style.display = supM.length ? "" : "none";
+
+    const singleDevice = tstatSession.ids?.length === 1 && !tstatSession.central && !tstatSession.roomGroup;
+    const showEco = !!(singleDevice && tstatHasEco(t));
+    popup._ecoSection.style.display = showEco ? "" : "none";
+    if (showEco && popup._ecoBtn) {
+      const on = tstatEcoOn(t);
+      const modeOff = tm === "off";
+      popup._ecoBtn.classList.toggle("active", on);
+      popup._ecoBtn.disabled = noneSelected || modeOff;
+      popup._ecoBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      popup._ecoBtn.setAttribute("aria-label", modeOff
+        ? "Eco needs heat, cool, or auto"
+        : (on ? "Turn Eco off" : "Turn Eco on"));
+    }
 
     const useComfortFan = deviceHasComfortFan(t);
     if (useComfortFan) {
@@ -3658,22 +3729,27 @@
     function apply(e) {
       const t = activeTstat();
       if (!t || !tstatSession || !tstatSession.ids?.length) return;
+      if (tstatSessionEcoHold()) return;
       const unit = tstatSession.unit;
       const tm = String(t.tm || "").toLowerCase();
       if (tm === "off") return;
       const val = angleToVal(angleFromEvent(e), unit);
       const editing = (tstatSession.edit === "cool" && tm === "auto") || tm === "cool" ? "cool" : "heat";
       const patch = editing === "heat" ? { hsp: clampSetpoint(val, unit) } : { csp: clampSetpoint(val, unit) };
-      if (editing === "heat") t.hsp = patch.hsp;
-      else t.csp = patch.csp;
-      for (const id of tstatSession.ids) setSetpointOptimistic(id, patch);
+      const live = tstatSetpointIds(tstatSession.ids);
+      if (!live.length) return;
+      if (tstatSession.central || !tstatEcoOn(t)) {
+        if (editing === "heat") t.hsp = patch.hsp;
+        else t.csp = patch.csp;
+      }
+      for (const id of live) setSetpointOptimistic(id, patch);
       renderTstatDial();
       const now = Date.now();
       if (now - lastCommit > 300) {
         lastCommit = now;
         const cmd = editing === "heat" ? "setHeat" : "setCool";
         const sendVal = editing === "heat" ? patch.hsp : patch.csp;
-        for (const id of tstatSession.ids) sendCmd(id, cmd, sendVal);
+        for (const id of live) sendCmd(id, cmd, sendVal);
       }
       e.preventDefault();
     }
@@ -3699,6 +3775,7 @@
       const t = activeTstat();
       if (!t || !tstatSession || !tstatSession.ids?.length) return;
       if (String(t.tm || "").toLowerCase() === "off") return;
+      if (tstatSessionEcoHold()) return;
       if (tstatSession?.central && !String(t.tm || "")) return;
       if (e.button != null && e.button !== 0) return;
       dragging = true;
@@ -3824,6 +3901,102 @@
     if (m === "fan" || m === "fanonly") return "Fan";
     if (m === "dehumidify" || m === "dehumidification") return "Dehumidify";
     return tm || "—";
+  }
+
+  // Nest Eco is an overlay. Anything other than OFF means the Eco range is the hold.
+  function tstatHasEco(t) {
+    return !!(t && (t.hasEco === 1 || t.hasEco === true));
+  }
+
+  function tstatEcoOn(t) {
+    if (!tstatHasEco(t)) return false;
+    const m = String(t.eco || "").trim().toUpperCase().replace(/[\s-]+/g, "_");
+    return m !== "" && m !== "OFF" && m !== "NULL";
+  }
+
+  function tstatEcoPoints(t) {
+    const heatN = Number(t?.ehsp);
+    const coolN = Number(t?.ecsp);
+    return {
+      heat: Number.isFinite(heatN) ? Math.round(heatN) : null,
+      cool: Number.isFinite(coolN) ? Math.round(coolN) : null,
+    };
+  }
+
+  function tstatEcoRangeLabel(t) {
+    const { heat, cool } = tstatEcoPoints(t);
+    if (heat != null && cool != null) return heat + "–" + cool;
+    if (heat != null) return String(heat);
+    if (cool != null) return String(cool);
+    return "Eco";
+  }
+
+  function tstatSelectedDevices() {
+    return (tstatSession?.ids || [])
+      .map((id) => thermostats.find((x) => x.i === id))
+      .filter(Boolean);
+  }
+
+  // Lock the shared dial only when every selected thermostat is holding Eco.
+  function tstatSessionEcoHold() {
+    const list = tstatSelectedDevices();
+    return list.length > 0 && list.every(tstatEcoOn);
+  }
+
+  function tstatSetpointIds(ids) {
+    return (ids || []).filter((id) => {
+      const dev = thermostats.find((x) => x.i === id);
+      return dev && !tstatEcoOn(dev);
+    });
+  }
+
+  function tstatEcoLocked(id) {
+    const devLock = tstatEcoLock.get(Number(id));
+    return !!(devLock && (devLock.checking || devLock.until > Date.now()));
+  }
+
+  function reapplyTstatEcoLocks() {
+    const now = Date.now();
+    for (const [id, lock] of tstatEcoLock) {
+      const t = thermostats.find((x) => x.i === id);
+      const got = String(t?.eco || "").trim().toUpperCase();
+      const want = String(lock.mode || "").trim().toUpperCase();
+      if (t && got === want) {
+        tstatEcoLock.delete(id);
+        releaseOptimisticHold(id);
+        continue;
+      }
+      if (lock.until <= now) noteOptimisticExpiry(id, lock);
+      if (t) t.eco = lock.mode;
+    }
+  }
+
+  function applyTstatEcoOptimistic(id, mode) {
+    const t = thermostats.find((x) => x.i === id);
+    if (!t || !tstatHasEco(t)) return;
+    const prev = tstatEcoLock.get(id);
+    const prevEco = prev ? prev.prevEco : t.eco;
+    t.eco = mode;
+    tstatEcoLock.set(id, { until: Date.now() + 4000, mode, prevEco });
+    armOptimisticSettle(id, 4000);
+  }
+
+  function setEcoMode(on) {
+    if (!tstatSession || tstatSession.ids?.length !== 1) return;
+    const id = tstatSession.ids[0];
+    const t = thermostats.find((x) => x.i === id);
+    if (!tstatHasEco(t)) return;
+    if (String(t.tm || "").toLowerCase() === "off") return;
+    const mode = on ? "MANUAL_ECO" : "OFF";
+    if (String(t.eco || "") === mode) return;
+    hapticTap();
+    applyTstatEcoOptimistic(id, mode);
+    renderTstatDial();
+    renderTstatControls();
+    updateClimateWidgets();
+    refreshOpenTstatQuickPopups();
+    sendCmd(id, "setEcoMode", mode);
+    reconcileTstat(id);
   }
 
   let tstatModeLabelRo = null;
@@ -3965,6 +4138,10 @@
     const current = t.temp != null ? Math.round(t.temp) + deg : "—";
     const tm = String(t?.tm || "").toLowerCase();
     const tone = favoriteTstatTone(t);
+    if (tstatEcoOn(t) && tm !== "off") {
+      const value = tstatEcoRangeLabel(t);
+      return { current, setpoint: value, value, unit: "", tone, eco: true };
+    }
     if (tm === "off") return { current, setpoint: "Off", value: "Off", unit: "", tone: "off" };
     if (tstatFanOnlyMode(tm)) return { current, setpoint: "Fan", value: "Fan", unit: "", tone };
     const target = favoriteTstatTarget(t);
@@ -3976,8 +4153,8 @@
   }
 
   function paintTstatSetpoint(el, temps) {
-    const label = !temps.unit && (temps.tone === "off" || temps.tone === "fan");
-    el.className = "quick-fav-tstat-sp " + temps.tone + (label ? " is-label" : "");
+    const label = !temps.unit && (temps.tone === "off" || temps.tone === "fan" || temps.eco);
+    el.className = "quick-fav-tstat-sp " + temps.tone + (label ? " is-label" : "") + (temps.eco ? " eco" : "");
     el.replaceChildren();
     el.appendChild(document.createTextNode(temps.value));
     if (temps.unit) {
@@ -4002,6 +4179,9 @@
     } else if (os === "heating" || os === "pending heat") { prefix = "Heating · now "; active = true; }
     else if (os === "cooling" || os === "pending cool") { prefix = "Cooling · now "; active = true; }
     else if (os === "fan" || os === "fan only" || os === "fan_only") { prefix = "Fan · now "; active = true; }
+    if (tstatEcoOn(t) && tm !== "off") {
+      prefix = prefix === "Now " ? "Eco · now " : ("Eco · " + prefix);
+    }
     return { prefix, now, active, label: prefix + now };
   }
 
@@ -4073,7 +4253,7 @@
 
   function adjustFavoriteTstat(id, delta) {
     const t = thermostats.find(x => x.i === id);
-    if (!t) return;
+    if (!t || tstatEcoOn(t)) return;
     const target = favoriteTstatTarget(t);
     if (!target) return;
     const unit = normalizeTstatUnit(t.u);
@@ -8247,6 +8427,7 @@
     reapplyTstatDeviceModeLocks();
     reapplyTstatFanModeLocks();
     reapplyTstatVaneLocks();
+    reapplyTstatEcoLocks();
     applyTstatSessionModeLock();
 
     repopulateThermoByRoom();
@@ -9285,6 +9466,12 @@
       const t = thermostats.find((x) => x.i === id);
       if (!t || String(t.vp || "").toLowerCase() !== String(snap.vane.position || "").toLowerCase()) mark("miss");
     }
+    if (snap.eco) {
+      const t = thermostats.find((x) => x.i === id);
+      const want = String(snap.eco.mode || "").trim().toUpperCase();
+      const got = String(t?.eco || "").trim().toUpperCase();
+      if (!t || got !== want) mark("miss");
+    }
     if (miss) return "miss";
     if (progress) return "progress";
     return "ok";
@@ -9461,6 +9648,10 @@
         if (d.hasVp != null) t.hasVp = d.hasVp;
         if (d.vp != null && (forceHub || !tstatVaneLocked(t.i))) t.vp = d.vp;
         if (d.vpLev != null) t.vpLev = d.vpLev;
+        if (d.hasEco != null) t.hasEco = d.hasEco;
+        if (Object.prototype.hasOwnProperty.call(d, "eco") && (forceHub || !tstatEcoLocked(t.i))) t.eco = d.eco;
+        if (d.ehsp != null) t.ehsp = Number(d.ehsp);
+        if (d.ecsp != null) t.ecsp = Number(d.ecsp);
         updateClimateWidgets();
         updateRoomMeta();
         refreshOpenTstatQuickPopups();
@@ -12379,7 +12570,9 @@
     paintTstatSetpoint(spEl, temps);
 
     const compactMode = ce("div", "quick-fav-tstat-mode" + (tm === "off" ? " is-off" : ""));
-    compactMode.textContent = tstatModeDisplayLabel(t.tm);
+    compactMode.textContent = tstatEcoOn(t) && tm !== "off"
+      ? ("Eco · " + tstatModeDisplayLabel(t.tm))
+      : tstatModeDisplayLabel(t.tm);
 
     const controls = ce("div", "quick-fav-tstat-controls");
     const minus = ce("button", "quick-fav-ctl quick-fav-step");
@@ -12403,9 +12596,13 @@
     plus.type = "button";
     plus.textContent = "+";
     plus.setAttribute("aria-label", "Increase setpoint");
-    const canAdjust = !!favoriteTstatTarget(t);
+    const canAdjust = !!favoriteTstatTarget(t) && !tstatEcoOn(t);
     minus.disabled = !canAdjust;
     plus.disabled = !canAdjust;
+    if (!canAdjust && tstatEcoOn(t)) {
+      minus.setAttribute("aria-label", "Setpoint locked while Eco is on");
+      plus.setAttribute("aria-label", "Setpoint locked while Eco is on");
+    }
     minus.addEventListener("click", (e) => {
       e.stopPropagation();
       adjustFavoriteTstat(t.i, -1);
@@ -12477,12 +12674,17 @@
     fitTstatModeLabel(rec.modeBtn);
     if (rec.dialTemp) rec.dialTemp.textContent = temps.current;
     if (rec.compactMode) {
-      rec.compactMode.textContent = tstatModeDisplayLabel(t.tm);
+      rec.compactMode.textContent = tstatEcoOn(t) && tm !== "off"
+        ? ("Eco · " + tstatModeDisplayLabel(t.tm))
+        : tstatModeDisplayLabel(t.tm);
       rec.compactMode.classList.toggle("is-off", tm === "off");
     }
-    const canAdjust = !!favoriteTstatTarget(t);
+    const canAdjust = !!favoriteTstatTarget(t) && !tstatEcoOn(t);
     rec.minus.disabled = !canAdjust;
     rec.plus.disabled = !canAdjust;
+    const locked = tstatEcoOn(t);
+    rec.minus.setAttribute("aria-label", locked ? "Setpoint locked while Eco is on" : "Decrease setpoint");
+    rec.plus.setAttribute("aria-label", locked ? "Setpoint locked while Eco is on" : "Increase setpoint");
     if (favTstatModeMenu && favTstatModeMenuId === t.i) syncFavoriteTstatModeMenu(t);
   }
 
@@ -14726,6 +14928,9 @@
           }
           else if (name === "fanSpeed") t.fs = val;
           else if (name === "vanePosition" && !tstatVaneLocked(t.i)) t.vp = val;
+          else if (name === "ecoMode" && !tstatEcoLocked(t.i)) { t.hasEco = 1; t.eco = val; }
+          else if (name === "ecoHeatPoint") { const n = Number(val); if (!isNaN(n)) t.ehsp = n; }
+          else if (name === "ecoCoolPoint") { const n = Number(val); if (!isNaN(n)) t.ecsp = n; }
           else return;
           updateClimateWidgets();
           updateRoomMeta();

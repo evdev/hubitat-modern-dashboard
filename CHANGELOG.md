@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.78
+
+- **Dashboard:** A Nest thermostat shows Eco. While Eco is on, the dial shows that range and the usual setpoint stays locked. Favorites show Eco beside the mode. Update Modern Dashboard.
+
 ## 0.4.77
 
 - **Dashboard:** After you change a device, the tile stays on that state only if the device changed. If it did not, the tile goes back and a message says to check the device. Update Modern Dashboard.
