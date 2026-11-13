@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.18
+// Modern Dashboard v0.4.78
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,23 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.18"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.78"
+@Field private static List LOCAL_FILE_NAME_CACHE = null
+@Field private static long LOCAL_FILE_NAME_CACHE_AT = 0L
+@Field private static final long LOCAL_FILE_NAME_CACHE_TTL = 30000L
+@Field private static Long HOLIDAY_CHILD_APP_ID = null
+@Field private static Long SYNAGOGUE_CHILD_APP_ID = null
+// Sunrise/sunset, the LAN schedule list, and room/capability facts survive from one refresh to the next.
+// Live device attributes do not.
+@Field private static Map SUN_MS_CACHE = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map SCHEDULES_FRAGMENT_CACHE = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map DEVICE_FACT_CACHE = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map HTML_SANITIZED = new java.util.concurrent.ConcurrentHashMap()
+// Per installed app, so one dashboard's refresh does not make another app's commands use the refresh cache.
+@Field private static Map POLL_FLAGS = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map POLL_STATE_BOXES = new java.util.concurrent.ConcurrentHashMap()
+@Field private static Map POLL_ROOM_MAPS = new java.util.concurrent.ConcurrentHashMap()
+@Field private static final long DEVICE_FACT_CACHE_TTL = 30000L
 
 definition(
     name: "Modern Dashboard",
@@ -34,11 +50,13 @@ definition(
 preferences {
     page(name: "mainPage", uninstall: true, install: true)
     page(name: "schedImportPage", title: "Import Simple Automation Rules", install: false, uninstall: false)
+    page(name: "schedUploadPage", title: "Upload schedules", install: false, uninstall: false)
     page(name: "triggersPage", title: "Tablet triggers", install: false, uninstall: false)
 }
 
 def mainPage() {
     if (!state.accessToken) { createAccessToken() }
+    try { clearLocalFileNameCache() } catch (e) {}
     def assetsOk = assetsPresent()
     def localUrl = dashboardUrl(true)
     def cloudUrl = dashboardUrl(false)
@@ -46,7 +64,8 @@ def mainPage() {
     def climateCount = devicePickerCount(thermostats) + devicePickerCount(tempSensors)
     def shadesMediaCount = devicePickerCount(windowShades) + devicePickerCount(windowBlinds) +
         devicePickerCount(windowShadesLevel) + devicePickerCount(ceilingFans) +
-        devicePickerCount(musicPlayers) + devicePickerCount(audioSpeakers)
+        devicePickerCount(musicPlayers) + devicePickerCount(audioSpeakers) +
+        devicePickerCount(mediaTransportPlayers)
     def locksCount = devicePickerCount(locks) + devicePickerCount(garageDoors)
     def sensorsCount = devicePickerCount(motionSensors) + devicePickerCount(shockSensors) +
         devicePickerCount(contactSensors) + devicePickerCount(waterSensors) +
@@ -68,7 +87,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.18 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.78 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -142,8 +161,11 @@ def mainPage() {
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "musicPlayers", "capability.musicPlayer", title: "Music / media players (Sonos, Echo Speaks, AirPlay, …)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
-            input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, …)",
+            input "audioSpeakers", "capability.audioVolume", title: "Additional speakers (Chromecast, Google Home, Bluetooth volume, …)",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
+            input "mediaTransportPlayers", "capability.mediaTransport", title: "Media transport (HomeKit speakers, TVs, …)",
+                multiple: true, required: false, showFilter: true, submitOnChange: true
+            paragraph "<small>The Music tab only lists devices you can control from the dashboard (play/pause/stop or volume). TTS-only Bluetooth speakers are not shown — use Rule Machine to speak or play a track. C-8 Pro <b>BTHome</b> sensors belong under Sensors, not here.</small>"
         }
         section(sectionTitleWithCount("Locks & garage", locksCount), hideable: true, hidden: locksSectionCollapsed()) {
             paragraph "<small>Locks and garage doors appear in the Locks dashboard popup.</small>"
@@ -158,7 +180,7 @@ def mainPage() {
             }
         }
         section(sectionTitleWithCount("Sensors", sensorsCount), hideable: true, hidden: sensorsSectionCollapsed()) {
-            paragraph "<small>Sensors appear in the Sensors popup. Multi-sensors may overlap with other pickers; temperature + humidity or illuminance merge into one tile. Alert types (motion, contact, etc.) stay primary with other readings in the footer.</small>"
+            paragraph "<small>Sensors appear in the Sensors popup. Multi-sensors may overlap with other pickers; temperature + humidity or illuminance merge into one tile. Alert types (motion, contact, etc.) stay primary with other readings in the footer. C-8 Pro <b>BTHome</b> / Shelly BLU devices use the matching typed lists (motion, contact, temperature, …); occupancy-only and button devices go under <b>Other / generic sensors</b>.</small>"
             input "motionSensors", "capability.motionSensor", title: "Motion sensors",
                 multiple: true, required: false, showFilter: true, submitOnChange: true
             input "shockSensors", "capability.accelerationSensor", title: "Shock / glass-break sensors",
@@ -285,7 +307,8 @@ def mainPage() {
                     ["blinds": "Blinds"],
                     ["fans": "Fans"],
                     ["outlets": "Outlets"],
-                    ["scheduling": "Scheduler"]
+                    ["scheduling": "Scheduler"],
+                    ["synagogue": "Synagogue"]
                 ],
                 defaultValue: "lights", required: false
             paragraph "<small>Applies when Category tabs is enabled on the dashboard. Falls back to Lights if the chosen tab has no content (or Cameras when not on the local URL).</small>"
@@ -301,13 +324,42 @@ def mainPage() {
                 defaultValue: false, submitOnChange: true
             if (schedulerDisabled != true) {
                 input "schedulerUse24Hour", "bool", title: "Use 24-hour time in scheduler", defaultValue: false
+                input "mcpSchedulesEnabled", "bool",
+                    title: "Allow an AI assistant to create schedules",
+                    defaultValue: false, submitOnChange: true
+                if (mcpSchedulesEnabled == true) {
+                    paragraph "<small>The assistant can create, change, and delete schedules. It does not ask for the dashboard password. Use the link below from an assistant on your home network. Away from home, copy the schedule schema and upload the file.</small>"
+                    paragraph mldLinkCard("Local assistant", "On your home network", mcpUrl(), "info")
+                }
+                href "toSchedUpload", title: "Upload schedules…",
+                    description: "Schema and device list for an assistant, then paste the JSON it returns",
+                    page: "schedUploadPage"
                 href "toSchedImport", title: "Import Simple Automation Rules…",
                     description: "Paste a Hubitat App Export to create mDash schedules",
                     page: "schedImportPage"
             }
-            paragraph "<small>When scheduler is hidden, no schedules run. Saved schedules are kept if you turn it back on.</small>"
+            if (holidayFilePresent()) {
+                paragraph "<small>When scheduler is hidden, no schedules run, including Shabbat and holiday schedules. Saved schedules are kept if you turn it back on.</small>"
+            } else {
+                paragraph "<small>When scheduler is hidden, no schedules run. Saved schedules are kept if you turn it back on.</small>"
+            }
             input "debugLogging", "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             paragraph "<small>Logs command traces to Hubitat Logs for troubleshooting. Auto-disables after 30 minutes. Failures are always logged regardless of this setting.</small>"
+        }
+        if (holidayFilePresent()) {
+            section("Shabbat & holidays") {
+                paragraph "<small><b>Enabled.</b> <code>mld-holiday.js</code> is in File Manager, so Shabbat &amp; holidays is on. That file comes from the separate <b>mDash Shabbat and Holidays</b> package in Hubitat Package Manager. This page does not install it.</small>"
+                paragraph "<small>If Shabbat and Holiday Scheduler is also installed, turn off its mode switching so the hub is not switched twice.</small>"
+                def postalNote = holidayLocationNotice()
+                if (postalNote) paragraph mldCallout("danger", "Postal code needed", htmlEsc(postalNote))
+            }
+        }
+        if (synagogueFilePresent()) {
+            section("Synagogue") {
+                paragraph "<small><b>Enabled.</b> <code>mld-synagogue.js</code> is in File Manager, so Synagogue is on. That file comes from the separate <b>mDash Synagogue</b> package in Hubitat Package Manager. This page does not install it.</small>"
+                def synagogueNote = synagogueLocationNotice()
+                if (synagogueNote) paragraph mldCallout("danger", "Location needed", htmlEsc(synagogueNote))
+            }
         }
         section("Light control", hideable: true, hidden: true) {
             paragraph "<small>Applies to snapshot restore, All on/off, and room on/off. Metering is on by default.</small>"
@@ -418,6 +470,106 @@ def schedImportPage() {
 
         section("") {
             href "backMain", title: "Back to Modern Dashboard settings", page: "mainPage"
+        }
+    }
+}
+
+def schedUploadPage() {
+    dynamicPage(name: "schedUploadPage", title: "Upload schedules", install: false, uninstall: false) {
+        if (state.schedUploadResult) {
+            section("Status") {
+                paragraph mldSchedScrollTop() + schedUploadResultHtml()
+            }
+        }
+        section("How to import", hideable: true, hidden: state.schedUploadResult ? true : false) {
+            if (!state.schedUploadResult) paragraph mldSchedScrollTop()
+            paragraph schedUploadHowTo()
+        }
+        section("Schedule JSON") {
+            paragraph "<span style='color:#1f7a45'><b>Green</b></span> rows in the preview will be saved. <span style='color:#b8324a'><b>Red</b></span> rows will be skipped and not written."
+            paragraph "<small><b>Upload</b> loads the file and shows that preview. <b>Submit</b>, under the preview, saves the green rows.</small>"
+            if (state.schedUploadHidePaste == true) {
+                paragraph mldCallout("tip", "Paste cleared", "Tap <b>Paste another file</b> to upload again.")
+                input name: "btnSchedUploadClear", type: "button", title: "Paste another file"
+            } else {
+                input "schedUploadPaste", "textarea", title: "Schedule JSON", required: false, rows: 3
+                paragraph mldSchedUploadFilePicker()
+                input name: "btnSchedUploadLoad", type: "button", title: "Upload"
+                input name: "btnSchedUploadClear", type: "button", title: "Clear paste"
+            }
+        }
+        def preview = schedUploadPreviewFromSettings()
+        if (state.schedUploadHidePaste != true) {
+            if (preview.error && preview.hasPaste) {
+                section("Error") {
+                    paragraph mldCallout("danger", "This file cannot be imported yet",
+                        htmlEsc(preview.error.toString()) + "<br>Nothing has been saved. Fix the file, then tap <b>Upload</b>.")
+                }
+            } else if (preview.hasPaste) {
+                section("Will import (${preview.ok.size()})") {
+                    if (!preview.ok) {
+                        paragraph mldCallout("warning", "Nothing to import", "Every row was skipped, so there is nothing to submit.")
+                    } else {
+                        def lines = preview.ok.collect { row ->
+                            def bits = []
+                            def summary = row?.summary?.toString()?.trim()
+                            if (summary) bits << summary
+                            if (row?.replaced == true) bits << "will replace the schedule with this name"
+                            else if (row?.replaced == false) bits << "will be added"
+                            if (row?.enabled == false) bits << "will be left off"
+                            def text = htmlEsc(bits.join(". "))
+                            "<li><b>${htmlEsc(row.name)}</b>${text ? " — ${text}" : ""}</li>"
+                        }.join("")
+                        paragraph mldCallout("success", "${preview.ok.size()} will be saved",
+                            "<ul style='margin:0;padding-left:18px;color:#1f7a45'>${lines}</ul>")
+                    }
+                }
+                if (preview.skipped) {
+                    section("Will skip (${preview.skipped.size()})") {
+                        def lines = preview.skipped.collect { row ->
+                            "<li><b>${htmlEsc(row.name ?: "Untitled")}</b>: ${htmlEsc(row.error)}</li>"
+                        }.join("")
+                        paragraph mldCallout("danger", "${preview.skipped.size()} will not be saved",
+                            "<ul style='margin:0;padding-left:18px;color:#b8324a'>${lines}</ul>" +
+                            "<div style='margin-top:6px'>Fix these if you want them included. Green rows are saved only when you tap Submit.</div>")
+                    }
+                }
+                section("Submit") {
+                    if (preview.ok) {
+                        input name: "btnSchedUploadRun", type: "button", title: "Submit"
+                        def skipNote = preview.skipped ? " Red rows are left out." : ""
+                        paragraph "<small>Submit saves the ${preview.ok.size()} green row${preview.ok.size() == 1 ? '' : 's'}.${skipNote} Nothing is saved until you tap Submit.</small>"
+                    } else if (preview.kind == "holiday") {
+                        paragraph mldCallout("danger", "No holiday items can be imported",
+                            "Nothing will be saved. Fix the red rows, or paste a different Shabbat and holidays file.")
+                    } else {
+                        paragraph mldCallout("danger", "No schedules can be imported",
+                            "Nothing will be saved. Fix the red rows, or paste a schedules file.")
+                    }
+                }
+            }
+        }
+        section("Devices for your assistant", hideable: true, hidden: false) {
+            if (holidayModuleInstalled()) {
+                paragraph "<small>Selected devices and the controls a schedule or a Shabbat and holidays file can set. Each link includes your dashboard token.</small>"
+            } else {
+                paragraph "<small>Selected devices and the controls a schedule can set. Each link includes your dashboard token.</small>"
+            }
+            paragraph mldSchedActionLink("Download device list", scheduleDevicesUrl(false), "mdash-devices.json") +
+                mldSchedActionLink("Local Network Download", scheduleDevicesUrl(true), "mdash-devices.json")
+        }
+        section("Schema for your assistant", hideable: true, hidden: false) {
+            paragraph "<small>Give this to your assistant with the device list. Download or Copy for the full file.</small>"
+            paragraph mldSchemaToolbar()
+        }
+        if (holidayModuleInstalled()) {
+            section("Schema for Shabbat & holidays", hideable: true, hidden: false) {
+                paragraph "<small>Give this to your assistant with the device list. Use it only for a Shabbat and holidays file. Download or Copy for the full file.</small>"
+                paragraph holidaySchemaToolbar()
+            }
+        }
+        section("") {
+            href "backMainUpload", title: "Back to Modern Dashboard settings", page: "mainPage"
         }
     }
 }
@@ -658,7 +810,7 @@ def schedImportClearPaste() {
 def schedImportRunFromUi() {
     def preview = schedImportPreviewFromSettings()
     if (preview.error) {
-        state.schedImportResult = "Import failed: ${preview.error}"
+        state.schedImportResult = "Import failed: ${preview.error}".toString()
         state.schedImportSkipped = null
         return
     }
@@ -669,11 +821,11 @@ def schedImportRunFromUi() {
     }
     def applied = schedImportApplyOk(preview.ok)
     if (applied.error) {
-        state.schedImportResult = "Import failed: ${applied.error}"
+        state.schedImportResult = "Import failed: ${applied.error}".toString()
         state.schedImportSkipped = schedImportFormatSkippedHtml(preview.skipped)
         return
     }
-    state.schedImportResult = "Imported ${applied.count} schedule(s)."
+    state.schedImportResult = "Imported ${applied.count} schedule(s).".toString()
     state.schedImportSkipped = schedImportFormatSkippedHtml(preview.skipped)
     try {
         log.info "Modern Dashboard: imported ${applied.count} schedule(s) from Simple Automation export" +
@@ -686,6 +838,1514 @@ def schedImportRunFromUi() {
     }
 }
 
+def schedUploadSchema() {
+    return '''
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/evdev/hubitat-modern-dashboard/blob/beta/lib/schedule-upload.schema.json",
+  "title": "Modern Dashboard schedule upload",
+  "description": "Write one JSON object for Modern Dashboard and nothing else. It must match this schema. Use only device names the user gives you. Do not invent devices, rooms, or hub modes. Omit enabled to leave a schedule on. A schedule name that already exists is replaced. Clock times are 24-hour hub-local HH:mm. One-time at is yyyy-MM-ddTHH:mm in hub-local time and must be in the future. Weekly days are SUN, MON, TUE, WED, THU, FRI, SAT. Sunrise and sunset use offsetMin from -720 to 720; negative is before that event. onlyInModes does nothing on a mode trigger. A mode trigger must not set the same hub mode it watches. Do not schedule sensors, music, or scenes. Lights, outlets, locks, blinds, fans, and thermostats need at least one device. Heat must be below cool. Fahrenheit setpoints are 50-90. Celsius setpoints are 10-32. Level is 0-100. ct is color temperature in Kelvin, only for a bulb that supports it. A lock with locked false unlocks and does not ask for a PIN. Shade position is 1-100 and only applies when open is true and that shade supports position. Fan speed must be one that fan reports, such as low, medium, high, or a number like 4. Omit speed to turn the fan on. The speed off turns the fan off.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schedules"],
+  "properties": {
+    "schedules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/schedule" }
+    }
+  },
+  "$defs": {
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "trigger", "action"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Shown in the scheduler. Uploading the same name again replaces that schedule." },
+        "enabled": { "type": "boolean", "description": "Omit to leave the schedule on." },
+        "id": { "type": "string", "description": "Omit. The hub assigns an id. Send one only to replace a schedule whose id you already know." },
+        "onlyInModes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Hub mode names. The schedule runs only while the hub is in one of these modes. Omit or use [] for any mode. Ignored when trigger.kind is mode."
+        },
+        "trigger": { "$ref": "#/$defs/trigger" },
+        "action": { "$ref": "#/$defs/action" }
+      }
+    },
+    "days": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] }
+    },
+    "trigger": {
+      "oneOf": [
+        {
+          "title": "Daily or weekly clock",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "when", "time"],
+          "properties": {
+            "kind": { "enum": ["daily", "weekly"] },
+            "when": { "const": "clock" },
+            "time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time." },
+            "days": { "$ref": "#/$defs/days" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "kind": { "const": "weekly" } }, "required": ["kind"] },
+              "then": { "required": ["days"] }
+            }
+          ]
+        },
+        {
+          "title": "Daily or weekly sunrise or sunset",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "when", "offsetMin"],
+          "properties": {
+            "kind": { "enum": ["daily", "weekly"] },
+            "when": { "enum": ["sunrise", "sunset"] },
+            "offsetMin": { "type": "integer", "minimum": -720, "maximum": 720, "description": "Minutes from the sun event. Negative is before." },
+            "days": { "$ref": "#/$defs/days" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "kind": { "const": "weekly" } }, "required": ["kind"] },
+              "then": { "required": ["days"] }
+            }
+          ]
+        },
+        {
+          "title": "One time",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "at"],
+          "properties": {
+            "kind": { "const": "once" },
+            "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?$", "description": "Hub-local yyyy-MM-ddTHH:mm. Must be in the future. The schedule is removed after it runs." }
+          }
+        },
+        {
+          "title": "Hub mode change",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "mode"],
+          "properties": {
+            "kind": { "const": "mode" },
+            "mode": { "type": "string", "minLength": 1, "description": "Exact hub mode name. The schedule runs when the hub enters this mode." }
+          }
+        }
+      ]
+    },
+    "action": {
+      "oneOf": [
+        {
+          "title": "Lights",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "lights" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/lightState" }
+            }
+          }
+        },
+        {
+          "title": "Outlets",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "outlets" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/outletState" }
+            }
+          }
+        },
+        {
+          "title": "Thermostats",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "devices"],
+          "properties": {
+            "target": { "const": "thermostats" },
+            "devices": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1, "description": "Thermostat name, or a numeric hub id." }
+            },
+            "mode": { "type": "string", "description": "heat, cool, auto, off, emergency heat, or another mode that thermostat supports. Omit to change setpoints only. heat and emergency heat require heat. cool requires cool. auto requires both." },
+            "heat": { "type": "integer", "description": "Heat setpoint. 50-90 Fahrenheit or 10-32 Celsius." },
+            "cool": { "type": "integer", "description": "Cool setpoint. Must be above heat. 50-90 Fahrenheit or 10-32 Celsius." },
+            "fanMode": { "type": "string", "description": "auto, on, or circulate, when that thermostat has a fan mode." }
+          }
+        },
+        {
+          "title": "Locks",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "locks" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/lockState" }
+            }
+          }
+        },
+        {
+          "title": "Blinds",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "blinds" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/blindState" }
+            }
+          }
+        },
+        {
+          "title": "Fans",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "fans" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/fanState" }
+            }
+          }
+        },
+        {
+          "title": "Hub mode",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "mode"],
+          "properties": {
+            "target": { "const": "hubMode" },
+            "mode": { "type": "string", "minLength": 1, "description": "Exact hub mode name to set. Must differ from trigger.mode when the trigger is a mode change." }
+          }
+        }
+      ]
+    },
+    "lightState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Light name as selected in the app. Prefer name over id." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "on": { "type": "boolean" },
+        "level": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Dim level. Omit for a switch that cannot dim." },
+        "ct": { "type": "integer", "minimum": 2000, "maximum": 6500, "description": "Color temperature in Kelvin. Omit unless that bulb supports it." }
+      }
+    },
+    "outletState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Outlet name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "on": { "type": "boolean" }
+      }
+    },
+    "lockState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locked"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Lock name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "locked": { "type": "boolean", "description": "false unlocks. A scheduled unlock does not ask for the PIN." }
+      }
+    },
+    "blindState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["open"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Blind or shade name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "open": { "type": "boolean" },
+        "position": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Open position, 1-100. Only when open is true and that shade supports position. Omit to open without a level. Ignored when open is false." }
+      }
+    },
+    "fanState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Ceiling fan name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "on": { "type": "boolean" },
+        "speed": { "type": "string", "minLength": 1, "description": "A speed that fan reports, such as low, medium, high, or 4. Omit to turn on without a speed. off turns the fan off." }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schedules": [
+        {
+          "name": "Porch at sunset",
+          "trigger": { "kind": "daily", "when": "sunset", "offsetMin": -15 },
+          "action": { "target": "lights", "states": [{ "name": "Porch", "on": true, "level": 40 }] }
+        },
+        {
+          "name": "Weekday morning",
+          "onlyInModes": ["Home"],
+          "trigger": { "kind": "weekly", "when": "clock", "time": "06:30", "days": ["MON", "TUE", "WED", "THU", "FRI"] },
+          "action": { "target": "lights", "states": [{ "name": "Kitchen", "on": true, "level": 80, "ct": 3000 }] }
+        },
+        {
+          "name": "Guest outlet off",
+          "trigger": { "kind": "once", "at": "2026-10-09T22:00" },
+          "action": { "target": "outlets", "states": [{ "name": "Guest outlet", "on": false }] }
+        },
+        {
+          "name": "Away cools the house",
+          "trigger": { "kind": "mode", "mode": "Away" },
+          "action": { "target": "thermostats", "devices": ["Hall thermostat"], "mode": "cool", "cool": 78, "fanMode": "auto" }
+        },
+        {
+          "name": "Front door unlocks",
+          "trigger": { "kind": "daily", "when": "clock", "time": "07:00" },
+          "action": { "target": "locks", "states": [{ "name": "Front Door", "locked": false }] }
+        },
+        {
+          "name": "Living room shade",
+          "trigger": { "kind": "daily", "when": "sunrise", "offsetMin": 0 },
+          "action": { "target": "blinds", "states": [{ "name": "Living Room Shade", "open": true, "position": 40 }] }
+        },
+        {
+          "name": "Bedroom fan",
+          "trigger": { "kind": "daily", "when": "clock", "time": "21:00" },
+          "action": { "target": "fans", "states": [{ "name": "Bedroom Fan", "on": true, "speed": "medium" }] }
+        }
+      ]
+    }
+  ]
+}
+'''
+}
+
+def holidayUploadSchema() {
+    return '''
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/evdev/hubitat-modern-dashboard/blob/beta/lib/holiday-upload.schema.json",
+  "title": "Modern Dashboard Shabbat and holidays upload",
+  "description": "Write one JSON object for Modern Dashboard and nothing else. It must match this schema. Do not include a schedules array. Use only device names and hub mode names the user gives you. Do not invent devices, rooms, or hub modes. Occasions left out of the file stay as they are. An occasion in the file replaces that occasion's choice. A template slot you include replaces that slot. A slot you leave out stays as saved. An empty list clears that slot. Shabbat choice is own and needs a template. choice shabbat uses the Shabbat template as-is. choice skip does not change devices or the hub mode for that holiday. choice own is a new schedule and needs a template. choice copy is a schedule based on Shabbat and needs a template. choice pesachFirst is only for pesachLast and uses the Pesach first-days template. Clock times are 24-hour hub-local HH:mm. kind is light, outlet, lock, blind, fan, or thermostat. Prefer a device name over its id. If both are set and they are different devices, that occasion is skipped. If the name matches more than one device, the id chooses among those matches. The same device command twice in one slot is stored once. Two different commands for one device in one slot skip that occasion. Heat must be below cool. Fahrenheit setpoints are 50-90. Celsius setpoints are 10-32. Level is 0-100 and only for a light that can dim. ct is color temperature in Kelvin from 2000 to 6500, only for a bulb that supports it. A lock with locked false unlocks and does not ask for a PIN. Shade position is 1-100 and only applies when open is true and that shade supports position. Fan speed must be one that fan reports, such as low, medium, high, or a number like 4. Omit speed to turn the fan on. on false turns the fan off. Do not send paused or a one-week Early Shabbat choice. Do not add fields that are not in this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "anyOf": [
+    { "required": ["occasions"] },
+    { "required": ["settings"] }
+  ],
+  "properties": {
+    "settings": { "$ref": "#/$defs/settings" },
+    "occasions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/occasion" }
+    }
+  },
+  "$defs": {
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "holidayMode": { "type": "string", "minLength": 1, "description": "Hub mode entered at candle lighting. Must differ from endMode." },
+        "endMode": { "type": "string", "minLength": 1, "description": "Hub mode restored at havdalah. Must differ from holidayMode." },
+        "israel": { "type": "boolean", "description": "true for Israel. Omit or false for the diaspora. Rosh Hashana is two days in both." },
+        "doNotStartModes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "If the hub is in one of these modes at candle lighting, nothing starts. Use [] for none."
+        },
+        "candleMin": { "type": "integer", "minimum": 0, "maximum": 120, "description": "Minutes before sunset for candle lighting. 0 means at sunset. 18 is usual." },
+        "havdalah": { "$ref": "#/$defs/havdalah" },
+        "startEarlyMin": { "type": "integer", "minimum": 0, "maximum": 180, "description": "Minutes before candle lighting to enter the holiday mode and run the start actions. 0 starts at candle lighting." },
+        "earlyShabbat": { "$ref": "#/$defs/earlyShabbat" }
+      }
+    },
+    "havdalah": {
+      "oneOf": [
+        {
+          "title": "Nightfall",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "nightfall" } }
+        },
+        {
+          "title": "Minutes after sunset",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "minutes"],
+          "properties": {
+            "type": { "const": "minutes" },
+            "minutes": { "type": "integer", "minimum": 0, "maximum": 120, "description": "Minutes after sunset. 0 means at sunset. 42 is common." }
+          }
+        }
+      ]
+    },
+    "earlyShabbat": {
+      "description": "On a plain Friday, start Shabbat at time when sunset is at or after sunsetBefore. When sunset is earlier, candle lighting is used. Off unless enabled is true.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean", "description": "false leaves every Friday at candle lighting." },
+        "time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time. Shabbat starts then when that time is before candle lighting. 19:00 if omitted." },
+        "sunsetBefore": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "When sunset is earlier than this hub-local time, Early Shabbat does not apply. 18:30 if omitted." }
+      }
+    },
+    "occasion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "choice"],
+      "properties": {
+        "id": {
+          "enum": ["shabbat", "roshHashana", "yomKippur", "sukkot", "shemini", "pesachFirst", "pesachLast", "shavuot"]
+        },
+        "choice": {
+          "enum": ["own", "copy", "shabbat", "skip", "pesachFirst"],
+          "description": "own and copy need a template. shabbat uses the Shabbat template. skip leaves that holiday alone. pesachFirst is only for pesachLast."
+        },
+        "template": { "$ref": "#/$defs/template" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "id": { "const": "shabbat" } }, "required": ["id"] },
+          "then": {
+            "properties": { "choice": { "const": "own" } },
+            "required": ["template"]
+          }
+        },
+        {
+          "if": { "properties": { "choice": { "enum": ["own", "copy"] } }, "required": ["choice"] },
+          "then": { "required": ["template"] }
+        },
+        {
+          "if": { "properties": { "choice": { "const": "pesachFirst" } }, "required": ["choice"] },
+          "then": { "properties": { "id": { "const": "pesachLast" } } }
+        },
+        {
+          "if": { "properties": { "choice": { "enum": ["shabbat", "skip", "pesachFirst"] } }, "required": ["choice"] },
+          "then": { "not": { "required": ["template"] } }
+        }
+      ]
+    },
+    "template": {
+      "description": "Slots you include replace those slots. Slots you leave out stay as saved. An empty list clears that slot.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start": { "$ref": "#/$defs/startSlot" },
+        "night": { "$ref": "#/$defs/timeGroups" },
+        "morning": { "$ref": "#/$defs/timeGroups" },
+        "afternoon": { "$ref": "#/$defs/timeGroups" },
+        "evening": { "$ref": "#/$defs/timeGroups" },
+        "end": { "$ref": "#/$defs/endSlot" },
+        "custom": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/customSlot" }
+        }
+      }
+    },
+    "startSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repeatLaterNights": { "type": "boolean", "description": "Also run these actions on later nights of a holiday. Omit or false to run them only on the first night." },
+        "states": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deviceState" }
+        }
+      }
+    },
+    "endSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "states": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deviceState" }
+        }
+      }
+    },
+    "timeGroups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["time", "states"],
+        "properties": {
+          "time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time on that Jewish day. Night times are after candle lighting." },
+          "states": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/deviceState" }
+          }
+        }
+      }
+    },
+    "customSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchor", "value", "states"],
+      "properties": {
+        "anchor": {
+          "enum": ["clock-day", "clock-night", "sunrise", "sunset", "after-start", "before-end", "after-end"],
+          "description": "clock-day and clock-night use an HH:mm value. The others use a number of minutes."
+        },
+        "value": {
+          "oneOf": [
+            { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+            { "type": "integer", "minimum": 0, "maximum": 720 }
+          ]
+        },
+        "days": { "enum": ["every", "first", "last"], "description": "Omit for every day of the occasion." },
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/deviceState" }
+        }
+      }
+    },
+    "deviceState": {
+      "oneOf": [
+        { "$ref": "#/$defs/lightState" },
+        { "$ref": "#/$defs/outletState" },
+        { "$ref": "#/$defs/lockState" },
+        { "$ref": "#/$defs/blindState" },
+        { "$ref": "#/$defs/fanState" },
+        { "$ref": "#/$defs/thermostatState" }
+      ]
+    },
+    "lightState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "light" },
+        "name": { "type": "string", "minLength": 1, "description": "Light name as selected in the app. Prefer name over id." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "on": { "type": "boolean" },
+        "level": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Dim level. Omit for a switch that cannot dim." },
+        "ct": { "type": "integer", "minimum": 2000, "maximum": 6500, "description": "Color temperature in Kelvin. Omit unless that bulb supports it." }
+      }
+    },
+    "outletState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "outlet" },
+        "name": { "type": "string", "minLength": 1, "description": "Outlet name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "on": { "type": "boolean" }
+      }
+    },
+    "lockState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "locked"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "lock" },
+        "name": { "type": "string", "minLength": 1, "description": "Lock name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "locked": { "type": "boolean", "description": "false unlocks. A scheduled unlock does not ask for the PIN." }
+      }
+    },
+    "blindState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "open"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "blind" },
+        "name": { "type": "string", "minLength": 1, "description": "Blind or shade name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "open": { "type": "boolean" },
+        "position": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Open position, 1-100. Only when open is true and that shade supports position. Omit to open without a level. Ignored when open is false." }
+      }
+    },
+    "fanState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "kind": { "const": "fan" },
+        "name": { "type": "string", "minLength": 1, "description": "Ceiling fan name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "on": { "type": "boolean" },
+        "speed": { "type": "string", "minLength": 1, "description": "A speed that fan reports, such as low, medium, high, or 4. Omit to turn on without a speed. on false turns the fan off." }
+      }
+    },
+    "thermostatState": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "thermostat" },
+        "name": { "type": "string", "minLength": 1, "description": "Thermostat name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use when the name is missing or matches more than one device. If it is a different device than the name, the occasion is skipped." },
+        "mode": { "type": "string", "description": "heat, cool, auto, off, emergency heat, or another mode that thermostat supports. Omit to change setpoints only. heat and emergency heat require heat. cool requires cool. auto requires both." },
+        "heat": { "type": "integer", "description": "Heat setpoint. 50-90 Fahrenheit or 10-32 Celsius." },
+        "cool": { "type": "integer", "description": "Cool setpoint. Must be above heat. 50-90 Fahrenheit or 10-32 Celsius." },
+        "fanMode": { "type": "string", "description": "auto, on, or circulate, when that thermostat has a fan mode." }
+      }
+    }
+  },
+  "examples": [
+    {
+      "settings": {
+        "holidayMode": "Shabbat",
+        "endMode": "Home",
+        "israel": false,
+        "doNotStartModes": ["Away"],
+        "candleMin": 18,
+        "havdalah": { "type": "minutes", "minutes": 42 },
+        "earlyShabbat": { "enabled": false, "time": "19:00", "sunsetBefore": "18:30" }
+      },
+      "occasions": [
+        {
+          "id": "shabbat",
+          "choice": "own",
+          "template": {
+            "start": {
+              "states": [{ "kind": "light", "name": "Dining", "on": true, "level": 40 }]
+            },
+            "night": [
+              { "time": "22:30", "states": [{ "kind": "light", "name": "Dining", "on": false }] }
+            ],
+            "end": {
+              "states": [{ "kind": "light", "name": "Dining", "on": false }]
+            }
+          }
+        },
+        { "id": "yomKippur", "choice": "shabbat" },
+        { "id": "pesachLast", "choice": "pesachFirst" }
+      ]
+    }
+  ]
+}
+'''
+}
+
+def schedUploadPreviewFromSettings() {
+    if (state.schedUploadHidePaste == true) return [hasPaste: false, ok: [], skipped: [], error: null]
+    def text = schedUploadPaste?.toString()
+    if (!text?.trim()) return [hasPaste: false, ok: [], skipped: [], error: null]
+    def parsed = schedUploadParseText(text)
+    if (parsed.error) return [hasPaste: true, ok: [], skipped: [], error: parsed.error, kind: parsed.kind]
+    if (parsed.kind == "holiday") {
+        def preview = holidayUploadPrepare(parsed.body)
+        preview.hasPaste = true
+        preview.kind = "holiday"
+        return preview
+    }
+    def preview = schedulesPreviewBundle(parsed.items)
+    preview.hasPaste = true
+    preview.kind = "schedules"
+    return preview
+}
+
+def schedUploadParseText(String text) {
+    def body
+    try { body = new groovy.json.JsonSlurper().parseText(text) } catch (e) {
+        return [error: "That paste is not JSON"]
+    }
+    boolean holidayShape = body instanceof Map && (body.containsKey("settings") || body.containsKey("occasions"))
+    boolean scheduleShape = body instanceof Map && (body.containsKey("schedules") || body.trigger instanceof Map || body.action instanceof Map)
+    if (holidayShape && scheduleShape) {
+        if (holidayModuleInstalled()) return [error: "Use one file for schedules or one file for Shabbat and holidays", kind: "holiday"]
+        holidayShape = false
+    }
+    if (holidayShape) {
+        if (!holidayModuleInstalled()) return [error: "Expected a schedules array, or one schedule object"]
+        return [kind: "holiday", body: body]
+    }
+    def items = schedulesBundleItems(body)
+    if (items == null) {
+        if (holidayModuleInstalled()) return [error: "Expected a schedules array, or a Shabbat and holidays file", kind: "holiday"]
+        return [error: "Expected a schedules array, or one schedule object"]
+    }
+    return [kind: "schedules", items: items]
+}
+
+def schedUploadClearPaste() {
+    if (state.schedUploadHidePaste == true) {
+        state.schedUploadHidePaste = false
+        schedUploadClearResult()
+        return
+    }
+    state.schedUploadHidePaste = true
+    try { app.clearSetting("schedUploadPaste") } catch (e1) {
+        try { app.updateSetting("schedUploadPaste", [type: "textarea", value: ""]) } catch (e2) {}
+    }
+    schedUploadClearResult()
+}
+
+def schedUploadClearResult() {
+    state.remove("schedUploadResult")
+    state.remove("schedUploadDetail")
+    state.remove("schedUploadTone")
+    state.remove("schedUploadSkipped")
+    state.remove("schedUploadSaved")
+}
+
+def schedUploadRemember(String tone, String title, String detail, skipped, saved) {
+    state.schedUploadTone = tone
+    state.schedUploadResult = title?.toString()
+    state.schedUploadDetail = detail?.toString()
+    def skippedHtml = schedUploadFormatSkippedHtml(skipped)
+    if (skippedHtml) state.schedUploadSkipped = skippedHtml
+    else state.remove("schedUploadSkipped")
+    def savedHtml = schedUploadFormatSavedHtml(saved)
+    if (savedHtml) state.schedUploadSaved = savedHtml
+    else state.remove("schedUploadSaved")
+}
+
+def schedUploadResultHtml() {
+    def title = state.schedUploadResult?.toString() ?: ""
+    if (!title) return ""
+    def tone = state.schedUploadTone?.toString()
+    if (!tone) tone = (title.startsWith("Upload failed") || title.startsWith("Submit failed")) ? "danger" : "success"
+    def detail = htmlEsc(state.schedUploadDetail?.toString() ?: "").replace("\n", "<br>")
+    if (state.schedUploadSaved) {
+        detail += "<div style='margin-top:8px'><b style='color:#1f7a45'>Saved</b>${state.schedUploadSaved}</div>"
+    }
+    if (state.schedUploadSkipped) {
+        detail += "<div style='margin-top:8px'><b style='color:#b8324a'>Not saved</b>${state.schedUploadSkipped}</div>"
+    }
+    return mldCallout(tone, title, detail)
+}
+
+def schedUploadHowTo() {
+    def holiday = holidayModuleInstalled()
+    def steps = []
+    steps << "Download the <b>device list</b> below. It has the device names and hub mode names this app can use. Do not invent names."
+    if (holiday) {
+        steps << "Download or copy the <b>schedule schema</b>, or the <b>Shabbat &amp; holidays schema</b> if that is the file you want. Give that schema and the device list to your assistant. Ask for one JSON file."
+    } else {
+        steps << "Download or copy the <b>schema</b>. Give the schema and the device list to your assistant. Ask for one JSON file."
+    }
+    steps << "Paste that JSON into the box below, or tap <b>Choose file</b>. Then tap <b>Upload</b>. Choosing a file loads it for you. <span style='color:#1f7a45'><b>Green</b></span> preview rows can be saved. <span style='color:#b8324a'><b>Red</b></span> rows will be skipped. Nothing is saved yet."
+    if (holiday) {
+        steps << "Tap <b>Submit</b> under the preview. Use one file for schedules, or one file for Shabbat and holidays. A schedule name that already exists is replaced. A holiday occasion in the file replaces that occasion's choice. Template slots you include replace those slots. Slots you leave out stay as they are."
+    } else {
+        steps << "Tap <b>Submit</b> under the preview. A schedule name that already exists is replaced. Schedules that are not in the file stay as they are."
+    }
+    def items = []
+    for (int i = 0; i < steps.size(); i++) {
+        items << "<li style='margin:0 0 8px 0'><b style='color:#3b6bff'>Step ${i + 1}.</b> ${steps[i]}</li>"
+    }
+    return mldCallout("info", "How to import", "<ol style='margin:0;padding-left:18px'>${items.join('')}</ol>")
+}
+
+def schedUploadFailDetail(String error, String kind) {
+    def why = error?.toString()?.trim() ?: "Nothing was imported."
+    def lines = [why, "Nothing was saved. The paste is still in the box."]
+    if (kind == "holiday") {
+        lines << "Shabbat & holidays was not changed. Fix the file, tap Upload to preview it again, then tap Submit."
+    } else {
+        lines << "Your existing schedules were not changed. Use a file shaped like { \"schedules\": [ ... ] }, or one schedule with a trigger and an action. Tap Upload to preview it, then tap Submit."
+    }
+    return lines.join("\n")
+}
+
+def schedUploadFormatSavedHtml(rows) {
+    def lines = []
+    for (row in (rows ?: [])) {
+        def name = htmlEsc(row?.name?.toString()?.trim() ?: "Untitled")
+        def bits = []
+        if (row?.replaced == true) bits << "replaced the schedule with this name"
+        else if (row?.replaced == false) bits << "added"
+        def summary = row?.summary?.toString()?.trim()
+        if (summary) bits << summary
+        if (row?.enabled == false) bits << "left off"
+        def text = htmlEsc(bits.join(". "))
+        lines << "<li><b>${name}</b>${text ? " — ${text}" : ""}</li>"
+    }
+    if (!lines) return null
+    return "<ul style='margin:6px 0 0;padding-left:18px;color:#1f7a45'>${lines.join('')}</ul>".toString()
+}
+
+def schedUploadLoadFromUi() {
+    state.schedUploadHidePaste = false
+    def text = schedUploadPaste?.toString()?.trim()
+    if (!text) {
+        schedUploadRemember("danger", "Nothing was loaded",
+            "The paste box is empty.\nPaste JSON, or tap Choose file and pick a .json file. Then tap Upload. Nothing is saved until you tap Submit.",
+            null, null)
+        return
+    }
+    def parsed = schedUploadParseText(text)
+    if (parsed.error) {
+        def kind = parsed.kind == "holiday" ? "holiday" : "schedules"
+        schedUploadRemember("danger", "This file cannot be imported yet", schedUploadFailDetail(parsed.error, kind), null, null)
+        return
+    }
+    schedUploadRemember("info", "File loaded",
+        "Nothing is saved yet.\nGreen rows will be saved when you tap Submit. Red rows will be skipped.",
+        null, null)
+}
+
+def schedUploadRunFromUi() {
+    def text = schedUploadPaste?.toString()?.trim()
+    if (!text) {
+        schedUploadRemember("danger", "Submit failed",
+            "Nothing was saved.\nThe paste box is empty. Paste JSON, or tap Choose file and pick a .json file. Tap Upload to preview it, then tap Submit.",
+            null, null)
+        return
+    }
+    def parsed = schedUploadParseText(text)
+    if (parsed.error) {
+        def kind = parsed.kind == "holiday" ? "holiday" : "schedules"
+        schedUploadRemember("danger", "Submit failed", schedUploadFailDetail(parsed.error, kind), null, null)
+        return
+    }
+    if (parsed.kind == "holiday") {
+        holidayUploadRun(parsed.body)
+        return
+    }
+    def applied = schedulesCommitBundle(parsed.items)
+    if (applied.ok != true) {
+        schedUploadRemember("danger", "Submit failed", schedUploadFailDetail(applied.error ?: "nothing imported", "schedules"), applied.skipped, null)
+        return
+    }
+    def skippedN = applied.skipped ? applied.skipped.size() : 0
+    int n = 0
+    try { n = applied.imported as int } catch (e) { n = 0 }
+    def title = n == 1 ? "Imported 1 schedule." : "Imported ${n} schedules."
+    if (skippedN) title += " ${skippedN} not saved."
+    int replacedN = 0
+    int addedN = 0
+    for (row in (applied.importedRows ?: [])) {
+        if (row?.replaced == true) replacedN++
+        else if (row?.replaced == false) addedN++
+    }
+    def lines = []
+    lines << (n == 1 ? "Saved 1 schedule in Modern Dashboard." : "Saved ${n} schedules in Modern Dashboard.")
+    if (replacedN && addedN) lines << "${replacedN} replaced a schedule that already had the same name. ${addedN} ${addedN == 1 ? 'was' : 'were'} added."
+    else if (replacedN == 1) lines << "It replaced a schedule that already had the same name."
+    else if (replacedN) lines << "Each one replaced a schedule that already had the same name."
+    else if (n == 1) lines << "It was added."
+    else lines << "Each one was added."
+    lines << "The green list is what was saved. Schedules that were not in this file were left as they are."
+    if (skippedN) lines << "The red list was not written. Fix those and upload again if you want them included."
+    lines << "The paste was cleared. Tap Paste another file to upload another one."
+    schedUploadRemember(skippedN ? "warning" : "success", title, lines.join("\n"), applied.skipped, applied.importedRows)
+    try { log.info "Modern Dashboard: uploaded ${applied.imported} schedule(s)" + (skippedN ? " (${skippedN} skipped)" : "") } catch (e) {}
+    state.schedUploadHidePaste = true
+    try { app.clearSetting("schedUploadPaste") } catch (e1) {
+        try { app.updateSetting("schedUploadPaste", [type: "textarea", value: ""]) } catch (e2) {}
+    }
+}
+
+def schedUploadFormatSkippedHtml(skipped) {
+    if (!skipped) return null
+    def lines = skipped.collect { row ->
+        "<li><b>${htmlEsc(row.name ?: "Untitled")}</b>: ${htmlEsc(row.error)}</li>"
+    }
+    if (!lines) return null
+    return "<ul style='margin:6px 0 0;padding-left:18px;color:#b8324a'>${lines.join('')}</ul>".toString()
+}
+
+def holidayUploadRun(body) {
+    def applied = holidayUploadCommit(body)
+    if (applied?.ok != true) {
+        schedUploadRemember("danger", "Submit failed", schedUploadFailDetail(applied?.error ?: "nothing imported", "holiday"), applied?.skipped, null)
+        return
+    }
+    def skippedN = applied.skipped ? applied.skipped.size() : 0
+    int n = 0
+    try { n = applied.imported as int } catch (e) { n = 0 }
+    def title = n == 1 ? "Imported 1 holiday item." : "Imported ${n} holiday items."
+    if (skippedN) title += " ${skippedN} not saved."
+    if (applied.armed == false) title += " Saved, but not scheduled."
+    boolean hadOccasion = false
+    for (row in (applied.rows ?: [])) {
+        if (row?.id) hadOccasion = true
+    }
+    def lines = []
+    lines << (n == 1 ? "Saved 1 holiday item in Shabbat & holidays." : "Saved ${n} holiday items in Shabbat & holidays.")
+    if (hadOccasion) lines << "Each occasion in the file replaced that occasion's choice. Template slots included in the file replaced those slots. Slots you left out, occasions you left out, one-time edits, and paused occasions were kept."
+    else lines << "Settings in the file were saved. Occasions, templates, one-time edits, and paused occasions were kept."
+    lines << "The green list is what was saved."
+    if (applied.armed == false) {
+        def why = applied.note?.toString()?.trim() ?: "the next action could not be armed"
+        lines << "Saved, but not scheduled: ${why}"
+        lines << "The file is saved on the hub. Fix that, then upload again or open Shabbat & holidays."
+    } else if (applied.scheduled == true) {
+        def when = applied.when?.toString()?.trim()
+        if (when) lines << "The next action was scheduled for ${when}."
+        else lines << "The next action was scheduled."
+    } else if (applied.retry == true) {
+        lines << "The file is saved. The next action could not be scheduled just now. Shabbat & holidays will try again shortly."
+    } else if (applied.scheduled == false) {
+        lines << "The file is saved. No timer was set, because no lighting, havdalah, or other action is still ahead."
+    }
+    if (skippedN) lines << "The red list was not changed."
+    lines << "The paste was cleared. Tap Paste another file to upload another one."
+    def tone = (skippedN || applied.armed == false || applied.scheduled == false || applied.retry == true) ? "warning" : "success"
+    schedUploadRemember(tone, title, lines.join("\n"), applied.skipped, applied.rows)
+    try { log.info "Modern Dashboard: uploaded ${applied.imported} holiday item(s)" + (skippedN ? " (${skippedN} skipped)" : "") } catch (e) {}
+    state.schedUploadHidePaste = true
+    try { app.clearSetting("schedUploadPaste") } catch (e1) {
+        try { app.updateSetting("schedUploadPaste", [type: "textarea", value: ""]) } catch (e2) {}
+    }
+}
+
+def holidayUploadCommit(body) {
+    def prepared = holidayUploadPrepare(body)
+    if (prepared.error) return [ok: false, error: prepared.error, imported: 0, skipped: prepared.skipped ?: []]
+    if (!prepared.ok) {
+        def err = prepared.skipped ? prepared.skipped[0].error : "nothing to import"
+        return [ok: false, error: err, imported: 0, skipped: prepared.skipped ?: []]
+    }
+    def child = holidaysChild()
+    if (!child) return [ok: false, error: "Expected a schedules array, or one schedule object", imported: 0, skipped: prepared.skipped ?: []]
+    def payload = [occasions: prepared.occasions ?: []]
+    if (prepared.settings instanceof Map) payload.settings = prepared.settings
+    def result = null
+    try { result = child.holidaysImport(payload) } catch (e) {
+        return [ok: false, error: holidayUploadChildError(e, "Submit failed"), imported: 0, skipped: prepared.skipped ?: []]
+    }
+    if (result?.ok != true) return [ok: false, error: result?.error ?: "nothing imported", imported: 0, skipped: prepared.skipped ?: []]
+    def scheduled = null
+    if (result instanceof Map && result.containsKey("scheduled")) scheduled = result.scheduled == true
+    return [ok: true, imported: prepared.ok.size(), skipped: prepared.skipped ?: [], armed: result?.armed != false, scheduled: scheduled, retry: result?.retry == true, when: result?.when?.toString(), note: result?.note, rows: prepared.ok]
+}
+
+def holidayUploadChildError(e, String fallback) {
+    def text = "${e ?: ''} ${e?.cause ?: ''}"
+    if (text.contains("MissingMethodException")) return "Update the Shabbat and holidays app, then try again."
+    def msg = e?.message?.toString()?.trim()
+    return msg ?: fallback
+}
+
+def holidayUploadFileError(String message) {
+    return [error: message, ok: [], skipped: [], settings: null, occasions: []]
+}
+
+def holidayUploadPrepare(body) {
+    if (!holidayModuleInstalled()) return holidayUploadFileError("Expected a schedules array, or one schedule object")
+    if (!(body instanceof Map)) return holidayUploadFileError("Expected a schedules array, or a Shabbat and holidays file")
+    if (body.containsKey("settings") && !(body.settings instanceof Map)) return holidayUploadFileError("settings must be an object")
+    if (body.containsKey("occasions") && !(body.occasions instanceof List)) return holidayUploadFileError("occasions must be a list")
+    def child = holidaysChild()
+    def snap = null
+    try { snap = child?.holidayUploadSnapshot() } catch (e) {
+        return holidayUploadFileError(holidayUploadChildError(e, "Could not read the Shabbat and holidays setup"))
+    }
+    if (!(snap instanceof Map)) return holidayUploadFileError("Could not read the Shabbat and holidays setup")
+    def currentSettings = snap.settings instanceof Map ? snap.settings : [:]
+    def storedOccasions = snap.occasions instanceof Map ? snap.occasions : [:]
+    def storedTemplates = snap.templates instanceof Map ? snap.templates : [:]
+    def settingsResult = holidayUploadSettings(body, currentSettings)
+    if (settingsResult.error) return holidayUploadFileError(settingsResult.error)
+    def occasionResult = holidayUploadOccasions(body.occasions, storedOccasions, storedTemplates)
+    def ok = []
+    if (settingsResult.settings instanceof Map) ok << [name: "Settings", summary: settingsResult.summary ?: "settings"]
+    if (occasionResult.ok) ok.addAll(occasionResult.ok)
+    return [error: null, ok: ok, skipped: occasionResult.skipped ?: [], settings: settingsResult.settings, occasions: occasionResult.occasions ?: []]
+}
+
+def holidayUploadModeNames() {
+    def modes = []
+    try {
+        for (m in (location?.modes ?: [])) {
+            def n = (m?.name != null) ? m.name.toString() : m?.toString()
+            if (n) modes << n
+        }
+    } catch (e) {}
+    return modes
+}
+
+def holidayUploadWhole(value) {
+    if (value instanceof Boolean || value == null) return null
+    if (!(value instanceof Number)) return null
+    long n = value.longValue()
+    if (value.doubleValue() != (n as double)) return null
+    if (n > Integer.MAX_VALUE || n < Integer.MIN_VALUE) return null
+    return n as int
+}
+
+def holidayUploadBool(value) {
+    if (value == true || value == false) return value
+    return null
+}
+
+def holidayUploadClock(value) {
+    def text = value?.toString()?.trim()
+    if (!(text ==~ /^([01][0-9]|2[0-3]):[0-5][0-9]$/)) return null
+    return text
+}
+
+def holidayUploadKnownMode(String name, List modes) {
+    if (!name) return false
+    for (m in modes) if (m?.toString() == name) return true
+    return false
+}
+
+def holidayUploadSettings(body, current) {
+    if (!body.containsKey("settings")) return [settings: null]
+    def incoming = body.settings
+    def allowed = ["holidayMode", "endMode", "israel", "doNotStartModes", "candleMin", "havdalah", "startEarlyMin", "earlyShabbat"] as Set
+    def ignored = ["paused", "fridayOverrideDate", "earlyShabbatWeeks"] as Set
+    def next = [:]
+    def notes = []
+    for (k in incoming.keySet()) {
+        def key = k?.toString()
+        if (!key || ignored.contains(key)) continue
+        if (!allowed.contains(key)) return [error: "Unknown setting ${key}"]
+    }
+    def modes = holidayUploadModeNames()
+    boolean needsModes = incoming.containsKey("holidayMode") || incoming.containsKey("endMode") || incoming.containsKey("doNotStartModes")
+    if (needsModes && !modes) return [error: "The hub has no modes to match."]
+    if (incoming.containsKey("holidayMode")) {
+        def name = incoming.holidayMode?.toString()?.trim()
+        if (!name || !holidayUploadKnownMode(name, modes)) return [error: "Unknown hub mode ${incoming.holidayMode}"]
+        next.holidayMode = name
+        notes << "holiday mode ${name}"
+    }
+    if (incoming.containsKey("endMode")) {
+        def name = incoming.endMode?.toString()?.trim()
+        if (!name || !holidayUploadKnownMode(name, modes)) return [error: "Unknown hub mode ${incoming.endMode}"]
+        next.endMode = name
+        notes << "end mode ${name}"
+    }
+    def mergedHoliday = next.containsKey("holidayMode") ? next.holidayMode : current?.holidayMode?.toString()?.trim()
+    def mergedEnd = next.containsKey("endMode") ? next.endMode : current?.endMode?.toString()?.trim()
+    if (mergedHoliday && mergedEnd && mergedHoliday == mergedEnd) return [error: "The holiday mode and the end mode must be different."]
+    if (incoming.containsKey("israel")) {
+        def flag = holidayUploadBool(incoming.israel)
+        if (flag == null) return [error: "israel must be true or false"]
+        next.israel = flag
+        notes << (flag ? "Israel" : "diaspora")
+    }
+    if (incoming.containsKey("doNotStartModes")) {
+        def list = incoming.doNotStartModes
+        if (!(list instanceof List)) return [error: "doNotStartModes must be a list"]
+        def names = []
+        for (item in list) {
+            def name = item?.toString()?.trim()
+            if (!name || !holidayUploadKnownMode(name, modes)) return [error: "Unknown hub mode ${item}"]
+            if (!names.contains(name)) names << name
+        }
+        next.doNotStartModes = names
+        notes << (names ? "do not start in ${names.join(', ')}" : "do not start: none")
+    }
+    if (incoming.containsKey("candleMin")) {
+        def n = holidayUploadWhole(incoming.candleMin)
+        if (n == null || n < 0 || n > 120) return [error: "candleMin must be from 0 to 120"]
+        next.candleMin = n
+        notes << "candle lighting ${n} minutes before sunset"
+    }
+    if (incoming.containsKey("startEarlyMin")) {
+        def n = holidayUploadWhole(incoming.startEarlyMin)
+        if (n == null || n < 0 || n > 180) return [error: "startEarlyMin must be from 0 to 180"]
+        next.startEarlyMin = n
+        notes << "start ${n} minutes early"
+    }
+    if (incoming.containsKey("havdalah")) {
+        def hav = incoming.havdalah
+        if (!(hav instanceof Map)) return [error: "havdalah must be an object"]
+        def type = hav.type?.toString()
+        def kept = 42
+        if (current?.havdalah instanceof Map) {
+            def prev = holidayUploadWhole(current.havdalah.minutes)
+            if (prev != null && prev >= 0 && prev <= 120) kept = prev
+        }
+        if (type == "nightfall") {
+            def extra = holidayUploadExtraKey(hav, ["type"])
+            if (extra) return [error: "unknown field ${extra}"]
+            next.havdalah = [type: "nightfall", minutes: kept]
+            notes << "havdalah at nightfall"
+        } else if (type == "minutes") {
+            def extra = holidayUploadExtraKey(hav, ["type", "minutes"])
+            if (extra) return [error: "unknown field ${extra}"]
+            def n = holidayUploadWhole(hav.minutes)
+            if (n == null || n < 0 || n > 120) return [error: "havdalah minutes must be from 0 to 120"]
+            next.havdalah = [type: "minutes", minutes: n]
+            notes << "havdalah ${n} minutes after sunset"
+        } else return [error: "havdalah type must be nightfall or minutes"]
+    }
+    if (incoming.containsKey("earlyShabbat")) {
+        def early = incoming.earlyShabbat
+        if (!(early instanceof Map)) return [error: "earlyShabbat must be an object"]
+        def extra = holidayUploadExtraKey(early, ["enabled", "time", "sunsetBefore"])
+        if (extra) return [error: "unknown field ${extra}"]
+        if (!(early.enabled instanceof Boolean)) return [error: "earlyShabbat enabled must be true or false"]
+        def time = "19:00"
+        if (early.containsKey("time")) {
+            time = holidayUploadClock(early.time)
+            if (!time) return [error: "early Shabbat needs a time like 19:00"]
+        }
+        def cutoff = "18:30"
+        if (early.containsKey("sunsetBefore")) {
+            cutoff = holidayUploadClock(early.sunsetBefore)
+            if (!cutoff) return [error: "early Shabbat sunset time needs a time like 18:30"]
+        }
+        next.earlyShabbat = [enabled: early.enabled == true, time: time, sunsetBefore: cutoff]
+        notes << (early.enabled == true ? "early Shabbat at ${time} until sunset is before ${cutoff}" : "early Shabbat off")
+    }
+    if (!next) return [settings: null]
+    return [settings: next, summary: notes.join(", ")]
+}
+
+def holidayUploadIds() {
+    return ["shabbat", "roshHashana", "yomKippur", "sukkot", "shemini", "pesachFirst", "pesachLast", "shavuot"]
+}
+
+def holidayUploadLabel(id) {
+    def labels = [
+        shabbat: "Shabbat",
+        roshHashana: "Rosh Hashana",
+        yomKippur: "Yom Kippur",
+        sukkot: "Sukkot",
+        shemini: "Shemini Atzeret / Simchat Torah",
+        pesachFirst: "Pesach, first days",
+        pesachLast: "Pesach, last days",
+        shavuot: "Shavuot"
+    ]
+    return labels[id?.toString()] ?: (id?.toString() ?: "Occasion")
+}
+
+def holidayUploadOccasions(raw, storedOccasions, storedTemplates) {
+    def skipped = []
+    def first = []
+    def seen = []
+    if (!(raw instanceof List)) return [ok: [], skipped: [], occasions: []]
+    for (item in raw) {
+        if (!(item instanceof Map)) {
+            skipped << [name: "Occasion", error: "each occasion must be an object"]
+            continue
+        }
+        def id = item.id?.toString()?.trim()
+        def label = holidayUploadLabel(id)
+        if (!holidayUploadIds().contains(id)) {
+            skipped << [name: label, error: "unknown occasion"]
+            continue
+        }
+        if (seen.contains(id)) {
+            skipped << [name: label, error: "already in this file"]
+            continue
+        }
+        seen << id
+        first << item
+    }
+    def pending = []
+    for (item in first) {
+        def built = holidayUploadOneOccasion(item, storedTemplates)
+        if (built.error) skipped << [name: built.name, error: built.error]
+        else pending << built
+    }
+    def pesachImported = null
+    for (built in pending) if (built.id == "pesachFirst") pesachImported = built
+    boolean pesachSkipped = false
+    if (pesachImported) {
+        pesachSkipped = pesachImported.choice == "skip"
+    } else {
+        def storedChoice = storedOccasions?.pesachFirst?.toString()?.trim()
+        pesachSkipped = !storedChoice || storedChoice == "skip"
+    }
+    def ok = []
+    def occasions = []
+    for (built in pending) {
+        if (built.choice == "pesachFirst" && pesachSkipped) {
+            skipped << [name: built.name, error: "Pesach first days is skipped"]
+            continue
+        }
+        def row = [id: built.id, choice: built.choice]
+        if (built.template instanceof Map) row.template = built.template
+        occasions << row
+        ok << [name: built.name, summary: built.summary]
+    }
+    return [ok: ok, skipped: skipped, occasions: occasions]
+}
+
+def holidayUploadOneOccasion(item, storedTemplates) {
+    def id = item.id?.toString()?.trim()
+    def name = holidayUploadLabel(id)
+    def choice = item.choice?.toString()?.trim()
+    def choices = ["own", "copy", "shabbat", "skip", "pesachFirst"]
+    if (!choices.contains(choice)) return [name: name, error: "choice must be own, copy, shabbat, skip, or pesachFirst"]
+    if (id == "shabbat" && choice != "own") return [name: name, error: "Shabbat uses its own schedule"]
+    if (choice == "pesachFirst" && id != "pesachLast") return [name: name, error: "that choice is only for Pesach last days"]
+    boolean needsTemplate = choice == "own" || choice == "copy"
+    if (needsTemplate) {
+        if (!item.containsKey("template")) return [name: name, error: "that choice needs a template"]
+        def storedTemplate = storedTemplates instanceof Map ? storedTemplates[id] : null
+        def built = holidayUploadTemplate(item.template, storedTemplate)
+        if (built.error) return [name: name, error: built.error]
+        def summary = (choice == "copy" ? "based on Shabbat" : "own schedule") + ", ${built.devices} " + ((built.devices == 1) ? "device" : "devices")
+        return [id: id, name: name, choice: choice, template: built.template, summary: summary]
+    }
+    if (item.containsKey("template")) return [name: name, error: "that choice does not take a template"]
+    def summary = "uses Shabbat"
+    if (choice == "skip") summary = "skipped"
+    else if (choice == "pesachFirst") summary = "uses Pesach first days"
+    return [id: id, name: name, choice: choice, summary: summary]
+}
+
+def holidayUploadTemplate(raw, stored) {
+    if (!(raw instanceof Map)) return [error: "template must be an object"]
+    def known = ["start", "night", "morning", "afternoon", "evening", "end", "custom"] as Set
+    for (k in raw.keySet()) {
+        def key = k?.toString()
+        if (!known.contains(key)) return [error: "unknown template field ${key}"]
+    }
+    def template = holidayUploadStoredTemplate(stored)
+    if (raw.containsKey("start")) {
+        def start = raw.start
+        if (!(start instanceof Map)) return [error: "start must be an object"]
+        def extra = holidayUploadExtraKey(start, ["repeatLaterNights", "states"])
+        if (extra) return [error: "unknown field ${extra}"]
+        def repeat = false
+        if (start.containsKey("repeatLaterNights")) {
+            def flag = holidayUploadBool(start.repeatLaterNights)
+            if (flag == null) return [error: "repeatLaterNights must be true or false"]
+            repeat = flag
+        }
+        def states = holidayUploadStateList(start.states, "candle lighting")
+        if (states.error) return states
+        template.start = [states: states.states, repeatLaterNights: repeat]
+    }
+    for (bucket in ["night", "morning", "afternoon", "evening"]) {
+        if (!raw.containsKey(bucket)) continue
+        def groups = raw[bucket]
+        if (!(groups instanceof List)) return [error: "${bucket} must be a list"]
+        def built = []
+        int i = 0
+        for (g in groups) {
+            i++
+            if (!(g instanceof Map)) return [error: "${bucket} ${i} must be an object"]
+            def extra = holidayUploadExtraKey(g, ["time", "states"])
+            if (extra) return [error: "unknown field ${extra}"]
+            def time = holidayUploadClock(g.time)
+            if (!time) return [error: "${bucket} ${i} needs a time like 22:30"]
+            def states = holidayUploadStateList(g.states, "${bucket} ${i}")
+            if (states.error) return states
+            if (!states.states) return [error: "${bucket} ${i} needs a device"]
+            built << [time: time, states: states.states]
+        }
+        template[bucket] = built
+    }
+    if (raw.containsKey("end")) {
+        def end = raw.end
+        if (!(end instanceof Map)) return [error: "end must be an object"]
+        def extra = holidayUploadExtraKey(end, ["states"])
+        if (extra) return [error: "unknown field ${extra}"]
+        def states = holidayUploadStateList(end.states, "havdalah")
+        if (states.error) return states
+        template.end = [states: states.states]
+    }
+    if (raw.containsKey("custom")) {
+        def custom = raw.custom
+        if (!(custom instanceof List)) return [error: "custom must be a list"]
+        def anchors = ["clock-day", "clock-night", "sunrise", "sunset", "after-start", "before-end", "after-end"]
+        def dayChoices = ["every", "first", "last"]
+        def built = []
+        int i = 0
+        for (c in custom) {
+            i++
+            if (!(c instanceof Map)) return [error: "custom ${i} must be an object"]
+            def extra = holidayUploadExtraKey(c, ["anchor", "value", "days", "states"])
+            if (extra) return [error: "unknown field ${extra}"]
+            def anchor = c.anchor?.toString()
+            if (!anchors.contains(anchor)) return [error: "custom ${i} needs an anchor"]
+            def days = c.containsKey("days") ? c.days?.toString() : "every"
+            if (!dayChoices.contains(days)) return [error: "custom ${i} days must be every, first, or last"]
+            def value = null
+            if (anchor.startsWith("clock")) {
+                value = holidayUploadClock(c.value)
+                if (!value) return [error: "custom ${i} needs a time like 15:00"]
+            } else {
+                def n = holidayUploadWhole(c.value)
+                if (n == null || n < 0 || n > 720) return [error: "custom ${i} needs minutes from 0 to 720"]
+                value = n
+            }
+            def states = holidayUploadStateList(c.states, "custom ${i}")
+            if (states.error) return states
+            if (!states.states) return [error: "custom ${i} needs a device"]
+            built << [anchor: anchor, value: value, days: days, states: states.states]
+        }
+        template.custom = built
+    }
+    return [template: template, devices: holidayUploadDeviceCount(template)]
+}
+
+def holidayUploadStoredTemplate(stored) {
+    def template = [
+        start: [states: [], repeatLaterNights: false],
+        night: [], morning: [], afternoon: [], evening: [],
+        end: [states: []],
+        custom: []
+    ]
+    if (!(stored instanceof Map)) return template
+    def copy = holidayUploadCopyValue(stored)
+    if (!(copy instanceof Map)) return template
+    if (copy.start instanceof Map) {
+        template.start = [
+            states: copy.start.states instanceof List ? copy.start.states : [],
+            repeatLaterNights: copy.start.repeatLaterNights == true
+        ]
+    }
+    for (bucket in ["night", "morning", "afternoon", "evening"]) {
+        template[bucket] = copy[bucket] instanceof List ? copy[bucket] : []
+    }
+    if (copy.end instanceof Map) template.end = [states: copy.end.states instanceof List ? copy.end.states : []]
+    template.custom = copy.custom instanceof List ? copy.custom : []
+    return template
+}
+
+def holidayUploadCopyValue(value) {
+    if (value instanceof Map) {
+        def out = [:]
+        value.each { k, v -> out[k == null ? "null" : k.toString()] = holidayUploadCopyValue(v) }
+        return out
+    }
+    if (value instanceof List) {
+        def out = []
+        value.each { v -> out << holidayUploadCopyValue(v) }
+        return out
+    }
+    return value
+}
+
+def holidayUploadDeviceCount(template) {
+    def ids = []
+    def lists = [template?.start?.states, template?.end?.states]
+    for (bucket in ["night", "morning", "afternoon", "evening"]) {
+        for (g in (template[bucket] ?: [])) lists << g?.states
+    }
+    for (c in (template?.custom ?: [])) lists << c?.states
+    for (list in lists) {
+        for (s in (list ?: [])) {
+            def id = s?.id?.toString()
+            if (id && !ids.contains(id)) ids << id
+        }
+    }
+    return ids.size()
+}
+
+def holidayUploadStateList(raw, String slot) {
+    if (raw == null) return [states: []]
+    if (!(raw instanceof List)) return [error: "${slot} states must be a list"]
+    def states = []
+    def sigs = [:]
+    for (st in raw) {
+        def one = holidayUploadResolveState(st)
+        if (one.error) return [error: "${slot}: ${one.error}"]
+        def sid = one.state.id?.toString()
+        def sig = holidayUploadSig(one.state)
+        if (sigs.containsKey(sid)) {
+            if (sigs[sid] != sig) return [error: "${slot}: a device is listed twice with different commands"]
+            continue
+        }
+        sigs[sid] = sig
+        states << one.state
+    }
+    return [states: states]
+}
+
+def holidayUploadSig(st) {
+    def kind = st?.kind?.toString()
+    if (kind == "blind") return "blind|${st.open == true}|${st.position}"
+    if (kind == "fan") return "fan|${st.on == true}|${st.speed}"
+    if (kind == "lock") return "lock|${st.locked != false}"
+    if (kind == "thermostat") return "tstat|${st.mode}|${st.heat}|${st.cool}|${st.fanMode}"
+    return "${kind}|${st.on == true}|${st.level}|${st.ct}"
+}
+
+def holidayUploadDevices(kind) {
+    if (kind == "light") return lights
+    if (kind == "outlet") return outletSwitches
+    if (kind == "lock") return locks
+    if (kind == "blind") return allWindowShades()
+    if (kind == "fan") return ceilingFans
+    if (kind == "thermostat") return thermostats
+    return null
+}
+
+def holidayUploadResolveState(st) {
+    if (!(st instanceof Map)) return [error: "each device state must be an object"]
+    def kind = st.kind?.toString()?.trim()
+    def known = ["light", "outlet", "lock", "blind", "fan", "thermostat"]
+    if (!known.contains(kind)) return [error: "each device needs a kind of light, outlet, lock, blind, fan, or thermostat"]
+    def allowed = ["kind", "name", "id", "label"]
+    if (kind == "light") allowed += ["on", "level", "ct"]
+    else if (kind == "outlet") allowed += ["on"]
+    else if (kind == "lock") allowed += ["locked"]
+    else if (kind == "blind") allowed += ["open", "position"]
+    else if (kind == "fan") allowed += ["on", "speed"]
+    else allowed += ["mode", "heat", "cool", "fanMode"]
+    def extra = holidayUploadExtraKey(st, allowed)
+    if (extra) return [error: "unknown field ${extra}"]
+    def pool = holidayUploadDevices(kind)
+    def resolved = holidayUploadPickDevice(st, pool)
+    if (resolved.error) return [error: resolved.error]
+    def id = resolved.id?.toString()
+    def dev = null
+    for (d in (pool ?: [])) {
+        if (d?.id?.toString() == id) { dev = d; break }
+    }
+    if (kind == "light") return holidayUploadLightState(st, id, dev)
+    if (kind == "outlet") return holidayUploadOutletState(st, id)
+    if (kind == "lock") return holidayUploadLockState(st, id)
+    if (kind == "blind") return holidayUploadBlindState(st, id, dev)
+    if (kind == "fan") return holidayUploadFanState(st, id, dev)
+    return holidayUploadThermostatState(st, id, dev)
+}
+
+def holidayUploadExtraKey(st, List allowed) {
+    for (k in st.keySet()) {
+        def key = k?.toString()
+        if (!key || allowed.contains(key)) continue
+        return key
+    }
+    return null
+}
+
+def holidayUploadPickDevice(st, pool) {
+    def name = (st.name ?: st.label)?.toString()?.trim()
+    def idText = (st.id != null) ? st.id.toString().trim() : ""
+    if (!name && !idText) return [error: "device needs a name or id"]
+    def byId = null
+    if (idText) {
+        byId = scheduleResolveDeviceToken(idText, pool)
+        if (byId?.error) return byId
+    }
+    if (!name) return byId
+    def byName = scheduleResolveDeviceToken(name, pool)
+    if (!byName?.error) {
+        if (byId && byName.id?.toString() != byId.id?.toString()) return [error: "the name and the id are different devices"]
+        return byName
+    }
+    def ambiguous = byName.error?.toString()?.startsWith("more than one device matches")
+    if (ambiguous && byId) {
+        def label = ""
+        for (d in (pool ?: [])) {
+            if (d?.id?.toString() == byId.id?.toString()) {
+                label = scheduleDeviceLabel(d)?.toString()?.toLowerCase() ?: ""
+                break
+            }
+        }
+        def needle = name.toLowerCase()
+        if (label == needle || (needle && label.contains(needle))) return byId
+        return [error: "the name and the id are different devices"]
+    }
+    return byName
+}
+
+def holidayUploadCan(dev, String cap) {
+    if (!dev) return false
+    try { return dev.hasCapability(cap) == true } catch (e) { return false }
+}
+
+def holidayUploadLightState(st, String id, dev) {
+    def on = holidayUploadBool(st.on)
+    if (on == null) return [error: "light needs on true or false"]
+    def out = [id: id, kind: "light", on: on]
+    if (st.level != null) {
+        if (!holidayUploadCan(dev, "SwitchLevel")) return [error: "that light cannot dim"]
+        def level = holidayUploadWhole(st.level)
+        if (level == null || level < 0 || level > 100) return [error: "level must be from 0 to 100"]
+        out.level = level
+    }
+    if (st.ct != null) {
+        if (!holidayUploadCan(dev, "ColorTemperature")) return [error: "that light has no color temperature"]
+        def ct = holidayUploadWhole(st.ct)
+        if (ct == null || ct < 2000 || ct > 6500) return [error: "ct must be from 2000 to 6500"]
+        out.ct = ct
+    }
+    return [state: out]
+}
+
+def holidayUploadOutletState(st, String id) {
+    def on = holidayUploadBool(st.on)
+    if (on == null) return [error: "outlet needs on true or false"]
+    return [state: [id: id, kind: "outlet", on: on]]
+}
+
+def holidayUploadLockState(st, String id) {
+    def locked = holidayUploadBool(st.locked)
+    if (locked == null) return [error: "lock needs locked true or false"]
+    return [state: [id: id, kind: "lock", locked: locked]]
+}
+
+def holidayUploadBlindState(st, String id, dev) {
+    def open = holidayUploadBool(st.open)
+    if (open == null) return [error: "shade needs open true or false"]
+    def out = [id: id, kind: "blind", open: open]
+    if (open == true && st.position != null && st.position.toString().trim()) {
+        if (!(dev && shadeSupportsPosition(dev) == true)) return [error: "that shade has no position"]
+        def pos = holidayUploadWhole(st.position)
+        if (pos == null || pos < 1 || pos > 100) return [error: "position must be from 1 to 100"]
+        out.position = pos
+    }
+    return [state: out]
+}
+
+def holidayUploadFanState(st, String id, dev) {
+    def on = holidayUploadBool(st.on)
+    if (on == null) return [error: "fan needs on true or false"]
+    def out = [id: id, kind: "fan", on: on]
+    if (on == true && st.speed != null && st.speed.toString().trim()) {
+        def speed = dev ? scheduleFanSpeedMatch(dev, st.speed) : null
+        if (!speed) return [error: "that fan has no speed ${st.speed}"]
+        out.speed = speed
+    }
+    return [state: out]
+}
+
+def holidayUploadThermostatState(st, String id, dev) {
+    for (key in ["heat", "cool"]) {
+        if (st[key] != null && holidayUploadWhole(st[key]) == null) return [error: "${key} must be a whole number"]
+    }
+    def unit = null
+    if (dev) {
+        try { unit = thermostatTempUnit(dev) } catch (e) { unit = null }
+    }
+    def err = thermostatSettingError(st, unit)
+    if (err) return [error: err]
+    def n = thermostatSettingNormalized(st)
+    def out = [id: id, kind: "thermostat"]
+    if (n?.mode) out.mode = n.mode.toString()
+    if (n?.heat != null) out.heat = n.heat
+    if (n?.cool != null) out.cool = n.cool
+    if (n?.fanMode) out.fanMode = n.fanMode.toString()
+    return [state: out]
+}
+
 def schedImportFormatSkippedHtml(skipped) {
     if (!skipped) return null
     return skipped.collect { row ->
@@ -694,10 +2354,16 @@ def schedImportFormatSkippedHtml(skipped) {
 }
 
 def installed() {
+    try { clearLocalFileNameCache() } catch (e) {}
+    try { clearChildAppCache() } catch (e) {}
+    try { clearDashboardPollMemos() } catch (e) {}
     if (!state.accessToken) { createAccessToken() }
     logInit()
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
+    try { holidayEnsureChild() } catch (e) { log.warn "Modern Dashboard: holiday setup failed: ${e}" }
+    try { synagogueSyncChild() } catch (e) { log.warn "Modern Dashboard: synagogue setup failed: ${e}" }
+    try { holidayNotifyChild() } catch (e) { log.warn "Modern Dashboard: holiday notify failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
     try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
@@ -705,11 +2371,17 @@ def installed() {
 }
 
 def updated() {
+    try { clearLocalFileNameCache() } catch (e) {}
+    try { clearChildAppCache() } catch (e) {}
+    try { clearDashboardPollMemos() } catch (e) {}
     logInit()
     try { clearLocalAssetCache() } catch (e) { log.warn "Modern Dashboard: asset cache clear failed: ${e}" }
     try { syncHubCredentials() } catch (e) { log.warn "Modern Dashboard: hub credential sync failed: ${e}" }
     try { syncDashPasswordEpoch() } catch (e) { log.warn "Modern Dashboard: dash password sync failed: ${e}" }
     try { initializeScheduler() } catch (e) { log.warn "Modern Dashboard: scheduler init failed: ${e}" }
+    try { holidayEnsureChild() } catch (e) { log.warn "Modern Dashboard: holiday setup failed: ${e}" }
+    try { synagogueSyncChild() } catch (e) { log.warn "Modern Dashboard: synagogue setup failed: ${e}" }
+    try { holidayNotifyChild() } catch (e) { log.warn "Modern Dashboard: holiday notify failed: ${e}" }
     try { initializeHsm() } catch (e) { log.warn "Modern Dashboard: HSM init failed: ${e}" }
     try { initializeNotifications() } catch (e) { log.warn "Modern Dashboard: notifications init failed: ${e}" }
     try { initializeTriggers() } catch (e) { log.warn "Modern Dashboard: triggers init failed: ${e}" }
@@ -747,6 +2419,12 @@ def appButtonHandler(btn) {
         schedImportRunFromUi()
     } else if (btn == "btnSchedImportClear") {
         schedImportClearPaste()
+    } else if (btn == "btnSchedUploadLoad") {
+        schedUploadLoadFromUi()
+    } else if (btn == "btnSchedUploadRun") {
+        schedUploadRunFromUi()
+    } else if (btn == "btnSchedUploadClear") {
+        schedUploadClearPaste()
     } else if (btn == "btnTriggerTest") {
         triggerSendTestAction()
     } else if (btn == "btnTrigSave") {
@@ -859,19 +2537,25 @@ def logInit() {
     if (!assetsPresent()) { log.warn "Modern Dashboard: upload all mld-* dashboard files to File Manager (see app setup page)" }
 }
 
+def audioHasDashboardControls(d) {
+    if (d == null) return false
+    return deviceHasCommand(d, "play") || deviceHasCommand(d, "pause") || deviceHasCommand(d, "stop") ||
+        deviceHasCommand(d, "previousTrack") || deviceHasCommand(d, "nextTrack") ||
+        deviceHasCommand(d, "setVolume") || deviceHasCommand(d, "setLevel")
+}
+
 def allAudioDevices() {
     def out = []
     def seen = [:]
-    if (musicPlayers) {
-        for (d in musicPlayers) {
-            def key = d.id.toString()
-            if (!seen[key]) { seen[key] = true; out << d }
-        }
-    }
-    if (audioSpeakers) {
-        for (d in audioSpeakers) {
-            def key = d.id.toString()
-            if (!seen[key]) { seen[key] = true; out << d }
+    for (list in [musicPlayers, audioSpeakers, mediaTransportPlayers]) {
+        for (d in asDeviceList(list)) {
+            if (d == null) continue
+            def key = null
+            try { key = d.id?.toString() } catch (e) { key = null }
+            if (!key || seen[key]) continue
+            if (!audioHasDashboardControls(d)) continue
+            seen[key] = true
+            out << d
         }
     }
     return out
@@ -902,11 +2586,11 @@ def shadePosition(dev) {
 }
 
 def shadeSupportsPosition(dev) {
-    return dev.hasCommand("setPosition") || dev.hasCommand("setLevel")
+    return deviceHasCommand(dev, "setPosition") || deviceHasCommand(dev, "setLevel")
 }
 
 def shadeSupportsStop(dev) {
-    return dev.hasCommand("stopPositionChange") || dev.hasCommand("stop")
+    return deviceHasCommand(dev, "stopPositionChange") || deviceHasCommand(dev, "stop")
 }
 
 def shadeStatus(dev) {
@@ -965,7 +2649,7 @@ def sensorExtraStateEntry(d, nm) {
     def raw = null
     def unit = null
     try {
-        def st = d.currentState(nm)
+        def st = pollCurrentState(d, nm?.toString())
         raw = st?.value
         unit = st?.unit
     } catch (e) {}
@@ -999,13 +2683,7 @@ def allSensorDevices() {
 }
 
 def sensorRoomId(d, roomsList) {
-    def roomName = null
-    try { roomName = d.getRoomName() } catch (e) { roomName = null }
-    if (roomName) {
-        def rm = roomsList.find { it.name == roomName }
-        if (rm) return rm.id
-    }
-    return null
+    return pollRoomId(d, roomsList)
 }
 
 // Card-worthy secondary attrs only (typed sensors); generic may discover more via sensorSkipAttrs.
@@ -1027,7 +2705,7 @@ def sensorExtraAttrs(d, primaryAttr, int maxNonBattery, String sensorType = null
     if (genericDiscovery) {
         def present = []
         try {
-            for (st in d.currentStates) {
+            for (st in deviceCurrentStates(d)) {
                 def nm = st?.name?.toString()?.toLowerCase()
                 if (!nm || skip.contains(nm)) continue
                 def key = sensorExtraAttrKey(nm)
@@ -1145,13 +2823,13 @@ def appendExJsonArray(out, extras) {
 def audioControlFlags(d) {
     if (d == null) return 0
     int f = 0
-    if (d.hasCommand("play")) f |= 1
-    if (d.hasCommand("pause")) f |= 2
-    if (d.hasCommand("stop")) f |= 4
-    if (d.hasCommand("previousTrack")) f |= 8
-    if (d.hasCommand("nextTrack")) f |= 16
-    if (d.hasCommand("setVolume") || d.hasCapability("MusicPlayer") || d.hasCapability("AudioVolume")) f |= 32
-    if (d.hasCommand("mute")) f |= 64
+    if (deviceHasCommand(d, "play")) f |= 1
+    if (deviceHasCommand(d, "pause")) f |= 2
+    if (deviceHasCommand(d, "stop")) f |= 4
+    if (deviceHasCommand(d, "previousTrack")) f |= 8
+    if (deviceHasCommand(d, "nextTrack")) f |= 16
+    if (deviceHasCommand(d, "setVolume") || deviceHasCommand(d, "setLevel")) f |= 32
+    if (deviceHasCommand(d, "mute")) f |= 64
     return f
 }
 
@@ -1187,11 +2865,7 @@ def normalizeAudioTrack(d) {
 }
 
 def audioRoomId(d, roomsList) {
-    def roomName = null
-    try { roomName = d.getRoomName() } catch (e) { roomName = null }
-    if (!roomName) return null
-    def rm = roomsList.find { it.name == roomName }
-    return rm ? rm.id : null
+    return pollRoomId(d, roomsList)
 }
 
 def appendAudioDeviceJson(out, d, roomsList) {
@@ -1202,13 +2876,14 @@ def appendAudioDeviceJson(out, d, roomsList) {
     def muteVal = safeCurrent(d, "mute")
     def flags = audioControlFlags(d)
     out << "{\"i\":" << d.id
-    out << ",\"n\":" << jsonStr(d.displayName)
+    out << ",\"n\":" << jsonStr(pollDisplayName(d))
     out << ",\"r\":" << (rid == null ? "null" : rid.toString())
     out << ",\"st\":" << jsonStr(statusVal ?: "idle")
     out << ",\"v\":" << (lvl == null ? "null" : lvl.toString())
     out << ",\"tr\":" << jsonStr(track ?: "")
     out << ",\"m\":" << jsonStr(muteVal ?: "unmuted")
     out << ",\"f\":" << flags.toString()
+    out << pollFlagJson(d)
     out << "}"
 }
 
@@ -1216,6 +2891,26 @@ def appendAudioDeviceJson(out, d, roomsList) {
 def dashboardUrl(boolean local) {
     def base = local ? getFullLocalApiServerUrl() : getFullApiServerUrl()
     return "${base}/dashboard?access_token=${state.accessToken}"
+}
+
+// Local OAuth URL only. Hubitat Cloud cannot keep the live connection an assistant needs.
+def mcpUrl() {
+    return "${getFullLocalApiServerUrl()}/mcp?access_token=${state.accessToken}"
+}
+
+def scheduleDevicesUrl(boolean local) {
+    def base = local ? getFullLocalApiServerUrl() : getFullApiServerUrl()
+    return "${base}/schedules/devices?access_token=${state.accessToken}"
+}
+
+def scheduleSchemaUrl(boolean local) {
+    def base = local ? getFullLocalApiServerUrl() : getFullApiServerUrl()
+    return "${base}/schedules/schema?access_token=${state.accessToken}"
+}
+
+def holidaySchemaUrl(boolean local) {
+    def base = local ? getFullLocalApiServerUrl() : getFullApiServerUrl()
+    return "${base}/holidays/schema?access_token=${state.accessToken}"
 }
 
 // ---------------------------------------------------------------------------
@@ -1265,7 +2960,13 @@ def assetBodyByteLength(String body) {
     return body ? body.getBytes("UTF-8").length : 0
 }
 
+def ensureLocalAssetCache() {
+    if (LOCAL_ASSET_CACHE == null) LOCAL_ASSET_CACHE = [:]
+    if (LOCAL_ASSET_CACHE_VERSION == null) LOCAL_ASSET_CACHE_VERSION = ""
+}
+
 def clearLocalAssetCache(boolean keepGeneration = false) {
+    ensureLocalAssetCache()
     def gen = LOCAL_ASSET_CACHE_VERSION
     LOCAL_ASSET_CACHE.clear()
     LOCAL_ASSET_CACHE_BYTES = 0
@@ -1289,6 +2990,7 @@ def ensureAssetCacheVersion() {
 
 def rememberCachedAsset(String fileName, String body) {
     if (!body || !isCacheableAsset(fileName)) return
+    ensureLocalAssetCache()
     ensureAssetCacheVersion()
     def key = assetCacheKey(fileName)
     def bytes = assetBodyByteLength(body)
@@ -1304,6 +3006,7 @@ def rememberCachedAsset(String fileName, String body) {
 
 def readCachedAsset(String fileName) {
     if (!isCacheableAsset(fileName)) return null
+    ensureLocalAssetCache()
     ensureAssetCacheVersion()
     return LOCAL_ASSET_CACHE[assetCacheKey(fileName)]
 }
@@ -1322,7 +3025,7 @@ def fetchLocalAssetUncached(String fileName) {
     def result = ""
     try {
         def params = [
-            uri: "${hubBaseUri()}/local/${fileName}",
+            uri: "${hubBaseUri()}/local/${fileName}".toString(),
             contentType: "text/plain",
             textParser: true,
             timeout: 30,
@@ -1373,7 +3076,11 @@ def rewriteDashboardAssetRefsToFileManager(String html) {
         ["src", "app-post.js", assetJsPostFile()],
         ["src", "app-post2.js", assetJsPost2File()],
         ["src", "app-post3.js", assetJsPost3File()],
+        ["src", "app-holiday.js", assetJsHolidayFile()],
+        ["src", "app-synagogue.js", assetJsSynagogueFile()],
         ["content", "app-post3.js", assetJsPost3File()],
+        ["content", "app-holiday.js", assetJsHolidayFile()],
+        ["content", "app-synagogue.js", assetJsSynagogueFile()],
     ].each { spec ->
         def attr = spec[0], assetPath = spec[1], fmFile = spec[2]
         def escaped = assetPath.replace(".", "\\.")
@@ -1393,6 +3100,8 @@ def assetJsCoreFile() { return "mld-app-core.js" }
 def assetJsPostFile() { return "mld-app-post.js" }
 def assetJsPost2File() { return "mld-app-post2.js" }
 def assetJsPost3File() { return "mld-app-post3.js" }
+def assetJsHolidayFile() { return "mld-holiday.js" }
+def assetJsSynagogueFile() { return "mld-synagogue.js" }
 def assetManifestFile() { return "mld-manifest.webmanifest" }
 def assetSwFile() { return "mld-sw.js" }
 def assetIcon192File() { return "mld-icon-192.b64" }
@@ -1406,7 +3115,7 @@ def requiredAssetFiles() {
 }
 
 def hubBaseUri() {
-    return "http://${location.hub.localIP}:8080"
+    return "http://${location.hub.localIP}:8080".toString()
 }
 
 def hubLoginUri() {
@@ -1524,11 +3233,33 @@ def logHubFileAuthHint(String context) {
     }
 }
 
+def clearLocalFileNameCache() {
+    LOCAL_FILE_NAME_CACHE = null
+    LOCAL_FILE_NAME_CACHE_AT = 0L
+}
+
+def clearChildAppCache() {
+    HOLIDAY_CHILD_APP_ID = null
+    SYNAGOGUE_CHILD_APP_ID = null
+}
+
 def listLocalFileNames() {
+    long at = 0L
+    try { at = now() as long } catch (e) { at = 0L }
+    if (LOCAL_FILE_NAME_CACHE != null && at > LOCAL_FILE_NAME_CACHE_AT && (at - LOCAL_FILE_NAME_CACHE_AT) < LOCAL_FILE_NAME_CACHE_TTL) {
+        return new ArrayList(LOCAL_FILE_NAME_CACHE)
+    }
+    def names = fetchLocalFileNames()
+    LOCAL_FILE_NAME_CACHE = names instanceof List ? new ArrayList(names) : []
+    LOCAL_FILE_NAME_CACHE_AT = at > 0L ? at : 0L
+    return new ArrayList(LOCAL_FILE_NAME_CACHE)
+}
+
+def fetchLocalFileNames() {
     def names = []
     try {
         def params = [
-            uri: "${hubBaseUri()}/hub/fileManager/json",
+            uri: "${hubBaseUri()}/hub/fileManager/json".toString(),
             timeout: 15,
             ignoreSSLIssues: true
         ]
@@ -1624,6 +3355,8 @@ mappings {
     path("/app-post.js") { action: [GET: "renderJsPost"] }
     path("/app-post2.js") { action: [GET: "renderJsPost2"] }
     path("/app-post3.js") { action: [GET: "renderJsPost3"] }
+    path("/app-holiday.js") { action: [GET: "renderJsHoliday"] }
+    path("/app-synagogue.js") { action: [GET: "renderJsSynagogue"] }
     path("/manifest.webmanifest") { action: [GET: "renderManifest"] }
     path("/sw.js") { action: [GET: "renderSw"] }
     path("/icons/icon-192.png") { action: [GET: "renderIcon192"] }
@@ -1648,6 +3381,8 @@ mappings {
     path("/hsm") { action: [GET: "setHsmGet", POST: "setHsm"] }
     path("/scene/activate") { action: [GET: "activateSceneGet", POST: "activateScene"] }
     path("/favorites") { action: [GET: "saveFavoritesGet", POST: "saveFavorites"] }
+    path("/device/label") { action: [GET: "saveDeviceLabel", POST: "saveDeviceLabel"] }
+    path("/room/name") { action: [GET: "saveRoomName", POST: "saveRoomName"] }
     path("/embed-cards") { action: [POST: "saveEmbedCards"] }
     path("/time-cards") { action: [POST: "saveTimeCards"] }
     path("/notification-cards") { action: [POST: "saveNotificationCards"] }
@@ -1658,9 +3393,27 @@ mappings {
     path("/lights/bulk") { action: [GET: "lightsBulkGet", POST: "lightsBulk"] }
     path("/schedules") { action: [GET: "schedulesGet", POST: "schedulesSave"] }
     path("/schedules/save") { action: [POST: "schedulesSave"] }
+    path("/schedules/upload") { action: [POST: "schedulesUpload"] }
+    path("/schedules/devices") { action: [GET: "schedulesDevicesGet"] }
+    path("/schedules/schema") { action: [GET: "schedulesSchemaGet"] }
     path("/schedules/delete") { action: [POST: "schedulesDelete"] }
     path("/schedules/toggle") { action: [POST: "schedulesToggle"] }
     path("/schedules/test") { action: [POST: "schedulesTest"] }
+    path("/mcp") { action: [GET: "mcpGet", POST: "mcpPost"] }
+    path("/holidays") { action: [GET: "holidaysGet"] }
+    path("/holidays/later") { action: [GET: "holidaysLaterGet"] }
+    path("/holidays/save") { action: [POST: "holidaysSave"] }
+    path("/holidays/preview") { action: [POST: "holidaysPreview"] }
+    path("/holidays/test") { action: [POST: "holidaysTest"] }
+    path("/holidays/skip") { action: [POST: "holidaysSkip"] }
+    path("/holidays/refresh") { action: [POST: "holidaysRefresh"] }
+    path("/holidays/schema") { action: [GET: "holidaysSchemaGet"] }
+    path("/synagogue") { action: [GET: "synagogueGet"] }
+    path("/synagogue/days") { action: [GET: "synagogueDaysGet"] }
+    path("/synagogue/save") { action: [POST: "synagogueSave"] }
+    path("/synagogue/preview") { action: [POST: "synagoguePreview"] }
+    path("/synagogue/skip") { action: [POST: "synagogueSkip"] }
+    path("/synagogue/refresh") { action: [POST: "synagogueRefresh"] }
     path("/notifications") { action: [GET: "notificationsGet"] }
     path("/notifications/ack") { action: [GET: "notificationsAckGet", POST: "notificationsAck"] }
     path("/tile-notifications") { action: [GET: "tileNotificationsGet"] }
@@ -1690,7 +3443,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-192-0.4.18.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-192-0.4.78.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -1701,10 +3454,12 @@ def renderIndex() {
         html = appendAccessToken(html, "href", "app.css", token)
         html = appendAccessToken(html, "href", "app-post.css", token)
         html = html.replace('href="manifest.webmanifest"', "href=\"manifest.webmanifest${q}\"")
-        for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js"]) {
+        for (def asset : ["app.js", "app-core.js", "app-post.js", "app-post2.js", "app-post3.js", "app-holiday.js", "app-synagogue.js"]) {
             html = appendAccessToken(html, "src", asset, token)
         }
         html = appendAccessToken(html, "content", "app-post3.js", token)
+        html = appendAccessToken(html, "content", "app-holiday.js", token)
+        html = appendAccessToken(html, "content", "app-synagogue.js", token)
     }
     html = rewriteDashboardAssetRefsToFileManager(html)
     renderNoStore("text/html", html, 200)
@@ -1752,6 +3507,18 @@ def renderJsPost3() {
     renderVersionedAsset("application/javascript", js)
 }
 
+def renderJsHoliday() {
+    def js = readLocalAsset(assetJsHolidayFile())
+    if (!js) { js = "globalThis.mldHolidayMissing=true;console.warn('Upload mld-holiday.js to File Manager');" }
+    renderVersionedAsset("application/javascript", js)
+}
+
+def renderJsSynagogue() {
+    def js = readLocalAsset(assetJsSynagogueFile())
+    if (!js) { js = "globalThis.mldSynagogueMissing=true;console.warn('Upload mld-synagogue.js to File Manager');" }
+    renderVersionedAsset("application/javascript", js)
+}
+
 def renderManifest() {
     // Keep the manifest small, but do not proxy PNG bytes through Hubitat Cloud:
     // Hubitat's text-oriented render path corrupts binary image responses. Published
@@ -1775,7 +3542,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-${size}-0.4.18.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-${size}-0.4.78.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'
@@ -1826,6 +3593,9 @@ def renderLanProbe() {
 // ---------------------------------------------------------------------------
 def renderData() {
     if (!guardDashboardAccess()) return renderAuthRequired()
+    beginDashboardPoll()
+    long pollStartedAt = now()
+    try {
     def out = new StringBuilder()
     out << "{\"config\":{"
     out << "\"pollIntervalMs\":" << (pollSec ? (pollSec.toInteger() * 1000) : 5000)
@@ -1852,16 +3622,10 @@ def renderData() {
     if (lights) {
         for (d in lights) {
             if (!first) out << ","; first = false
-            def isDim = d.hasCapability("SwitchLevel")
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
-            def hasCt = d.hasCapability("ColorTemperature")
-            def hasRgb = d.hasCapability("ColorControl")
+            def isDim = pollHasCapability(d, "SwitchLevel")
+            def rid = pollRoomId(d, roomsList)
+            def hasCt = pollHasCapability(d, "ColorTemperature")
+            def hasRgb = pollHasCapability(d, "ColorControl")
             def sw = safeCurrent(d, "switch")
             def lvl = isDim ? safeCurrent(d, "level") : null
             def kelvin = hasCt ? safeCurrent(d, "colorTemperature") : null
@@ -1869,7 +3633,7 @@ def renderData() {
             def sat = hasRgb ? safeCurrent(d, "saturation") : null
             def cmode = (hasCt && hasRgb) ? safeCurrent(d, "colorMode") : null
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"d\":" << (isDim ? 1 : 0)
             out << ",\"ct\":" << (hasCt ? 1 : 0)
@@ -1880,6 +3644,7 @@ def renderData() {
             out << ",\"h\":" << (hue == null ? "null" : hue.toString())
             out << ",\"sat\":" << (sat == null ? "null" : sat.toString())
             out << ",\"cm\":" << jsonStr(cmode)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -1896,26 +3661,16 @@ def renderData() {
     if (thermostats) {
         for (d in thermostats) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def tmode = safeCurrent(d, "thermostatMode")
             def ostate = safeCurrent(d, "thermostatOperatingState")
             def hsp = safeCurrent(d, "heatingSetpoint")
             def csp = safeCurrent(d, "coolingSetpoint")
             def temp = safeCurrent(d, "temperature")
-            def tempUnit = "F"
-            try {
-                def st = d.currentState("temperature")
-                if (st?.unit) tempUnit = st.unit
-            } catch (e) {}
-            def hasFanMode = d.hasCapability("ThermostatFanMode") || d.hasAttribute("thermostatFanMode")
+            def tempUnit = pollCurrentState(d, "temperature")?.unit?.toString() ?: "F"
+            def hasFanMode = pollHasCapability(d, "ThermostatFanMode") || deviceHasAttribute(d, "thermostatFanMode")
             def fmode = hasFanMode ? safeCurrent(d, "thermostatFanMode") : null
-            def hasFanSpeed = d.hasAttribute("fanSpeed") || d.hasCommand("setFanSpeed") || d.hasAttribute("fanSpeedLevels")
+            def hasFanSpeed = deviceHasAttribute(d, "fanSpeed") || deviceHasCommand(d, "setFanSpeed") || deviceHasAttribute(d, "fanSpeedLevels")
             def fspeed = hasFanSpeed ? safeCurrent(d, "fanSpeed") : null
             def supModes = safeCurrent(d, "supportedThermostatModes")
             def supFanModes = null
@@ -1924,7 +3679,7 @@ def renderData() {
             }
             def fsLevels = hasFanSpeed ? safeCurrent(d, "fanSpeedLevels") : null
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"tm\":" << jsonStr(tmode)
             out << ",\"os\":" << jsonStr(ostate)
@@ -1940,6 +3695,7 @@ def renderData() {
             out << ",\"supFM\":" << jsonListAttr(supFanModes)
             out << ",\"fsLev\":" << jsonListAttr(fsLevels)
             appendTstatComfortJson(out, d)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -1950,23 +3706,13 @@ def renderData() {
         for (d in tempSensors) {
             if (thermoIds.contains(d.id)) continue
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def temp = safeCurrent(d, "temperature")
-            def tempUnit = "F"
-            try {
-                def st = d.currentState("temperature")
-                if (st?.unit) tempUnit = st.unit
-            } catch (e) {}
+            def tempUnit = pollCurrentState(d, "temperature")?.unit?.toString() ?: "F"
             def bat = safeCurrent(d, "battery")
             def extras = sensorExtraAttrs(d, "temperature", sensorExMaxForType("temp"), "temp")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"temp\":" << numOrNull(temp)
             out << ",\"u\":" << jsonStr(tempUnit)
@@ -2016,7 +3762,7 @@ def renderData() {
             if (urls == null || !urls.u) continue
             if (!first) out << ","; first = false
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"u\":" << jsonStr(urls.u)
             if (urls.uh) out << ",\"uh\":" << jsonStr(urls.uh)
             def streamType = urls.t ? urls.t : "webrtc"
@@ -2029,19 +3775,14 @@ def renderData() {
     if (locks) {
         for (d in locks) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def lockSt = safeCurrent(d, "lock")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"lk\":" << (lockSt == "locked" ? 1 : 0)
             out << ",\"st\":" << jsonStr(lockSt)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -2050,18 +3791,13 @@ def renderData() {
     if (garageDoors) {
         for (d in garageDoors) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def doorSt = safeCurrent(d, "door")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"st\":" << jsonStr(doorSt)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -2069,22 +3805,17 @@ def renderData() {
     first = true
     for (d in allWindowShades()) {
         if (!first) out << ","; first = false
-        def roomName = null
-        try { roomName = d.getRoomName() } catch (e) { roomName = null }
-        def rid = null
-        if (roomName) {
-            def rm = roomsList.find { it.name == roomName }
-            if (rm) rid = rm.id
-        }
+        def rid = pollRoomId(d, roomsList)
         def shadeSt = shadeStatus(d)
         def shadePos = shadePosition(d)
         out << "{\"i\":" << d.id
-        out << ",\"n\":" << jsonStr(d.displayName)
+        out << ",\"n\":" << jsonStr(pollDisplayName(d))
         out << ",\"r\":" << (rid == null ? "null" : rid.toString())
         out << ",\"st\":" << jsonStr(shadeSt)
         out << ",\"pos\":" << numOrNull(shadePos)
         out << ",\"hasPos\":" << (shadeSupportsPosition(d) ? 1 : 0)
         out << ",\"hasStop\":" << (shadeSupportsStop(d) ? 1 : 0)
+        out << pollFlagJson(d)
         out << "}"
     }
     out << "],\"ceilingFans\":["
@@ -2092,27 +3823,22 @@ def renderData() {
     if (ceilingFans) {
         for (d in ceilingFans) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def speed = safeCurrent(d, "speed")
             def sw = safeCurrent(d, "switch")
-            def hasSw = d.hasCapability("Switch") || d.hasCommand("on") || d.hasCommand("off")
+            def hasSw = pollHasCapability(d, "Switch") || deviceHasCommand(d, "on") || deviceHasCommand(d, "off")
             def on = false
             if (sw != null) on = (sw == "on")
             else if (speed != null) on = (speed.toString().toLowerCase() != "off")
             def supSpeeds = safeCurrent(d, "supportedFanSpeeds")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"s\":" << (on ? 1 : 0)
             out << ",\"sp\":" << jsonStr(speed)
             out << ",\"supSp\":" << jsonListAttr(supSpeeds)
             out << ",\"hasSw\":" << (hasSw ? 1 : 0)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -2121,18 +3847,13 @@ def renderData() {
     if (valves) {
         for (d in valves) {
             if (!first) out << ","; first = false
-            def roomName = null
-            try { roomName = d.getRoomName() } catch (e) { roomName = null }
-            def rid = null
-            if (roomName) {
-                def rm = roomsList.find { it.name == roomName }
-                if (rm) rid = rm.id
-            }
+            def rid = pollRoomId(d, roomsList)
             def valveSt = safeCurrent(d, "valve")
             out << "{\"i\":" << d.id
-            out << ",\"n\":" << jsonStr(d.displayName)
+            out << ",\"n\":" << jsonStr(pollDisplayName(d))
             out << ",\"r\":" << (rid == null ? "null" : rid.toString())
             out << ",\"st\":" << jsonStr(valveSt)
+            out << pollFlagJson(d)
             out << "}"
         }
     }
@@ -2161,8 +3882,13 @@ def renderData() {
     out << ",\"scenesPopupEnabled\":" << (scenesPopupEnabled == null ? "true" : (scenesPopupEnabled == true ? "true" : "false"))
     out << ",\"roomClimateEnabled\":" << (roomClimateEnabled == null ? "true" : (roomClimateEnabled == true ? "true" : "false"))
     out << ",\"schedulerEnabled\":" << (schedulerIsEnabled() ? "true" : "false")
+    out << ",\"holidaysAvailable\":" << (holidaysAvailable() ? "true" : "false")
+    try { synagogueSyncSoon() } catch (e) { log.warn "Modern Dashboard: synagogue sync failed: ${e}" }
+    out << ",\"synagogueAvailable\":" << (synagogueAvailable() ? "true" : "false")
     out << ",\"schedUse24Hour\":" << (schedulerUse24Hour == true ? "true" : "false")
     out << ",\"hubTimeZone\":" << jsonStr(hubTimeZoneId())
+    def offsetMin = hubOffsetMin()
+    out << ",\"hubOffsetMin\":" << (offsetMin == null ? "null" : offsetMin.toString())
     out << ",\"hubNow\":" << now().toString()
     out << ",\"triggersEnabled\":" << (triggersIsEnabled() ? "true" : "false")
     out << ",\"alertsArmed\":" << (readAlertsArmed() ? "true" : "false")
@@ -2202,29 +3928,283 @@ def renderData() {
         out << ",\"dashSessionExpiresAt\":" << authRenewed.expiresAt
     }
     out << "}"
-    renderJsonNoStore(out.toString(), 200)
+    return renderJsonNoStore(out.toString(), 200)
+    } finally {
+        endDashboardPoll()
+        noteSlowDashboardPoll(pollStartedAt)
+    }
+}
+
+def dashboardAppId() {
+    try {
+        def id = app?.id
+        if (id != null && id.toString()) return id.toString()
+    } catch (e) {}
+    return "0"
+}
+
+def clearDashboardPollMemos() {
+    try { if (DEVICE_FACT_CACHE != null) DEVICE_FACT_CACHE.clear() } catch (e) {}
+    try { if (SCHEDULES_FRAGMENT_CACHE != null) SCHEDULES_FRAGMENT_CACHE.remove(dashboardAppId()) } catch (e) {}
+}
+
+def ensureDashboardPollCaches() {
+    if (SUN_MS_CACHE == null) SUN_MS_CACHE = new java.util.concurrent.ConcurrentHashMap()
+    if (SCHEDULES_FRAGMENT_CACHE == null) SCHEDULES_FRAGMENT_CACHE = new java.util.concurrent.ConcurrentHashMap()
+    if (DEVICE_FACT_CACHE == null) DEVICE_FACT_CACHE = new java.util.concurrent.ConcurrentHashMap()
+    if (HTML_SANITIZED == null) HTML_SANITIZED = new java.util.concurrent.ConcurrentHashMap()
+    if (POLL_FLAGS == null) POLL_FLAGS = new java.util.concurrent.ConcurrentHashMap()
+    if (POLL_STATE_BOXES == null) POLL_STATE_BOXES = new java.util.concurrent.ConcurrentHashMap()
+    if (POLL_ROOM_MAPS == null) POLL_ROOM_MAPS = new java.util.concurrent.ConcurrentHashMap()
+}
+
+def pollSlotId() {
+    return dashboardAppId()
+}
+
+def pollFactsOn() {
+    try {
+        ensureDashboardPollCaches()
+        return POLL_FLAGS.get(pollSlotId()) == Boolean.TRUE
+    } catch (e) { return false }
+}
+
+def beginDashboardPoll() {
+    ensureDashboardPollCaches()
+    def id = pollSlotId()
+    POLL_FLAGS.put(id, Boolean.TRUE)
+    POLL_STATE_BOXES.put(id, new java.util.concurrent.ConcurrentHashMap())
+    POLL_ROOM_MAPS.remove(id)
+}
+
+def endDashboardPoll() {
+    def id = pollSlotId()
+    try { if (POLL_FLAGS != null) POLL_FLAGS.remove(id) } catch (e) {}
+    try { if (POLL_STATE_BOXES != null) POLL_STATE_BOXES.remove(id) } catch (e) {}
+    try { if (POLL_ROOM_MAPS != null) POLL_ROOM_MAPS.remove(id) } catch (e) {}
+}
+
+// Hubitat runs one call at a time in this app, so a slow dashboard refresh makes every
+// schedule behind it start late. Say so in the log, at most once every five minutes.
+// The timestamp lives in a static map, so this never writes app state.
+def noteSlowDashboardPoll(long startedAt) {
+    try {
+        long took = now() - startedAt
+        if (took < 1500L) return
+        ensureDashboardPollCaches()
+        def key = "slow:${pollSlotId()}"
+        def prev = POLL_FLAGS.get(key)
+        long last = (prev instanceof Long) ? (prev as long) : 0L
+        if (now() - last < 300000L) return
+        POLL_FLAGS.put(key, now())
+        log.warn "Modern Dashboard: a dashboard refresh kept the app busy for ${took} ms. Schedules due in that time start late."
+    } catch (e) {}
+}
+
+// A schedule that starts well after its planned time usually waited behind another call.
+def scheduleNoteLateStart(id, s) {
+    try {
+        if (s?.nextFire == null) return
+        long late = now() - (s.nextFire as long)
+        if (late >= 5000L && late <= 900000L) {
+            log.warn "Modern Dashboard: schedule ${scheduleLogName(id, s)} started ${Math.round(late / 1000.0d)} s after its time"
+        }
+    } catch (e) {}
+}
+
+def pollDeviceKey(d) {
+    try {
+        def id = d?.id?.toString()
+        if (id) return id
+    } catch (e) {}
+    try { return "obj:" + d.hashCode() } catch (e) { return "obj:0" }
+}
+
+// One currentStates read for this refresh. Missing names fall back to currentState.
+def pollStateBox(d) {
+    ensureDashboardPollCaches()
+    def boxes = POLL_STATE_BOXES.get(pollSlotId())
+    if (!(boxes instanceof Map)) boxes = new java.util.concurrent.ConcurrentHashMap()
+    def key = pollDeviceKey(d)
+    def hit = boxes.get(key)
+    if (hit instanceof Map) return hit
+    def byName = [:]
+    def list = []
+    try {
+        def states = d?.currentStates
+        if (states) {
+            for (st in states) {
+                def nm = st?.name?.toString()
+                if (!nm) continue
+                list << st
+                if (!byName.containsKey(nm)) byName[nm] = st
+                def low = nm.toLowerCase()
+                if (!byName.containsKey(low)) byName[low] = st
+            }
+        }
+    } catch (e) {}
+    def box = [byName: byName, list: list]
+    boxes.put(key, box)
+    POLL_STATE_BOXES.put(pollSlotId(), boxes)
+    return box
+}
+
+def deviceCurrentStates(d) {
+    if (pollFactsOn() && d != null) return pollStateBox(d).list ?: []
+    try { return d?.currentStates ?: [] } catch (e) { return [] }
+}
+
+def pollCurrentState(d, String attrName) {
+    if (d == null || !attrName) return null
+    if (pollFactsOn()) {
+        def byName = pollStateBox(d).byName
+        if (byName instanceof Map) {
+            if (byName.containsKey(attrName)) return byName[attrName]
+            def lower = attrName.toLowerCase()
+            if (lower != attrName && byName.containsKey(lower)) return byName[lower]
+        }
+    }
+    try { return d.currentState(attrName) } catch (e) { return null }
 }
 
 def safeCurrent(d, attrName) {
     try {
-        def st = d.currentState(attrName)
-        return st?.value
+        return pollCurrentState(d, attrName?.toString())?.value
     } catch (e) { return null }
 }
 
-def appendOnOffDeviceJson(out, d, roomsList) {
-    def roomName = null
-    try { roomName = d.getRoomName() } catch (e) { roomName = null }
-    def rid = null
-    if (roomName) {
-        def rm = roomsList.find { it.name == roomName }
-        if (rm) rid = rm.id
+def deviceFactSlot(d) {
+    if (!pollFactsOn() || d == null) return null
+    long at = 0L
+    try { at = now() as long } catch (e) { at = 0L }
+    if (at <= 0L) return null
+    def key = pollDeviceKey(d)
+    def hit = DEVICE_FACT_CACHE.get(key)
+    if (hit instanceof Map) {
+        long stamp = 0L
+        try { stamp = hit.at as long } catch (e) { stamp = 0L }
+        long age = at - stamp
+        if (age >= 0L && age < DEVICE_FACT_CACHE_TTL) return hit
     }
+    def slot = [at: at]
+    DEVICE_FACT_CACHE.put(key, slot)
+    return slot
+}
+
+def deviceFact(d, String key, Closure compute) {
+    def slot = deviceFactSlot(d)
+    if (!(slot instanceof Map)) return compute()
+    if (slot.containsKey(key)) return slot[key]
+    def value = compute()
+    slot[key] = value
+    return value
+}
+
+def pollHasCapability(d, String cap) {
+    if (d == null || !cap) return false
+    if (!pollFactsOn()) {
+        try { return d.hasCapability(cap) == true } catch (e) { return false }
+    }
+    return deviceFact(d, "cap:" + cap) {
+        try { return d.hasCapability(cap) == true } catch (e) { return false }
+    } == true
+}
+
+def deviceHasCommand(d, String cmd) {
+    if (d == null || !cmd) return false
+    if (!pollFactsOn()) {
+        try { return d.hasCommand(cmd) == true } catch (e) { return false }
+    }
+    return deviceFact(d, "cmd:" + cmd) {
+        try { return d.hasCommand(cmd) == true } catch (e) { return false }
+    } == true
+}
+
+def deviceHasAttribute(d, String attr) {
+    if (d == null || !attr) return false
+    if (!pollFactsOn()) {
+        try { return d.hasAttribute(attr) == true } catch (e) { return false }
+    }
+    return deviceFact(d, "attr:" + attr) {
+        try { return d.hasAttribute(attr) == true } catch (e) { return false }
+    } == true
+}
+
+// WiFi drivers that drop their own live socket. A command confirm asks these to Refresh.
+def deviceNeedsCommandPoll(d) {
+    def tn = ""
+    try { tn = (d?.typeName ?: "").toString().toLowerCase() } catch (e) { tn = "" }
+    if (!tn) return false
+    if (tn.contains("blu") || tn.contains("bthome")) return false
+    return tn.contains("shelly") || tn.contains("tasmota") || tn.contains("esphome")
+}
+
+def pollFlagJson(d) {
+    return deviceNeedsCommandPoll(d) ? ",\"poll\":1" : ""
+}
+
+def pollDisplayName(d) {
+    if (d == null) return null
+    if (!pollFactsOn()) {
+        try { return d.displayName } catch (e) { return null }
+    }
+    return deviceFact(d, "name") {
+        try { return d.displayName } catch (e) { return null }
+    }
+}
+
+def pollRoomName(d) {
+    if (d == null) return null
+    if (!pollFactsOn()) {
+        try { return d.getRoomName() } catch (e) { return null }
+    }
+    return deviceFact(d, "room") {
+        try { return d.getRoomName() } catch (e) { return null }
+    }
+}
+
+def roomIdsByName(roomsList) {
+    def map = [:]
+    for (r in (roomsList ?: [])) {
+        if (r?.name == null) continue
+        if (!map.containsKey(r.name)) map[r.name] = r.id
+        def text = r.name.toString()
+        if (!map.containsKey(text)) map[text] = r.id
+    }
+    return map
+}
+
+def pollRoomId(d, roomsList) {
+    if (pollFactsOn()) {
+        ensureDashboardPollCaches()
+        def roomKey = pollSlotId()
+        def roomIds = POLL_ROOM_MAPS.get(roomKey)
+        if (!(roomIds instanceof Map)) {
+            roomIds = roomIdsByName(roomsList)
+            POLL_ROOM_MAPS.put(roomKey, roomIds)
+        }
+        def name = pollRoomName(d)
+        if (name == null) return null
+        if (roomIds.containsKey(name)) return roomIds[name]
+        def text = name.toString()
+        if (text != name && roomIds.containsKey(text)) return roomIds[text]
+        return null
+    }
+    def roomName = null
+    try { roomName = d?.getRoomName() } catch (e) { roomName = null }
+    if (!roomName) return null
+    def rm = roomsList?.find { it.name == roomName }
+    return rm ? rm.id : null
+}
+
+def appendOnOffDeviceJson(out, d, roomsList) {
+    def rid = pollRoomId(d, roomsList)
     def sw = safeCurrent(d, "switch")
     out << "{\"i\":" << d.id
-    out << ",\"n\":" << jsonStr(d.displayName)
+    out << ",\"n\":" << jsonStr(pollDisplayName(d))
     out << ",\"r\":" << (rid == null ? "null" : rid.toString())
     out << ",\"s\":" << (sw == "on" ? 1 : 0)
+    out << pollFlagJson(d)
     out << "}"
 }
 
@@ -2246,8 +4226,7 @@ def isNumberLike(v) {
 
 // First meaningful (non-skip, non-empty) attribute value for generic sensors.
 def firstMeaningfulAttr(d, skipAttr) {
-    def states = null
-    try { states = d.currentStates } catch (e) { states = null }
+    def states = deviceCurrentStates(d)
     if (states == null) return null
     try {
         for (st in states) {
@@ -2365,7 +4344,7 @@ def appendSensorJson(out, d, entry, roomsList) {
     def aFlag = reading.a
     def rid = sensorRoomId(d, roomsList)
     out << "{\"i\":" << d.id
-    out << ",\"n\":" << jsonStr(d.displayName)
+    out << ",\"n\":" << jsonStr(pollDisplayName(d))
     out << ",\"r\":" << (rid == null ? "null" : rid.toString())
     out << ",\"t\":" << jsonStr(t)
     if (rawVal != null && isNumberLike(rawVal)) {
@@ -2388,7 +4367,7 @@ def resolvedDashboardName() {
 def normalizedDefaultTab() {
     def allowed = [
         "lights", "favorites", "sensors", "thermostats", "music",
-        "cameras", "blinds", "fans", "outlets", "scheduling"
+        "cameras", "blinds", "fans", "outlets", "scheduling", "synagogue"
     ] as Set
     def v = defaultTab?.toString()?.trim()
     return (v && allowed.contains(v)) ? v : "lights"
@@ -2457,6 +4436,75 @@ def mldLinkCard(label, subtitle, url, type) {
         "</div>"
 }
 
+// Light button with dark text. Hubitat forces link blue, which vanished on a blue fill.
+def mldSchedActionLink(String label, String url, String downloadName, String linkTitle = null) {
+    def extra = downloadName ? " download='${htmlEsc(downloadName)}'" : ""
+    def titleText = linkTitle
+    if (!titleText && label == "Download") titleText = "Download schedule schema"
+    def titleAttr = titleText ? " title='${htmlEsc(titleText)}'" : ""
+    return "<a href='${htmlEsc(url)}' target='_blank'${extra}${titleAttr} " +
+        "style='display:inline-block;margin:0 6px 6px 0;padding:6px 12px;border-radius:8px;" +
+        "background:#ffffff !important;color:#111827 !important;-webkit-text-fill-color:#111827;" +
+        "text-decoration:none !important;font-weight:700;font-size:13px;line-height:1.2;" +
+        "border:1px solid #111827;cursor:pointer'>${htmlEsc(label)}</a>"
+}
+
+// Download and Copy sit on the schema. Copy reads the hidden textarea, so the JSON is not shown on the page.
+def mldSchemaToolbar() {
+    def copyJs = 'var b=this,el=document.getElementById("mldSchedSchema");if(!el)return false;' +
+        'var v=el.value||el.textContent||el.innerText||"";' +
+        'var ok=function(){b.textContent="Copied";};' +
+        'var legacy=function(){try{var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");ok();}catch(e){b.textContent="Copy failed";}};' +
+        'if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(v).then(ok).catch(legacy);}else{legacy();}' +
+        'return false;'
+    def copyBtn = "display:inline-block;margin:0 6px 6px 0;padding:6px 12px;border-radius:8px;" +
+        "background:#ffffff;color:#111827;font-weight:700;font-size:13px;line-height:1.2;" +
+        "border:1px solid #111827;cursor:pointer;font-family:inherit"
+    return "<div style='margin:0 0 4px'>" +
+        mldSchedActionLink("Download", scheduleSchemaUrl(false), "mdash-schedule-schema.json") +
+        "<button type='button' style='${copyBtn}' onclick='${copyJs}'>Copy</button>" +
+        mldSchedActionLink("Local Network Download", scheduleSchemaUrl(true), "mdash-schedule-schema.json") +
+        "</div>" +
+        "<textarea id='mldSchedSchema' readonly aria-hidden='true' style='display:none'>" +
+        htmlEsc(schedUploadSchema().trim()) + "</textarea>"
+}
+
+// Copy reads this textarea, not the schedule schema above it.
+def holidaySchemaToolbar() {
+    def copyJs = 'var b=this,el=document.getElementById("mldHolidaySchema");if(!el)return false;' +
+        'var v=el.value||el.textContent||el.innerText||"";' +
+        'var ok=function(){b.textContent="Copied";};' +
+        'var legacy=function(){try{var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");ok();}catch(e){b.textContent="Copy failed";}};' +
+        'if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(v).then(ok).catch(legacy);}else{legacy();}' +
+        'return false;'
+    def copyBtn = "display:inline-block;margin:0 6px 6px 0;padding:6px 12px;border-radius:8px;" +
+        "background:#ffffff;color:#111827;font-weight:700;font-size:13px;line-height:1.2;" +
+        "border:1px solid #111827;cursor:pointer;font-family:inherit"
+    return "<div style='margin:0 0 4px'>" +
+        mldSchedActionLink("Download", holidaySchemaUrl(false), "mdash-holiday-schema.json", "Download Shabbat and holidays schema") +
+        "<button type='button' style='${copyBtn}' onclick='${copyJs}'>Copy</button>" +
+        mldSchedActionLink("Local Network Download", holidaySchemaUrl(true), "mdash-holiday-schema.json", "Download Shabbat and holidays schema") +
+        "</div>" +
+        "<textarea id='mldHolidaySchema' readonly aria-hidden='true' style='display:none'>" +
+        htmlEsc(holidayUploadSchema().trim()) + "</textarea>"
+}
+
+// Hubitat reopens this page at the previous scroll position. Reset scrollable parents.
+def mldSchedScrollTop() {
+    def js = 'var n=0,t=function(){n++;try{window.scrollTo(0,0);var roots=[document.scrollingElement,document.documentElement,document.body];for(var i=0;i<roots.length;i++){if(roots[i])roots[i].scrollTop=0;}var nodes=document.getElementsByTagName("div");for(var j=0;j<nodes.length;j++){if(nodes[j].scrollTop>20)nodes[j].scrollTop=0;}}catch(e){}if(n<10)setTimeout(t,80);};t();'
+    return "<img alt='' width='1' height='1' style='position:absolute;width:1px;height:1px;opacity:0' src='invalid:mld' onerror='${js}'>"
+}
+
+// Reads a JSON file into the Schedule JSON box, then presses Upload so the hub
+// reloads the preview. Submit is a separate button and is what saves the file.
+def mldSchedUploadFilePicker() {
+    def js = 'var input=this;var f=input.files&&input.files[0];if(!f)return;var label=document.getElementById("mldSchedFileLabel");var say=function(msg){if(label)label.textContent=msg;};var r=new FileReader();r.onload=function(){var text=String(r.result||"");var areas=document.getElementsByTagName("textarea");var area=null;var i;for(i=0;i<areas.length;i++){var el=areas[i];if(el.id==="mldSchedSchema"||el.id==="mldHolidaySchema")continue;if(el.getAttribute("aria-hidden")==="true"||el.readOnly)continue;var n=(el.getAttribute("name")||"")+" "+(el.id||"");if(n.indexOf("schedUploadPaste")>=0){area=el;break;}}if(!area){for(i=0;i<areas.length;i++){var el2=areas[i];if(el2.id==="mldSchedSchema"||el2.id==="mldHolidaySchema")continue;if(el2.getAttribute("aria-hidden")==="true"||el2.readOnly)continue;var st=window.getComputedStyle?getComputedStyle(el2):null;if(st&&(st.display==="none"||st.visibility==="hidden"))continue;area=el2;break;}}if(!area){say("Could not find the paste box. Paste the JSON, then tap Upload.");return;}var proto=window.HTMLTextAreaElement&&Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,"value");if(proto&&proto.set)proto.set.call(area,text);else area.value=text;if(window.jQuery){try{window.jQuery(area).val(text);}catch(e){}}try{area.dispatchEvent(new Event("input",{bubbles:true}));area.dispatchEvent(new Event("change",{bubbles:true}));}catch(e3){}try{area.focus();area.blur();}catch(e4){}try{input.value="";}catch(e2){}say("Loaded "+(f.name||"file")+".");setTimeout(function(){setTimeout(function(){say("Loaded "+(f.name||"file")+". Tap Upload to preview it.");},700);var nodes=document.querySelectorAll("input,button");var j;var el3;for(j=0;j<nodes.length;j++){el3=nodes[j];if(el3.id==="mldSchedFile")continue;var blob=(el3.id||"")+" "+(el3.getAttribute("name")||"")+" "+(el3.getAttribute("onclick")||"")+" "+(el3.value||"");if(blob.indexOf("btnSchedUploadLoad")>=0){el3.click();return;}}for(j=0;j<nodes.length;j++){el3=nodes[j];var typ=el3.type||"";var tag=el3.tagName||"";if(tag!=="BUTTON"&&typ!=="button"&&typ!=="submit")continue;var text2=(el3.innerText||el3.value||"").replace(/^\\s+|\\s+$/g,"");if(text2==="Upload"){el3.click();return;}}say("Loaded "+(f.name||"file")+". Tap Upload to preview it.");},0);};r.onerror=function(){say("Could not read that file. Paste the JSON, then tap Upload.");};r.readAsText(f);'
+    return "<label style='display:inline-block;margin:0 0 8px;padding:8px 14px;border-radius:8px;" +
+        "font-weight:700;font-size:14px;line-height:1.2;cursor:pointer;background:#e8edf5;color:#1e293b'>" +
+        "<span id='mldSchedFileLabel'>Choose file</span><input id='mldSchedFile' type='file' accept='.json,application/json' " +
+        "style='display:none' onchange='${js}'></label>"
+}
+
 def devicePickerCount(val) {
     return asDeviceList(val).size()
 }
@@ -2483,7 +4531,8 @@ def shadesMediaSectionCollapsed() {
         devicePickerCount(windowShadesLevel) == 0 &&
         devicePickerCount(ceilingFans) == 0 &&
         devicePickerCount(musicPlayers) == 0 &&
-        devicePickerCount(audioSpeakers) == 0
+        devicePickerCount(audioSpeakers) == 0 &&
+        devicePickerCount(mediaTransportPlayers) == 0
 }
 
 def locksSectionCollapsed() {
@@ -2646,15 +4695,15 @@ def jsonListAttr(v) {
 }
 
 def tstatHasComfortMode(d) {
-    return d.hasCommand("setComfortMode") || d.hasAttribute("comfortMode")
+    return deviceHasCommand(d, "setComfortMode") || deviceHasAttribute(d, "comfortMode")
 }
 
 def tstatHasComfortFanSpeed(d) {
-    return d.hasCommand("setComfortFanSpeed") || d.hasAttribute("comfortFanSpeed")
+    return deviceHasCommand(d, "setComfortFanSpeed") || deviceHasAttribute(d, "comfortFanSpeed")
 }
 
 def tstatHasVane(d) {
-    return d.hasCommand("setVanePosition") || d.hasAttribute("vanePosition")
+    return deviceHasCommand(d, "setVanePosition") || deviceHasAttribute(d, "vanePosition")
 }
 
 def appendTstatComfortJson(out, d) {
@@ -2670,6 +4719,27 @@ def appendTstatComfortJson(out, d) {
     out << ",\"cfs\":" << jsonStr(cfs)
     out << ",\"vp\":" << jsonStr(vp)
     out << ",\"vpLev\":" << jsonListAttr(vpLev)
+    appendTstatEcoJson(out, d)
+}
+
+def tstatHasEco(d) {
+    return deviceHasAttribute(d, "ecoMode") || deviceHasCommand(d, "setEcoMode")
+}
+
+// Eco is a Nest overlay, not a thermostat mode. Omit the points when the device has neither.
+def appendTstatEcoJson(out, d) {
+    def hasEco = tstatHasEco(d)
+    out << ",\"hasEco\":" << (hasEco ? 1 : 0)
+    if (!hasEco) return
+    out << ",\"eco\":" << jsonStr(safeCurrent(d, "ecoMode"))
+    out << ",\"ehsp\":" << numOrNull(safeCurrent(d, "ecoHeatPoint"))
+    out << ",\"ecsp\":" << numOrNull(safeCurrent(d, "ecoCoolPoint"))
+}
+
+// refresh=0 reads the hub cache. Anything else (including refresh=1) asks the driver to poll.
+def maybeRefreshDevice(dev) {
+    if (params?.refresh?.toString() == "0") return
+    try { dev?.refresh() } catch (e) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -2687,7 +4757,7 @@ def renderDevice() {
         def isDim = dev.hasCapability("SwitchLevel")
         def hasCt = dev.hasCapability("ColorTemperature")
         def hasRgb = dev.hasCapability("ColorControl")
-        try { dev.refresh() } catch (e) {}
+        maybeRefreshDevice(dev)
         def sw = safeCurrent(dev, "switch")
         def lvl = isDim ? safeCurrent(dev, "level") : null
         def kelvin = hasCt ? safeCurrent(dev, "colorTemperature") : null
@@ -2703,7 +4773,7 @@ def renderDevice() {
         out << ",\"h\":" << (hue == null ? "null" : hue.toString())
         out << ",\"sat\":" << (sat == null ? "null" : sat.toString())
         if (shadeForDev != null) {
-            try { shadeForDev.refresh() } catch (e) {}
+            maybeRefreshDevice(shadeForDev)
             out << ",\"st\":" << jsonStr(shadeStatus(shadeForDev))
             out << ",\"pos\":" << numOrNull(shadePosition(shadeForDev))
             out << ",\"hasPos\":" << (shadeSupportsPosition(shadeForDev) ? 1 : 0)
@@ -2712,10 +4782,20 @@ def renderDevice() {
         out << "}"
         return renderJsonNoStore( withAuthJson(out.toString()), 200)
     }
+    def outlet = outletSwitches?.find { it.id.toString() == id.toString() }
+    if (outlet != null) {
+        maybeRefreshDevice(outlet)
+        def sw = safeCurrent(outlet, "switch")
+        def out = new StringBuilder()
+        out << "{\"i\":" << outlet.id
+        out << ",\"s\":" << (sw == "on" ? 1 : 0)
+        out << "}"
+        return renderJsonNoStore( withAuthJson(out.toString()), 200)
+    }
     // thermostat?
     def t = thermostats?.find { it.id.toString() == id.toString() }
     if (t != null) {
-        try { t.refresh() } catch (e) {}
+        maybeRefreshDevice(t)
         def hasFanMode = t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode")
         def hasFanSpeed = t.hasAttribute("fanSpeed") || t.hasCommand("setFanSpeed") || t.hasAttribute("fanSpeedLevels")
         def out = new StringBuilder()
@@ -2743,7 +4823,7 @@ def renderDevice() {
         allAudioDevices()?.any { it.id.toString() == id.toString() }
     def s = tempSensors?.find { it.id.toString() == id.toString() }
     if (s != null && senEntry == null && !hasControlRole) {
-        try { s.refresh() } catch (e) {}
+        maybeRefreshDevice(s)
         def out = new StringBuilder()
         def extras = sensorExtraAttrs(s, "temperature", sensorExMaxForType("temp"), "temp")
         out << "{\"i\":" << s.id
@@ -2755,7 +4835,7 @@ def renderDevice() {
     }
     if (senEntry != null && !hasControlRole) {
         def sd = senEntry.device
-        try { sd.refresh() } catch (e) {}
+        maybeRefreshDevice(sd)
         def roomsList = app.getRooms() ?: []
         def out = new StringBuilder()
         appendSensorJson(out, sd, senEntry, roomsList)
@@ -2763,7 +4843,7 @@ def renderDevice() {
     }
     def lk = locks?.find { it.id.toString() == id.toString() }
     if (lk != null) {
-        try { lk.refresh() } catch (e) {}
+        maybeRefreshDevice(lk)
         def lockSt = safeCurrent(lk, "lock")
         def out = new StringBuilder()
         out << "{\"i\":" << lk.id
@@ -2773,7 +4853,7 @@ def renderDevice() {
     }
     def garage = garageDoors?.find { it.id.toString() == id.toString() }
     if (garage != null) {
-        try { garage.refresh() } catch (e) {}
+        maybeRefreshDevice(garage)
         def out = new StringBuilder()
         out << "{\"i\":" << garage.id
         out << ",\"st\":" << jsonStr(safeCurrent(garage, "door")) << "}"
@@ -2781,7 +4861,7 @@ def renderDevice() {
     }
     def shade = allWindowShades()?.find { it.id.toString() == id.toString() }
     if (shade != null) {
-        try { shade.refresh() } catch (e) {}
+        maybeRefreshDevice(shade)
         def shadeSt = shadeStatus(shade)
         def shadePos = shadePosition(shade)
         def out = new StringBuilder()
@@ -2795,7 +4875,7 @@ def renderDevice() {
     }
     def fan = ceilingFans?.find { it.id.toString() == id.toString() }
     if (fan != null) {
-        try { fan.refresh() } catch (e) {}
+        maybeRefreshDevice(fan)
         def speed = safeCurrent(fan, "speed")
         def sw = safeCurrent(fan, "switch")
         def on = false
@@ -2809,7 +4889,7 @@ def renderDevice() {
     }
     def valve = valves?.find { it.id.toString() == id.toString() }
     if (valve != null) {
-        try { valve.refresh() } catch (e) {}
+        maybeRefreshDevice(valve)
         def out = new StringBuilder()
         out << "{\"i\":" << valve.id
         out << ",\"st\":" << jsonStr(safeCurrent(valve, "valve"))
@@ -2818,7 +4898,7 @@ def renderDevice() {
     }
     def mp = allAudioDevices()?.find { it.id.toString() == id.toString() }
     if (mp != null) {
-        try { mp.refresh() } catch (e) {}
+        maybeRefreshDevice(mp)
         def out = new StringBuilder()
         out << "{\"i\":" << mp.id
         out << ",\"st\":" << jsonStr(normalizeAudioStatus(mp) ?: "idle")
@@ -2891,9 +4971,21 @@ def runThermostatCmd(t, c, v) {
         case "setVanePosition":
             if (v != null && t.hasCommand("setVanePosition")) t.setVanePosition(v.toString())
             break
+        case "setEcoMode":
+            setEcoModeCmd(t, v)
+            break
         default:
             throw new IllegalArgumentException("unknown command")
     }
+}
+
+// Google SDM: setEcoMode takes OFF or MANUAL_ECO. Do not fall through to setThermostatMode.
+def setEcoModeCmd(t, modeStr) {
+    if (modeStr == null) return
+    if (!t.hasCommand("setEcoMode")) return
+    def mode = modeStr.toString()
+    if (!(mode == "OFF" || mode == "MANUAL_ECO")) return
+    t.setEcoMode(mode)
 }
 
 def setComfortModeCmd(t, modeStr) {
@@ -2911,10 +5003,14 @@ def setComfortFanSpeedCmd(t, speedStr) {
     else if (t.hasCommand("setFanMode")) t.setFanMode(speed)
 }
 
+def tstatSupportsFanMode(t) {
+    return t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode") || tstatHasComfortFanSpeed(t)
+}
+
 def setThermostatFanModeCmd(t, modeStr) {
     def mode = modeStr?.toString()?.toLowerCase()
     if (!mode) return false
-    if (!(t.hasCapability("ThermostatFanMode") || t.hasAttribute("thermostatFanMode") || tstatHasComfortFanSpeed(t))) return false
+    if (!tstatSupportsFanMode(t)) return false
     boolean dispatched = false
     try {
         if (mode == "auto" && t.hasCommand("fanAuto")) { t.fanAuto(); dispatched = true }
@@ -3104,11 +5200,14 @@ def runAudioCmd(dev, c, v) {
             dev.unmute()
             break
         case "setVolume":
-            if (!dev.hasCommand("setVolume") && !dev.hasCapability("MusicPlayer") && !dev.hasCapability("AudioVolume")) {
+            int vol = (v != null) ? Math.max(0, Math.min(100, v.toInteger())) : 0
+            if (dev.hasCommand("setVolume")) {
+                dev.setVolume(vol)
+            } else if (dev.hasCommand("setLevel")) {
+                dev.setLevel(vol)
+            } else {
                 throw new IllegalArgumentException("unsupported command")
             }
-            int vol = (v != null) ? Math.max(0, Math.min(100, v.toInteger())) : 0
-            dev.setVolume(vol)
             break
         default:
             throw new IllegalArgumentException("unknown command")
@@ -3266,6 +5365,188 @@ def parseRequestJson() {
         } catch (e) {}
     }
     return body
+}
+
+def renameError(String message, int status) {
+    return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(message)}}", status)
+}
+
+def renameRequestValue(String key) {
+    def body = parseRequestJson()
+    if (body instanceof Map && body.containsKey(key)) return [present: true, value: body[key]]
+    try {
+        if (params instanceof Map && params.containsKey(key)) return [present: true, value: params[key]]
+    } catch (e) {}
+    return [present: false, value: null]
+}
+
+def sanitizeRenameText(value) {
+    def text = value == null ? "" : value.toString()
+    text = text.replaceAll("\\p{Cntrl}", " ").trim()
+    return text
+}
+
+def dashboardDeviceLists() {
+    def lists = [
+        lights, outletSwitches, thermostats, locks, garageDoors, ceilingFans, valves,
+        cameras, rtspCameras, htmlTileDevices, tempSensors, allWindowShades(), allAudioDevices()
+    ]
+    for (spec in sensorTypeInputs()) lists << spec.list
+    return lists
+}
+
+def findDashboardDevice(id) {
+    if (id == null) return null
+    def want = id.toString()
+    for (list in dashboardDeviceLists()) {
+        for (d in asDeviceList(list)) {
+            try {
+                if (d?.id?.toString() == want) return d
+            } catch (e) {}
+        }
+    }
+    return null
+}
+
+def selectedDeviceIdsInRoom(String roomName) {
+    def ids = new HashSet()
+    if (!roomName) return ids
+    for (list in dashboardDeviceLists()) {
+        for (d in asDeviceList(list)) {
+            if (d == null) continue
+            def rn = null
+            try { rn = d.getRoomName()?.toString() } catch (e) { rn = null }
+            if (rn != roomName) continue
+            try { ids.add(d.id.toString()) } catch (e) {}
+        }
+    }
+    return ids
+}
+
+def roomMembershipIds(room) {
+    if (room == null) return null
+    def raw = null
+    try { raw = room.deviceIds } catch (e) { return null }
+    if (raw == null) return null
+    def items = (raw instanceof Collection) ? raw : [raw]
+    def ids = []
+    for (item in items) {
+        if (item == null) continue
+        try { ids << (item as Long) } catch (e) { return null }
+    }
+    return ids
+}
+
+def postHubRoomSave(Map bodyMap) {
+    if (hubSecurity && !hubAuthCookie()) {
+        return [ok: false, error: "Hub Login Security is on. Enter hub admin credentials under Hub file access, then try again."]
+    }
+    def json = new groovy.json.JsonBuilder(bodyMap).toString()
+    def params = [
+        uri: "http://127.0.0.1:8080",
+        path: "/room/save",
+        contentType: "application/json",
+        requestContentType: "application/json",
+        body: json,
+        textParser: true,
+        timeout: 20
+    ]
+    def headers = hubRequestHeaders()
+    if (headers) params.headers = headers
+    try {
+        def failed = null
+        httpPost(params) { resp ->
+            def code = resp?.status ?: resp?.statusCode ?: 200
+            def text = ""
+            try { text = readHttpBody(resp?.data) } catch (e) { text = "" }
+            if ((code as int) >= 400) failed = "room save failed"
+            else if (text?.contains("<html") || text?.contains("<HTML")) {
+                failed = hubSecurity
+                    ? "Hub Login Security is on. Enter hub admin credentials under Hub file access, then try again."
+                    : "room save failed"
+            }
+        }
+        if (failed) return [ok: false, error: failed]
+        return [ok: true]
+    } catch (e) {
+        def msg = e?.message?.toString() ?: "room save failed"
+        log.warn "Modern Dashboard: room save failed — ${msg}"
+        if (msg.contains("'<',") || msg.toLowerCase().contains("login")) {
+            return [ok: false, error: "Hub Login Security is on. Enter hub admin credentials under Hub file access, then try again."]
+        }
+        return [ok: false, error: "room save failed"]
+    }
+}
+
+def saveDeviceLabel() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def idField = renameRequestValue("id")
+    def labelField = renameRequestValue("label")
+    if (!idField.present || !labelField.present) return renameError("missing params", 400)
+    def dev = findDashboardDevice(idField.value)
+    if (dev == null) return renameError("device not found", 404)
+    def next = sanitizeRenameText(labelField.value)
+    if (next.length() > 255) return renameError("label too long", 400)
+    try {
+        dev.setLabel(next)
+    } catch (e) {
+        def msg = e?.message?.toString() ?: "could not rename device"
+        log.warn "Modern Dashboard: device label failed — id=${dev.id} ${msg}"
+        return renameError(msg, 500)
+    }
+    def labelAfter = null
+    try { labelAfter = dev.getLabel()?.toString()?.trim() } catch (e) { labelAfter = null }
+    if (!next && labelAfter) return renameError("could not clear device label", 500)
+    def shown = dev.displayName?.toString() ?: ""
+    log.info "Modern Dashboard: renamed device ${dev.id} to ${shown}"
+    return renderJsonNoStore(withAuthJson("{\"ok\":true,\"id\":${dev.id},\"n\":${jsonStr(shown)}}"), 200)
+}
+
+def saveRoomName() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def idField = renameRequestValue("id")
+    def nameField = renameRequestValue("name")
+    if (!idField.present || !nameField.present) return renameError("missing params", 400)
+    def idStr = idField.value?.toString()?.trim()
+    if (!idStr) return renameError("missing params", 400)
+    if (idStr == "-1") return renameError("unassigned is not a room", 400)
+    def next = sanitizeRenameText(nameField.value)
+    if (!next) return renameError("room name required", 400)
+    if (next.length() > 255) return renameError("room name too long", 400)
+    def rooms = app.getRooms() ?: []
+    def room = rooms.find { it?.id?.toString() == idStr }
+    if (!room) return renameError("room not found", 404)
+    def currentName = room.name?.toString()?.trim() ?: ""
+    def dup = rooms.find {
+        it?.id?.toString() != idStr && it?.name?.toString()?.trim()?.equalsIgnoreCase(next)
+    }
+    if (dup) return renameError("a room with that name already exists", 400)
+    if (currentName == next) {
+        return renderJsonNoStore(withAuthJson("{\"ok\":true,\"id\":${room.id},\"name\":${jsonStr(currentName)}}"), 200)
+    }
+    def membership = roomMembershipIds(room)
+    if (membership == null) return renameError("room membership unavailable", 400)
+    def beforeSet = new HashSet(membership.collect { it.toString() })
+    for (sid in selectedDeviceIdsInRoom(currentName)) {
+        if (!beforeSet.contains(sid)) return renameError("room membership snapshot is incomplete", 400)
+    }
+    def posted = postHubRoomSave([roomId: (room.id as Long), name: next, deviceIds: membership])
+    if (!posted.ok) return renameError(posted.error ?: "room save failed", 500)
+    def afterRooms = app.getRooms() ?: []
+    def saved = afterRooms.find { it?.id?.toString() == idStr }
+    if (!saved || saved.name?.toString()?.trim() != next) {
+        log.warn "Modern Dashboard: room rename did not stick — id=${idStr}"
+        return renameError("room name did not update", 500)
+    }
+    def afterMembership = roomMembershipIds(saved)
+    if (afterMembership == null) return renameError("room membership changed unexpectedly", 500)
+    def afterSet = new HashSet(afterMembership.collect { it.toString() })
+    if (beforeSet != afterSet) {
+        log.warn "Modern Dashboard: room membership changed during rename — id=${idStr}"
+        return renameError("room membership changed unexpectedly", 500)
+    }
+    log.info "Modern Dashboard: renamed room ${saved.id} to ${next}"
+    return renderJsonNoStore(withAuthJson("{\"ok\":true,\"id\":${saved.id},\"name\":${jsonStr(next)}}"), 200)
 }
 
 def lightControlMeterDelayMsValue() {
@@ -3844,7 +6125,7 @@ def saveRoomOrderFromList(order) {
 // Nav order (state.navOrder — synced across devices)
 // ---------------------------------------------------------------------------
 def validNavKeySet() {
-    return ["lights", "locks", "scenes", "hub-mode", "security", "blinds", "outlets", "scheduling", "sensors", "thermostats", "music", "cameras", "favorites"] as Set
+    return ["lights", "locks", "scenes", "hub-mode", "security", "blinds", "outlets", "scheduling", "sensors", "thermostats", "music", "cameras", "favorites", "synagogue"] as Set
 }
 
 def cameraGo2rtcServerBase(dev) {
@@ -4407,12 +6688,18 @@ def looksLikeDashboardHtml(raw) {
 
 def sanitizeHtmlForDashboard(raw) {
     if (raw == null) return null
-    def s = raw.toString()
+    ensureDashboardPollCaches()
+    def original = raw.toString()
+    def cached = HTML_SANITIZED.get(original)
+    if (cached instanceof String) return cached
+    def s = original
     s = s.replaceAll(/(?is)<script\b[^>]*>.*?<\/script>/, "")
     s = s.replaceAll(/(?is)<script\b[^>]*\/?>/, "")
     s = s.replaceAll(/(?i)\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/, "")
     s = s.replaceAll(/(?i)(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/, '$1=$2#$2')
     s = s.replaceAll(/(?is)<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/, "")
+    if (HTML_SANITIZED.size() > 40) HTML_SANITIZED.clear()
+    HTML_SANITIZED.put(original, s)
     return s
 }
 
@@ -4484,7 +6771,7 @@ def htmlTileWantsBody(tileId, includeHtmlBodies, activeIds) {
 def discoverHtmlTilesForDevice(d, includeHtmlBodies = false, activeIds = null) {
     def out = []
     if (!d) return out
-    def deviceName = d.displayName?.toString() ?: ("Device " + d.id)
+    def deviceName = pollDisplayName(d)?.toString() ?: ("Device " + d.id)
     def deviceId = d.id
     if (isTileBuilderStorageDevice(d)) {
         def descs = mergeTileDescriptionMaps(parseTileDescriptionsMap(d), tileBuilderDescriptions(d))
@@ -4507,7 +6794,7 @@ def discoverHtmlTilesForDevice(d, includeHtmlBodies = false, activeIds = null) {
     def seen = new HashSet()
     def named = htmlNamedAttrs()
     try {
-        def states = d.currentStates ?: []
+        def states = deviceCurrentStates(d) ?: []
         for (st in states) {
             def nm = st?.name?.toString()
             if (!nm) continue
@@ -5806,6 +8093,421 @@ def setHubModeFromName(modeName) {
     }
 }
 
+def holidayModuleInstalled() {
+    return holidayFilePresent() && holidaysChild()
+}
+
+def holidayFilePresent() {
+    def names = []
+    try { names = listLocalFileNames() } catch (e) { names = [] }
+        if (names) {
+        def present = fileNamePresent(names, assetJsHolidayFile())
+        if (state.holidayFileSeen != present) state.holidayFileSeen = present
+        return present
+    }
+    return state.holidayFileSeen == true
+}
+
+def holidayEnsureChild() {
+    if (!holidayFilePresent()) return
+    if (holidaysChild()) return
+    try {
+        addChildApp("mDash", "mDash Shabbat and Holidays", "Shabbat & holidays")
+        log.info "Modern Dashboard: Shabbat & holidays is on because mld-holiday.js is in File Manager."
+    } catch (e) {
+        log.info "Modern Dashboard: mld-holiday.js is in File Manager. Install the mDash Shabbat and Holidays package with Hubitat Package Manager so schedules can run."
+    }
+}
+
+def holidaysChild() {
+    if (HOLIDAY_CHILD_APP_ID != null) {
+        def cached = null
+        try { cached = getChildAppById(HOLIDAY_CHILD_APP_ID) } catch (e) { cached = null }
+        if (cached) return cached
+        HOLIDAY_CHILD_APP_ID = null
+    }
+    def kids = []
+    try { kids = getChildApps() ?: [] } catch (e) { kids = [] }
+    for (child in kids) {
+        def name = ""
+        try { name = "${child?.getLabel() ?: ''} ${child?.name ?: ''}" } catch (e) { name = "" }
+        if (name.contains("Shabbat") || name.contains("Holiday")) {
+            try { HOLIDAY_CHILD_APP_ID = child.id as Long } catch (e2) {}
+            return child
+        }
+    }
+    return null
+}
+
+def holidayLocationNotice() {
+    def child = holidaysChild()
+    if (!child) return ""
+    try { return child.holidayLocationNotice()?.toString()?.trim() ?: "" } catch (e) { return "" }
+}
+
+def holidaysAvailable() {
+    if (!schedulerIsEnabled()) return false
+    if (!holidayFilePresent()) return false
+    if (!holidaysChild()) return true
+    // This runs inside the dashboard poll. The holiday app calls back here to run
+    // devices. Entering that app from the poll locks both until Hubitat gives up
+    // after 120 seconds. The poll reads a flag the holiday app reported instead.
+    if (state.holidayUserPaused == null) holidayPauseFlagSoon()
+    return state.holidayUserPaused != true
+}
+
+def holidaySetUserPaused(boolean paused) {
+    state.holidayUserPaused = paused == true
+}
+
+// First poll after an upgrade, before the holiday app has reported its pause flag.
+// The read runs as its own call a second later, and at most once a minute.
+def holidayPauseFlagSoon() {
+    long last = 0L
+    try { last = (state.holidayPauseSeedAt ?: 0L) as long } catch (e) { last = 0L }
+    if (now() - last < 60000L) return
+    state.holidayPauseSeedAt = now()
+    try { runIn(1, "holidaySeedPauseFlag", [overwrite: true]) } catch (e) {}
+}
+
+def holidaySeedPauseFlag() {
+    def child = holidaysChild()
+    if (!child) return
+    try {
+        state.holidayUserPaused = child.holidayUserPaused() == true
+    } catch (e) {
+        // An older holiday app has no holidayUserPaused. A gate timeout must not
+        // be followed by a second call into that app.
+        def missing = "${e}".contains("MissingMethodException")
+        if (!missing) {
+            state.holidayPauseSeedAt = now()
+            return
+        }
+        try {
+            state.holidayUserPaused = child.holidayIsAvailable() != true
+        } catch (e2) {
+            state.holidayPauseSeedAt = now()
+        }
+    }
+}
+
+def holidayNotifyChild() {
+    def child = holidaysChild()
+    if (!child) return
+    try {
+        def userPaused = child.holidayParentPause(!schedulerIsEnabled())
+        if (userPaused instanceof Boolean) state.holidayUserPaused = userPaused
+    } catch (e) {
+        log.warn "Modern Dashboard: holiday child pause failed: ${e}"
+    }
+}
+
+def holidaysRoute(String method) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def child = holidaysChild()
+    if (!child) return renderJsonNoStore('{"ok":false,"error":"Install the optional mDash Shabbat and Holidays app with Hubitat Package Manager."}', 404)
+    def body = null
+    if (method != "status" && method != "later") {
+        body = request?.JSON
+        if (body == null) {
+            try {
+                def raw = request?.postBody ?: request?.content
+                if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+            } catch (e) {}
+        }
+    }
+    def result = null
+    try {
+        if (method == "status") result = child.holidaysStatus()
+        else if (method == "later") {
+            def spanId = null
+            try { spanId = params?.span?.toString()?.trim() } catch (e) { spanId = null }
+            result = spanId ? child.holidaysLater(spanId) : child.holidaysLater()
+        }
+        else if (method == "save") result = child.holidaysSave(body)
+        else if (method == "preview") result = child.holidaysPreview(body)
+        else if (method == "test") result = child.holidaysTest(body)
+        else if (method == "skip") result = child.holidaysSkip(body)
+        else if (method == "refresh") {
+            child.holidayRefresh()
+            result = child.holidaysStatus()
+            result.ok = true
+        }
+    } catch (e) {
+        log.warn "Modern Dashboard: holiday ${method} failed: ${e}"
+        return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", 500)
+    }
+    def json = groovy.json.JsonOutput.toJson(result ?: [ok: false])
+    return renderJsonNoStore(withAuthJson(json), 200)
+}
+
+def holidaysGet() { return holidaysRoute("status") }
+def holidaysLaterGet() { return holidaysRoute("later") }
+def holidaysSave() { return holidaysRoute("save") }
+def holidaysPreview() { return holidaysRoute("preview") }
+def holidaysTest() { return holidaysRoute("test") }
+def holidaysSkip() { return holidaysRoute("skip") }
+def holidaysRefresh() { return holidaysRoute("refresh") }
+
+def synagogueFilePresent() {
+    def names = []
+    try { names = listLocalFileNames() } catch (e) { names = [] }
+        if (names) {
+        def present = fileNamePresent(names, assetJsSynagogueFile())
+        if (state.synagogueFileSeen != present) state.synagogueFileSeen = present
+        return present
+    }
+    return state.synagogueFileSeen == true
+}
+
+// The dashboard poll calls this. It must not enter the Synagogue app: that app calls
+// back here to run devices, and the two would wait on each other until Hubitat gives
+// up after 120 seconds. The poll only notices that the file appeared or went away,
+// and the sync runs as its own call a second later, at most once a minute.
+def synagogueSyncSoon() {
+    boolean present = synagogueFilePresent()
+    if (state.synagogueChildSynced == present) return
+    long last = 0L
+    try { last = (state.synagogueSyncAt ?: 0L) as long } catch (e) { last = 0L }
+    if (now() - last < 60000L) return
+    state.synagogueSyncAt = now()
+    try { runIn(1, "synagogueSyncChild", [overwrite: true]) } catch (e) {}
+}
+
+def synagogueSyncChild() {
+    boolean present = synagogueFilePresent()
+    def child = synagogueChild()
+    if (!present) {
+        if (child) {
+            try {
+                if (child.synagogueIsHidden() != true) child.synagogueHidden()
+            } catch (e) {
+                // The child was busy. Leave the flag unset so a later poll tries again,
+                // and start the one-minute wait from now rather than from the queue time.
+                state.synagogueSyncAt = now()
+                return
+            }
+        }
+        state.synagogueChildSynced = present
+        return
+    }
+    if (!child) {
+        try {
+            addChildApp("mDash", "mDash Synagogue", "Synagogue")
+            log.info "Modern Dashboard: Synagogue is on because mld-synagogue.js is in File Manager."
+        } catch (e) {
+            log.info "Modern Dashboard: mld-synagogue.js is in File Manager. Install the mDash Synagogue package with Hubitat Package Manager so schedules can run."
+            state.synagogueSyncAt = now()
+            return
+        }
+        state.synagogueChildSynced = present
+        return
+    }
+    try {
+        if (child.synagogueIsHidden() == true) child.synagogueShown()
+    } catch (e) {
+        state.synagogueSyncAt = now()
+        return
+    }
+    state.synagogueChildSynced = present
+}
+
+def synagogueChild() {
+    if (SYNAGOGUE_CHILD_APP_ID != null) {
+        def cached = null
+        try { cached = getChildAppById(SYNAGOGUE_CHILD_APP_ID) } catch (e) { cached = null }
+        if (cached) return cached
+        SYNAGOGUE_CHILD_APP_ID = null
+    }
+    def kids = []
+    try { kids = getChildApps() ?: [] } catch (e) { kids = [] }
+    for (child in kids) {
+        def name = ""
+        try { name = "${child?.getLabel() ?: ''} ${child?.name ?: ''}" } catch (e2) { name = "" }
+        if (name.contains("Synagogue")) {
+            try { SYNAGOGUE_CHILD_APP_ID = child.id as Long } catch (e3) {}
+            return child
+        }
+    }
+    return null
+}
+
+def synagogueLocationNotice() {
+    def child = synagogueChild()
+    if (!child) return ""
+    try { return child.synagogueLocationNotice()?.toString()?.trim() ?: "" } catch (e) { return "" }
+}
+
+def synagogueAvailable() {
+    return synagogueFilePresent()
+}
+
+def synagogueRoute(String method) {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    def child = synagogueChild()
+    if (!child) return renderJsonNoStore('{"ok":false,"error":"Install the optional mDash Synagogue app with Hubitat Package Manager."}', 404)
+    def body = null
+    if (method != "status" && method != "days") {
+        body = request?.JSON
+        if (body == null) {
+            try {
+                def raw = request?.postBody ?: request?.content
+                if (raw) body = new groovy.json.JsonSlurper().parseText(raw.toString())
+            } catch (e) {}
+        }
+    }
+    def result = null
+    try {
+        if (method == "status") {
+            def days = null
+            try { days = params?.days } catch (e) { days = null }
+            result = child.synagogueStatus(days)
+        }
+        else if (method == "days") {
+            def dayId = null
+            try { dayId = params?.day?.toString()?.trim() } catch (e) { dayId = null }
+            result = dayId ? child.synagogueDays(dayId) : child.synagogueDays(null)
+        }
+        else if (method == "save") result = child.synagogueSave(body)
+        else if (method == "preview") result = child.synagoguePreview(body)
+        else if (method == "skip") result = child.synagogueSkip(body)
+        else if (method == "refresh") {
+            child.synagogueRefresh()
+            result = child.synagogueStatus()
+            result.ok = true
+        }
+    } catch (e) {
+        log.warn "Modern Dashboard: synagogue ${method} failed: ${e}"
+        return renderJsonNoStore("{\"ok\":false,\"error\":${jsonStr(e.message ?: e.toString())}}", 500)
+    }
+    def json = groovy.json.JsonOutput.toJson(result ?: [ok: false])
+    return renderJsonNoStore(withAuthJson(json), 200)
+}
+
+def synagogueGet() { return synagogueRoute("status") }
+def synagogueDaysGet() { return synagogueRoute("days") }
+def synagogueSave() { return synagogueRoute("save") }
+def synagoguePreview() { return synagogueRoute("preview") }
+def synagogueSkip() { return synagogueRoute("skip") }
+def synagogueRefresh() { return synagogueRoute("refresh") }
+
+def synagogueHolidayDefaults() {
+    def child = holidaysChild()
+    if (!child) return [:]
+    try {
+        def snap = child.holidayDefaultsSnapshot()
+        if (snap instanceof Map && (snap.containsKey("candleMin") || snap.containsKey("havdalahMinutes") || snap.containsKey("israel"))) {
+            def minutes = snap.havdalahMinutes != null ? snap.havdalahMinutes : 50
+            return [candleMin: snap.candleMin, havdalahMinutes: minutes, israel: snap.israel == true]
+        }
+    } catch (e) {}
+    try {
+        def status = child.holidaysStatus()
+        def settings = status?.settings
+        if (!(settings instanceof Map)) return [:]
+        def hav = settings.havdalah instanceof Map ? settings.havdalah : [:]
+        def minutes = hav.minutes != null ? hav.minutes : 50
+        return [candleMin: settings.candleMin, havdalahMinutes: minutes, israel: settings.israel == true]
+    } catch (e) {
+        return [:]
+    }
+}
+
+def synagogueScheduleNames() {
+    def out = [:]
+    def map = [:]
+    try { map = parseSchedulesMap() } catch (e) { map = [:] }
+    if (!(map instanceof Map)) return out
+    map.each { id, sched ->
+        if (sched?.enabled == false) return
+        def name = sched?.name?.toString() ?: "Schedule"
+        def ids = []
+        def action = sched?.action
+        if (action?.states instanceof List) action.states.each { st -> if (st?.id != null) ids << st.id.toString() }
+        if (action?.devices instanceof List) action.devices.each { d -> if (d != null) ids << d.toString() }
+        ids.each { dev -> if (dev && !out[dev]) out[dev] = name }
+    }
+    return out
+}
+
+def holidaySupportedKinds() {
+    return ["light", "outlet", "blind", "fan", "lock", "thermostat"]
+}
+
+def holidayFindDevice(list, id) {
+    if (id == null) return null
+    return list?.find { it?.id?.toString() == id.toString() }
+}
+
+def holidayRunAction(states) {
+    def result = newScheduleActionResult()
+    if (!(states instanceof List)) return result
+    int delay = 0
+    try { delay = lightControlMeterDelayMsValue() as Integer } catch (e) { delay = 0 }
+    if (lightControlDisableMetering == true) delay = 0
+    boolean first = true
+    for (st in states) {
+        if (st == null) continue
+        if (!first && delay > 0) {
+            try { pauseExecution(delay) } catch (e) {}
+        }
+        first = false
+        def kind = st?.kind?.toString() ?: "light"
+        if (kind == "outlet") {
+            runScheduleOnOffAction([states: [[id: st?.id, on: (st?.on == true)]]], outletSwitches, result)
+        } else if (kind == "light") {
+            runScheduleLightAction([states: [[id: st?.id, on: (st?.on == true), level: st?.level, ct: st?.ct]]], result)
+        } else {
+            holidayRunKind(kind, st, result)
+        }
+    }
+    return [
+        attempted: result.attempted,
+        succeeded: result.succeeded,
+        missing: result.missing,
+        failed: result.failed
+    ]
+}
+
+// Blinds, fans, locks, and thermostats. Lights and outlets never reach here.
+def holidayRunKind(kind, st, result) {
+    result.attempted++
+    def id = st?.id?.toString()
+    def dev = null
+    if (kind == "blind") dev = holidayFindDevice(allWindowShades(), id)
+    else if (kind == "fan") dev = holidayFindDevice(ceilingFans, id)
+    else if (kind == "lock") dev = holidayFindDevice(locks, id)
+    else if (kind == "thermostat") dev = holidayFindDevice(thermostats, id)
+    if (!dev) {
+        if (id) result.missing << id
+        return
+    }
+    try {
+        if (kind == "blind") {
+            if (st?.open == true && st?.position != null && st.position.toString().trim()) runShadeCmd(dev, "setPosition", st.position)
+            else runShadeCmd(dev, st?.open == true ? "open" : "close", null)
+        } else if (kind == "fan") {
+            if (st?.on != true) runFanCmd(dev, "off", null)
+            else if (st?.speed?.toString()?.trim()) runFanCmd(dev, "setSpeed", st.speed)
+            else runFanCmd(dev, "on", null)
+        } else if (kind == "lock") {
+            runLockCmd(dev, st?.locked == false ? "unlock" : "lock", null)
+        } else if (kind == "thermostat") {
+            if (runThermostatSetting(dev, st) != true) {
+                result.failed << id
+                return
+            }
+        } else {
+            result.missing << id
+            return
+        }
+        result.succeeded++
+    } catch (e) {
+        result.failed << id
+        log.warn "Modern Dashboard: holiday ${kind} failed for ${id}: ${e}"
+    }
+}
+
 def pinsMatch(expected, provided) {
     if (expected == null || expected == "") {
         return provided == null || provided == ""
@@ -6398,7 +9100,7 @@ def triggerSaveRuleFromUi() {
     }
     def map = parseTriggerRulesMap()
     if (!existingId && map.size() >= maxTriggerRules()) {
-        state.triggerEditError = "Rule limit reached (${maxTriggerRules()})"
+        state.triggerEditError = "Rule limit reached (${maxTriggerRules()})".toString()
         return
     }
     def rule = result.rule
@@ -6745,9 +9447,9 @@ def triggerSendTestAction() {
     ]
     enqueueTriggerActionFromRule(fake)
     def dur = triggerDefaultDurationSec()
-    state.triggerTestOk = cameraId ?
+    state.triggerTestOk = (cameraId ?
         "Queued test action (camera ${cameraId}, ${dur}s overlay${toneId ? ", tone" : ", no tone (shunted)"}, notification)." :
-        "Queued test action (no camera configured; notification${toneId ? " + tone" : ""}; default overlay ${dur}s)."
+        "Queued test action (no camera configured; notification${toneId ? " + tone" : ""}; default overlay ${dur}s).").toString()
 }
 
 def triggerActionsGet() {
@@ -8190,10 +10892,55 @@ def renderSchedulesStoreError(parsed) {
 
 def hubTimeZoneId() {
     try {
-        def tz = location.timeZone
-        if (tz?.ID) return tz.ID.toString()
+        def tz = location?.timeZone
+        if (tz instanceof java.util.TimeZone) {
+            def id = tz.getID()?.toString()?.trim()
+            if (id) return id
+        }
+        def id = tz?.ID?.toString()?.trim()
+        if (id) return id
+        def text = tz?.toString()?.trim()
+        if (text && text.matches("[A-Za-z0-9_+/-]+")) return text
     } catch (e) {}
     return ""
+}
+
+def hubZone() {
+    try {
+        def tz = location?.timeZone
+        if (tz instanceof java.util.TimeZone) return tz
+        def id = hubTimeZoneId()
+        if (id) return TimeZone.getTimeZone(id)
+    } catch (e) {}
+    return TimeZone.getDefault()
+}
+
+def hubOffsetMin() {
+    try {
+        long offMs = hubZone().getOffset(now()) as long
+        return (int) Math.floor(offMs / 60000d)
+    } catch (e) {
+        return null
+    }
+}
+
+def hubWallText(ms, String pattern) {
+    if (ms == null) return ""
+    try {
+        def fmt = new java.text.SimpleDateFormat(pattern, java.util.Locale.US)
+        fmt.setTimeZone(hubZone())
+        return fmt.format(new Date(ms as long))
+    } catch (e) {
+        return ""
+    }
+}
+
+def hubWallHm(ms) {
+    return hubWallText(ms, "HH:mm")
+}
+
+def hubWallOn(ms) {
+    return hubWallText(ms, "MMM d")
 }
 
 def saveSchedulesMap(map) {
@@ -8254,7 +11001,38 @@ def scheduleOffsetMin(tr) {
     }
 }
 
+def scheduleSunCacheKey(which, offsetMin, forDate) {
+    def tz = null
+    def lat = ""
+    def lon = ""
+    try {
+        tz = location?.timeZone
+        lat = location?.latitude?.toString() ?: ""
+        lon = location?.longitude?.toString() ?: ""
+    } catch (e) {}
+    def tzId = ""
+    try { tzId = tz?.ID?.toString() ?: "" } catch (e) { tzId = "" }
+    def cal = Calendar.getInstance()
+    if (tz) cal.setTimeZone(tz)
+    if (forDate instanceof Date) cal.setTime(forDate)
+    else if (forDate != null) {
+        try { cal.setTime(forDate as Date) } catch (e) { return null }
+    }
+    def day = String.format("%04d-%02d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DATE))
+    def off = 0
+    try { off = (offsetMin ?: 0) as Integer } catch (e) { off = 0 }
+    def whichKey = (which == "sunrise") ? "sunrise" : "sunset"
+    return "${tzId}|${lat}|${lon}|${day}|${whichKey}|${off}".toString()
+}
+
 def scheduleSunMs(which, offsetMin, forDate) {
+    ensureDashboardPollCaches()
+    def key = null
+    try { key = scheduleSunCacheKey(which, offsetMin, forDate) } catch (e) { key = null }
+    if (key != null) {
+        def hit = SUN_MS_CACHE.get(key)
+        if (hit instanceof Number) return hit
+    }
     try {
         def opts = [:]
         def off = (offsetMin ?: 0) as Integer
@@ -8263,7 +11041,12 @@ def scheduleSunMs(which, offsetMin, forDate) {
         if (forDate) opts.date = forDate
         def rs = getSunriseAndSunset(opts)
         def d = (which == "sunrise") ? rs?.sunrise : rs?.sunset
-        return d?.getTime()
+        def ms = d?.getTime()
+        if (ms != null && key != null) {
+            if (SUN_MS_CACHE.size() > 2000) SUN_MS_CACHE.clear()
+            SUN_MS_CACHE.put(key, ms as long)
+        }
+        return ms
     } catch (e) {
         return null
     }
@@ -8428,9 +11211,18 @@ def lastResultJson(s) {
 
 def schedulesJsonFragment() {
     if (!schedulerIsEnabled()) return ',"schedules":[]'
+    ensureDashboardPollCaches()
+    def raw = ""
+    try { raw = state?.schedulesJson?.toString() ?: "" } catch (e) { raw = "" }
+    def cacheKey = (schedulerUse24Hour == true ? "24|" : "12|") + raw
+    def appId = dashboardAppId()
+    def cached = SCHEDULES_FRAGMENT_CACHE.get(appId)
+    if (cached instanceof Map && cached.key == cacheKey && cached.fragment instanceof String) return cached.fragment
     def parsed = parseSchedulesMapResult()
     if (parsed.ok != true) {
-        return ',"schedules":[],"schedulesError":' + jsonStr(parsed.error ?: "schedule store unreadable")
+        def errFragment = ',"schedules":[],"schedulesError":' + jsonStr(parsed.error ?: "schedule store unreadable")
+        SCHEDULES_FRAGMENT_CACHE.put(appId, [key: cacheKey, fragment: errFragment])
+        return errFragment
     }
     def map = parsed.map instanceof Map ? parsed.map : [:]
     def out = new StringBuilder()
@@ -8448,8 +11240,12 @@ def schedulesJsonFragment() {
         out << ",\"summary\":" << jsonStr(scheduleSummary(s))
         def lastFired = s?.lastFired
         out << ",\"lastFired\":" << (lastFired == null ? "null" : lastFired.toString())
+        out << ",\"lastFiredHm\":" << jsonStr(lastFired == null ? "" : hubWallHm(lastFired))
+        out << ",\"lastFiredOn\":" << jsonStr(lastFired == null ? "" : hubWallOn(lastFired))
         def nextFire = s?.nextFire
         out << ",\"nextFire\":" << (nextFire == null ? "null" : nextFire.toString())
+        out << ",\"nextFireHm\":" << jsonStr(nextFire == null ? "" : hubWallHm(nextFire))
+        out << ",\"nextFireOn\":" << jsonStr(nextFire == null ? "" : hubWallOn(nextFire))
         out << ",\"trigger\":" << groovy.json.JsonOutput.toJson(s?.trigger ?: [:])
         out << ",\"action\":" << groovy.json.JsonOutput.toJson(s?.action ?: [:])
         out << ",\"onlyInModes\":["
@@ -8465,7 +11261,9 @@ def schedulesJsonFragment() {
         out << "}"
     }
     out << "]"
-    return out.toString()
+    def fragment = out.toString()
+    SCHEDULES_FRAGMENT_CACHE.put(appId, [key: cacheKey, fragment: fragment])
+    return fragment
 }
 
 def initializeScheduler() {
@@ -8586,13 +11384,20 @@ def armEnabledSchedule(id, s, long nowMs, result) {
             }
         } else if (kind == "once") {
             def atMs = scheduleOnceToMs(tr?.at)
-            if (atMs != null && atMs > nowMs) {
-                runOnce(new Date(atMs), "scheduledJobHandler", scheduleJobOptions(id))
+            def how = onceScheduleDisposition(atMs, nowMs)
+            if (how == "schedule") {
+                runOnce(new Date(atMs as long), "scheduledJobHandler", scheduleJobOptions(id))
                 result.registered++
                 nextFire = atMs
-            } else if (atMs != null && atMs <= nowMs) {
-                // past one-time — will be removed by cleanupSchedules shortly
+            } else if (how == "catchup") {
+                // A couple of seconds ahead so Hubitat does not drop a past runOnce.
+                long catchAt = nowMs + 2000L
+                runOnce(new Date(catchAt), "scheduledJobHandler", scheduleJobOptions(id))
+                result.registered++
+                nextFire = catchAt
+            } else if (how == "drop") {
                 nextFire = null
+                result.failures[id.toString()] = "one-time schedule must be in the future"
             } else {
                 result.failures[id.toString()] = "invalid one-time date"
             }
@@ -8660,6 +11465,20 @@ def schedulerSunRetry(data) {
     scheduleSunRetryLater(id, attempt + 1)
 }
 
+def scheduleOnceCatchUpMs() {
+    return 10L * 60L * 1000L
+}
+
+// "schedule" (future), "catchup" (up to 10 minutes late), "drop", or "invalid".
+def onceScheduleDisposition(atMs, long nowMs) {
+    if (atMs == null) return "invalid"
+    long at
+    try { at = atMs as Long } catch (e) { return "invalid" }
+    if (at > nowMs) return "schedule"
+    if (at >= nowMs - scheduleOnceCatchUpMs()) return "catchup"
+    return "drop"
+}
+
 def scheduleOnceToMs(at) {
     if (at == null) return null
     try {
@@ -8706,6 +11525,10 @@ def scheduleAdvanceAfterTrigger(id, s, map, boolean markFired) {
         }
     } catch (e) {
         log.warn "Modern Dashboard: schedule ${id} advance failed: ${e}"
+        try {
+            def when = scheduleTriggerWhen(s?.trigger)
+            if (when == "sunrise" || when == "sunset") scheduleSunRetryLater(id?.toString(), 1)
+        } catch (e2) {}
     }
     saveSchedulesMap(map)
     return false
@@ -8725,6 +11548,18 @@ def scheduledJobHandler(data) {
     if (!s) return
     if (s?.enabled != true) return
     def kind = s?.trigger?.kind?.toString()
+    // A catch-up and a late cron can both see the same minute. One run is enough.
+    if (kind != "mode") {
+        long lastFiredMs = 0L
+        try { if (s.lastFired != null) lastFiredMs = s.lastFired as long } catch (e) {}
+        if (lastFiredMs > 0L && now() - lastFiredMs < 45000L) {
+            log.info "Modern Dashboard: schedule skipped — ${scheduleLogName(id, s)} already ran"
+            return
+        }
+    }
+    // After the duplicate check, so a second fire for the same slot is not called late.
+    // Before the mode check, so a schedule that waited and then skipped still says how long.
+    scheduleNoteLateStart(id, s)
     // Mode condition applies to time-based schedules only (not mode triggers)
     if (kind != "mode") {
         def onlyInModes = s?.onlyInModes
@@ -8735,8 +11570,9 @@ def scheduledJobHandler(data) {
             for (m in onlyInModes) { if (m?.toString() == cur) { ok = true; break } }
             if (!ok) {
                 log.info "Modern Dashboard: schedule skipped — ${scheduleLogName(id, s)} (hub mode ${cur ?: '(none)'} not allowed)"
-                // Trigger consumed without running — still advance nextFire / re-arm sun jobs.
-                scheduleAdvanceAfterTrigger(id, s, map, false)
+                // The slot is consumed. Catch-up must not run it if the mode changes later.
+                s.lastResult = [ok: true, skipped: "mode", ts: now()]
+                scheduleAdvanceAfterTrigger(id, s, map, true)
                 return
             }
         }
@@ -8749,13 +11585,19 @@ def scheduledJobHandler(data) {
         log.warn "Modern Dashboard: schedule ${id} action failed: ${e}"
         if (result) result.failed << (e?.message ?: e?.toString() ?: "action failed").toString()
     }
-    s.lastResult = captureScheduleActionResult(result)
-    if (result?.missing instanceof List && result.missing) {
-        log.warn "Modern Dashboard: schedule ${id} missing device(s) — ${result.missing.join(', ')}"
+    try {
+        s.lastResult = captureScheduleActionResult(result)
+        if (result?.missing instanceof List && result.missing) {
+            log.warn "Modern Dashboard: schedule ${id} missing device(s) — ${result.missing.join(', ')}"
+        }
+        if (result?.failed instanceof List && result.failed) {
+            log.warn "Modern Dashboard: schedule ${id} failed device(s) — ${result.failed.join(', ')}"
+        }
+    } catch (e) {
+        log.warn "Modern Dashboard: schedule ${id} result save failed: ${e}"
     }
-    if (result?.failed instanceof List && result.failed) {
-        log.warn "Modern Dashboard: schedule ${id} failed device(s) — ${result.failed.join(', ')}"
-    }
+    // The trigger already fired. Re-arm even when saving the result failed,
+    // or a sunrise/sunset job would not be scheduled again.
     scheduleAdvanceAfterTrigger(id, s, map, true)
 }
 
@@ -8766,6 +11608,108 @@ def scheduleLogName(id, s) {
 }
 
 // Hubitat JSON may unwrap a one-item array to a scalar (devices: 37 instead of [37]).
+// A states array, or one state object if the hub unwrapped a one-item list.
+def scheduleStateList(raw) {
+    if (raw == null) return []
+    if (raw instanceof List) return raw.findAll { it instanceof Map }
+    if (raw instanceof Map) return [raw]
+    return []
+}
+
+def schedulePositionValue(v) {
+    if (v == null || !v.toString().trim()) return [ok: true, value: null]
+    if (!isNumberLike(v)) return [ok: false]
+    int n = Math.round(new BigDecimal(v.toString()).doubleValue()) as Integer
+    if (n < 1 || n > 100) return [ok: false]
+    return [ok: true, value: n]
+}
+
+// Speeds a schedule may set. Numeric maps above 10 are dim levels, not fan speeds.
+def scheduleFanSpeedChoices(dev) {
+    def filtered = []
+    for (tok in (fanSpeedTokens(dev) ?: [])) {
+        def s = tok?.toString()?.trim()?.toLowerCase()
+        if (!s || s == "off" || s == "on" || s == "auto") continue
+        filtered << s
+    }
+    if (filtered) {
+        boolean allNumeric = true
+        double max = 0d
+        for (s in filtered) {
+            if (!(s ==~ /^\d+(\.\d+)?$/)) {
+                allNumeric = false
+                break
+            }
+            def n = new BigDecimal(s).doubleValue()
+            if (n > max) max = n
+        }
+        if (allNumeric && max > 10d) return ["low", "medium", "high"]
+        return filtered
+    }
+    return ["low", "medium", "high"]
+}
+
+def scheduleFanSpeedMatch(dev, speed) {
+    def req = speed?.toString()?.trim()
+    if (!req) return null
+    def key = req.toLowerCase()
+    if (key == "off") return null
+    def aliases = [med: "medium", hi: "high", lo: "low"]
+    def canonical = aliases.containsKey(key) ? aliases[key] : key
+    for (choice in scheduleFanSpeedChoices(dev)) {
+        if (choice.equalsIgnoreCase(canonical) || choice.equalsIgnoreCase(key)) return choice
+    }
+    return null
+}
+
+// Groovy treats 0 as false and 1 as true. Only a real boolean counts, so a
+// missing or numeric value cannot unlock a door.
+def scheduleBoolIs(v, boolean expected) {
+    if (!(v instanceof Boolean)) return false
+    return expected ? (v == true) : (v == false)
+}
+
+// Only boolean false unlocks. A closed shade drops position. Fan speed off means off.
+// An open shade position outside 1-100 is kept so validation can reject it.
+def scheduleNormalizeDeviceStates(String target, raw) {
+    def out = []
+    for (st in scheduleStateList(raw)) {
+        def id = st?.id
+        if (id == null || !id.toString().trim()) continue
+        if (target == "locks") {
+            out << [id: id, locked: !scheduleBoolIs(st?.locked, false)]
+        } else if (target == "blinds") {
+            def open = scheduleBoolIs(st?.open, true)
+            def o = [id: id, open: open]
+            if (open && st?.position != null && st.position.toString().trim()) {
+                def parsed = schedulePositionValue(st.position)
+                if (parsed.ok != true) {
+                    o.position = st.position
+                } else if (parsed.value != null) {
+                    def dev = allWindowShades()?.find { it?.id?.toString() == id.toString() }
+                    if (dev == null || shadeSupportsPosition(dev)) o.position = parsed.value
+                }
+            }
+            out << o
+        } else if (target == "fans") {
+            def on = scheduleBoolIs(st?.on, true)
+            def speed = st?.speed?.toString()?.trim()
+            if (speed?.equalsIgnoreCase("off")) {
+                on = false
+                speed = null
+            }
+            def o = [id: id, on: on]
+            if (on && speed) {
+                def dev = ceilingFans?.find { it?.id?.toString() == id.toString() }
+                def match = dev ? scheduleFanSpeedMatch(dev, speed) : null
+                o.speed = match ?: speed
+            }
+            out << o
+        }
+    }
+    return out
+}
+
 def scheduleThermostatIds(raw) {
     def out = []
     def seen = [] as Set
@@ -8794,6 +11738,11 @@ def scheduleActionLogSummary(action) {
         case "outlets":
             def n = (action?.states instanceof List) ? action.states.size() : 0
             return "outlets (${n} device(s))"
+        case "locks":
+        case "blinds":
+        case "fans":
+            def count = scheduleStateList(action?.states).size()
+            return "${target} (${count} device(s))"
         case "thermostats":
             def n = scheduleThermostatIds(action?.devices).size()
             def bits = ["thermostats (${n} device(s))"]
@@ -8853,6 +11802,12 @@ def runScheduleAction(action) {
             return runScheduleLightAction(action, result)
         case "outlets":
             return runScheduleOnOffAction(action, outletSwitches, result)
+        case "locks":
+            return runScheduleLockAction(action, result)
+        case "blinds":
+            return runScheduleBlindAction(action, result)
+        case "fans":
+            return runScheduleFanAction(action, result)
         case "thermostats":
             return runScheduleThermostatAction(action, result)
         case "hubMode":
@@ -8891,6 +11846,90 @@ def runScheduleAction(action) {
         default:
             return result
     }
+}
+
+def runScheduleLockAction(action, result) {
+    if (result == null) result = newScheduleActionResult()
+    for (st in scheduleStateList(action?.states)) {
+        def id = st?.id
+        if (id == null) continue
+        result.attempted++
+        def dev = locks?.find { it?.id?.toString() == id.toString() }
+        if (!dev) {
+            result.missing << id.toString()
+            continue
+        }
+        try {
+            def unlock = scheduleBoolIs(st?.locked, false)
+            logControl("automation", "${deviceLabel(dev)} ${unlock ? 'unlock' : 'lock'}")
+            runLockCmd(dev, unlock ? "unlock" : "lock", null)
+            result.succeeded++
+        } catch (e) {
+            log.warn "Modern Dashboard: schedule lock cmd failed for ${id}: ${e}"
+            result.failed << id.toString()
+        }
+    }
+    return result
+}
+
+def runScheduleBlindAction(action, result) {
+    if (result == null) result = newScheduleActionResult()
+    for (st in scheduleStateList(action?.states)) {
+        def id = st?.id
+        if (id == null) continue
+        result.attempted++
+        def dev = allWindowShades()?.find { it?.id?.toString() == id.toString() }
+        if (!dev) {
+            result.missing << id.toString()
+            continue
+        }
+        try {
+            def open = scheduleBoolIs(st?.open, true)
+            if (open && st?.position != null && st.position.toString().trim() && shadeSupportsPosition(dev)) {
+                logControl("automation", "${deviceLabel(dev)} setPosition=${st.position}")
+                runShadeCmd(dev, "setPosition", st.position)
+            } else {
+                logControl("automation", "${deviceLabel(dev)} ${open ? 'open' : 'close'}")
+                runShadeCmd(dev, open ? "open" : "close", null)
+            }
+            result.succeeded++
+        } catch (e) {
+            log.warn "Modern Dashboard: schedule blind cmd failed for ${id}: ${e}"
+            result.failed << id.toString()
+        }
+    }
+    return result
+}
+
+def runScheduleFanAction(action, result) {
+    if (result == null) result = newScheduleActionResult()
+    for (st in scheduleStateList(action?.states)) {
+        def id = st?.id
+        if (id == null) continue
+        result.attempted++
+        def dev = ceilingFans?.find { it?.id?.toString() == id.toString() }
+        if (!dev) {
+            result.missing << id.toString()
+            continue
+        }
+        try {
+            if (!scheduleBoolIs(st?.on, true)) {
+                logControl("automation", "${deviceLabel(dev)} off")
+                runFanCmd(dev, "off", null)
+            } else if (st?.speed?.toString()?.trim()) {
+                logControl("automation", "${deviceLabel(dev)} setSpeed=${st.speed}")
+                runFanCmd(dev, "setSpeed", st.speed)
+            } else {
+                logControl("automation", "${deviceLabel(dev)} on")
+                runFanCmd(dev, "on", null)
+            }
+            result.succeeded++
+        } catch (e) {
+            log.warn "Modern Dashboard: schedule fan cmd failed for ${id}: ${e}"
+            result.failed << id.toString()
+        }
+    }
+    return result
 }
 
 def runScheduleOnOffAction(action, deviceList, result) {
@@ -8949,7 +11988,7 @@ def runScheduleLightAction(action, result) {
                 def ct = st?.ct
                 if (ct != null) {
                     if (!dev.hasCapability("ColorTemperature")) throw new RuntimeException("setColorTemperature is unavailable")
-                    int k = Math.max(2500, Math.min(6000, ct.toInteger()))
+                    int k = Math.max(2000, Math.min(6500, ct.toInteger()))
                     dev.setColorTemperature(k)
                 }
             } else {
@@ -8968,10 +12007,6 @@ def runScheduleLightAction(action, result) {
 def runScheduleThermostatAction(action, result) {
     if (result == null) result = newScheduleActionResult()
     def ids = scheduleThermostatIds(action?.devices)
-    def mode = action?.mode?.toString()
-    def heat = action?.heat
-    def cool = action?.cool
-    def fanMode = action?.fanMode?.toString()
     for (id in ids) {
         if (id == null) continue
         result.attempted++
@@ -8980,46 +12015,192 @@ def runScheduleThermostatAction(action, result) {
             result.missing << id.toString()
             continue
         }
-        def bits = []
-        if (mode) bits << "mode=${mode}"
-        if (heat != null) bits << "heat=${heat}"
-        if (cool != null) bits << "cool=${cool}"
-        if (fanMode) bits << "fan=${fanMode}"
-        if (bits) logControl("automation", "${deviceLabel(dev)} ${bits.join(' ')}")
-        boolean deviceFailed = false
-        if (mode) {
-            try { dev.setThermostatMode(mode) } catch (e) {
-                deviceFailed = true
-                log.warn "Modern Dashboard: schedule tstat mode failed for ${id}: ${e}"
-            }
-        }
-        if (heat != null) {
-            try { dev.setHeatingSetpoint(heat.toInteger()) } catch (e) {
-                deviceFailed = true
-                log.warn "Modern Dashboard: schedule tstat heat failed for ${id}: ${e}"
-            }
-        }
-        if (cool != null) {
-            try { dev.setCoolingSetpoint(cool.toInteger()) } catch (e) {
-                deviceFailed = true
-                log.warn "Modern Dashboard: schedule tstat cool failed for ${id}: ${e}"
-            }
-        }
-        if (fanMode) {
-            try {
-                if (setThermostatFanModeCmd(dev, fanMode) != true) {
-                    deviceFailed = true
-                    log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: no compatible fan command"
-                }
-            } catch (e) {
-                deviceFailed = true
-                log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: ${e}"
-            }
-        }
-        if (deviceFailed) result.failed << id.toString()
-        else result.succeeded++
+        if (runThermostatSetting(dev, action)) result.succeeded++
+        else result.failed << id.toString()
     }
     return result
+}
+
+// Which setpoints a thermostat mode uses. No mode means the setting only changes setpoints.
+def thermostatSetpointsForMode(mode) {
+    def key = mode?.toString()?.toLowerCase()?.replaceAll(/[\s_-]+/, "") ?: ""
+    if (!key) return [heat: true, cool: true]
+    return [heat: key in ["heat", "emergencyheat", "auto"], cool: key in ["cool", "auto"]]
+}
+
+def thermostatSetpointValue(v) {
+    if (v == null || v.toString().trim() == "" || !isNumberLike(v)) return null
+    return Math.round(new BigDecimal(v.toString()).doubleValue()) as Integer
+}
+
+// Keeps only the fields a setting can use: the mode, the setpoints that mode uses, and a fan mode.
+def thermostatSettingNormalized(raw) {
+    def out = [:]
+    def mode = raw?.mode?.toString()?.trim()
+    if (mode) out.mode = mode
+    def needs = thermostatSetpointsForMode(mode)
+    def heat = needs.heat ? thermostatSetpointValue(raw?.heat) : null
+    def cool = needs.cool ? thermostatSetpointValue(raw?.cool) : null
+    if (heat != null) out.heat = heat
+    if (cool != null) out.cool = cool
+    def fan = raw?.fanMode?.toString()?.trim()
+    if (fan) out.fanMode = fan
+    return out
+}
+
+def thermostatDialRange(unit) {
+    def key = unit?.toString()?.replace("°", "")?.trim()?.toUpperCase()
+    if (key == "C") return [min: 10, max: 32]
+    if (key == "F") return [min: 50, max: 90]
+    return null
+}
+
+def thermostatTempUnit(dev) {
+    def unit = "F"
+    try {
+        def st = dev?.currentState("temperature")
+        def u = st?.unit?.toString()
+        if (u) unit = u
+    } catch (e) {}
+    return thermostatDialRange(unit) ? unit.replace("°", "").trim().toUpperCase() : "F"
+}
+
+def thermostatSettingError(raw, String unit = null) {
+    def mode = raw?.mode?.toString()?.trim()
+    def needs = thermostatSetpointsForMode(mode)
+    def heat = needs.heat ? thermostatSetpointValue(raw?.heat) : null
+    def cool = needs.cool ? thermostatSetpointValue(raw?.cool) : null
+    if (mode) {
+        if (needs.heat && heat == null) return "enter a heat setpoint"
+        if (needs.cool && cool == null) return "enter a cool setpoint"
+    } else if (heat == null && cool == null && !raw?.fanMode?.toString()?.trim()) {
+        return "choose a mode, setpoint, or fan mode"
+    }
+    if (heat != null && cool != null && heat >= cool) return "heat setpoint must be below cool setpoint"
+    def range = thermostatDialRange(unit)
+    if (range != null && heat != null && (heat < range.min || heat > range.max)) {
+        return "heat setpoint must be between ${range.min} and ${range.max}".toString()
+    }
+    if (range != null && cool != null && (cool < range.min || cool > range.max)) {
+        return "cool setpoint must be between ${range.min} and ${range.max}".toString()
+    }
+    return null
+}
+
+// Sends one setting to one thermostat. Returns false if any requested command failed.
+def runThermostatSetting(dev, raw) {
+    def setting = thermostatSettingNormalized(raw)
+    def id = dev.id
+    def mode = setting.mode
+    def heat = setting.heat
+    def cool = setting.cool
+    def fanMode = setting.fanMode
+    if (fanMode && !tstatSupportsFanMode(dev)) {
+        if (debugLogActive()) log.debug "Modern Dashboard: ${deviceLabel(dev)} has no fan mode; skipped fan=${fanMode}"
+        fanMode = null
+    }
+    def bits = []
+    if (mode) bits << "mode=${mode}"
+    if (heat != null) bits << "heat=${heat}"
+    if (cool != null) bits << "cool=${cool}"
+    if (fanMode) bits << "fan=${fanMode}"
+    if (bits) logControl("automation", "${deviceLabel(dev)} ${bits.join(' ')}")
+    boolean deviceFailed = false
+    if (mode) {
+        try { dev.setThermostatMode(mode) } catch (e) {
+            deviceFailed = true
+            log.warn "Modern Dashboard: schedule tstat mode failed for ${id}: ${e}"
+        }
+    }
+    if (heat != null) {
+        try { dev.setHeatingSetpoint(heat) } catch (e) {
+            deviceFailed = true
+            log.warn "Modern Dashboard: schedule tstat heat failed for ${id}: ${e}"
+        }
+    }
+    if (cool != null) {
+        try { dev.setCoolingSetpoint(cool) } catch (e) {
+            deviceFailed = true
+            log.warn "Modern Dashboard: schedule tstat cool failed for ${id}: ${e}"
+        }
+    }
+    if (fanMode) {
+        try {
+            if (setThermostatFanModeCmd(dev, fanMode) != true) {
+                deviceFailed = true
+                log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: no compatible fan command"
+            }
+        } catch (e) {
+            deviceFailed = true
+            log.warn "Modern Dashboard: schedule tstat fan failed for ${id}: ${e}"
+        }
+    }
+    return !deviceFailed
+}
+
+// Clock time today if it already passed and is still inside the one-time catch-up window.
+def scheduleRecentClockMs(s, long nowMs) {
+    def tr = s?.trigger
+    def kind = tr?.kind?.toString()
+    if (!(kind in ["daily", "weekly"])) return null
+    if (scheduleTriggerWhen(tr) != "clock") return null
+    def parts = tr?.time?.toString()?.split(":")
+    if (!parts || parts.length < 2) return null
+    int hh
+    int mm
+    try {
+        hh = parts[0].trim().toInteger()
+        mm = parts[1].trim().toInteger()
+    } catch (e) { return null }
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null
+    def tz = null
+    try { tz = location?.timeZone } catch (e) {}
+    def cal = Calendar.getInstance()
+    if (tz) cal.setTimeZone(tz)
+    cal.setTimeInMillis(nowMs)
+    if (kind == "weekly" && !scheduleDayMatchesWeekly(tr, cal)) return null
+    cal.set(Calendar.HOUR_OF_DAY, hh)
+    cal.set(Calendar.MINUTE, mm)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    long at = cal.getTimeInMillis()
+    if (at > nowMs || nowMs - at > scheduleOnceCatchUpMs()) return null
+    return at
+}
+
+// Sunrise or sunset if it already passed and is still inside the catch-up window.
+// Yesterday is included because a positive offset can land after midnight.
+def scheduleRecentSunMs(s, long nowMs) {
+    def tr = s?.trigger
+    def kind = tr?.kind?.toString()
+    if (!(kind in ["daily", "weekly"])) return null
+    def when = scheduleTriggerWhen(tr)
+    if (!(when in ["sunrise", "sunset"])) return null
+    def tz = null
+    try { tz = location?.timeZone } catch (e) {}
+    def cal = Calendar.getInstance()
+    if (tz) cal.setTimeZone(tz)
+    cal.setTimeInMillis(nowMs)
+    cal.set(Calendar.HOUR_OF_DAY, 0)
+    cal.set(Calendar.MINUTE, 0)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    cal.add(Calendar.DATE, -1)
+    Long best = null
+    def offsetMin = scheduleOffsetMin(tr)
+    for (int i = 0; i < 3; i++) {
+        if (scheduleDayMatchesWeekly(tr, cal)) {
+            def sunMs = scheduleSunMs(when, offsetMin, cal.getTime())
+            if (sunMs != null) {
+                long at = sunMs as long
+                if (at <= nowMs && nowMs - at <= scheduleOnceCatchUpMs()) {
+                    if (best == null || at > best) best = at
+                }
+            }
+        }
+        cal.add(Calendar.DATE, 1)
+    }
+    return best
 }
 
 def cleanupSchedules() {
@@ -9032,21 +12213,39 @@ def cleanupSchedules() {
     def map = parsed.map instanceof Map ? parsed.map : [:]
     def now = now()
     def changed = false
+    def needsArm = false
+    def clockCatchUp = []
     for (id in map.keySet().toList()) {
         def s = map[id]
         if (!s) continue
         def kind = s?.trigger?.kind?.toString()
-        if (kind == "once") {
-            def atMs = scheduleOnceToMs(s?.trigger?.at)
-            if (atMs != null && atMs < now) {
-                map.remove(id)
-                changed = true
+        if (kind == "daily" || kind == "weekly") {
+            if (s?.enabled == true) {
+                def recent = scheduleRecentClockMs(s, now as long)
+                if (recent == null) recent = scheduleRecentSunMs(s, now as long)
+                long last = 0L
+                try { if (s.lastFired != null) last = s.lastFired as long } catch (e) {}
+                if (recent != null && last < (recent as long)) clockCatchUp << id.toString()
             }
+            continue
+        }
+        if (kind != "once") continue
+        def how = onceScheduleDisposition(scheduleOnceToMs(s?.trigger?.at), now as long)
+        if (how == "drop" && s?.enabled == true) {
+            map.remove(id)
+            changed = true
+        } else if (how == "catchup" && s?.enabled == true) {
+            def nf = null
+            try { if (s.nextFire != null) nf = (s.nextFire as Long) } catch (e) {}
+            if (nf == null || nf <= now) needsArm = true
         }
     }
-    if (changed) {
-        saveSchedulesMap(map)
-        rebuildScheduledJobs()
+    if (changed) saveSchedulesMap(map)
+    if (changed || needsArm) rebuildScheduledJobs()
+    for (id in clockCatchUp) {
+        try { scheduledJobHandler([id: id]) } catch (e) {
+            log.warn "Modern Dashboard: schedule ${id} catch-up failed: ${e}"
+        }
     }
 }
 
@@ -9078,7 +12277,11 @@ def schedulesListForClient(mapIn = null) {
             enabled: (s?.enabled == true),
             summary: scheduleSummary(s),
             lastFired: s?.lastFired,
+            lastFiredHm: s?.lastFired == null ? "" : hubWallHm(s.lastFired),
+            lastFiredOn: s?.lastFired == null ? "" : hubWallOn(s.lastFired),
             nextFire: s?.nextFire,
+            nextFireHm: s?.nextFire == null ? "" : hubWallHm(s.nextFire),
+            nextFireOn: s?.nextFire == null ? "" : hubWallOn(s.nextFire),
             lastResult: (s?.lastResult instanceof Map) ? s.lastResult : null,
             trigger: s?.trigger,
             action: s?.action,
@@ -9115,11 +12318,38 @@ def schedulesValidateNormalized(s) {
     }
     def ac = s.action ?: [:]
     def target = ac?.target?.toString()
-    if (!(target in ["lights", "outlets", "thermostats", "hubMode"])) return "unsupported action type"
+    if (!(target in ["lights", "outlets", "locks", "blinds", "fans", "thermostats", "hubMode"])) return "unsupported action type"
     if (target == "lights" || target == "outlets") {
         if (!(ac?.states instanceof List) || !ac.states) return "select at least one device"
+    } else if (target == "locks" || target == "blinds" || target == "fans") {
+        if (!scheduleStateList(ac?.states)) return "select at least one device"
+        if (target == "blinds") {
+            for (st in scheduleStateList(ac?.states)) {
+                if (scheduleBoolIs(st?.open, true) && st?.position != null && st.position.toString().trim()) {
+                    if (schedulePositionValue(st.position).ok != true) return "position must be between 1 and 100"
+                }
+            }
+        }
+        if (target == "fans") {
+            for (st in scheduleStateList(ac?.states)) {
+                if (!scheduleBoolIs(st?.on, true)) continue
+                def speed = st?.speed?.toString()?.trim()
+                if (!speed) continue
+                def dev = ceilingFans?.find { it?.id?.toString() == st?.id?.toString() }
+                if (!dev) continue
+                if (!scheduleFanSpeedMatch(dev, speed)) return "fan speed ${speed} is not supported".toString()
+            }
+        }
     } else if (target == "thermostats") {
         if (!scheduleThermostatIds(ac?.devices)) return "select at least one thermostat"
+        def tstatErr = thermostatSettingError(ac)
+        if (tstatErr) return tstatErr
+        for (id in scheduleThermostatIds(ac?.devices)) {
+            def dev = thermostats?.find { it.id.toString() == id.toString() }
+            if (!dev) continue
+            def rangeErr = thermostatSettingError(ac, thermostatTempUnit(dev))
+            if (rangeErr) return rangeErr
+        }
     } else if (target == "hubMode") {
         if (!ac?.mode?.toString()?.trim()) return "pick a hub mode"
     }
@@ -9144,6 +12374,14 @@ def schedulesUnknownDeviceError(s) {
         for (id in ids) {
             def dev = thermostats?.find { it.id.toString() == id.toString() }
             if (!dev) return "thermostat ${id} is not available in the thermostats picker"
+        }
+    } else if (target == "locks" || target == "blinds" || target == "fans") {
+        def deviceList = (target == "locks") ? locks : ((target == "blinds") ? allWindowShades() : ceilingFans)
+        for (st in scheduleStateList(ac?.states)) {
+            def id = st?.id
+            if (id == null) continue
+            def dev = deviceList?.find { it?.id?.toString() == id.toString() }
+            if (!dev) return "device ${id} is not available in the ${target} picker"
         }
     }
     return null
@@ -9260,12 +12498,11 @@ def schedulesNormalizePayload(body) {
         } else {
             ac.states = []
         }
+    } else if (ac.target == "locks" || ac.target == "blinds" || ac.target == "fans") {
+        ac.states = scheduleNormalizeDeviceStates(ac.target, body?.action?.states)
     } else if (ac.target == "thermostats") {
         ac.devices = scheduleThermostatIds(body?.action?.devices)
-        if (body?.action?.mode != null) ac.mode = body.action.mode.toString()
-        if (body?.action?.heat != null) ac.heat = body.action.heat
-        if (body?.action?.cool != null) ac.cool = body.action.cool
-        if (body?.action?.fanMode != null) ac.fanMode = body.action.fanMode.toString()
+        ac.putAll(thermostatSettingNormalized(body?.action))
     } else if (ac.target == "hubMode") {
         ac.mode = body?.action?.mode?.toString()?.trim() ?: ""
     }
@@ -9274,6 +12511,42 @@ def schedulesNormalizePayload(body) {
     if (importKey) s.importKey = importKey
     s.ts = now()
     return s
+}
+
+def schedulesStageOne(Map map, Map s) {
+    def validationError = schedulesValidateNormalized(s)
+    if (validationError) return [ok: false, error: validationError]
+    def deviceErr = schedulesUnknownDeviceError(s)
+    if (deviceErr) return [ok: false, error: deviceErr]
+    def id = s.id?.toString()?.trim()
+    if (!id) id = scheduleNewId()
+    s.id = id
+    def existing = map[id]
+    if (existing && existing.lastFired != null) s.lastFired = existing.lastFired
+    if (existing && existing.lastResult instanceof Map) s.lastResult = existing.lastResult
+    map[id] = s
+    def cycleErr = schedulesModeCycleError(map)
+    if (cycleErr) {
+        if (existing != null) map[id] = existing
+        else map.remove(id)
+        return [ok: false, error: cycleErr]
+    }
+    return [ok: true, id: id.toString()]
+}
+
+def schedulesFinishSave(Map map, priorJson, List armedIds) {
+    saveSchedulesMap(map)
+    def rebuild = rebuildScheduledJobs()
+    for (id in (armedIds ?: [])) {
+        def reason = null
+        try { reason = rebuild?.failures ? rebuild.failures[id.toString()] : null } catch (e) {}
+        if (!reason) continue
+        if (priorJson != null) state.schedulesJson = priorJson
+        else state.remove("schedulesJson")
+        rebuildScheduledJobs()
+        return [ok: false, error: reason.toString()]
+    }
+    return [ok: true]
 }
 
 def schedulesSave() {
@@ -9286,42 +12559,246 @@ def schedulesSave() {
     def parsed = parseSchedulesMapResult()
     if (parsed.ok != true) return renderSchedulesStoreError(parsed)
     def s = schedulesNormalizePayload(body)
-    def validationError = schedulesValidateNormalized(s)
-    if (validationError) {
-        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(validationError)}}".toString(), 422)
-    }
-    def deviceErr = schedulesUnknownDeviceError(s)
-    if (deviceErr) {
-        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(deviceErr)}}".toString(), 422)
-    }
     def map = parsed.map instanceof Map ? parsed.map : [:]
     def priorJson = state.schedulesJson
-    def id = s.id
-    if (!id) id = scheduleNewId()
-    def existing = map[id]
-    if (existing && existing.lastFired != null) s.lastFired = existing.lastFired
-    if (existing && existing.lastResult instanceof Map) s.lastResult = existing.lastResult
-    map[id] = s
-    def cycleErr = schedulesModeCycleError(map)
-    if (cycleErr) {
-        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(cycleErr)}}".toString(), 422)
+    def staged = schedulesStageOne(map, s)
+    if (staged.ok != true) {
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(staged.error)}}".toString(), 422)
     }
-    saveSchedulesMap(map)
-    def rebuild = rebuildScheduledJobs()
-    def failReason = null
-    try { failReason = rebuild?.failures ? rebuild.failures[id.toString()] : null } catch (e) {}
-    if (failReason && s.enabled == true) {
-        // Roll back so a broken schedule is never persisted as "saved".
-        if (priorJson != null) state.schedulesJson = priorJson
-        else state.remove("schedulesJson")
-        rebuildScheduledJobs()
-        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(failReason)},\"schedules\":${groovy.json.JsonOutput.toJson(schedulesListForClient())}}".toString(), 422)
+    def armed = (s.enabled == true) ? [staged.id] : []
+    def done = schedulesFinishSave(map, priorJson, armed)
+    if (done.ok != true) {
+        return renderJsonNoStore( "{\"ok\":false,\"error\":${jsonStr(done.error)},\"schedules\":${groovy.json.JsonOutput.toJson(schedulesListForClient())}}".toString(), 422)
     }
     def out = new StringBuilder()
-    out << "{\"ok\":true,\"id\":" << jsonStr(id.toString())
+    out << "{\"ok\":true,\"id\":" << jsonStr(staged.id.toString())
     out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
     out << "}"
     return renderJsonNoStore( withAuthJson(out.toString()), 200)
+}
+
+def schedulesBundleItems(body) {
+    if (body instanceof List) return body
+    if (body instanceof Map && body.schedules instanceof List) return body.schedules
+    if (body instanceof Map && (body.trigger instanceof Map || body.action instanceof Map)) return [body]
+    return null
+}
+
+def scheduleDeviceLabel(d) {
+    try { return d?.displayName?.toString() ?: "" } catch (e) { return "" }
+}
+
+def scheduleResolveDeviceToken(token, devices) {
+    def id = null
+    def name = null
+    if (token instanceof Map) {
+        if (token.id != null && token.id.toString().trim()) id = token.id.toString().trim()
+        else name = (token.name ?: token.label)?.toString()?.trim()
+    } else {
+        def text = token?.toString()?.trim()
+        if (!text) return [error: "device needs a name or id"]
+        if (text ==~ /^\d+$/) id = text
+        else name = text
+    }
+    def list = devices ?: []
+    if (id) {
+        def dev = list.find { it?.id?.toString() == id }
+        if (!dev) return [error: "device ${id} is not selected in this app"]
+        return [id: dev.id]
+    }
+    if (!name) return [error: "device needs a name or id"]
+    def exact = list.findAll { scheduleDeviceLabel(it) == name }
+    if (exact.size() == 1) return [id: exact[0].id]
+    def folded = list.findAll { scheduleDeviceLabel(it).equalsIgnoreCase(name) }
+    if (folded.size() == 1) return [id: folded[0].id]
+    def needle = name.toLowerCase()
+    def partial = list.findAll { scheduleDeviceLabel(it).toLowerCase().contains(needle) }
+    if (partial.size() == 1) return [id: partial[0].id]
+    def pool = partial.size() ? partial : (folded.size() ? folded : exact)
+    if (!pool.size()) return [error: "no device named ${name}"]
+    def sample = pool.collect { scheduleDeviceLabel(it) }.findAll { it }.unique().take(8).join(", ")
+    return [error: "more than one device matches ${name}: ${sample}"]
+}
+
+def schedulesApplyDeviceNames(Map body) {
+    def action = body.action instanceof Map ? body.action : [:]
+    def target = action.target?.toString()?.trim() ?: "lights"
+    if (target == "lights" || target == "outlets") {
+        def devices = (target == "lights") ? lights : outletSwitches
+        def states = action.states
+        if (!(states instanceof List)) return [ok: true]
+        for (st in states) {
+            if (!(st instanceof Map)) return [ok: false, error: "each device state must be an object"]
+            def token = (st.id != null && st.id.toString().trim()) ? st.id : (st.name ?: st.label)
+            def resolved = scheduleResolveDeviceToken(token, devices)
+            if (resolved.error) return [ok: false, error: resolved.error]
+            st.id = resolved.id
+        }
+    } else if (target == "thermostats") {
+        def list = action.devices
+        if (!(list instanceof List)) list = (list != null && list.toString().trim()) ? [list] : []
+        def ids = []
+        for (item in list) {
+            def resolved = scheduleResolveDeviceToken(item, thermostats)
+            if (resolved.error) return [ok: false, error: resolved.error]
+            ids << resolved.id?.toString()
+        }
+        action.devices = ids
+    } else if (target == "locks" || target == "blinds" || target == "fans") {
+        def devices = (target == "locks") ? locks : ((target == "blinds") ? allWindowShades() : ceilingFans)
+        def states = action.states
+        if (states instanceof Map) states = [states]
+        if (!(states instanceof List)) return [ok: true]
+        for (st in states) {
+            if (!(st instanceof Map)) return [ok: false, error: "each device state must be an object"]
+            def token = (st.id != null && st.id.toString().trim()) ? st.id : (st.name ?: st.label)
+            def resolved = scheduleResolveDeviceToken(token, devices)
+            if (resolved.error) return [ok: false, error: resolved.error]
+            st.id = resolved.id
+        }
+        action.states = states
+    }
+    body.action = action
+    return [ok: true]
+}
+
+def schedulesMatchIdByName(map, name) {
+    def want = name?.toString()?.trim()
+    if (!want || !(map instanceof Map)) return [id: null]
+    def hits = []
+    for (id in map.keySet()) {
+        def n = map[id]?.name?.toString()?.trim()
+        if (n && n.equalsIgnoreCase(want)) hits << id.toString()
+    }
+    if (hits.size() > 1) return [error: "more than one schedule is named ${want}"]
+    if (hits.size() == 1) return [id: hits[0]]
+    return [id: null]
+}
+
+// matchName replaces an existing schedule with the same name.
+// requireExisting refuses to create one when updating.
+def schedulesPrepareUploadItem(raw, map, boolean matchName, boolean requireExisting) {
+    if (!(raw instanceof Map)) return [ok: false, name: "", error: "each schedule must be an object"]
+    def name = raw.name?.toString()?.trim() ?: ""
+    def body = [
+        name: name,
+        trigger: raw.trigger instanceof Map ? raw.trigger : [:],
+        onlyInModes: raw.onlyInModes,
+        action: raw.action instanceof Map ? raw.action : [:]
+    ]
+    if (raw.containsKey("enabled")) {
+        def en = raw.enabled
+        body.enabled = (en == true || en?.toString()?.equalsIgnoreCase("true"))
+    } else {
+        body.enabled = true
+    }
+    def named = schedulesApplyDeviceNames(body)
+    if (named.ok != true) return [ok: false, name: name, error: named.error]
+    def id = raw.id?.toString()?.trim()
+    if (!matchName) id = null
+    if (id) {
+        if (requireExisting && !(map instanceof Map && map.containsKey(id))) {
+            return [ok: false, name: name, error: "schedule not found"]
+        }
+        body.id = id
+    }
+    else if (matchName && name) {
+        def match = schedulesMatchIdByName(map, name)
+        if (match.error) return [ok: false, name: name, error: match.error]
+        if (match.id) body.id = match.id
+        else if (requireExisting) return [ok: false, name: name, error: "no schedule named ${name}"]
+    } else if (requireExisting) {
+        return [ok: false, name: name, error: "schedule id is required"]
+    }
+    def schedule = schedulesNormalizePayload(body)
+    return [ok: true, name: schedule.name ?: name, schedule: schedule]
+}
+
+def schedulesPreviewBundle(items) {
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return [ok: [], skipped: [], error: parsed.error]
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def okById = new LinkedHashMap()
+    def skipped = []
+    for (raw in (items ?: [])) {
+        def prepared = schedulesPrepareUploadItem(raw, map, true, false)
+        if (prepared.ok != true) {
+            skipped << [name: prepared.name, error: prepared.error]
+            continue
+        }
+        def priorId = prepared.schedule?.id?.toString()?.trim()
+        boolean replaced = false
+        if (priorId && map.containsKey(priorId)) replaced = true
+        def staged = schedulesStageOne(map, prepared.schedule)
+        if (staged.ok != true) skipped << [name: prepared.name, error: staged.error]
+        else okById[staged.id] = [name: prepared.schedule?.name ?: prepared.name, summary: scheduleSummary(prepared.schedule), id: staged.id, replaced: replaced, enabled: prepared.schedule?.enabled == true]
+    }
+    return [ok: okById.isEmpty() ? [] : new ArrayList(okById.values()), skipped: skipped, error: null]
+}
+
+def schedulesCommitBundle(items) {
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return [ok: false, error: parsed.error, imported: 0, skipped: [], schedules: []]
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def priorJson = state.schedulesJson
+    def importedIds = []
+    def importedRowById = new LinkedHashMap()
+    def armedIds = []
+    def skipped = []
+    for (raw in (items ?: [])) {
+        def prepared = schedulesPrepareUploadItem(raw, map, true, false)
+        if (prepared.ok != true) {
+            skipped << [name: prepared.name, error: prepared.error]
+            continue
+        }
+        def priorId = prepared.schedule?.id?.toString()?.trim()
+        boolean replaced = false
+        if (priorId && map.containsKey(priorId)) replaced = true
+        def staged = schedulesStageOne(map, prepared.schedule)
+        if (staged.ok != true) {
+            skipped << [name: prepared.name, error: staged.error]
+            continue
+        }
+        importedIds << staged.id
+        importedRowById[staged.id] = [
+            name: prepared.schedule?.name ?: prepared.name ?: "Untitled",
+            summary: scheduleSummary(prepared.schedule),
+            replaced: replaced == true,
+            enabled: prepared.schedule?.enabled == true
+        ]
+        if (prepared.schedule?.enabled == true) armedIds << staged.id
+    }
+    if (!importedIds) {
+        def err = skipped ? skipped[0].error : "nothing to import"
+        return [ok: false, error: err, imported: 0, skipped: skipped, schedules: schedulesListForClient()]
+    }
+    def done = schedulesFinishSave(map, priorJson, armedIds)
+    if (done.ok != true) {
+        return [ok: false, error: done.error, imported: 0, skipped: skipped, schedules: schedulesListForClient()]
+    }
+    return [ok: true, imported: importedIds.unique().size(), skipped: skipped, importedRows: new ArrayList(importedRowById.values()), schedules: schedulesListForClient()]
+}
+
+def schedulesUpload() {
+    if (!guardDashboardAccess()) return renderAuthRequired()
+    if (!guardSchedulerEnabled()) return
+    def body = parseRequestJson()
+    def items = schedulesBundleItems(body)
+    if (items == null) return renderJsonNoStore('{"ok":false,"error":"expected a schedules array"}', 400)
+    def result = schedulesCommitBundle(items)
+    def status = result.ok == true ? 200 : 422
+    return renderJsonNoStore(withAuthJson(groovy.json.JsonOutput.toJson(result)), status)
+}
+
+def schedulesRemoveById(String id) {
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return [ok: false, error: parsed.error, schedules: []]
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    if (!map.containsKey(id)) return [ok: false, error: "not found", schedules: schedulesListForClient(map)]
+    map.remove(id)
+    saveSchedulesMap(map)
+    rebuildScheduledJobs()
+    return [ok: true, id: id, schedules: schedulesListForClient()]
 }
 
 def schedulesDelete() {
@@ -9332,19 +12809,337 @@ def schedulesDelete() {
     if (!id) {
         return renderJsonNoStore( '{"ok":false,"error":"missing id"}', 400)
     }
-    def parsed = parseSchedulesMapResult()
-    if (parsed.ok != true) return renderSchedulesStoreError(parsed)
-    def map = parsed.map instanceof Map ? parsed.map : [:]
-    if (map.containsKey(id)) {
-        map.remove(id)
-        saveSchedulesMap(map)
+    def removed = schedulesRemoveById(id)
+    if (removed.ok != true && removed.error != "not found") {
+        return renderSchedulesStoreError([error: removed.error])
     }
-    rebuildScheduledJobs()
     def out = new StringBuilder()
     out << "{\"ok\":true,\"id\":" << jsonStr(id.toString())
-    out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(schedulesListForClient())
+    out << ",\"schedules\":" << groovy.json.JsonOutput.toJson(removed.schedules ?: schedulesListForClient())
     out << "}"
     return renderJsonNoStore( withAuthJson(out.toString()), 200)
+}
+
+def mcpSchedulesAllowed() {
+    return mcpSchedulesEnabled == true && schedulerIsEnabled()
+}
+
+def mcpLocalOnly() {
+    try { return request?.requestSource != "cloud" } catch (e) { return true }
+}
+
+def mcpJson(payload) {
+    return groovy.json.JsonOutput.toJson(payload)
+}
+
+def mcpGet() {
+    if (!mcpSchedulesAllowed()) return renderJsonNoStore('{"ok":false,"error":"schedule assistant is off"}', 404)
+    if (!mcpLocalOnly()) return renderJsonNoStore('{"ok":false,"error":"schedule assistant is local only"}', 404)
+    return renderNoStore("text/plain",
+        "Modern Dashboard schedule assistant. POST JSON-RPC here from your home network.\n" +
+        "Away from home, upload a schedule JSON file from the dashboard Scheduler.\n",
+        405)
+}
+
+def mcpPost() {
+    if (!mcpSchedulesAllowed()) return renderJsonNoStore('{"ok":false,"error":"schedule assistant is off"}', 404)
+    if (!mcpLocalOnly()) return renderJsonNoStore('{"ok":false,"error":"schedule assistant is local only"}', 404)
+    def body = parseRequestJson()
+    if (body instanceof List) {
+        def out = []
+        boolean notesOnly = true
+        for (item in body) {
+            if (!(item instanceof Map) || !item.containsKey("id")) continue
+            notesOnly = false
+            out << mcpDispatch(item)
+        }
+        if (notesOnly) {
+            render contentType: "application/json", data: "", status: 202
+            return
+        }
+        return renderJsonNoStore(mcpJson(out), 200)
+    }
+    if (!(body instanceof Map)) return renderJsonNoStore(mcpJson([jsonrpc: "2.0", id: null, error: [code: -32700, message: "parse error"]]), 400)
+    def method = body.method?.toString()
+    if (!body.containsKey("id") || method?.startsWith("notifications/")) {
+        render contentType: "application/json", data: "", status: 202
+        return
+    }
+    return renderJsonNoStore(mcpJson(mcpDispatch(body)), 200)
+}
+
+def mcpDispatch(Map body) {
+    def id = body.id
+    def method = body.method?.toString()
+    try {
+        if (method == "initialize") return [jsonrpc: "2.0", id: id, result: mcpInitialize(body.params)]
+        if (method == "ping") return [jsonrpc: "2.0", id: id, result: [:]]
+        if (method == "tools/list") return [jsonrpc: "2.0", id: id, result: [tools: mcpToolDefs()]]
+        if (method == "tools/call") return [jsonrpc: "2.0", id: id, result: mcpCallTool(body.params)]
+        return [jsonrpc: "2.0", id: id, error: [code: -32601, message: "method not found"]]
+    } catch (e) {
+        return [jsonrpc: "2.0", id: id, error: [code: -32603, message: (e?.message ?: "internal error").toString()]]
+    }
+}
+
+def mcpInitialize(params) {
+    def requested = params?.protocolVersion?.toString()
+    def version = (requested == "2025-06-18" || requested == "2025-03-26") ? requested : "2025-03-26"
+    return [
+        protocolVersion: version,
+        capabilities: [tools: [listChanged: false]],
+        serverInfo: [name: "Modern Dashboard", version: MLD_DEPLOYED_VERSION]
+    ]
+}
+
+def mcpToolDefs() {
+    def triggerHelp = "kind is daily, weekly, once, or mode. Clock: when=clock and time=HH:mm. Sun: when=sunrise or sunset and offsetMin (-720 to 720). Weekly days are MON,TUE,WED,THU,FRI,SAT,SUN. Once: at=yyyy-MM-ddTHH:mm in hub local time. Mode: mode is the hub mode name."
+    def actionHelp = "target is lights, outlets, locks, blinds, fans, thermostats, or hubMode. Lights and outlets use states: [{name or id, on, level, ct}]. Locks use states: [{name or id, locked}]. locked false unlocks and does not ask for a PIN. Blinds use states: [{name or id, open, position}]. position is 1-100 only when open and that shade supports position. Fans use states: [{name or id, on, speed}]. speed is one reported for that fan. Omit speed to turn on. Thermostats use devices (name or id) plus mode, heat, cool, and fanMode. Hub mode uses mode."
+    def scheduleProps = [
+        name: [type: "string"],
+        enabled: [type: "boolean"],
+        trigger: [type: "object", description: triggerHelp],
+        onlyInModes: [type: "array", items: [type: "string"]],
+        action: [type: "object", description: actionHelp]
+    ]
+    return [
+        [
+            name: "list_schedule_context",
+            description: "List selected lights, outlets, thermostats, locks, blinds, fans, hub modes, and current schedules. Call this before creating a schedule.",
+            inputSchema: [type: "object", properties: [:]]
+        ],
+        [
+            name: "create_schedule",
+            description: "Create one dashboard schedule. Match devices by name from list_schedule_context. Omit enabled to leave the schedule on.",
+            inputSchema: [type: "object", properties: scheduleProps, required: ["name", "trigger", "action"]]
+        ],
+        [
+            name: "update_schedule",
+            description: "Replace one schedule by id, or by name when only one schedule uses that name.",
+            inputSchema: [type: "object", properties: scheduleProps + [id: [type: "string"]], required: ["trigger", "action"]]
+        ],
+        [
+            name: "delete_schedule",
+            description: "Delete one schedule by id or by a unique name.",
+            inputSchema: [type: "object", properties: [id: [type: "string"], name: [type: "string"]]]
+        ]
+    ]
+}
+
+def mcpCallTool(params) {
+    def name = params?.name?.toString()
+    def args = params?.arguments instanceof Map ? params.arguments : [:]
+    def payload
+    if (name == "list_schedule_context") payload = mcpScheduleContext()
+    else if (name == "create_schedule") payload = mcpCreateSchedule(args)
+    else if (name == "update_schedule") payload = mcpUpdateSchedule(args)
+    else if (name == "delete_schedule") payload = mcpDeleteSchedule(args)
+    else return mcpToolResult("unknown tool", true)
+    if (payload?.ok == false) return mcpToolResult((payload.error ?: "failed").toString(), true)
+    return mcpToolResult(mcpJson(payload), false)
+}
+
+def mcpToolResult(String text, boolean isError) {
+    return [content: [[type: "text", text: text]], isError: isError]
+}
+
+def mcpScheduleContext() {
+    def catalog = scheduleDeviceCatalog()
+    def schedules = []
+    for (s in schedulesListForClient()) {
+        schedules << [
+            id: s.id, name: s.name, enabled: s.enabled, summary: s.summary,
+            trigger: s.trigger, action: s.action, onlyInModes: s.onlyInModes
+        ]
+    }
+    return [ok: true, devices: catalog.devices, hubModes: catalog.hubModes, schedules: schedules]
+}
+
+def scheduleDeviceRoom(d) {
+    try { return d?.getRoomName()?.toString() ?: "" } catch (e) { return "" }
+}
+
+def scheduleListChoices(raw) {
+    def out = []
+    def seen = [] as Set
+    for (tok in (normalizeListTokens(raw) ?: [])) {
+        def s = tok?.toString()?.trim()
+        if (!s) continue
+        def key = s.toLowerCase()
+        if (seen.contains(key)) continue
+        seen << key
+        out << s
+    }
+    return out
+}
+
+def scheduleThermostatFanModeChoices(dev) {
+    def raw = null
+    try { raw = safeCurrent(dev, "supportedThermostatFanModes") ?: safeCurrent(dev, "supportedFanModes") } catch (e) {}
+    if (raw == null) return []
+    return scheduleListChoices(raw)
+}
+
+// Devices selected in this app, and only the controls a schedule can set.
+// target matches the schedule action target. controls are field names, not live status.
+def scheduleDeviceCatalog() {
+    def devices = []
+    def add = { d, target, Map extra ->
+        if (d == null) return
+        def row = [
+            id: d.id?.toString(),
+            name: scheduleDeviceLabel(d),
+            room: scheduleDeviceRoom(d),
+            target: target
+        ]
+        if (extra) row.putAll(extra)
+        devices << row
+    }
+    for (d in (lights ?: [])) {
+        def controls = ["on"]
+        def extra = [controls: controls]
+        try {
+            if (d.hasCapability("SwitchLevel") == true) {
+                controls << "level"
+                extra.level = [min: 0, max: 100]
+            }
+        } catch (e) {}
+        try {
+            if (d.hasCapability("ColorTemperature") == true) {
+                controls << "ct"
+                extra.ct = [min: 2000, max: 6500]
+            }
+        } catch (e) {}
+        add(d, "lights", extra)
+    }
+    for (d in (outletSwitches ?: [])) add(d, "outlets", [controls: ["on"]])
+    for (d in (locks ?: [])) add(d, "locks", [controls: ["locked"]])
+    for (d in (allWindowShades() ?: [])) {
+        def controls = ["open"]
+        def extra = [controls: controls]
+        try {
+            if (shadeSupportsPosition(d) == true) {
+                controls << "position"
+                extra.position = [min: 1, max: 100]
+            }
+        } catch (e) {}
+        add(d, "blinds", extra)
+    }
+    for (d in (ceilingFans ?: [])) {
+        add(d, "fans", [controls: ["on", "speed"], speeds: scheduleFanSpeedChoices(d)])
+    }
+    for (d in (thermostats ?: [])) {
+        def unit = "F"
+        try { unit = thermostatTempUnit(d) } catch (e) {}
+        def range = thermostatDialRange(unit) ?: [min: 50, max: 90]
+        def extra = [unit: unit, setpointRange: range]
+        def reportedModes = null
+        try { reportedModes = safeCurrent(d, "supportedThermostatModes") } catch (e) {}
+        def modes = (reportedModes == null) ? ["auto", "heat", "cool", "off"] : scheduleListChoices(reportedModes)
+        if (modes) extra.modes = modes
+        def fanModes = []
+        try { fanModes = scheduleThermostatFanModeChoices(d) } catch (e) {}
+        if (fanModes) extra.fanModes = fanModes
+        add(d, "thermostats", extra)
+    }
+    def nameCounts = [:]
+    for (row in devices) {
+        def key = row.name?.toString()?.trim()?.toLowerCase()
+        if (!key) continue
+        nameCounts[key] = (nameCounts[key] ?: 0) + 1
+    }
+    for (row in devices) {
+        def key = row.name?.toString()?.trim()?.toLowerCase()
+        if (key && nameCounts[key] > 1) row.useId = true
+    }
+    def modes = []
+    try {
+        for (m in (location?.modes ?: [])) {
+            def n = m?.name?.toString()
+            if (n) modes << n
+        }
+    } catch (e) {}
+    def catalogNote = "Devices selected in Modern Dashboard that a schedule can control. target is the schedule action target. controls are fields a schedule may set, not the device's current state. useId means another selected device has the same name, so put id in the schedule instead of name. speeds, modes, and fanModes are the only values a schedule may use for that device. This is not live status. Give this file to an assistant with the schedule schema."
+    if (holidayModuleInstalled()) catalogNote += " The same names are used in a Shabbat and holidays file."
+    return [
+        description: catalogNote,
+        hubModes: modes,
+        devices: devices
+    ]
+}
+
+def schedulesDevicesGet() {
+    def headers = noStoreHeaders() + ["Content-Disposition": "attachment; filename=\"mdash-devices.json\""]
+    def body = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(scheduleDeviceCatalog()))
+    render contentType: "application/json", data: body, status: 200, headers: headers
+}
+
+def schedulesSchemaGet() {
+    def headers = noStoreHeaders() + ["Content-Disposition": "attachment; filename=\"mdash-schedule-schema.json\""]
+    render contentType: "application/json", data: schedUploadSchema().trim(), status: 200, headers: headers
+}
+
+def holidaysSchemaGet() {
+    if (!holidayModuleInstalled()) return renderJsonNoStore('{"ok":false,"error":"not found"}', 404)
+    def headers = noStoreHeaders() + ["Content-Disposition": "attachment; filename=\"mdash-holiday-schema.json\""]
+    render contentType: "application/json", data: holidayUploadSchema().trim(), status: 200, headers: headers
+}
+
+def mcpCreateSchedule(args) {
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return [ok: false, error: parsed.error]
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def priorJson = state.schedulesJson
+    def prepared = schedulesPrepareUploadItem(args, map, false, false)
+    if (prepared.ok != true) return [ok: false, error: prepared.error]
+    def staged = schedulesStageOne(map, prepared.schedule)
+    if (staged.ok != true) return [ok: false, error: staged.error]
+    def armed = (prepared.schedule?.enabled == true) ? [staged.id] : []
+    def done = schedulesFinishSave(map, priorJson, armed)
+    if (done.ok != true) return [ok: false, error: done.error]
+    try { log.info "Modern Dashboard: schedule assistant created ${prepared.schedule?.name}" } catch (e) {}
+    return [ok: true, schedule: mcpScheduleRow(staged.id)]
+}
+
+def mcpUpdateSchedule(args) {
+    def parsed = parseSchedulesMapResult()
+    if (parsed.ok != true) return [ok: false, error: parsed.error]
+    def map = parsed.map instanceof Map ? parsed.map : [:]
+    def priorJson = state.schedulesJson
+    def prepared = schedulesPrepareUploadItem(args, map, true, true)
+    if (prepared.ok != true) return [ok: false, error: prepared.error]
+    def staged = schedulesStageOne(map, prepared.schedule)
+    if (staged.ok != true) return [ok: false, error: staged.error]
+    def armed = (prepared.schedule?.enabled == true) ? [staged.id] : []
+    def done = schedulesFinishSave(map, priorJson, armed)
+    if (done.ok != true) return [ok: false, error: done.error]
+    try { log.info "Modern Dashboard: schedule assistant updated ${prepared.schedule?.name}" } catch (e) {}
+    return [ok: true, schedule: mcpScheduleRow(staged.id)]
+}
+
+def mcpDeleteSchedule(args) {
+    def id = args?.id?.toString()?.trim()
+    if (!id) {
+        def parsed = parseSchedulesMapResult()
+        if (parsed.ok != true) return [ok: false, error: parsed.error]
+        def match = schedulesMatchIdByName(parsed.map, args?.name)
+        if (match.error) return [ok: false, error: match.error]
+        id = match.id
+    }
+    if (!id) return [ok: false, error: "schedule not found"]
+    def removed = schedulesRemoveById(id)
+    if (removed.ok != true) return [ok: false, error: removed.error ?: "not found"]
+    try { log.info "Modern Dashboard: schedule assistant deleted ${id}" } catch (e) {}
+    return [ok: true, id: id]
+}
+
+def mcpScheduleRow(id) {
+    for (s in schedulesListForClient()) {
+        if (s?.id?.toString() == id?.toString()) {
+            return [id: s.id, name: s.name, enabled: s.enabled, summary: s.summary, trigger: s.trigger, action: s.action, onlyInModes: s.onlyInModes]
+        }
+    }
+    return [id: id]
 }
 
 def schedulesToggle() {

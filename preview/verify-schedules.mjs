@@ -14,8 +14,15 @@ import {
   dueScheduleIds,
   nextDispatcherAt,
   scheduleSunNextFire,
+  scheduleRecentSunMs,
   validateSchedulePayload,
+  thermostatSettingError,
+  thermostatSettingNormalized,
+  deviceStatesNormalized,
+  onceScheduleDisposition,
+  ONCE_CATCHUP_MS,
 } from "../lib/scheduler-core.mjs";
+import { readFileSync } from "node:fs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = String(18000 + Math.floor(Math.random() * 2000));
@@ -144,6 +151,44 @@ function futureOnceAt(hoursAhead = 2) {
   const expectedCrossed = new Date(2026, 8, 15, 1, 0, 0, 0).getTime();
   assert(crossed === expectedCrossed, `cross-midnight sunset offset: ${new Date(crossed)}`);
 
+  const sunAt = (hour, minute, day) => {
+    const sunset = new Date(day);
+    sunset.setHours(hour, minute, 0, 0);
+    return sunset.getTime();
+  };
+  const sunProvider = (_which, offsetMin, day) => sunAt(18, 0, day) + offsetMin * 60 * 1000;
+  const fiveLate = sunAt(18, 5, new Date(2026, 8, 15));
+  const recentSun = scheduleRecentSunMs(
+    { kind: "daily", when: "sunset", offsetMin: 0 },
+    fiveLate,
+    sunProvider,
+  );
+  assert(recentSun === sunAt(18, 0, new Date(2026, 8, 15)), "a sunset five minutes late is still due");
+  const elevenLate = sunAt(18, 11, new Date(2026, 8, 15));
+  assert(
+    scheduleRecentSunMs({ kind: "daily", when: "sunset", offsetMin: 0 }, elevenLate, sunProvider) == null,
+    "a sunset older than ten minutes is not caught up",
+  );
+  assert(
+    scheduleRecentSunMs({ kind: "daily", when: "clock", time: "18:00" }, fiveLate, sunProvider) == null,
+    "a clock schedule is not a sun catch-up",
+  );
+  const afterMidnight = sunAt(1, 5, new Date(2026, 8, 16));
+  const crossedRecent = scheduleRecentSunMs(
+    { kind: "daily", when: "sunset", offsetMin: 420 },
+    afterMidnight,
+    sunProvider,
+  );
+  assert(crossedRecent === sunAt(1, 0, new Date(2026, 8, 16)), "a sunset offset past midnight is still caught up");
+  assert(
+    scheduleRecentSunMs(
+      { kind: "weekly", when: "sunset", offsetMin: 0, days: ["MON"] },
+      fiveLate,
+      sunProvider,
+    ) == null,
+    "a weekly sunset catch-up skips other days",
+  );
+
   const staleOnce = {
     enabled: true,
     trigger: { kind: "once", at: "2020-01-01T00:00" },
@@ -168,6 +213,106 @@ function futureOnceAt(hoursAhead = 2) {
     { id: "b", enabled: true, trigger: { kind: "mode", mode: "Evening" }, action: { target: "lights", states: [{ id: 1, on: false }] } },
   ]) == null, "mode→lights cascade allowed");
   console.log("ok unit: mode-cycle validation");
+}
+
+{
+  const browserSrc = readFileSync(join(root, "src/app.js"), "utf8");
+  const pick = (name) => {
+    const start = browserSrc.indexOf(`function ${name}(`);
+    assert(start >= 0, `${name} missing from src/app.js`);
+    let depth = 0;
+    let end = browserSrc.indexOf("{", start);
+    for (; end < browserSrc.length; end++) {
+      if (browserSrc[end] === "{") depth++;
+      else if (browserSrc[end] === "}" && --depth === 0) { end++; break; }
+    }
+    return browserSrc.slice(start, end);
+  };
+  const browserErr = new Function(
+    `${pick("normalizeTstatModeKey")}\n${pick("thermostatSetpointsForMode")}\n${pick("thermostatSettingError")}\nreturn thermostatSettingError;`,
+  )();
+
+  const cases = [
+    [{ mode: "heat", heat: 68 }, null],
+    [{ mode: "heat", heat: 68, cool: 60 }, null],
+    [{ mode: "heat" }, "enter a heat setpoint"],
+    [{ mode: "heat", heat: "" }, "enter a heat setpoint"],
+    [{ mode: "emergency heat", heat: 66 }, null],
+    [{ mode: "cool" }, "enter a cool setpoint"],
+    [{ mode: "cool", cool: 74, heat: 80 }, null],
+    [{ mode: "auto", heat: 68 }, "enter a cool setpoint"],
+    [{ mode: "auto", heat: 72, cool: 72 }, "heat setpoint must be below cool setpoint"],
+    [{ mode: "auto", heat: 68, cool: 72 }, null],
+    [{ mode: "off", heat: 90, cool: 50 }, null],
+    [{ mode: "fan only" }, null],
+    [{}, "choose a mode, setpoint, or fan mode"],
+    [{ fanMode: "on" }, null],
+    [{ heat: 70, cool: 68 }, "heat setpoint must be below cool setpoint"],
+    [{ mode: "heat", heat: 40 }, "heat setpoint must be between 50 and 90", "F"],
+    [{ mode: "heat", heat: 50 }, null, "F"],
+    [{ mode: "heat", heat: 90 }, null, "F"],
+    [{ mode: "heat", heat: 91 }, "heat setpoint must be between 50 and 90", "F"],
+    [{ mode: "cool", cool: 9 }, "cool setpoint must be between 10 and 32", "C"],
+    [{ mode: "cool", cool: 24 }, null, "C"],
+    [{ mode: "heat", heat: 68 }, "heat setpoint must be between 10 and 32", "C"],
+    [{ mode: "off", heat: 40, cool: 5 }, null, "F"],
+    [{ mode: "heat", heat: 40 }, null],
+  ];
+  for (const [ac, want, unit] of cases) {
+    const got = thermostatSettingError(ac, unit);
+    assert(got === want, `thermostatSettingError(${JSON.stringify(ac)}, ${unit}) = ${got}, want ${want}`);
+    assert(browserErr(ac, unit) === want, `editor copy of thermostatSettingError(${JSON.stringify(ac)}, ${unit}) = ${browserErr(ac, unit)}, want ${want}`);
+  }
+
+  const n = thermostatSettingNormalized({ mode: "heat", heat: "68.6", cool: 72, fanMode: "" });
+  assert(JSON.stringify(n) === JSON.stringify({ mode: "heat", heat: 69 }), "heat mode keeps a whole-degree heat setpoint only: " + JSON.stringify(n));
+  const off = thermostatSettingNormalized({ mode: "off", heat: 68, cool: 72, fanMode: "auto" });
+  assert(JSON.stringify(off) === JSON.stringify({ mode: "off", fanMode: "auto" }), "off mode drops setpoints: " + JSON.stringify(off));
+  assert(
+    validateSchedulePayload({ trigger: { kind: "daily", time: "07:00" }, action: { target: "thermostats", devices: ["1"], mode: "auto", heat: 74, cool: 70 } })
+      === "heat setpoint must be below cool setpoint",
+    "schedule save rejects a reversed auto range",
+  );
+  console.log("ok unit: thermostat setting rules (preview and editor agree)");
+}
+
+{
+  const clock = { trigger: { kind: "daily", when: "clock", time: "07:00" } };
+  assert(validateSchedulePayload({ ...clock, action: { target: "locks", states: [] } }) === "select at least one device", "locks need a device");
+  assert(validateSchedulePayload({ ...clock, action: { target: "locks", states: { id: 3001, locked: false } } }) === null, "one lock state object is accepted");
+  const unlocked = deviceStatesNormalized("locks", [{ id: 1, locked: false }]);
+  assert(unlocked.states[0].locked === false, "explicit unlock is kept");
+  const locked = deviceStatesNormalized("locks", [{ id: 1 }]);
+  assert(locked.states[0].locked === true, "a missing lock value locks");
+  assert(deviceStatesNormalized("locks", [{ id: 1, locked: 0 }]).states[0].locked === true, "numeric 0 does not unlock");
+  assert(deviceStatesNormalized("locks", [{ id: 1, locked: "false" }]).states[0].locked === true, "the string false does not unlock");
+  assert(deviceStatesNormalized("blinds", [{ id: 1, open: 1 }]).states[0].open === false, "numeric 1 does not open a shade");
+  assert(deviceStatesNormalized("fans", [{ id: 1, on: 1, speed: "low" }]).states[0].on === false, "numeric 1 does not turn a fan on");
+  assert(
+    validateSchedulePayload({ ...clock, action: { target: "blinds", states: [{ id: 1, open: true, position: 0 }] } })
+      === "position must be between 1 and 100",
+    "shade position 0 is rejected",
+  );
+  assert(
+    validateSchedulePayload({ ...clock, action: { target: "blinds", states: [{ id: 1, open: true, position: 40 }] } }) === null,
+    "shade position 40 is accepted",
+  );
+  const closed = deviceStatesNormalized("blinds", [{ id: 1, open: false, position: 0 }]);
+  assert(closed.error == null && closed.states[0].position == null, "a closed shade drops position");
+  const fanOff = deviceStatesNormalized("fans", [{ id: 1, on: true, speed: "off" }]);
+  assert(fanOff.states[0].on === false && fanOff.states[0].speed == null, "fan speed off is off");
+  assert(validateSchedulePayload({ ...clock, action: { target: "sensors", states: [{ id: 1 }] } }) === "unsupported action type", "sensors stay unsupported");
+  console.log("ok unit: lock, blind, and fan schedule states");
+}
+
+{
+  const now = 1_700_000_000_000;
+  assert(onceScheduleDisposition(now + 1000, now) === "schedule", "future once schedules");
+  assert(onceScheduleDisposition(now - 60 * 1000, now) === "catchup", "one minute late still runs");
+  assert(onceScheduleDisposition(now - ONCE_CATCHUP_MS, now) === "catchup", "exactly 10 minutes late still runs");
+  assert(onceScheduleDisposition(now - ONCE_CATCHUP_MS - 1, now) === "drop", "older than 10 minutes is dropped");
+  assert(onceScheduleDisposition(Number.NaN, now) === "invalid", "bad once time");
+  console.log("ok unit: once catch-up window");
 }
 
 const child = spawn("node", ["preview/server.mjs"], {
@@ -398,6 +543,64 @@ try {
     const missing = await postJson("/schedules/test", { id: "sc-demo-1", simulateResult: "missing" });
     assert(missing.res.status === 200 && missing.json.ok === false, "missing target must not report top-level success");
     assert(missing.json.lastResult?.missing?.length === 1, "missing action result must include target");
+  }
+
+  {
+    const lock = await postJson("/schedules/save", {
+      name: "Verify unlock",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "07:00" },
+      action: { target: "locks", states: [{ id: 3001, locked: false }] },
+    });
+    assert(lock.res.status === 200 && lock.json.ok, `lock save failed: ${JSON.stringify(lock.json)}`);
+    const lockRow = lock.json.schedules.find((s) => s.id === lock.json.id);
+    assert(lockRow.action.states[0].locked === false, "unlock is stored");
+
+    const badPos = await postJson("/schedules/save", {
+      name: "Verify bad position",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "08:00" },
+      action: { target: "blinds", states: [{ id: 5001, open: true, position: 0 }] },
+    });
+    assert(badPos.res.status === 422, `position 0 should 422: ${JSON.stringify(badPos.json)}`);
+
+    const shade = await postJson("/schedules/save", {
+      name: "Verify shade",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "08:00" },
+      action: { target: "blinds", states: [{ id: 5001, open: true, position: 40 }] },
+    });
+    assert(shade.res.status === 200 && shade.json.ok, `shade save failed: ${JSON.stringify(shade.json)}`);
+    const shadeRow = shade.json.schedules.find((s) => s.id === shade.json.id);
+    assert(shadeRow.action.states[0].position === 40, "position is stored");
+
+    const noPos = await postJson("/schedules/save", {
+      name: "Verify shade without position",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "08:15" },
+      action: { target: "blinds", states: [{ id: 5003, open: true, position: 40 }] },
+    });
+    assert(noPos.res.status === 200 && noPos.json.ok, `shade without position failed: ${JSON.stringify(noPos.json)}`);
+    const noPosRow = noPos.json.schedules.find((s) => s.id === noPos.json.id);
+    assert(noPosRow.action.states[0].position == null, "a shade that cannot take a level drops position");
+
+    const fan = await postJson("/schedules/save", {
+      name: "Verify fan",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "21:00" },
+      action: { target: "fans", states: [{ id: 5103, on: true, speed: "4" }] },
+    });
+    assert(fan.res.status === 200 && fan.json.ok, `fan save failed: ${JSON.stringify(fan.json)}`);
+    const fanRow = fan.json.schedules.find((s) => s.id === fan.json.id);
+    assert(fanRow.action.states[0].speed === "4", "numeric fan speed is stored");
+
+    const badSpeed = await postJson("/schedules/save", {
+      name: "Verify bad fan speed",
+      enabled: true,
+      trigger: { kind: "daily", when: "clock", time: "21:15" },
+      action: { target: "fans", states: [{ id: 5103, on: true, speed: "turbo" }] },
+    });
+    assert(badSpeed.res.status === 422, `unsupported fan speed should 422: ${JSON.stringify(badSpeed.json)}`);
   }
 
   console.log("ok api: scheduler CRUD / nextFire / validation");

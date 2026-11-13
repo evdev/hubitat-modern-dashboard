@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/evdev/hubitat-modern-dashboard/blob/beta/lib/schedule-upload.schema.json",
+  "title": "Modern Dashboard schedule upload",
+  "description": "Write one JSON object for Modern Dashboard and nothing else. It must match this schema. Use only device names the user gives you. Do not invent devices, rooms, or hub modes. Omit enabled to leave a schedule on. A schedule name that already exists is replaced. Clock times are 24-hour hub-local HH:mm. One-time at is yyyy-MM-ddTHH:mm in hub-local time and must be in the future. Weekly days are SUN, MON, TUE, WED, THU, FRI, SAT. Sunrise and sunset use offsetMin from -720 to 720; negative is before that event. onlyInModes does nothing on a mode trigger. A mode trigger must not set the same hub mode it watches. Do not schedule sensors, music, or scenes. Lights, outlets, locks, blinds, fans, and thermostats need at least one device. Heat must be below cool. Fahrenheit setpoints are 50-90. Celsius setpoints are 10-32. Level is 0-100. ct is color temperature in Kelvin, only for a bulb that supports it. A lock with locked false unlocks and does not ask for a PIN. Shade position is 1-100 and only applies when open is true and that shade supports position. Fan speed must be one that fan reports, such as low, medium, high, or a number like 4. Omit speed to turn the fan on. The speed off turns the fan off.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schedules"],
+  "properties": {
+    "schedules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/schedule" }
+    }
+  },
+  "$defs": {
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "trigger", "action"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Shown in the scheduler. Uploading the same name again replaces that schedule." },
+        "enabled": { "type": "boolean", "description": "Omit to leave the schedule on." },
+        "id": { "type": "string", "description": "Omit. The hub assigns an id. Send one only to replace a schedule whose id you already know." },
+        "onlyInModes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Hub mode names. The schedule runs only while the hub is in one of these modes. Omit or use [] for any mode. Ignored when trigger.kind is mode."
+        },
+        "trigger": { "$ref": "#/$defs/trigger" },
+        "action": { "$ref": "#/$defs/action" }
+      }
+    },
+    "days": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] }
+    },
+    "trigger": {
+      "oneOf": [
+        {
+          "title": "Daily or weekly clock",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "when", "time"],
+          "properties": {
+            "kind": { "enum": ["daily", "weekly"] },
+            "when": { "const": "clock" },
+            "time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "24-hour hub-local time." },
+            "days": { "$ref": "#/$defs/days" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "kind": { "const": "weekly" } }, "required": ["kind"] },
+              "then": { "required": ["days"] }
+            }
+          ]
+        },
+        {
+          "title": "Daily or weekly sunrise or sunset",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "when", "offsetMin"],
+          "properties": {
+            "kind": { "enum": ["daily", "weekly"] },
+            "when": { "enum": ["sunrise", "sunset"] },
+            "offsetMin": { "type": "integer", "minimum": -720, "maximum": 720, "description": "Minutes from the sun event. Negative is before." },
+            "days": { "$ref": "#/$defs/days" }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "kind": { "const": "weekly" } }, "required": ["kind"] },
+              "then": { "required": ["days"] }
+            }
+          ]
+        },
+        {
+          "title": "One time",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "at"],
+          "properties": {
+            "kind": { "const": "once" },
+            "at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?$", "description": "Hub-local yyyy-MM-ddTHH:mm. Must be in the future. The schedule is removed after it runs." }
+          }
+        },
+        {
+          "title": "Hub mode change",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "mode"],
+          "properties": {
+            "kind": { "const": "mode" },
+            "mode": { "type": "string", "minLength": 1, "description": "Exact hub mode name. The schedule runs when the hub enters this mode." }
+          }
+        }
+      ]
+    },
+    "action": {
+      "oneOf": [
+        {
+          "title": "Lights",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "lights" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/lightState" }
+            }
+          }
+        },
+        {
+          "title": "Outlets",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "outlets" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/outletState" }
+            }
+          }
+        },
+        {
+          "title": "Thermostats",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "devices"],
+          "properties": {
+            "target": { "const": "thermostats" },
+            "devices": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1, "description": "Thermostat name, or a numeric hub id." }
+            },
+            "mode": { "type": "string", "description": "heat, cool, auto, off, emergency heat, or another mode that thermostat supports. Omit to change setpoints only. heat and emergency heat require heat. cool requires cool. auto requires both." },
+            "heat": { "type": "integer", "description": "Heat setpoint. 50-90 Fahrenheit or 10-32 Celsius." },
+            "cool": { "type": "integer", "description": "Cool setpoint. Must be above heat. 50-90 Fahrenheit or 10-32 Celsius." },
+            "fanMode": { "type": "string", "description": "auto, on, or circulate, when that thermostat has a fan mode." }
+          }
+        },
+        {
+          "title": "Locks",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "locks" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/lockState" }
+            }
+          }
+        },
+        {
+          "title": "Blinds",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "blinds" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/blindState" }
+            }
+          }
+        },
+        {
+          "title": "Fans",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "states"],
+          "properties": {
+            "target": { "const": "fans" },
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/fanState" }
+            }
+          }
+        },
+        {
+          "title": "Hub mode",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "mode"],
+          "properties": {
+            "target": { "const": "hubMode" },
+            "mode": { "type": "string", "minLength": 1, "description": "Exact hub mode name to set. Must differ from trigger.mode when the trigger is a mode change." }
+          }
+        }
+      ]
+    },
+    "lightState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Light name as selected in the app. Prefer name over id." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "on": { "type": "boolean" },
+        "level": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Dim level. Omit for a switch that cannot dim." },
+        "ct": { "type": "integer", "minimum": 2000, "maximum": 6500, "description": "Color temperature in Kelvin. Omit unless that bulb supports it." }
+      }
+    },
+    "outletState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Outlet name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "on": { "type": "boolean" }
+      }
+    },
+    "lockState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locked"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Lock name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "locked": { "type": "boolean", "description": "false unlocks. A scheduled unlock does not ask for the PIN." }
+      }
+    },
+    "blindState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["open"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Blind or shade name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "open": { "type": "boolean" },
+        "position": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Open position, 1-100. Only when open is true and that shade supports position. Omit to open without a level. Ignored when open is false." }
+      }
+    },
+    "fanState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on"],
+      "anyOf": [{ "required": ["name"] }, { "required": ["id"] }],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Ceiling fan name as selected in the app." },
+        "id": { "type": "string", "description": "Numeric hub device id. Use only when the name is ambiguous." },
+        "on": { "type": "boolean" },
+        "speed": { "type": "string", "minLength": 1, "description": "A speed that fan reports, such as low, medium, high, or 4. Omit to turn on without a speed. off turns the fan off." }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schedules": [
+        {
+          "name": "Porch at sunset",
+          "trigger": { "kind": "daily", "when": "sunset", "offsetMin": -15 },
+          "action": { "target": "lights", "states": [{ "name": "Porch", "on": true, "level": 40 }] }
+        },
+        {
+          "name": "Weekday morning",
+          "onlyInModes": ["Home"],
+          "trigger": { "kind": "weekly", "when": "clock", "time": "06:30", "days": ["MON", "TUE", "WED", "THU", "FRI"] },
+          "action": { "target": "lights", "states": [{ "name": "Kitchen", "on": true, "level": 80, "ct": 3000 }] }
+        },
+        {
+          "name": "Guest outlet off",
+          "trigger": { "kind": "once", "at": "2026-10-09T22:00" },
+          "action": { "target": "outlets", "states": [{ "name": "Guest outlet", "on": false }] }
+        },
+        {
+          "name": "Away cools the house",
+          "trigger": { "kind": "mode", "mode": "Away" },
+          "action": { "target": "thermostats", "devices": ["Hall thermostat"], "mode": "cool", "cool": 78, "fanMode": "auto" }
+        },
+        {
+          "name": "Front door unlocks",
+          "trigger": { "kind": "daily", "when": "clock", "time": "07:00" },
+          "action": { "target": "locks", "states": [{ "name": "Front Door", "locked": false }] }
+        },
+        {
+          "name": "Living room shade",
+          "trigger": { "kind": "daily", "when": "sunrise", "offsetMin": 0 },
+          "action": { "target": "blinds", "states": [{ "name": "Living Room Shade", "open": true, "position": 40 }] }
+        },
+        {
+          "name": "Bedroom fan",
+          "trigger": { "kind": "daily", "when": "clock", "time": "21:00" },
+          "action": { "target": "fans", "states": [{ "name": "Bedroom Fan", "on": true, "speed": "medium" }] }
+        }
+      ]
+    }
+  ]
+}

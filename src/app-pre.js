@@ -390,6 +390,271 @@ function parseSensorEventTimeMsClient(raw) {
   return isNaN(t) ? null : t;
 }
 
+// Java zone ids Hubitat still returns. Browsers want the IANA name.
+const HUB_ZONE_ALIASES = {
+  "US/Eastern": "America/New_York",
+  "US/Central": "America/Chicago",
+  "US/Mountain": "America/Denver",
+  "US/Pacific": "America/Los_Angeles",
+  "US/Alaska": "America/Anchorage",
+  "US/Aleutian": "America/Adak",
+  "US/Hawaii": "Pacific/Honolulu",
+  "US/Arizona": "America/Phoenix",
+  "US/East-Indiana": "America/Indiana/Indianapolis",
+  "US/Michigan": "America/Detroit",
+  "US/Samoa": "Pacific/Pago_Pago",
+  EST5EDT: "America/New_York",
+  CST6CDT: "America/Chicago",
+  MST7MDT: "America/Denver",
+  PST8PDT: "America/Los_Angeles",
+  "SystemV/EST5EDT": "America/New_York",
+  "SystemV/CST6CDT": "America/Chicago",
+  "SystemV/MST7MDT": "America/Denver",
+  "SystemV/PST8PDT": "America/Los_Angeles",
+  "SystemV/AST4ADT": "America/Halifax",
+  "SystemV/YST9YDT": "America/Anchorage",
+  "SystemV/HST10": "Pacific/Honolulu",
+  EST: "America/New_York",
+  CST: "America/Chicago",
+  MST: "America/Denver",
+  PST: "America/Los_Angeles",
+  HST: "Pacific/Honolulu",
+  AST: "America/Halifax",
+  AKST: "America/Anchorage",
+};
+
+function usableTimeZone(value) {
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw) return "";
+  const candidates = [];
+  if (HUB_ZONE_ALIASES[raw]) candidates.push(HUB_ZONE_ALIASES[raw]);
+  candidates.push(raw);
+  for (const id of candidates) {
+    try {
+      const resolved = new Intl.DateTimeFormat("en-US", {
+        timeZone: id,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).resolvedOptions().timeZone;
+      if (resolved) return resolved;
+    } catch (e) {}
+  }
+  return "";
+}
+
+// The hub stays put. Clock displays use its zone, not the phone's UTC offset.
+function hubClockZone() {
+  try {
+    const bridge = globalThis.__MLD && globalThis.__MLD.holidayBridge;
+    const tz = typeof bridge === "function" ? bridge().tz : "";
+    return usableTimeZone(tz);
+  } catch (e) {
+    return "";
+  }
+}
+
+function hubClockInfo() {
+  try {
+    const bridge = globalThis.__MLD && globalThis.__MLD.holidayBridge;
+    if (typeof bridge !== "function") return null;
+    const data = bridge() || {};
+    const zone = usableTimeZone(data.tz);
+    let offsetMin = null;
+    if (data.offsetMin != null && data.offsetMin !== "") {
+      const n = Number(data.offsetMin);
+      if (Number.isFinite(n)) offsetMin = n;
+    }
+    const now = Number(data.now);
+    return { zone, offsetMin, now: Number.isFinite(now) && now > 0 ? now : 0 };
+  } catch (e) {
+    return null;
+  }
+}
+
+function zoneOffsetMinAt(zone, ms) {
+  if (!zone) return null;
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    const bag = {};
+    for (const part of fmt.formatToParts(new Date(ms))) {
+      if (part.type !== "literal") bag[part.type] = part.value;
+    }
+    let hour = Number(bag.hour);
+    if (hour === 24) hour = 0;
+    const stamp = Date.UTC(
+      Number(bag.year),
+      Number(bag.month) - 1,
+      Number(bag.day),
+      hour,
+      Number(bag.minute),
+      Number(bag.second)
+    );
+    return Math.round((stamp - Math.floor(ms / 1000) * 1000) / 60000);
+  } catch (e) {
+    return null;
+  }
+}
+
+// A phone can quietly ignore a time zone and use its own. Compare the zone
+// against the offset the hub reported for its current time; only trust the zone
+// when they agree, so future dates still follow daylight saving.
+let hubZoneCheck = { key: "", ok: false };
+function hubZoneHonored(info) {
+  if (!info || !info.zone || info.offsetMin == null) return false;
+  const key = info.zone + "|" + info.offsetMin + "|" + Math.floor((info.now || 0) / 60000);
+  if (hubZoneCheck.key === key) return hubZoneCheck.ok;
+  const at = info.now || Date.now();
+  const got = zoneOffsetMinAt(info.zone, at);
+  const ok = got != null && Math.abs(got - info.offsetMin) <= 1;
+  hubZoneCheck = { key, ok };
+  return ok;
+}
+
+const HUB_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const HUB_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Fallback for a phone that ignores the time zone: shift the instant by the
+// offset the hub reported, then read the parts as if they were UTC.
+function offsetWallBag(ms, offsetMin, withSeconds) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || !Number.isFinite(offsetMin)) return null;
+  const d = new Date(n + offsetMin * 60000);
+  const bag = {
+    year: String(d.getUTCFullYear()),
+    month: HUB_MONTHS[d.getUTCMonth()],
+    day: String(d.getUTCDate()),
+    weekday: HUB_WEEKDAYS[d.getUTCDay()],
+    hour: String(d.getUTCHours()).padStart(2, "0"),
+    minute: String(d.getUTCMinutes()).padStart(2, "0"),
+    hour24: d.getUTCHours(),
+    fromOffset: true,
+  };
+  if (withSeconds) bag.second = String(d.getUTCSeconds()).padStart(2, "0");
+  return bag;
+}
+
+const hubWallFormatters = new Map();
+
+function hubWallFormatter(zone, withSeconds) {
+  const key = (zone || "") + (withSeconds ? "|s" : "");
+  let fmt = hubWallFormatters.get(key);
+  if (fmt) return fmt;
+  const options = {
+    year: "numeric",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    dayPeriod: "short",
+  };
+  if (withSeconds) options.second = "2-digit";
+  if (zone) options.timeZone = zone;
+  fmt = new Intl.DateTimeFormat("en-US", options);
+  hubWallFormatters.set(key, fmt);
+  return fmt;
+}
+function hubHour24(bag) {
+  let hour = Number(bag.hour);
+  if (!Number.isFinite(hour)) return null;
+  if (hour === 24) hour = 0;
+  const period = String(bag.dayPeriod || "");
+  if (period) {
+    const pm = /^p/i.test(period);
+    if (pm && hour < 12) hour += 12;
+    if (!pm && hour === 12) hour = 0;
+  }
+  return hour;
+}
+
+function hubWallBag(ms, zone, withSeconds) {
+  const n = Number(ms);
+  if (!Number.isFinite(n)) return null;
+  const info = hubClockInfo();
+  let resolved = zone || "";
+  if (info && info.zone) {
+    if (!resolved) resolved = info.zone;
+    else if (resolved === info.zone && !hubZoneHonored(info) && info.offsetMin != null) {
+      const shifted = offsetWallBag(n, info.offsetMin, withSeconds);
+      if (shifted) return shifted;
+    }
+  }
+  if (!resolved && info && info.offsetMin != null) {
+    const shifted = offsetWallBag(n, info.offsetMin, withSeconds);
+    if (shifted) return shifted;
+  }
+  let parts;
+  try {
+    parts = hubWallFormatter(resolved, withSeconds).formatToParts(new Date(n));
+  } catch (e) {
+    return null;
+  }
+  const bag = {};
+  for (const part of parts) if (part.type !== "literal") bag[part.type] = part.value;
+  const hour = hubHour24(bag);
+  if (hour == null) return null;
+  bag.hour24 = hour;
+  return bag;
+}
+
+// 12-hour text is built here. Asking the browser for a 12-hour clock makes some
+// phones ignore the hub time zone and show their own hour.
+function formatHubWall(ms, zone, opts) {
+  const bag = hubWallBag(ms, zone, !!(opts && opts.seconds));
+  if (!bag) return "";
+  const minute = bag.minute || "00";
+  const second = opts && opts.seconds && bag.second ? ":" + bag.second : "";
+  let time;
+  if (opts && opts.hour24) time = String(bag.hour24).padStart(2, "0") + ":" + minute + second;
+  else time = (bag.hour24 % 12 || 12) + ":" + minute + second + " " + (bag.hour24 >= 12 ? "PM" : "AM");
+  const bits = [];
+  if (opts && opts.weekday && bag.weekday) bits.push(bag.weekday);
+  if (opts && opts.month && bag.month) bits.push(bag.month + " " + bag.day);
+  if (!bits.length) return time;
+  return bits.join(", ") + ", " + time;
+}
+
+function formatHubDate(ms, zone) {
+  const bag = hubWallBag(ms, zone, false);
+  if (!bag || !bag.month) return "";
+  return bag.month + " " + bag.day;
+}
+
+function formatHubDay(ms, zone) {
+  const bag = hubWallBag(ms, zone, false);
+  if (!bag || !bag.month) return "";
+  return (bag.weekday ? bag.weekday + ", " : "") + bag.month + " " + bag.day;
+}
+
+function browserHour24() {
+  try {
+    return new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hour12 === false;
+  } catch (e) {
+    return false;
+  }
+}
+
+function formatHubHm(hm, hour24) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(hm || "").trim());
+  if (!match) return "";
+  const hh = Number(match[1]);
+  if (hh > 23) return "";
+  const minute = match[2];
+  if (hour24) return String(hh).padStart(2, "0") + ":" + minute;
+  return (hh % 12 || 12) + ":" + minute + " " + (hh >= 12 ? "PM" : "AM");
+}
+
 function formatSensorLastEvent(ms) {
   const n = Number(ms);
   if (ms == null || isNaN(n)) return "";
@@ -404,13 +669,16 @@ function formatSensorLastEvent(ms) {
     const hrs = Math.max(1, Math.floor(diff / 3600000));
     return hrs + " hr ago";
   }
-  const d = new Date(n);
-  if (isNaN(d.getTime())) return "";
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) {
-    return d.toLocaleString([], { hour: "numeric", minute: "2-digit" });
-  }
-  return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const zone = hubClockZone();
+  const sameDay = hubDayKey(n, zone) === hubDayKey(now, zone);
+  return formatHubWall(n, zone, sameDay ? { hour24: browserHour24() } : { month: true, hour24: browserHour24() });
+}
+
+function hubDayKey(ms, zone) {
+  const bag = hubWallBag(ms, zone, false);
+  if (!bag || !bag.day) return "";
+  const month = String(HUB_MONTHS.indexOf(String(bag.month)) + 1).padStart(2, "0");
+  return bag.year + "-" + month + "-" + String(bag.day).padStart(2, "0");
 }
 
 function sensorLastEventLine(dev) {
@@ -545,6 +813,7 @@ const MUSIC_ART_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linear
 
 const OUTLET_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="qnOutlet" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9fe7ff"/><stop offset="1" stop-color="#2b9bd6"/></linearGradient></defs><rect x="3.8" y="2.7" width="16.4" height="18.6" rx="3.4" fill="url(#qnOutlet)" stroke="#1f7aa8" stroke-width="0.9"/><rect x="3.8" y="2.7" width="16.4" height="18.6" rx="3.4" fill="none" stroke="#ffffff" stroke-width="0.5" opacity="0.45"/><circle cx="12" cy="5.4" r="0.55" fill="#1f7aa8" opacity="0.55"/><rect x="8.1" y="8" width="1.7" height="5.4" rx="0.85" fill="#ffffff"/><rect x="14.2" y="8" width="1.7" height="5.4" rx="0.85" fill="#ffffff"/><circle cx="12" cy="17.1" r="1.55" fill="#ffffff"/></svg>';
 
+const SYNAGOGUE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" overflow="visible"><defs><linearGradient id="qnSyn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9eb6ff"/><stop offset="1" stop-color="#3b6bff"/></linearGradient><linearGradient id="qnSynGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#e0913a"/></linearGradient></defs><path fill="url(#qnSynGold)" stroke="#c98a2a" stroke-width="0.4" stroke-linejoin="round" fill-rule="evenodd" d="M12 .65 15.2 6.2H8.8ZM12 7.45 8.8 1.9h6.4Z"/><path d="M4.2 21.5V12.1L12 8.4l7.8 3.7v9.4H4.2z" fill="url(#qnSyn)" stroke="#2b54e6" stroke-width="0.7" stroke-linejoin="round"/><path d="M10.05 21.5v-3.7a1.95 1.95 0 0 1 3.9 0v3.7z" fill="#10224a" stroke="#d6e2ff" stroke-width="0.35"/></svg>';
 const QUICK_NAV = [
   { id: "quick-locks", popup: "locks", title: "Locks", svg: LOCK_SVG },
   { id: "quick-scenes", popup: "scenes", title: "Scenes", svg: SCENES_SVG },
@@ -554,6 +823,7 @@ const QUICK_NAV = [
   { id: "quick-fans", popup: "fans", title: "Fans", svg: FANS_SVG },
   { id: "quick-outlets", popup: "outlets", title: "Outlets", svg: OUTLET_SVG },
   { id: "quick-scheduling", popup: "scheduling", title: "Scheduling", svg: SCHEDULE_SVG },
+  { id: "quick-synagogue", popup: "synagogue", title: "Synagogue", svg: SYNAGOGUE_SVG },
   { id: "quick-sensors", popup: "sensors", title: "Sensors", svg: SENSORS_SVG },
   { id: "quick-thermostats", popup: "thermostats", title: "Thermostats", svg: TSTAT_NAV_SVG },
   { id: "quick-music", popup: "music", title: "Music", svg: MUSIC_SVG },
@@ -1030,6 +1300,33 @@ function autoScheduleName(draft, catalogs, formatters) {
     const ids = Array.isArray(raw) ? raw : (raw != null && raw !== "" ? [raw] : []);
     scope = scopeFrom(ids, catalogs?.thermostats || [], "Thermostat", "Thermostats");
     state = thermoState(ac);
+  } else if (target === "locks" || target === "blinds" || target === "fans") {
+    const states = (Array.isArray(ac.states) ? ac.states : (ac.states && typeof ac.states === "object" ? [ac.states] : []))
+      .filter((s) => s && s.id != null && s.id !== "");
+    if (target === "locks") {
+      scope = scopeFrom(states.map((s) => s.id), catalogs?.locks || [], "Lock", "Locks");
+      state = states.length && states.every((s) => s.locked === false) ? "Unlocked"
+        : states.length && states.every((s) => s.locked !== false) ? "Locked"
+        : states.length ? "Set" : "";
+    } else if (target === "blinds") {
+      scope = scopeFrom(states.map((s) => s.id), catalogs?.windowShades || [], "Blind", "Blinds");
+      state = states.length && states.every((s) => s.open === true) ? "Open"
+        : states.length && states.every((s) => s.open !== true) ? "Closed"
+        : states.length ? "Set" : "";
+    } else {
+      scope = scopeFrom(states.map((s) => s.id), catalogs?.ceilingFans || [], "Fan", "Fans");
+      const ons = states.filter((s) => s.on === true);
+      const speed = ons.length && String(ons[0].speed || "").trim();
+      const sameSpeed = ons.length === states.length && speed
+        && ons.every((s) => String(s.speed || "").trim().toLowerCase() === speed.toLowerCase());
+      if (states.length && states.every((s) => s.on !== true)) state = "Off";
+      else if (sameSpeed) {
+        const key = speed.toLowerCase();
+        const labels = { low: "Low", "medium-low": "Med-Low", medium: "Medium", "medium-high": "Med-High", high: "High" };
+        state = labels[key] || (key.charAt(0).toUpperCase() + key.slice(1));
+      } else if (states.length && states.every((s) => s.on === true)) state = "On";
+      else if (states.length) state = "Set";
+    }
   } else if (target === "hubMode") {
     scope = "Hub Mode";
     state = String(ac.mode || "").trim();

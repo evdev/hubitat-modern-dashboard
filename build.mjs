@@ -5,7 +5,7 @@
 //   dist/ModernLightsDashboard.bundle.zip — Hubitat Bundles → Import ZIP
 //   hubitat/packageManifest.json          — HPM manifest (apps + files)
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -42,6 +42,10 @@ const APP_DISPLAY_NAME = "Modern Dashboard";
 const HPM_BASE_URL =
   process.env.HPM_BASE_URL ??
   "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist";
+// Package title in HPM. Match Up uses the app name and namespace, which stay
+// "Modern Dashboard" / mDash. A master build keeps the release title.
+const HPM_IS_BETA = /\/beta(\/|$)/.test(HPM_BASE_URL);
+const HPM_PACKAGE_NAME = HPM_IS_BETA ? "mDash beta" : APP_DISPLAY_NAME;
 
 const APP_AUTHOR = "Ephrayim (evdev)";
 const GITHUB_URL = "https://github.com/evdev/hubitat-modern-dashboard";
@@ -65,6 +69,13 @@ const PACKAGE_MANIFEST_URL =
 
 // Stable UUIDs for HPM update tracking (do not regenerate per build)
 const HPM_APP_ID = "a4f8c2e1-6b3d-4a9f-8e7c-1d2b3c4d5e6f";
+const HPM_HOLIDAY_APP_ID = "c1d2e3f4-a5b6-4789-8abc-def012345678";
+const HPM_HOLIDAY_PACKAGE_ID = "d4e5f6a7-b8c9-4012-9abc-def123456789";
+const HOLIDAY_PACKAGE_NAME = "mDash Shabbat and Holidays";
+const HPM_SYNAGOGUE_APP_ID = "b7e1c4a2-6d8f-4b31-9a70-2c5e8f1d4a63";
+const HPM_SYNAGOGUE_PACKAGE_ID = "c6d5e4f3-a2b1-4098-8c7d-6e5f4a3b2c1d";
+const HPM_SYNAGOGUE_FILE_ID = "e1f2a3b4-c5d6-4789-a012-3456789abcde";
+const SYNAGOGUE_PACKAGE_NAME = "mDash Synagogue";
 // New UUID (0.3.46): namespace/name change cannot be applied via HPM upgradeDriver on the
 // old heID — fresh installDriver is required. Keep stable from here for main channel.
 const HPM_DRIVER_ID = "e2f3a4b5-c6d7-8901-ef23-456789012bcd";
@@ -83,6 +94,7 @@ const FILE_MANAGER_ASSETS = [
   { id: "f5e6a7b8-c9d0-1234-ef01-345678901234", name: "mld-app-post.js" },
   { id: "e7f8a9b0-c1d2-3456-7890-abcdef123456", name: "mld-app-post2.js" },
   { id: "f8a9b0c1-d2e3-4567-8901-bcdef1234567", name: "mld-app-post3.js" },
+  { id: "a9b8c7d6-e5f4-4321-abcd-ef0987654321", name: "mld-holiday.js" },
   { id: "a6f7b8c9-d0e1-2345-f012-456789012345", name: "mld-manifest.webmanifest" },
   { id: "b7a8c9d0-e1f2-3456-0123-567890123456", name: "mld-sw.js" },
   { id: "c8b9d0e1-f2a3-4567-1234-678901234567", name: "mld-icon-192.b64" },
@@ -490,13 +502,88 @@ function assertUploadBlobLimits() {
   }
 }
 
-/** Minify without renaming identifiers so split-chunk __MLD exports stay stable. */
+/** Self-contained IIFE. Local names can be shortened; globalThis property names stay. */
+function bundleHolidayJs() {
+  const css = esbuild.transformSync(readFileSync(join(root, "src", "holiday.css"), "utf8"), {
+    loader: "css",
+    minify: true,
+  }).code;
+  const source = readFileSync(join(root, "src", "holiday.js"), "utf8")
+    .replace("__HOLIDAY_CSS__", JSON.stringify(css));
+  for (const name of ["flash", "holidayBridge", "getJson", "postJson"]) {
+    if (!source.includes(`.${name}`)) {
+      throw new Error(`holiday.js must call the dashboard helper ${name}`);
+    }
+  }
+  const result = esbuild.buildSync({
+    stdin: {
+      contents: source,
+      resolveDir: join(root, "src"),
+      sourcefile: "holiday.js",
+      loader: "js",
+    },
+    bundle: true,
+    format: "iife",
+    write: false,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    legalComments: "none",
+    target: ["es2018"],
+  });
+  const text = result.outputFiles[0].text;
+  if (!text.includes("globalThis.mldHoliday={mount:")) {
+    throw new Error("mld-holiday.js lost its mount export");
+  }
+  return text;
+}
+
+function bundleSynagogueJs() {
+  const css = esbuild.transformSync(readFileSync(join(root, "src", "synagogue.css"), "utf8"), {
+    loader: "css",
+    minify: true,
+  }).code;
+  const dir = join(root, "src", "synagogue");
+  const parts = readdirSync(dir).filter((name) => name.endsWith(".js")).sort();
+  if (!parts.length) throw new Error("src/synagogue has no scripts");
+  const source = parts.map((name) => readFileSync(join(dir, name), "utf8")).join("\n")
+    .replace("__SYNAGOGUE_CSS__", JSON.stringify(css));
+  for (const name of ["flash", "getJson", "postJsonSilent"]) {
+    if (!source.includes(`.${name}`)) {
+      throw new Error(`synagogue.js must call the dashboard helper ${name}`);
+    }
+  }
+  const result = esbuild.buildSync({
+    stdin: {
+      contents: source,
+      resolveDir: join(root, "src"),
+      sourcefile: "synagogue.js",
+      loader: "js",
+    },
+    bundle: true,
+    format: "iife",
+    write: false,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    legalComments: "none",
+    target: ["es2018"],
+  });
+  const text = result.outputFiles[0].text;
+  if (!text.includes("globalThis.mldSynagogue={mount:")) {
+    throw new Error("mld-synagogue.js lost its mount export");
+  }
+  return text;
+}
+
 function minifyJs(label, source) {
   const result = esbuild.transformSync(source, {
     loader: "js",
     minifyWhitespace: true,
     minifySyntax: true,
-    minifyIdentifiers: false,
+    // Renames locals only. Script top-level names (app-pre globals) are kept, and chunks
+    // reach each other through __MLD property names, which renaming never touches.
+    minifyIdentifiers: true,
     legalComments: "none",
     target: ["es2018"],
   });
@@ -619,6 +706,8 @@ const jsOutputs = [
   ["mld-app-post.js", minifyJs("mld-app-post.js", part2Out)],
   ["mld-app-post2.js", minifyJs("mld-app-post2.js", part3Out)],
   ["mld-app-post3.js", minifyJs("mld-app-post3.js", part4Out)],
+  ["mld-holiday.js", bundleHolidayJs()],
+  ["mld-synagogue.js", bundleSynagogueJs()],
 ];
 
 for (const [name, content] of jsOutputs) {
@@ -671,6 +760,8 @@ if (!groovy.includes(',"id":"/mDash"')) {
   throw new Error("Generated Groovy manifest is missing stable PWA id");
 }
 writeFileSync(join(dist, "ModernLightsDashboard.groovy"), groovy);
+copyFileSync(join(root, "app", "mDashHolidays.groovy"), join(dist, "mDashHolidays.groovy"));
+copyFileSync(join(root, "app", "mDashSynagogue.groovy"), join(dist, "mDashSynagogue.groovy"));
 
 const driverSrc = join(root, "drivers", DRIVER_FILE);
 const driverOutDir = join(dist, "drivers");
@@ -730,7 +821,7 @@ THEN (required — bundles cannot install File Manager files or enable OAuth):
   Apps → Add User App → ${APP_DISPLAY_NAME} → select devices → Done
 
 HPM INSTALL (recommended):
-  Hubitat Package Manager → search for Modern Dashboard → Install
+  Hubitat Package Manager → search for ${HPM_PACKAGE_NAME} → Install
   OAuth and File Manager files are handled automatically.
   Listed in the default HPM repository (no custom repo URL required).
 `
@@ -741,7 +832,7 @@ rmSync(bundleZip, { force: true });
 execSync(`cd "${staging}" && zip -rq "${bundleZip}" .`, { stdio: "inherit" });
 
 const hpmManifest = {
-  packageName: APP_DISPLAY_NAME,
+  packageName: HPM_PACKAGE_NAME,
   minimumHEVersion: "2.3.0",
   author: APP_AUTHOR,
   version: pkg.version,
@@ -772,17 +863,65 @@ const hpmManifest = {
       required: true,
     },
   ],
-  files: FILE_MANAGER_ASSETS.map(({ id, name }) => ({
+  files: FILE_MANAGER_ASSETS.filter((asset) => asset.name !== "mld-holiday.js").map(({ id, name }) => ({
     id,
     name,
     location: `${HPM_BASE_URL}/upload/${name}`,
   })),
 };
 
+const holidayFile = FILE_MANAGER_ASSETS.find((asset) => asset.name === "mld-holiday.js");
+const holidayManifest = {
+  packageName: HOLIDAY_PACKAGE_NAME,
+  minimumHEVersion: "2.3.0",
+  author: APP_AUTHOR,
+  version: pkg.version,
+  dateReleased: hpmManifest.dateReleased,
+  licenseFile: LICENSE_URL,
+  releaseNotes: "Optional Shabbat and Yom Tov schedules for Modern Dashboard. Installs mld-holiday.js. Modern Dashboard turns the feature on when that file is in File Manager.",
+  documentationLink: `${GITHUB_URL}#readme`,
+  communityLink: COMMUNITY_LINK,
+  gitHubUrl: GITHUB_URL,
+  apps: [
+    {
+      id: HPM_HOLIDAY_APP_ID,
+      name: HOLIDAY_PACKAGE_NAME,
+      namespace: NS,
+      location: `${HPM_BASE_URL}/mDashHolidays.groovy`,
+      required: true,
+      oauth: false,
+      primary: true,
+    },
+  ],
+  drivers: [],
+  files: [
+    {
+      id: holidayFile.id,
+      name: holidayFile.name,
+      location: `${HPM_BASE_URL}/upload/${holidayFile.name}`,
+    },
+  ],
+};
+
 const hpmManifestJson = JSON.stringify(hpmManifest, null, "\t") + "\n";
+const holidayManifestJson = JSON.stringify(holidayManifest, null, "\t") + "\n";
 mkdirSync(hubitat, { recursive: true });
 writeFileSync(join(hubitat, "packageManifest.json"), hpmManifestJson);
 writeFileSync(join(dist, "packageManifest.json"), hpmManifestJson);
+writeFileSync(join(hubitat, "holidayPackageManifest.json"), holidayManifestJson);
+
+const holidayManifestUrl = PACKAGE_MANIFEST_URL.replace(
+  /packageManifest\.json$/,
+  "holidayPackageManifest.json"
+);
+const holidayRepositoryPackage = {
+  id: HPM_HOLIDAY_PACKAGE_ID,
+  name: HOLIDAY_PACKAGE_NAME,
+  category: "Convenience",
+  location: holidayManifestUrl,
+  description: "Optional Shabbat and Yom Tov schedules for Modern Dashboard. Installs mld-holiday.js. Leave this uninstalled unless you want that feature.",
+  tags: ["Dashboards", "Climate Control"],
+};
 
 const repositoryPath = join(hubitat, "repository.json");
 let existingRepository = {};
@@ -791,7 +930,7 @@ try {
 } catch {}
 const currentRepositoryPackage = {
   id: HPM_REPO_PACKAGE_ID,
-  name: APP_DISPLAY_NAME,
+  name: HPM_PACKAGE_NAME,
   category: "Convenience",
   location: PACKAGE_MANIFEST_URL,
   description: PACKAGE_DESCRIPTION,
@@ -812,6 +951,70 @@ const repositoryPackageIndex = repositoryPackages.findIndex(
 );
 if (repositoryPackageIndex >= 0) repositoryPackages[repositoryPackageIndex] = currentRepositoryPackage;
 else repositoryPackages.push(currentRepositoryPackage);
+const holidayPackageIndex = repositoryPackages.findIndex(
+  (entry) => entry?.id === HPM_HOLIDAY_PACKAGE_ID
+);
+// Optional packages stay on the beta channel. A main-channel build keeps their
+// code in the dashboard, but does not list the packages in the HPM repository.
+if (HPM_IS_BETA) {
+  if (holidayPackageIndex >= 0) repositoryPackages[holidayPackageIndex] = holidayRepositoryPackage;
+  else repositoryPackages.push(holidayRepositoryPackage);
+} else if (holidayPackageIndex >= 0) {
+  repositoryPackages.splice(holidayPackageIndex, 1);
+}
+const synagogueManifestUrl = PACKAGE_MANIFEST_URL.replace(
+  /packageManifest\.json$/,
+  "synagoguePackageManifest.json"
+);
+const synagogueManifest = {
+  packageName: SYNAGOGUE_PACKAGE_NAME,
+  minimumHEVersion: "2.3.0",
+  author: APP_AUTHOR,
+  version: pkg.version,
+  dateReleased: hpmManifest.dateReleased,
+  licenseFile: LICENSE_URL,
+  releaseNotes: "Optional synagogue schedules for Modern Dashboard. Installs mld-synagogue.js. Modern Dashboard turns the feature on when that file is in File Manager.",
+  documentationLink: `${GITHUB_URL}#readme`,
+  communityLink: COMMUNITY_LINK,
+  gitHubUrl: GITHUB_URL,
+  apps: [
+    {
+      id: HPM_SYNAGOGUE_APP_ID,
+      name: SYNAGOGUE_PACKAGE_NAME,
+      namespace: NS,
+      location: `${HPM_BASE_URL}/mDashSynagogue.groovy`,
+      required: true,
+      oauth: false,
+      primary: true,
+    },
+  ],
+  drivers: [],
+  files: [
+    {
+      id: HPM_SYNAGOGUE_FILE_ID,
+      name: "mld-synagogue.js",
+      location: `${HPM_BASE_URL}/upload/mld-synagogue.js`,
+    },
+  ],
+};
+writeFileSync(join(hubitat, "synagoguePackageManifest.json"), JSON.stringify(synagogueManifest, null, "\t") + "\n");
+const synagogueRepositoryPackage = {
+  id: HPM_SYNAGOGUE_PACKAGE_ID,
+  name: SYNAGOGUE_PACKAGE_NAME,
+  category: "Convenience",
+  location: synagogueManifestUrl,
+  description: "Optional synagogue schedules for Modern Dashboard. Installs mld-synagogue.js. Leave this uninstalled unless you want that feature.",
+  tags: ["Dashboards", "Climate Control"],
+};
+const synagoguePackageIndex = repositoryPackages.findIndex(
+  (entry) => entry?.id === HPM_SYNAGOGUE_PACKAGE_ID
+);
+if (HPM_IS_BETA) {
+  if (synagoguePackageIndex >= 0) repositoryPackages[synagoguePackageIndex] = synagogueRepositoryPackage;
+  else repositoryPackages.push(synagogueRepositoryPackage);
+} else if (synagoguePackageIndex >= 0) {
+  repositoryPackages.splice(synagoguePackageIndex, 1);
+}
 const hpmRepository = {
   ...existingRepository,
   author: existingRepository.author || APP_AUTHOR,

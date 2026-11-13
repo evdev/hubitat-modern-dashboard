@@ -39,6 +39,8 @@
   const MENU_OPEN_LOCAL_BTN = document.getElementById("menu-open-local");
   const MENU_OPEN_CLOUD_BTN = document.getElementById("menu-open-cloud");
   const MENU_LOCAL_URL_EL = document.getElementById("menu-local-url");
+  const MENU_INSTALL_WRAP = document.getElementById("menu-install-wrap");
+  const MENU_INSTALL_BTN = document.getElementById("menu-install");
   const HAPTICS_STORAGE_KEY = "mld_haptics";
   const NOTIF_SOUND_STORAGE_KEY = "mld_notif_sound";
   const NOTIF_SNOOZE_STORAGE_KEY = "mld_notif_snooze";
@@ -679,6 +681,7 @@
   const tstatDeviceModeLock = new Map(); // id -> { until, mode }
   const tstatFanModeLock = new Map(); // id -> { until, mode }
   const tstatVaneLock = new Map(); // id -> { until, position }
+  const tstatEcoLock = new Map(); // id -> { until, mode, prevEco }
 
   let musicMasterPopup = null;
   let fanMasterPopup = null;
@@ -779,6 +782,7 @@
   let scenesPopupEnabled = true;
   let roomClimateEnabled = true;
   let schedulerEnabled = true;
+  let synagogueAvailable = false;
   let unlockPinEnabled = false;
   let unlockPinRequired = false;
   let hsmLockUntil = 0;
@@ -802,8 +806,8 @@
   }
 
   // ---------- tab mode (inline tabs instead of popups) ----------
-  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "cameras", "blinds", "fans", "outlets", "scheduling"]);
-  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", cameras: "Cameras", blinds: "Blinds", fans: "Fans", outlets: "Outlets", scheduling: "Scheduler" };
+  const TAB_CATEGORIES = new Set(["favorites", "sensors", "thermostats", "music", "cameras", "blinds", "fans", "outlets", "scheduling", "synagogue"]);
+  const TAB_LABELS = { lights: "Lights", favorites: "Favorites", sensors: "Sensors", thermostats: "Thermostats", music: "Music", cameras: "Cameras", blinds: "Blinds", fans: "Fans", outlets: "Outlets", scheduling: "Scheduler", synagogue: "Synagogue" };
   let tabMode = cfg.enableTabs;
   let activeTab = "lights";
   let defaultTabApplied = false;
@@ -821,59 +825,277 @@
   let tstatsPopupMap = new Map();
   let tstatsPopupSig = "";
 
+  const optimisticSettle = new Map(); // id -> { gen, timer, pollTimer, inflight }
+  const OPTIMISTIC_FAIL_CMDS = new Set([
+    "on", "off", "setLevel", "lock", "unlock", "open", "close", "setPosition", "stop",
+    "setSpeed", "play", "pause", "setVolume", "mute", "unmute",
+    "setHeat", "setCool", "setMode", "modeAuto", "modeHeat", "modeCool", "off",
+    "setFanMode", "setComfortMode", "setComfortFanSpeed", "setVanePosition",
+    "setEcoMode",
+  ]);
+
+  function optimisticNumsClose(a, b, tol) {
+    const na = Number(a);
+    const nb = Number(b);
+    if (!Number.isFinite(na) || !Number.isFinite(nb)) return false;
+    return Math.abs(na - nb) <= (tol == null ? 0 : tol);
+  }
+
+  function deviceReportsSlow(id) {
+    const n = Number(id);
+    const lists = [devices, outlets, thermostats, locks, garageDoors, windowShades, ceilingFans, valves, music];
+    for (const list of lists) {
+      if (!list) continue;
+      const hit = list.find((d) => d && Number(d.i) === n);
+      if (hit) return !!hit.poll;
+    }
+    return false;
+  }
+
+  function hasOptimisticHold(id) {
+    if (switchOptimistic.has(id) || levelOptimistic.has(id) || lockOptimistic.has(id)) return true;
+    if (garageOptimistic.has(id) || shadeOptimistic.has(id) || fanOptimistic.has(id)) return true;
+    if (valveOptimistic.has(id) || musicOptimistic.has(id) || setpointOptimistic.has(id)) return true;
+    if (tstatDeviceModeLock.has(id) || tstatFanModeLock.has(id) || tstatVaneLock.has(id) || tstatEcoLock.has(id)) return true;
+    return !!(tstatSession?.modeLockUntil > Date.now() && tstatSession.ids?.includes(id));
+  }
+
+  function optimisticHoldMaps() {
+    return [
+      switchOptimistic, levelOptimistic, lockOptimistic, garageOptimistic, shadeOptimistic,
+      fanOptimistic, valveOptimistic, musicOptimistic, setpointOptimistic,
+      tstatDeviceModeLock, tstatFanModeLock, tstatVaneLock, tstatEcoLock,
+    ];
+  }
+
+  function armOptimisticSettle(id, ms) {
+    let slot = optimisticSettle.get(id);
+    if (!slot) {
+      slot = { gen: 0, timer: null, pollTimer: null, inflight: null };
+      optimisticSettle.set(id, slot);
+    }
+    slot.gen += 1;
+    const gen = slot.gen;
+    if (slot.timer) clearTimeout(slot.timer);
+    if (slot.pollTimer) clearTimeout(slot.pollTimer);
+    slot.timer = setTimeout(() => {
+      slot.timer = null;
+      postCall("settleOptimisticDevice", id, gen);
+    }, ms);
+    if (deviceReportsSlow(id)) {
+      slot.pollTimer = setTimeout(() => {
+        slot.pollTimer = null;
+        if (optimisticSettle.get(id)?.gen !== gen) return;
+        if (!hasOptimisticHold(id)) return;
+        postCall("kickDevicePoll", id);
+      }, 1000);
+    }
+  }
+
+  function releaseOptimisticHold(id) {
+    if (hasOptimisticHold(id)) return;
+    const slot = optimisticSettle.get(id);
+    if (!slot) return;
+    slot.gen += 1;
+    if (slot.timer) clearTimeout(slot.timer);
+    if (slot.pollTimer) clearTimeout(slot.pollTimer);
+    slot.timer = null;
+    slot.pollTimer = null;
+  }
+
+  function noteOptimisticExpiry(id, opt) {
+    if (!opt || opt.checking) return;
+    opt.checking = true;
+    opt.until = Date.now() + 20000;
+    postCall("settleOptimisticDevice", id);
+  }
+
+  function captureOptimistic(id) {
+    const session = (tstatSession?.modeLockUntil > Date.now() && tstatSession.ids?.includes(id))
+      ? { mode: tstatSession.lockedMode }
+      : null;
+    const snap = {
+      sw: switchOptimistic.get(id) ? { ...switchOptimistic.get(id) } : null,
+      lv: levelOptimistic.get(id) ? { ...levelOptimistic.get(id) } : null,
+      lock: lockOptimistic.get(id) ? { ...lockOptimistic.get(id) } : null,
+      garage: garageOptimistic.get(id) ? { ...garageOptimistic.get(id) } : null,
+      shade: shadeOptimistic.get(id) ? { ...shadeOptimistic.get(id) } : null,
+      fan: fanOptimistic.get(id) ? { ...fanOptimistic.get(id) } : null,
+      valve: valveOptimistic.get(id) ? { ...valveOptimistic.get(id) } : null,
+      music: musicOptimistic.get(id) ? { ...musicOptimistic.get(id) } : null,
+      sp: setpointOptimistic.get(id) ? { ...setpointOptimistic.get(id) } : null,
+      mode: tstatDeviceModeLock.get(id) ? { ...tstatDeviceModeLock.get(id) } : null,
+      fanMode: tstatFanModeLock.get(id) ? { ...tstatFanModeLock.get(id) } : null,
+      vane: tstatVaneLock.get(id) ? { ...tstatVaneLock.get(id) } : null,
+      eco: tstatEcoLock.get(id) ? { ...tstatEcoLock.get(id) } : null,
+      session,
+    };
+    if (!snap.sw && !snap.lv && !snap.lock && !snap.garage && !snap.shade && !snap.fan && !snap.valve && !snap.music && !snap.sp && !snap.mode && !snap.fanMode && !snap.vane && !snap.session) {
+      return null;
+    }
+    return snap;
+  }
+
+  function restoreOptimisticSnapshot(id, snap) {
+    if (!snap) return;
+    if (snap.sw || snap.lv) {
+      const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
+      if (dev) {
+        const prevS = snap.sw && snap.sw.prevS !== undefined ? snap.sw.prevS : snap.lv?.prevS;
+        const prevL = snap.sw && snap.sw.prevL !== undefined ? snap.sw.prevL : snap.lv?.prevL;
+        if (prevS !== undefined) dev.s = prevS;
+        if (prevL !== undefined) dev.l = prevL;
+      }
+    }
+    if (snap.lock) {
+      const lock = locks.find((l) => l.i === id);
+      if (lock) {
+        if (snap.lock.prevLk !== undefined) lock.lk = snap.lock.prevLk;
+        if (snap.lock.prevSt !== undefined) lock.st = snap.lock.prevSt;
+      }
+    }
+    if (snap.garage) {
+      const door = garageDoors.find((g) => g.i === id);
+      if (door && snap.garage.prevSt !== undefined) door.st = snap.garage.prevSt;
+    }
+    if (snap.shade) {
+      const shade = windowShades.find((s) => s.i === id);
+      if (shade) {
+        if (snap.shade.prevSt !== undefined) shade.st = snap.shade.prevSt;
+        if (snap.shade.prevPos !== undefined) shade.pos = snap.shade.prevPos;
+      }
+    }
+    if (snap.fan) {
+      const fan = ceilingFans.find((f) => f.i === id);
+      if (fan) {
+        if (snap.fan.prevS !== undefined) fan.s = snap.fan.prevS;
+        if (snap.fan.prevSp !== undefined) fan.sp = snap.fan.prevSp;
+      }
+    }
+    if (snap.valve) {
+      const valve = valves.find((v) => v.i === id);
+      if (valve && snap.valve.prevSt !== undefined) valve.st = snap.valve.prevSt;
+    }
+    if (snap.music) {
+      const dev = music.find((m) => m.i === id);
+      if (dev) {
+        if (snap.music.prevSt !== undefined) dev.st = snap.music.prevSt;
+        if (snap.music.prevV !== undefined) dev.v = snap.music.prevV;
+      }
+    }
+    if (snap.sp) {
+      const t = thermostats.find((x) => x.i === id);
+      if (t) {
+        if (snap.sp.prevHsp !== undefined) t.hsp = snap.sp.prevHsp;
+        if (snap.sp.prevCsp !== undefined) t.csp = snap.sp.prevCsp;
+      }
+    }
+    const t = thermostats.find((x) => x.i === id);
+    if (t && snap.mode) {
+      if (snap.mode.prevTm !== undefined) t.tm = snap.mode.prevTm;
+      if (snap.mode.prevOs !== undefined) t.os = snap.mode.prevOs;
+    }
+    if (t && snap.fanMode) {
+      if (snap.fanMode.prevFm !== undefined) t.fm = snap.fanMode.prevFm;
+      if (snap.fanMode.prevCfs !== undefined) t.cfs = snap.fanMode.prevCfs;
+      if (snap.fanMode.prevOs !== undefined) t.os = snap.fanMode.prevOs;
+    }
+    if (t && snap.vane && snap.vane.prevVp !== undefined) t.vp = snap.vane.prevVp;
+    if (t && snap.eco && snap.eco.prevEco !== undefined) t.eco = snap.eco.prevEco;
+  }
+
+  function dropOptimisticHolds(id, snap) {
+    if (!snap || snap.sw) switchOptimistic.delete(id);
+    if (!snap || snap.lv) levelOptimistic.delete(id);
+    if (!snap || snap.lock) lockOptimistic.delete(id);
+    if (!snap || snap.garage) garageOptimistic.delete(id);
+    if (!snap || snap.shade) shadeOptimistic.delete(id);
+    if (!snap || snap.fan) fanOptimistic.delete(id);
+    if (!snap || snap.valve) valveOptimistic.delete(id);
+    if (!snap || snap.music) musicOptimistic.delete(id);
+    if (!snap || snap.sp) setpointOptimistic.delete(id);
+    if (!snap || snap.mode) tstatDeviceModeLock.delete(id);
+    if (!snap || snap.fanMode) tstatFanModeLock.delete(id);
+    if (!snap || snap.vane) tstatVaneLock.delete(id);
+    if (!snap || snap.eco) tstatEcoLock.delete(id);
+    if (snap && (snap.mode || snap.session) && tstatSession?.ids?.includes(id)) tstatSession.modeLockUntil = 0;
+  }
+
+  function abandonOptimistic(id) {
+    const snap = captureOptimistic(id);
+    if (!snap) {
+      releaseOptimisticHold(id);
+      return;
+    }
+    restoreOptimisticSnapshot(id, snap);
+    dropOptimisticHolds(id, null);
+    if (tstatSession?.ids?.includes(id)) tstatSession.modeLockUntil = 0;
+    const slot = optimisticSettle.get(id);
+    if (slot) {
+      slot.gen += 1;
+      if (slot.timer) clearTimeout(slot.timer);
+      if (slot.pollTimer) clearTimeout(slot.pollTimer);
+      slot.timer = null;
+      slot.pollTimer = null;
+    }
+    postCall("repaintOptimisticViews", id);
+  }
+
   function setLevelOptimistic(id, level) {
     const prev = levelOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
-    const until = Date.now() + LEVEL_OPTIMISTIC_MS;
-    const timer = setTimeout(() => {
-      levelOptimistic.delete(id);
-      postCall("updateStates");
-    }, LEVEL_OPTIMISTIC_MS);
-    levelOptimistic.set(id, { level, until, timer });
+    const sw = switchOptimistic.get(id);
+    const dev = devices.find((d) => d.i === id);
+    levelOptimistic.set(id, {
+      level,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      prevL: prev ? prev.prevL : (sw && sw.prevL !== undefined ? sw.prevL : dev?.l),
+      prevS: prev ? prev.prevS : (sw && sw.prevS !== undefined ? sw.prevS : dev?.s),
+    });
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function setSwitchOptimistic(id, s, l) {
     const prev = switchOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
-    const dev = devices.find((d) => d.i === id);
+    const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
+    const entry = {
+      s,
+      until: Date.now() + LEVEL_OPTIMISTIC_MS,
+      prevS: prev ? prev.prevS : dev?.s,
+      prevL: prev ? prev.prevL : (dev && "l" in dev ? dev.l : undefined),
+    };
+    if (l !== undefined) entry.l = l;
     if (dev) {
       dev.s = s;
-      if (l !== undefined) dev.l = l;
-    } else {
-      const out = outlets.find((d) => d.i === id);
-      if (out) out.s = s;
+      if (l !== undefined && "l" in dev) dev.l = l;
     }
-    const entry = { s, until: Date.now() + LEVEL_OPTIMISTIC_MS, timer: null };
-    if (l !== undefined) entry.l = l;
-    entry.timer = setTimeout(() => {
-      switchOptimistic.delete(id);
-      postCall("updateStates");
-    }, LEVEL_OPTIMISTIC_MS);
     switchOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearSwitchOptimistic(id) {
-    const prev = switchOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     switchOptimistic.delete(id);
+    releaseOptimisticHold(id);
+  }
+
+  function clearLevelOptimistic(id) {
+    levelOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplySwitchOptimistic() {
     for (const [id, opt] of switchOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        switchOptimistic.delete(id);
+      const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
+      if (!dev) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
-      const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
-      if (!dev) continue;
       const sMatch = !!dev.s === !!opt.s;
       const lMatch = opt.l === undefined || (opt.l === null && opt.s === 1) || dev.l === opt.l;
       if (sMatch && lMatch) {
-        if (opt.timer) clearTimeout(opt.timer);
-        switchOptimistic.delete(id);
+        clearSwitchOptimistic(id);
         continue;
       }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       dev.s = opt.s;
       if (opt.l !== undefined && "l" in dev) dev.l = opt.l;
     }
@@ -881,42 +1103,38 @@
 
   function effectiveSwitch(dev) {
     const opt = switchOptimistic.get(dev.i);
-    if (opt && Date.now() < opt.until) return !!opt.s;
+    if (opt && (opt.checking || Date.now() < opt.until)) return !!opt.s;
     return !!dev.s;
   }
 
   function effectiveLevel(dev) {
     const swOpt = switchOptimistic.get(dev.i);
-    if (swOpt && Date.now() < swOpt.until && swOpt.l === null) return null;
+    if (swOpt && (swOpt.checking || Date.now() < swOpt.until) && swOpt.l === null) return null;
     const opt = levelOptimistic.get(dev.i);
-    if (opt && Date.now() < opt.until) return opt.level;
+    if (opt && (opt.checking || Date.now() < opt.until)) return opt.level;
     return dev.l;
   }
 
   function setLockOptimistic(id, lk, st) {
     const prev = lockOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const lock = locks.find((l) => l.i === id);
+    lockOptimistic.set(id, {
+      lk,
+      st,
+      until: Date.now() + LOCK_OPTIMISTIC_MS,
+      prevLk: prev ? prev.prevLk : lock?.lk,
+      prevSt: prev ? prev.prevSt : lock?.st,
+    });
     if (lock) {
       lock.lk = lk;
       lock.st = st;
     }
-    const timer = setTimeout(() => {
-      lockOptimistic.delete(id);
-      const cur = locks.find((l) => l.i === id);
-      if (cur && (cur.st === "locking" || cur.st === "unlocking")) {
-        cur.st = cur.lk ? "locked" : "unlocked";
-      }
-      if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, LOCK_OPTIMISTIC_MS);
-    lockOptimistic.set(id, { lk, st, until: Date.now() + LOCK_OPTIMISTIC_MS, timer });
+    armOptimisticSettle(id, LOCK_OPTIMISTIC_MS);
   }
 
   function clearLockOptimistic(id) {
-    const prev = lockOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     lockOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function lockOptimisticSatisfied(opt, lock) {
@@ -931,18 +1149,16 @@
 
   function reapplyLockOptimistic() {
     for (const [id, opt] of lockOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        lockOptimistic.delete(id);
-        continue;
-      }
       const lock = locks.find((l) => l.i === id);
-      if (!lock) continue;
-      if (lockOptimisticSatisfied(opt, lock)) {
-        if (opt.timer) clearTimeout(opt.timer);
-        lockOptimistic.delete(id);
+      if (!lock) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
+      if (lockOptimisticSatisfied(opt, lock)) {
+        clearLockOptimistic(id);
+        continue;
+      }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       lock.lk = opt.lk;
       lock.st = opt.st;
     }
@@ -950,7 +1166,7 @@
 
   function effectiveLockState(lock) {
     const opt = lockOptimistic.get(lock.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return lock.st || "";
   }
 
@@ -980,63 +1196,51 @@
 
   function setGarageOptimistic(id, patch) {
     const prev = garageOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const door = garageDoors.find((g) => g.i === id);
-    if (door && patch.st != null) door.st = patch.st;
     const entry = {
       st: patch.st != null ? patch.st : prev?.st,
       until: Date.now() + GARAGE_OPTIMISTIC_MS,
-      timer: null,
+      prevSt: prev ? prev.prevSt : door?.st,
     };
-    entry.timer = setTimeout(() => {
-      garageOptimistic.delete(id);
-      const cur = garageDoors.find((g) => g.i === id);
-      if (cur && (cur.st === "opening" || cur.st === "closing")) {
-        // Fall back to last known direction if hub never settled in time.
-        cur.st = cur.st === "opening" ? "open" : "closed";
-      }
-      if (postCall("currentCategory") === "locks") postCall("renderLocksPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, GARAGE_OPTIMISTIC_MS);
+    if (door && patch.st != null) door.st = patch.st;
     garageOptimistic.set(id, entry);
+    armOptimisticSettle(id, GARAGE_OPTIMISTIC_MS);
   }
 
   function clearGarageOptimistic(id) {
-    const prev = garageOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     garageOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function garageOptimisticSatisfied(opt, door) {
     if (!opt || !door || opt.st == null) return false;
     const want = String(opt.st);
     const got = String(door.st || "");
-    if (want === got) return true;
-    // Hub often reports the settled state while we still hold opening/closing.
-    return (want === "opening" && got === "open") || (want === "closing" && got === "closed");
+    // Opening/closing is still travel. Only the settled end releases the hold.
+    if (want === "opening") return got === "open";
+    if (want === "closing") return got === "closed";
+    return want === got;
   }
 
   function reapplyGarageOptimistic() {
     for (const [id, opt] of garageOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        garageOptimistic.delete(id);
-        continue;
-      }
       const door = garageDoors.find((g) => g.i === id);
-      if (!door) continue;
-      if (garageOptimisticSatisfied(opt, door)) {
-        if (opt.timer) clearTimeout(opt.timer);
-        garageOptimistic.delete(id);
+      if (!door) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
+      if (garageOptimisticSatisfied(opt, door)) {
+        clearGarageOptimistic(id);
+        continue;
+      }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.st != null) door.st = opt.st;
     }
   }
 
   function effectiveGarageState(door) {
     const opt = garageOptimistic.get(door.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return door.st || "unknown";
   }
 
@@ -1062,31 +1266,25 @@
 
   function setShadeOptimistic(id, patch) {
     const prev = shadeOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const shade = windowShades.find((s) => s.i === id);
-    if (shade) {
-      if (patch.st != null) shade.st = patch.st;
-      if (patch.pos != null) shade.pos = patch.pos;
-    }
     const entry = {
       st: patch.st != null ? patch.st : prev?.st,
       pos: patch.pos != null ? patch.pos : prev?.pos,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevSt: prev ? prev.prevSt : shade?.st,
+      prevPos: prev ? prev.prevPos : shade?.pos,
     };
-    entry.timer = setTimeout(() => {
-      shadeOptimistic.delete(id);
-      if (postCall("currentCategory") === "blinds") postCall("refreshBlindsPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-      if (shadeMasterPopup?.classList.contains("open")) postCall("updateShadeMasterBody");
-    }, LEVEL_OPTIMISTIC_MS);
+    if (shade) {
+      if (patch.st != null) shade.st = patch.st;
+      if (patch.pos != null) shade.pos = patch.pos;
+    }
     shadeOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearShadeOptimistic(id) {
-    const prev = shadeOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     shadeOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function shadeOptimisticSatisfied(opt, shade) {
@@ -1107,18 +1305,16 @@
 
   function reapplyShadeOptimistic() {
     for (const [id, opt] of shadeOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        shadeOptimistic.delete(id);
-        continue;
-      }
       const shade = windowShades.find((s) => s.i === id);
-      if (!shade) continue;
-      if (shadeOptimisticSatisfied(opt, shade)) {
-        if (opt.timer) clearTimeout(opt.timer);
-        shadeOptimistic.delete(id);
+      if (!shade) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
+      if (shadeOptimisticSatisfied(opt, shade)) {
+        clearShadeOptimistic(id);
+        continue;
+      }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.st != null) shade.st = opt.st;
       if (opt.pos != null) shade.pos = opt.pos;
     }
@@ -1126,13 +1322,13 @@
 
   function effectiveShadeState(shade) {
     const opt = shadeOptimistic.get(shade.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return shade.st || "unknown";
   }
 
   function effectiveShadePosition(shade) {
     const opt = shadeOptimistic.get(shade.i);
-    if (opt && Date.now() < opt.until && opt.pos != null) return opt.pos;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.pos != null) return opt.pos;
     return shade.pos;
   }
 
@@ -1192,49 +1388,42 @@
 
   function setFanOptimistic(id, patch) {
     const prev = fanOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const fan = ceilingFans.find((f) => f.i === id);
-    if (fan) {
-      if (patch.s != null) fan.s = patch.s ? 1 : 0;
-      if (patch.sp != null) fan.sp = patch.sp;
-    }
     const entry = {
       s: patch.s != null ? (patch.s ? 1 : 0) : prev?.s,
       sp: patch.sp != null ? patch.sp : prev?.sp,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevS: prev ? prev.prevS : fan?.s,
+      prevSp: prev ? prev.prevSp : fan?.sp,
     };
-    entry.timer = setTimeout(() => {
-      fanOptimistic.delete(id);
-      if (postCall("currentCategory") === "fans") postCall("refreshFansPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, LEVEL_OPTIMISTIC_MS);
+    if (fan) {
+      if (patch.s != null) fan.s = patch.s ? 1 : 0;
+      if (patch.sp != null) fan.sp = patch.sp;
+    }
     fanOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearFanOptimistic(id) {
-    const prev = fanOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     fanOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplyFanOptimistic() {
     for (const [id, opt] of fanOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        fanOptimistic.delete(id);
+      const fan = ceilingFans.find((f) => f.i === id);
+      if (!fan) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
-      const fan = ceilingFans.find((f) => f.i === id);
-      if (!fan) continue;
       let matched = true;
       if (opt.s != null && !!fan.s !== !!opt.s) matched = false;
       if (opt.sp != null && String(fan.sp || "").toLowerCase() !== String(opt.sp).toLowerCase()) matched = false;
       if (matched) {
-        if (opt.timer) clearTimeout(opt.timer);
-        fanOptimistic.delete(id);
+        clearFanOptimistic(id);
         continue;
       }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.s != null) fan.s = opt.s ? 1 : 0;
       if (opt.sp != null) fan.sp = opt.sp;
     }
@@ -1242,13 +1431,13 @@
 
   function effectiveFanOn(fan) {
     const opt = fanOptimistic.get(fan.i);
-    if (opt && Date.now() < opt.until && opt.s != null) return !!opt.s;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.s != null) return !!opt.s;
     return !!fan.s;
   }
 
   function effectiveFanSpeed(fan) {
     const opt = fanOptimistic.get(fan.i);
-    if (opt && Date.now() < opt.until && opt.sp != null) return opt.sp;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.sp != null) return opt.sp;
     return fan.sp;
   }
 
@@ -1377,49 +1566,41 @@
 
   function setValveOptimistic(id, patch) {
     const prev = valveOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const valve = valves.find((v) => v.i === id);
-    if (valve && patch.st != null) valve.st = patch.st;
     const entry = {
       st: patch.st != null ? patch.st : prev?.st,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevSt: prev ? prev.prevSt : valve?.st,
     };
-    entry.timer = setTimeout(() => {
-      valveOptimistic.delete(id);
-      if (postCall("currentCategory") === "sensors") postCall("refreshSensorsPopup");
-      else if (postCall("currentCategory") === "favorites") postCall("refreshFavoritesPopup");
-    }, LEVEL_OPTIMISTIC_MS);
+    if (valve && patch.st != null) valve.st = patch.st;
     valveOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearValveOptimistic(id) {
-    const prev = valveOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     valveOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplyValveOptimistic() {
     for (const [id, opt] of valveOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        valveOptimistic.delete(id);
-        continue;
-      }
       const valve = valves.find((v) => v.i === id);
-      if (!valve) continue;
-      if (opt.st != null && valve.st === opt.st) {
-        if (opt.timer) clearTimeout(opt.timer);
-        valveOptimistic.delete(id);
+      if (!valve) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
+      if (opt.st != null && valve.st === opt.st) {
+        clearValveOptimistic(id);
+        continue;
+      }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.st != null) valve.st = opt.st;
     }
   }
 
   function effectiveValveState(valve) {
     const opt = valveOptimistic.get(valve.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return valve.st || "unknown";
   }
 
@@ -1450,15 +1631,20 @@
     };
   }
 
+  function musicHasControls(dev) {
+    const ctrl = musicControls(dev);
+    return !!(ctrl.play || ctrl.pause || ctrl.stop || ctrl.prev || ctrl.next || ctrl.volume);
+  }
+
   function effectiveMusicStatus(dev) {
     const opt = musicOptimistic.get(dev.i);
-    if (opt && Date.now() < opt.until && opt.st != null) return opt.st;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.st != null) return opt.st;
     return dev.st || "idle";
   }
 
   function effectiveMusicVolume(dev) {
     const opt = musicOptimistic.get(dev.i);
-    if (opt && Date.now() < opt.until && opt.v != null) return opt.v;
+    if (opt && (opt.checking || Date.now() < opt.until) && opt.v != null) return opt.v;
     return dev.v == null ? null : dev.v;
   }
 
@@ -1473,47 +1659,41 @@
 
   function setMusicOptimistic(id, patch) {
     const prev = musicOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const dev = music.find((m) => m.i === id);
-    if (dev) {
-      if (patch.st != null) dev.st = patch.st;
-      if (patch.v != null) dev.v = patch.v;
-    }
     const entry = {
       st: patch.st ?? null,
       v: patch.v ?? null,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevSt: prev ? prev.prevSt : dev?.st,
+      prevV: prev ? prev.prevV : dev?.v,
     };
-    entry.timer = setTimeout(() => {
-      musicOptimistic.delete(id);
-      if (postCall("currentCategory") === "music") postCall("renderMusicPopup");
-    }, LEVEL_OPTIMISTIC_MS);
+    if (dev) {
+      if (patch.st != null) dev.st = patch.st;
+      if (patch.v != null) dev.v = patch.v;
+    }
     musicOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearMusicOptimistic(id) {
-    const prev = musicOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     musicOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplyMusicOptimistic() {
     for (const [id, opt] of musicOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        musicOptimistic.delete(id);
+      const dev = music.find((m) => m.i === id);
+      if (!dev) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
-      const dev = music.find((m) => m.i === id);
-      if (!dev) continue;
       const stMatch = opt.st == null || dev.st === opt.st;
       const vMatch = opt.v == null || dev.v === opt.v;
       if (stMatch && vMatch) {
-        if (opt.timer) clearTimeout(opt.timer);
-        musicOptimistic.delete(id);
+        clearMusicOptimistic(id);
         continue;
       }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.st != null) dev.st = opt.st;
       if (opt.v != null) dev.v = opt.v;
     }
@@ -1522,52 +1702,41 @@
 
   function setSetpointOptimistic(id, patch) {
     const prev = setpointOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     const t = thermostats.find((x) => x.i === id);
-    if (t) {
-      if (patch.hsp != null) t.hsp = patch.hsp;
-      if (patch.csp != null) t.csp = patch.csp;
-    }
     const entry = {
       hsp: patch.hsp ?? null,
       csp: patch.csp ?? null,
       until: Date.now() + LEVEL_OPTIMISTIC_MS,
-      timer: null,
+      prevHsp: prev ? prev.prevHsp : t?.hsp,
+      prevCsp: prev ? prev.prevCsp : t?.csp,
     };
-    entry.timer = setTimeout(() => {
-      setpointOptimistic.delete(id);
-      if (tstatSession?.ids?.includes(id)) {
-        postCall("renderTstatDial");
-        postCall("updateClimateWidgets");
-      }
-      postCall("refreshOpenTstatQuickPopups");
-      postCall("refreshDevice", id);
-    }, LEVEL_OPTIMISTIC_MS);
+    if (t) {
+      if (patch.hsp != null) t.hsp = patch.hsp;
+      if (patch.csp != null) t.csp = patch.csp;
+    }
     setpointOptimistic.set(id, entry);
+    armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
   }
 
   function clearSetpointOptimistic(id) {
-    const prev = setpointOptimistic.get(id);
-    if (prev?.timer) clearTimeout(prev.timer);
     setpointOptimistic.delete(id);
+    releaseOptimisticHold(id);
   }
 
   function reapplySetpointOptimistic() {
     for (const [id, opt] of setpointOptimistic) {
-      if (Date.now() >= opt.until) {
-        if (opt.timer) clearTimeout(opt.timer);
-        setpointOptimistic.delete(id);
+      const t = thermostats.find((x) => x.i === id);
+      if (!t) {
+        if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
         continue;
       }
-      const t = thermostats.find((x) => x.i === id);
-      if (!t) continue;
       const hspMatch = opt.hsp == null || t.hsp === opt.hsp;
       const cspMatch = opt.csp == null || t.csp === opt.csp;
       if (hspMatch && cspMatch) {
-        if (opt.timer) clearTimeout(opt.timer);
-        setpointOptimistic.delete(id);
+        clearSetpointOptimistic(id);
         continue;
       }
+      if (Date.now() >= opt.until) noteOptimisticExpiry(id, opt);
       if (opt.hsp != null) t.hsp = opt.hsp;
       if (opt.csp != null) t.csp = opt.csp;
     }
@@ -1989,6 +2158,22 @@
   }
   registerServiceWorkerForPwa();
 
+  // Shared by reference across script chunks. Do not reassign this object.
+  const installState = { evt: null, dismissed: false, installed: false };
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    if (installState.installed) return;
+    installState.evt = e;
+    installState.dismissed = false;
+    postCall("updateInstallMenuUI");
+  });
+  window.addEventListener("appinstalled", () => {
+    installState.evt = null;
+    installState.installed = true;
+    installState.dismissed = false;
+    postCall("updateInstallMenuUI");
+  });
+
   async function fetchWithTimeout(url, opts = {}, ms = 15000) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), ms);
@@ -1999,11 +2184,12 @@
     }
   }
 
-  async function getJson(url, authPass) {
+  async function getJson(url, authPass, timeoutMs) {
     const pass = authPass || 0;
+    const ms = timeoutMs || 15000;
     let r;
     try {
-      r = await fetchWithTimeout(withToken(url), { cache: "no-store", headers: { "Accept": "application/json" } });
+      r = await fetchWithTimeout(withToken(url), { cache: "no-store", headers: { "Accept": "application/json" } }, ms);
     } catch (e) {
       if (e?.name === "AbortError") {
         const err = new Error("timed out");
@@ -2015,15 +2201,7 @@
       throw err;
     }
     if (r.status === 401) {
-      // First 401: reload any just-saved session and retry before prompting again.
-      // Clearing first caused a second password prompt when /data raced unlock.
-      if (pass === 0) {
-        loadDashSession();
-        if (isDashSessionFresh()) return getJson(url, 1);
-      }
-      clearDashSession();
-      await postCall("ensureDashboardAccess");
-      if (pass < 2) return getJson(url, pass + 1);
+      if (await continueAfterDashboard401(pass)) return getJson(url, pass + 1, ms);
       const err = new Error("auth required");
       err.code = "auth_required";
       throw err;
@@ -2046,7 +2224,10 @@
   }
 
   async function fetchData() {
+    const fetchSeq = postCall("beginDataFetch");
     const d = await getJson("data");
+    if (d && fetchSeq != null) d.__fetchSeq = fetchSeq;
+    if (postCall("isCurrentDataFetch", d) === false) return d;
     if (d && typeof d.dashboardPasswordRequired === "boolean") {
       postCall("syncDashboardAuthState", !!d.dashboardPasswordRequired);
     }
@@ -2083,26 +2264,59 @@
       const schedHook = globalThis.__MLD["applySchedules" + "FromData"];
       if (typeof schedHook === "function") schedHook(d);
     }
+    postCall("applyRenameNameHolds", d);
     return d;
   }
 
-  async function sendCmd(id, cmd, val, pin) {
+  // True when the caller should send the request again. A rejected session
+  // reloads once, then asks for the password. The command itself must not flash
+  // "auth required" — the password dialog is the recovery.
+  async function continueAfterDashboard401(pass) {
+    const n = pass || 0;
+    if (n >= 2) return false;
+    if (n === 0) {
+      loadDashSession();
+      if (isDashSessionFresh()) return true;
+    }
+    clearDashSession();
+    await postCall("ensureDashboardAccess");
+    return isDashSessionFresh();
+  }
+
+  async function sendCmd(id, cmd, val, pin, authPass) {
+    const holdGen = OPTIMISTIC_FAIL_CMDS.has(cmd) ? optimisticSettle.get(id)?.gen : undefined;
+    const dropHold = () => {
+      if (holdGen == null) return;
+      if (optimisticSettle.get(id)?.gen !== holdGen) return;
+      abandonOptimistic(id);
+    };
     let url = "cmd?id=" + id + "&c=" + encodeURIComponent(cmd);
     if (val != null) url += "&v=" + encodeURIComponent(val);
     if (pin != null && pin !== "") url += "&pin=" + encodeURIComponent(pin);
     try {
       const r = await fetch(withToken(url), { cache: "no-store" });
+      if (r.status === 401) {
+        if (await continueAfterDashboard401(authPass)) return sendCmd(id, cmd, val, pin, (authPass || 0) + 1);
+        dropHold();
+        return { ok: false, status: 401, error: "auth required" };
+      }
       if (!r.ok) {
         let msg = "Command failed";
         try {
           const body = await r.json();
           if (body?.error) msg = String(body.error);
         } catch {}
-        if (r.status !== 403 && msg !== "wrong pin") postCall("flash", msg, true);
+        if (msg === "wrong pin") postCall("flash", "Wrong PIN. Try again.", true, true);
+        else if (r.status !== 403) postCall("flash", msg, true);
+        dropHold();
         return { ok: false, status: r.status, error: msg };
       }
       return { ok: true };
-    } catch (e) { postCall("flash", "Command failed", true); return { ok: false }; }
+    } catch (e) {
+      postCall("flash", "Command failed", true);
+      dropHold();
+      return { ok: false };
+    }
   }
 
   async function sendCmdBatch(commands) {
@@ -2195,6 +2409,31 @@
   function syncRoomMap() {
     roomMap.clear();
     for (const r of rooms) roomMap.set(r.id, r.name);
+  }
+
+  function renameableDevice(id) {
+    const nid = Number(id);
+    for (const list of [devices, outlets, windowShades, ceilingFans, thermostats, music, sensors, tempSensors, valves]) {
+      const hit = list?.find?.((d) => Number(d.i) === nid);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function showRenamed(dev) {
+    const full = dev.n || "";
+    const id = String(dev.i);
+    document.querySelectorAll(`[data-id="${id}"], [data-tstat-id="${id}"]`).forEach((root) => {
+      root.dataset.name = full.toLowerCase();
+      const nameEl = root.querySelector(".tile-name, .quick-fav-name, .music-name, .sensor-card-name, .quick-fav-tstat-name");
+      if (!nameEl) return;
+      const strip = !!root.closest("#rooms") || (!!root.closest(".sensor-room, .quick-body-sensors") && !root.closest(".quick-fav-grid"));
+      const rid = normalizeRoomId(dev.r);
+      const shown = strip && rid !== -1 ? (stripRoomPrefix(full, roomMap.get(rid)) || full) : full;
+      nameEl.textContent = shown;
+      if (full && shown !== full) nameEl.title = full;
+      else nameEl.removeAttribute("title");
+    });
   }
 
   // ---------- render ----------
@@ -2821,10 +3060,29 @@
 
   // =================== thermostat ===================
 
+  function deviceIdSet(ids) {
+    return new Set((ids || []).map((id) => String(id)));
+  }
+
+  function allDeviceIdsSelected(allIds, selectedIds) {
+    const selected = deviceIdSet(selectedIds);
+    return allIds.length > 0 && allIds.every((id) => selected.has(String(id)));
+  }
+
+  function selectAllControlLabel(allSelected) {
+    return allSelected ? "Deselect all" : "Select all";
+  }
+
+  // Keep the id values from the device list so later === checks still match.
+  function keepListedIds(selectedIds, allIds) {
+    const wanted = deviceIdSet(selectedIds);
+    return allIds.filter((id) => wanted.has(String(id)));
+  }
+
   function applyCentralTstatSelection(selectedIds) {
     if (!tstatSession?.central && !tstatSession?.roomGroup) return;
     const allIds = tstatSession.allIds || thermostats.map((t) => t.i);
-    const ids = selectedIds.filter((id) => allIds.includes(id));
+    const ids = keepListedIds(selectedIds, allIds);
     tstatSession.ids = ids;
     if (tstatSession.central) {
       const selected = ids.map((id) => thermostats.find((t) => t.i === id)).filter(Boolean);
@@ -2968,7 +3226,11 @@
     const spBlock = ce("div", "tstat-readout");
     const spLbl = ce("div", "tstat-readout-label");
     spLbl.textContent = "Setpoint:";
+    const ecoBadge = ce("span", "tstat-eco-badge");
+    ecoBadge.textContent = "Eco";
+    ecoBadge.hidden = true;
     const spEl = ce("div", "tstat-sp");
+    spBlock.appendChild(ecoBadge);
     spBlock.appendChild(spLbl);
     spBlock.appendChild(spEl);
     center.appendChild(curBlock);
@@ -3038,6 +3300,24 @@
     const modes = ce("div", "tstat-modes");
     modeSection.appendChild(modes);
 
+    const ecoSection = ce("div", "tstat-section");
+    ecoSection.style.display = "none";
+    ecoSection.appendChild(tstatSectionLabel("Eco"));
+    const ecoModes = ce("div", "tstat-modes");
+    const ecoBtn = ce("button", "tstat-mode");
+    ecoBtn.type = "button";
+    ecoBtn.textContent = "Eco";
+    ecoBtn.setAttribute("aria-pressed", "false");
+    ecoBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const current = activeTstat();
+      if (!current || tstatSession?.ids?.length !== 1) return;
+      setEcoMode(!tstatEcoOn(current));
+    });
+    ecoModes.appendChild(ecoBtn);
+    ecoSection.appendChild(ecoModes);
+
     const fanModeSection = ce("div", "tstat-section");
     fanModeSection.appendChild(tstatSectionLabel("Fan mode"));
     const fanModes = ce("div", "tstat-modes");
@@ -3086,6 +3366,7 @@
     panel.appendChild(dialWrap);
     panel.appendChild(chips);
     panel.appendChild(modeSection);
+    panel.appendChild(ecoSection);
     panel.appendChild(fanModeSection);
     panel.appendChild(fanSpeedSection);
     panel.appendChild(comfortFanSection);
@@ -3111,6 +3392,8 @@
     tstatPopup._coolKnob = coolKnob;
     tstatPopup._tempEl = tempEl;
     tstatPopup._spEl = spEl;
+    tstatPopup._spLbl = spLbl;
+    tstatPopup._ecoBadge = ecoBadge;
     tstatPopup._minusBtn = minusBtn;
     tstatPopup._plusBtn = plusBtn;
     tstatPopup._chips = chips;
@@ -3119,6 +3402,8 @@
     tstatPopup._modeSection = modeSection;
     tstatPopup._modes = modes;
     tstatPopup._modeBtns = {};
+    tstatPopup._ecoSection = ecoSection;
+    tstatPopup._ecoBtn = ecoBtn;
     tstatPopup._fanModeSection = fanModeSection;
     tstatPopup._fanModes = fanModes;
     tstatPopup._fanModeBtns = fanModeBtns;
@@ -3148,33 +3433,35 @@
     if (!t || !tstatSession) return null;
     const tm = String(t.tm || "").toLowerCase();
     if (tstatSession?.central && !tm) return null;
-    if (tm === "off" || tm === "fan") return null;
-    return (tstatSession.edit === "cool" && tm === "auto") || tm === "cool" || tm === "dry" ? "cool" : "heat";
+    if (tm === "off" || tstatFanOnlyMode(tm)) return null;
+    return (tstatSession.edit === "cool" && tm === "auto") || tm === "cool" || tstatDryMode(tm) ? "cool" : "heat";
   }
 
   async function commitTstatSetpoint(ids, target, val, { haptic = true } = {}) {
+    const live = tstatSetpointIds(ids);
+    if (!live.length) return false;
     const patch = target === "heat" ? { hsp: val } : { csp: val };
     const cmd = target === "heat" ? "setHeat" : "setCool";
-    for (const id of ids) setSetpointOptimistic(id, patch);
+    for (const id of live) setSetpointOptimistic(id, patch);
     if (haptic) hapticTap();
     renderTstatDial();
     updateClimateWidgets();
     refreshOpenTstatQuickPopups();
-    const results = await Promise.all(ids.map((id) => sendCmd(id, cmd, val)));
+    const results = await Promise.all(live.map((id) => sendCmd(id, cmd, val)));
     if (results.some((r) => !r?.ok)) {
-      for (const id of ids) clearSetpointOptimistic(id);
       renderTstatDial();
       updateClimateWidgets();
       refreshOpenTstatQuickPopups();
-      for (const id of ids) reconcileTstat(id);
+      for (const id of live) reconcileTstat(id);
       return false;
     }
-    for (const id of ids) reconcileTstat(id);
+    for (const id of live) reconcileTstat(id);
     return true;
   }
 
   function adjustTstatSetpoint(delta) {
     if (!tstatSession?.ids?.length) return;
+    if (tstatSessionEcoHold()) return;
     const t = activeTstat();
     if (!t) return;
     const target = tstatSetpointTarget(t);
@@ -3206,13 +3493,21 @@
       popup._title.textContent = t.n || "Thermostat";
     }
 
-    const showHeat = (tm === "heat" || tm === "auto" || tm === "emergency heat");
-    const showCool = (tm === "cool" || tm === "auto" || tm === "dry");
-    const editHeat = tm === "heat" || tm === "emergency heat"
-      || (tm === "auto" && tstatSession.edit !== "cool");
+    const ecoSingle = tstatSession?.ids?.length === 1 && tstatEcoOn(t) && tm !== "off";
+    const ecoHold = tstatSessionEcoHold() && tm !== "off" && !tstatFanOnlyMode(tm);
+    const { heat: ecoHeat, cool: ecoCool } = tstatEcoPoints(t);
 
-    const hsp = t.hsp != null ? Number(t.hsp) : null;
-    const csp = t.csp != null ? Number(t.csp) : null;
+    const showHeat = ecoSingle
+      ? ecoHeat != null
+      : (tm === "heat" || tm === "auto" || tm === "emergency heat");
+    const showCool = ecoSingle
+      ? ecoCool != null
+      : (tm === "cool" || tm === "auto" || tstatDryMode(tm));
+    const editHeat = !ecoSingle && (tm === "heat" || tm === "emergency heat"
+      || (tm === "auto" && tstatSession.edit !== "cool"));
+
+    const hsp = ecoSingle ? ecoHeat : (t.hsp != null ? Number(t.hsp) : null);
+    const csp = ecoSingle ? ecoCool : (t.csp != null ? Number(t.csp) : null);
 
     // heat arc
     if (showHeat && hsp != null) {
@@ -3220,7 +3515,7 @@
       const kp = polar(cx, cy, TSTAT_DIAL_R, valToAngle(hsp, unit));
       popup._heatKnob.setAttribute("cx", kp.x.toFixed(2));
       popup._heatKnob.setAttribute("cy", kp.y.toFixed(2));
-      popup._heatKnob.setAttribute("data-active", editHeat ? "1" : "0");
+      popup._heatKnob.setAttribute("data-active", (!ecoSingle && editHeat) ? "1" : "0");
     } else {
       popup._heatArc.setAttribute("d", "");
       popup._heatKnob.setAttribute("cx", -100);
@@ -3231,7 +3526,7 @@
       const kp = polar(cx, cy, TSTAT_DIAL_R, valToAngle(csp, unit));
       popup._coolKnob.setAttribute("cx", kp.x.toFixed(2));
       popup._coolKnob.setAttribute("cy", kp.y.toFixed(2));
-      popup._coolKnob.setAttribute("data-active", !editHeat ? "1" : "0");
+      popup._coolKnob.setAttribute("data-active", (!ecoSingle && !editHeat) ? "1" : "0");
     } else {
       popup._coolArc.setAttribute("d", "");
       popup._coolKnob.setAttribute("cx", -100);
@@ -3239,27 +3534,41 @@
 
     // setpoint readout
     let spText;
-    if (tm === "off") spText = "Off";
-    else if (tm === "fan") spText = "Fan";
+    if (ecoSingle) spText = tstatEcoRangeLabel(t) === "Eco" ? "Eco" : tstatEcoRangeLabel(t) + deg;
+    else if (ecoHold) spText = "Eco";
+    else if (tm === "off") spText = "Off";
+    else if (tstatFanOnlyMode(tm)) spText = "Fan";
     else if (tm === "heat" || tm === "emergency heat") spText = hsp != null ? hsp + deg : "—";
-    else if (tm === "cool" || tm === "dry") spText = csp != null ? csp + deg : "—";
+    else if (tm === "cool" || tstatDryMode(tm)) spText = csp != null ? csp + deg : "—";
     else if (tm === "auto") spText = (editHeat ? hsp : csp) != null ? (editHeat ? hsp : csp) + deg : "—";
     else spText = "—";
     popup._spEl.textContent = spText;
+    if (popup._spLbl) popup._spLbl.textContent = ecoSingle ? "Eco range:" : "Setpoint:";
+    if (popup._ecoBadge) popup._ecoBadge.hidden = !(ecoSingle || ecoHold);
 
-    // chips only in auto
-    popup._chips.style.display = (tm === "auto") ? "" : "none";
+    // chips only in auto, and not while Eco is holding the range
+    popup._chips.style.display = (tm === "auto" && !ecoSingle && !ecoHold) ? "" : "none";
     popup._heatChip.classList.toggle("active", editHeat);
     popup._coolChip.classList.toggle("active", !editHeat);
 
     // disabled look when off or none selected for bulk
     const noneSelected = !!(tstatTargetPickerEnabled() && !tstatSession.ids?.length);
-    popup._svg.classList.toggle("disabled", tm === "off" || tm === "fan" || noneSelected);
-    const noMode = !!(tstatSession?.roomGroup && tstatSession.ids?.length !== 1)
-      || !!(tstatSession?.central && !tm);
-    const canAdjust = tm !== "off" && tm !== "fan" && !noMode && !noneSelected;
-    if (popup._minusBtn) popup._minusBtn.disabled = !canAdjust;
-    if (popup._plusBtn) popup._plusBtn.disabled = !canAdjust;
+    popup._svg.classList.toggle("disabled", tm === "off" || tstatFanOnlyMode(tm) || noneSelected);
+    popup._svg.classList.toggle("eco-hold", ecoHold);
+    // Several thermostats in one room still share this dial's setpoint.
+    // All-thermostats has no setpoint until a shared mode is chosen.
+    // Eco holds its own range, so the normal dial stays put.
+    const noMode = !!(tstatSession?.central && !tm);
+    const canAdjust = tm !== "off" && !tstatFanOnlyMode(tm) && !noMode && !noneSelected && !ecoHold;
+    const stepLabel = ecoHold ? "Setpoint locked while Eco is on" : null;
+    if (popup._minusBtn) {
+      popup._minusBtn.disabled = !canAdjust;
+      popup._minusBtn.setAttribute("aria-label", stepLabel || "Decrease setpoint by 1 degree");
+    }
+    if (popup._plusBtn) {
+      popup._plusBtn.disabled = !canAdjust;
+      popup._plusBtn.setAttribute("aria-label", stepLabel || "Increase setpoint by 1 degree");
+    }
   }
 
   function renderTstatModeButtons(popup, supported, tm, noneSelected) {
@@ -3323,6 +3632,7 @@
     const roomMultiTarget = !!(tstatSession?.roomGroup && tstatSession.ids?.length !== 1);
     if (roomMultiTarget) {
       popup._modeSection.style.display = "none";
+      popup._ecoSection.style.display = "none";
       popup._fanModeSection.style.display = "none";
       popup._fanSpeedSection.style.display = "none";
       popup._comfortFanSection.style.display = "none";
@@ -3333,6 +3643,20 @@
     const tm = String(t.tm || "").toLowerCase();
     renderTstatModeButtons(popup, supM, tm, noneSelected);
     popup._modeSection.style.display = supM.length ? "" : "none";
+
+    const singleDevice = tstatSession.ids?.length === 1 && !tstatSession.central && !tstatSession.roomGroup;
+    const showEco = !!(singleDevice && tstatHasEco(t));
+    popup._ecoSection.style.display = showEco ? "" : "none";
+    if (showEco && popup._ecoBtn) {
+      const on = tstatEcoOn(t);
+      const modeOff = tm === "off";
+      popup._ecoBtn.classList.toggle("active", on);
+      popup._ecoBtn.disabled = noneSelected || modeOff;
+      popup._ecoBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      popup._ecoBtn.setAttribute("aria-label", modeOff
+        ? "Eco needs heat, cool, or auto"
+        : (on ? "Turn Eco off" : "Turn Eco on"));
+    }
 
     const useComfortFan = deviceHasComfortFan(t);
     if (useComfortFan) {
@@ -3405,22 +3729,27 @@
     function apply(e) {
       const t = activeTstat();
       if (!t || !tstatSession || !tstatSession.ids?.length) return;
+      if (tstatSessionEcoHold()) return;
       const unit = tstatSession.unit;
       const tm = String(t.tm || "").toLowerCase();
       if (tm === "off") return;
       const val = angleToVal(angleFromEvent(e), unit);
       const editing = (tstatSession.edit === "cool" && tm === "auto") || tm === "cool" ? "cool" : "heat";
       const patch = editing === "heat" ? { hsp: clampSetpoint(val, unit) } : { csp: clampSetpoint(val, unit) };
-      if (editing === "heat") t.hsp = patch.hsp;
-      else t.csp = patch.csp;
-      for (const id of tstatSession.ids) setSetpointOptimistic(id, patch);
+      const live = tstatSetpointIds(tstatSession.ids);
+      if (!live.length) return;
+      if (tstatSession.central || !tstatEcoOn(t)) {
+        if (editing === "heat") t.hsp = patch.hsp;
+        else t.csp = patch.csp;
+      }
+      for (const id of live) setSetpointOptimistic(id, patch);
       renderTstatDial();
       const now = Date.now();
       if (now - lastCommit > 300) {
         lastCommit = now;
         const cmd = editing === "heat" ? "setHeat" : "setCool";
         const sendVal = editing === "heat" ? patch.hsp : patch.csp;
-        for (const id of tstatSession.ids) sendCmd(id, cmd, sendVal);
+        for (const id of live) sendCmd(id, cmd, sendVal);
       }
       e.preventDefault();
     }
@@ -3446,6 +3775,7 @@
       const t = activeTstat();
       if (!t || !tstatSession || !tstatSession.ids?.length) return;
       if (String(t.tm || "").toLowerCase() === "off") return;
+      if (tstatSessionEcoHold()) return;
       if (tstatSession?.central && !String(t.tm || "")) return;
       if (e.button != null && e.button !== 0) return;
       dragging = true;
@@ -3462,23 +3792,25 @@
 
   function tstatModeLocked(id) {
     const devLock = tstatDeviceModeLock.get(Number(id));
-    if (devLock?.until > Date.now()) return true;
+    if (devLock && (devLock.checking || devLock.until > Date.now())) return true;
     return !!(tstatSession?.modeLockUntil > Date.now() && tstatSession.ids?.includes(Number(id)));
   }
 
   function tstatFanModeLocked(id) {
     const devLock = tstatFanModeLock.get(Number(id));
-    return !!(devLock?.until > Date.now());
+    return !!(devLock && (devLock.checking || devLock.until > Date.now()));
   }
 
   function reapplyTstatDeviceModeLocks() {
     const now = Date.now();
     for (const [id, lock] of tstatDeviceModeLock) {
-      if (lock.until <= now) {
+      const t = thermostats.find(x => x.i === id);
+      if (t && String(t.tm || "").toLowerCase() === String(lock.mode || "").toLowerCase()) {
         tstatDeviceModeLock.delete(id);
+        releaseOptimisticHold(id);
         continue;
       }
-      const t = thermostats.find(x => x.i === id);
+      if (lock.until <= now) noteOptimisticExpiry(id, lock);
       if (t) t.tm = lock.mode;
     }
   }
@@ -3486,11 +3818,13 @@
   function reapplyTstatFanModeLocks() {
     const now = Date.now();
     for (const [id, lock] of tstatFanModeLock) {
-      if (lock.until <= now) {
+      const t = thermostats.find(x => x.i === id);
+      if (t && String(t.fm || "").toLowerCase() === String(lock.mode || "").toLowerCase()) {
         tstatFanModeLock.delete(id);
+        releaseOptimisticHold(id);
         continue;
       }
-      const t = thermostats.find(x => x.i === id);
+      if (lock.until <= now) noteOptimisticExpiry(id, lock);
       if (t) {
         t.fm = lock.mode;
         if (t.hasCfs) t.cfs = lock.mode;
@@ -3500,30 +3834,169 @@
 
   function tstatVaneLocked(id) {
     const devLock = tstatVaneLock.get(Number(id));
-    return !!(devLock?.until > Date.now());
+    return !!(devLock && (devLock.checking || devLock.until > Date.now()));
   }
 
   function reapplyTstatVaneLocks() {
     const now = Date.now();
     for (const [id, lock] of tstatVaneLock) {
-      if (lock.until <= now) {
+      const t = thermostats.find(x => x.i === id);
+      if (t && String(t.vp || "").toLowerCase() === String(lock.position || "").toLowerCase()) {
         tstatVaneLock.delete(id);
+        releaseOptimisticHold(id);
         continue;
       }
-      const t = thermostats.find(x => x.i === id);
+      if (lock.until <= now) noteOptimisticExpiry(id, lock);
       if (t) t.vp = lock.position;
     }
   }
 
+  function normalizeTstatModeKey(tm) {
+    return String(tm || "").toLowerCase().replace(/[\s_-]+/g, "");
+  }
+
+  // Fan / dry / dehumidify: circulate air or moisture, not a heat/cool setpoint.
+  function tstatAuxMode(tm) {
+    const m = normalizeTstatModeKey(tm);
+    return m === "fan" || m === "fanonly" || m === "dry" || m === "drymode"
+      || m === "dehumidify" || m === "dehumidification";
+  }
+
+  function tstatFanOnlyMode(tm) {
+    const m = normalizeTstatModeKey(tm);
+    return m === "fan" || m === "fanonly";
+  }
+
+  function tstatDryMode(tm) {
+    const m = normalizeTstatModeKey(tm);
+    return m === "dry" || m === "drymode" || m === "dehumidify" || m === "dehumidification";
+  }
+
+  function tstatModeClassName(tm) {
+    const key = String(tm || "off").toLowerCase().trim().replace(/[\s_]+/g, "-") || "off";
+    return "mode-" + key;
+  }
+
+  // Accent class from mode family so fan_only / dry / dehumidify all get green.
+  function tstatCardModeClass(t) {
+    const tm = String(t?.tm || "").toLowerCase();
+    if (tstatAuxMode(tm)) return "mode-fan";
+    if (tm === "emergency heat" || tm === "emergencyheat") return "mode-heat";
+    return tstatModeClassName(tm);
+  }
+
+  function tstatStateElClass(info, tone) {
+    return "quick-fav-tstat-state"
+      + (info.active ? " is-active" : "")
+      + (tone === "fan" ? " tone-fan" : "");
+  }
+
   function tstatModeDisplayLabel(tm) {
-    const m = String(tm || "").toLowerCase();
-    if (m === "heat" || m === "emergency heat" || m === "emergencyheat") return "Heat";
+    const m = normalizeTstatModeKey(tm);
+    if (m === "heat" || m === "emergencyheat") return "Heat";
     if (m === "cool") return "Cool";
     if (m === "auto") return "Auto";
     if (m === "off") return "Off";
-    if (m === "dry") return "Dry";
-    if (m === "fan") return "Fan";
+    if (m === "dry" || m === "drymode") return "Dry";
+    if (m === "fan" || m === "fanonly") return "Fan";
+    if (m === "dehumidify" || m === "dehumidification") return "Dehumidify";
     return tm || "—";
+  }
+
+  // Nest Eco is an overlay. Anything other than OFF means the Eco range is the hold.
+  function tstatHasEco(t) {
+    return !!(t && (t.hasEco === 1 || t.hasEco === true));
+  }
+
+  function tstatEcoOn(t) {
+    if (!tstatHasEco(t)) return false;
+    const m = String(t.eco || "").trim().toUpperCase().replace(/[\s-]+/g, "_");
+    return m !== "" && m !== "OFF" && m !== "NULL";
+  }
+
+  function tstatEcoPoints(t) {
+    const heatN = Number(t?.ehsp);
+    const coolN = Number(t?.ecsp);
+    return {
+      heat: Number.isFinite(heatN) ? Math.round(heatN) : null,
+      cool: Number.isFinite(coolN) ? Math.round(coolN) : null,
+    };
+  }
+
+  function tstatEcoRangeLabel(t) {
+    const { heat, cool } = tstatEcoPoints(t);
+    if (heat != null && cool != null) return heat + "–" + cool;
+    if (heat != null) return String(heat);
+    if (cool != null) return String(cool);
+    return "Eco";
+  }
+
+  function tstatSelectedDevices() {
+    return (tstatSession?.ids || [])
+      .map((id) => thermostats.find((x) => x.i === id))
+      .filter(Boolean);
+  }
+
+  // Lock the shared dial only when every selected thermostat is holding Eco.
+  function tstatSessionEcoHold() {
+    const list = tstatSelectedDevices();
+    return list.length > 0 && list.every(tstatEcoOn);
+  }
+
+  function tstatSetpointIds(ids) {
+    return (ids || []).filter((id) => {
+      const dev = thermostats.find((x) => x.i === id);
+      return dev && !tstatEcoOn(dev);
+    });
+  }
+
+  function tstatEcoLocked(id) {
+    const devLock = tstatEcoLock.get(Number(id));
+    return !!(devLock && (devLock.checking || devLock.until > Date.now()));
+  }
+
+  function reapplyTstatEcoLocks() {
+    const now = Date.now();
+    for (const [id, lock] of tstatEcoLock) {
+      const t = thermostats.find((x) => x.i === id);
+      const got = String(t?.eco || "").trim().toUpperCase();
+      const want = String(lock.mode || "").trim().toUpperCase();
+      if (t && got === want) {
+        tstatEcoLock.delete(id);
+        releaseOptimisticHold(id);
+        continue;
+      }
+      if (lock.until <= now) noteOptimisticExpiry(id, lock);
+      if (t) t.eco = lock.mode;
+    }
+  }
+
+  function applyTstatEcoOptimistic(id, mode) {
+    const t = thermostats.find((x) => x.i === id);
+    if (!t || !tstatHasEco(t)) return;
+    const prev = tstatEcoLock.get(id);
+    const prevEco = prev ? prev.prevEco : t.eco;
+    t.eco = mode;
+    tstatEcoLock.set(id, { until: Date.now() + 4000, mode, prevEco });
+    armOptimisticSettle(id, 4000);
+  }
+
+  function setEcoMode(on) {
+    if (!tstatSession || tstatSession.ids?.length !== 1) return;
+    const id = tstatSession.ids[0];
+    const t = thermostats.find((x) => x.i === id);
+    if (!tstatHasEco(t)) return;
+    if (String(t.tm || "").toLowerCase() === "off") return;
+    const mode = on ? "MANUAL_ECO" : "OFF";
+    if (String(t.eco || "") === mode) return;
+    hapticTap();
+    applyTstatEcoOptimistic(id, mode);
+    renderTstatDial();
+    renderTstatControls();
+    updateClimateWidgets();
+    refreshOpenTstatQuickPopups();
+    sendCmd(id, "setEcoMode", mode);
+    reconcileTstat(id);
   }
 
   let tstatModeLabelRo = null;
@@ -3568,12 +4041,11 @@
   function favoriteTstatCompactStateClass(t) {
     const tm = String(t?.tm || "").toLowerCase();
     if (tm === "off") return "state-off";
-    if (tm === "fan") return "state-fan";
-    if (tm === "dry") return "state-cool";
+    if (tstatAuxMode(tm)) return "state-fan";
     const os = String(t?.os || "").toLowerCase();
     if (os === "heating" || os === "pending heat") return "state-heat";
     if (os === "cooling" || os === "pending cool") return "state-cool";
-    if (os === "fan" || os === "fan only") return "state-fan";
+    if (os === "fan" || os === "fan only" || os === "fan_only") return "state-fan";
     if (t?.hasFm && fanModeActive(t.fm)) return "state-fan";
     return "state-off";
   }
@@ -3642,10 +4114,9 @@
 
   function favoriteTstatTarget(t) {
     const tm = String(t?.tm || "").toLowerCase();
-    if (tm === "off") return null;
-    if (tm === "fan") return null;
-    if (tm === "cool" || tm === "dry") return "cool";
-    if (tm === "heat" || tm === "emergency heat") return "heat";
+    if (tm === "off" || tstatFanOnlyMode(tm)) return null;
+    if (tm === "cool" || tstatDryMode(tm)) return "cool";
+    if (tm === "heat" || tm === "emergency heat" || tm === "emergencyheat") return "heat";
     if (tm === "auto") {
       const os = String(t?.os || "").toLowerCase();
       if (os === "cooling" || os === "pending cool") return "cool";
@@ -3654,22 +4125,36 @@
     return "heat";
   }
 
+  function favoriteTstatTone(t) {
+    const tm = String(t?.tm || "").toLowerCase();
+    if (tm === "off") return "off";
+    if (tstatAuxMode(tm)) return "fan";
+    return favoriteTstatTarget(t) || "off";
+  }
+
   function favoriteTstatTemps(t) {
     const unit = normalizeTstatUnit(t.u);
     const deg = "°" + unit;
     const current = t.temp != null ? Math.round(t.temp) + deg : "—";
     const tm = String(t?.tm || "").toLowerCase();
+    const tone = favoriteTstatTone(t);
+    if (tstatEcoOn(t) && tm !== "off") {
+      const value = tstatEcoRangeLabel(t);
+      return { current, setpoint: value, value, unit: "", tone, eco: true };
+    }
     if (tm === "off") return { current, setpoint: "Off", value: "Off", unit: "", tone: "off" };
+    if (tstatFanOnlyMode(tm)) return { current, setpoint: "Fan", value: "Fan", unit: "", tone };
     const target = favoriteTstatTarget(t);
-    if (!target) return { current, setpoint: "—", value: "—", unit: "", tone: "off" };
+    if (!target) return { current, setpoint: "—", value: "—", unit: "", tone };
     const sp = target === "heat" ? t.hsp : t.csp;
-    if (sp == null) return { current, setpoint: "—", value: "—", unit: "", tone: target };
+    if (sp == null) return { current, setpoint: "—", value: "—", unit: "", tone };
     const value = String(Math.round(Number(sp)));
-    return { current, setpoint: value + deg, value, unit: deg, tone: target };
+    return { current, setpoint: value + deg, value, unit: deg, tone };
   }
 
   function paintTstatSetpoint(el, temps) {
-    el.className = "quick-fav-tstat-sp " + temps.tone;
+    const label = !temps.unit && (temps.tone === "off" || temps.tone === "fan" || temps.eco);
+    el.className = "quick-fav-tstat-sp " + temps.tone + (label ? " is-label" : "") + (temps.eco ? " eco" : "");
     el.replaceChildren();
     el.appendChild(document.createTextNode(temps.value));
     if (temps.unit) {
@@ -3688,13 +4173,15 @@
     let prefix = "Now ";
     let active = false;
     if (tm === "off") prefix = "Off · now ";
-    else if (tm === "fan") { prefix = "Fan · now "; active = true; }
-    else if (tm === "dry") {
-      prefix = "Dry · now ";
-      active = os === "cooling" || os === "pending cool";
+    else if (tstatAuxMode(tm)) {
+      prefix = tstatModeDisplayLabel(tm) + " · now ";
+      active = true;
     } else if (os === "heating" || os === "pending heat") { prefix = "Heating · now "; active = true; }
     else if (os === "cooling" || os === "pending cool") { prefix = "Cooling · now "; active = true; }
-    else if (os === "fan" || os === "fan only") { prefix = "Fan · now "; active = true; }
+    else if (os === "fan" || os === "fan only" || os === "fan_only") { prefix = "Fan · now "; active = true; }
+    if (tstatEcoOn(t) && tm !== "off") {
+      prefix = prefix === "Now " ? "Eco · now " : ("Eco · " + prefix);
+    }
     return { prefix, now, active, label: prefix + now };
   }
 
@@ -3718,13 +4205,17 @@
     for (const id of ids) {
       const t = thermostats.find(x => x.i === id);
       if (!t) continue;
+      const prev = tstatDeviceModeLock.get(id);
+      const prevTm = prev ? prev.prevTm : t.tm;
+      const prevOs = prev ? prev.prevOs : t.os;
       t.tm = key;
       if (key === "heat") t.os = "heating";
-      else if (key === "cool" || key === "dry") t.os = "cooling";
+      else if (key === "cool" || tstatDryMode(key)) t.os = "cooling";
       else if (key === "off") t.os = "idle";
       else if (key === "auto") t.os = "idle";
-      else if (key === "fan") t.os = "fan";
-      tstatDeviceModeLock.set(id, { until: Date.now() + 4000, mode: key });
+      else if (tstatFanOnlyMode(key)) t.os = "fan";
+      tstatDeviceModeLock.set(id, { until: Date.now() + 4000, mode: key, prevTm, prevOs });
+      armOptimisticSettle(id, 4000);
     }
     refreshOpenTstatQuickPopups();
   }
@@ -3734,6 +4225,10 @@
     for (const id of ids) {
       const t = thermostats.find(x => x.i === id);
       if (!t || !(t.hasFm || deviceHasComfortFan(t))) continue;
+      const prev = tstatFanModeLock.get(id);
+      const prevFm = prev ? prev.prevFm : t.fm;
+      const prevCfs = prev ? prev.prevCfs : t.cfs;
+      const prevOs = prev ? prev.prevOs : t.os;
       t.fm = key;
       if (t.hasCfs) t.cfs = key;
       const tm = String(t.tm || "").toLowerCase();
@@ -3741,7 +4236,8 @@
         if (key === "on" || key === "circulate") t.os = "fan";
         else if (key === "auto") t.os = "idle";
       }
-      tstatFanModeLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, mode: key });
+      tstatFanModeLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, mode: key, prevFm, prevCfs, prevOs });
+      armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
     }
     refreshOpenTstatQuickPopups();
   }
@@ -3757,7 +4253,7 @@
 
   function adjustFavoriteTstat(id, delta) {
     const t = thermostats.find(x => x.i === id);
-    if (!t) return;
+    if (!t || tstatEcoOn(t)) return;
     const target = favoriteTstatTarget(t);
     if (!target) return;
     const unit = normalizeTstatUnit(t.u);
@@ -3925,16 +4421,19 @@
   function syncCentralTstatTargetMenu() {
     if (!centralTstatTargetMenu || !tstatTargetPickerEnabled()) return;
     const allIds = tstatSession.allIds || [];
-    const selectedSet = new Set(tstatSession.ids);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+    const selectedSet = deviceIdSet(tstatSession.ids);
+    const allSelected = allDeviceIdsSelected(allIds, tstatSession.ids);
     const selectAllBtn = centralTstatTargetMenu.querySelector(".tstat-target-all");
     if (selectAllBtn) {
+      const selectAllName = selectAllBtn.querySelector(".tstat-target-name");
+      const label = selectAllControlLabel(allSelected);
+      if (selectAllName) selectAllName.textContent = label;
+      selectAllBtn.setAttribute("aria-label", label);
       selectAllBtn.classList.toggle("active", allSelected);
       selectAllBtn.setAttribute("aria-selected", allSelected ? "true" : "false");
     }
     for (const b of centralTstatTargetMenu.querySelectorAll(".tstat-target-opt:not(.tstat-target-all)")) {
-      const id = Number(b.dataset.tstatId);
-      const on = selectedSet.has(id);
+      const on = selectedSet.has(String(b.dataset.tstatId));
       b.classList.toggle("active", on);
       if (on) b.setAttribute("aria-selected", "true");
       else b.removeAttribute("aria-selected");
@@ -3950,8 +4449,8 @@
     menu.setAttribute("aria-multiselectable", "true");
 
     const allIds = tstatSession.allIds || thermostats.map((t) => t.i);
-    const selectedSet = new Set(tstatSession.ids);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+    const selectedSet = deviceIdSet(tstatSession.ids);
+    const allSelected = allDeviceIdsSelected(allIds, tstatSession.ids);
 
     const selectAllBtn = ce("button", "tstat-target-opt tstat-target-all");
     selectAllBtn.type = "button";
@@ -3959,7 +4458,9 @@
     const selectAllCheck = ce("span", "tstat-target-check");
     const selectAllInfo = ce("span", "tstat-target-info");
     const selectAllName = ce("span", "tstat-target-name");
-    selectAllName.textContent = "Select all";
+    const selectAllLabel = selectAllControlLabel(allSelected);
+    selectAllName.textContent = selectAllLabel;
+    selectAllBtn.setAttribute("aria-label", selectAllLabel);
     selectAllInfo.appendChild(selectAllName);
     selectAllBtn.appendChild(selectAllCheck);
     selectAllBtn.appendChild(selectAllInfo);
@@ -3970,9 +4471,9 @@
     selectAllBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       hapticTap();
-      const currentSelected = new Set(tstatSession.ids);
-      const currentlyAll = allIds.length > 0 && allIds.every((id) => currentSelected.has(id));
-      applyCentralTstatSelection(currentlyAll ? [] : allIds.slice());
+      const liveIds = tstatSession.allIds || allIds;
+      const currentlyAll = allDeviceIdsSelected(liveIds, tstatSession.ids);
+      applyCentralTstatSelection(currentlyAll ? [] : liveIds.slice());
     });
     menu.appendChild(selectAllBtn);
 
@@ -3994,16 +4495,17 @@
       info.appendChild(room);
       b.appendChild(check);
       b.appendChild(info);
-      if (selectedSet.has(t.i)) {
+      if (selectedSet.has(String(t.i))) {
         b.classList.add("active");
         b.setAttribute("aria-selected", "true");
       }
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         hapticTap();
-        const next = new Set(tstatSession.ids);
-        if (next.has(t.i)) next.delete(t.i);
-        else next.add(t.i);
+        const next = deviceIdSet(tstatSession.ids);
+        const key = String(t.i);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
         applyCentralTstatSelection([...next]);
       });
       menu.appendChild(b);
@@ -4050,7 +4552,7 @@
         const ref = thermostats.find(x => x.csp != null);
         ct.csp = ref ? Number(ref.csp) : 74;
       }
-      tstatSession.edit = (key === "cool" || key === "dry") ? "cool" : "heat";
+      tstatSession.edit = (key === "cool" || tstatDryMode(key)) ? "cool" : "heat";
     }
     tstatSession.modeLockUntil = Date.now() + 4000;
     tstatSession.lockedMode = key;
@@ -4124,8 +4626,11 @@
     for (const id of ids) {
       const t = thermostats.find((x) => x.i === id);
       if (!t) continue;
+      const prev = tstatVaneLock.get(id);
+      const prevVp = prev ? prev.prevVp : t.vp;
       t.vp = pos;
-      tstatVaneLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, position: pos });
+      tstatVaneLock.set(id, { until: Date.now() + LEVEL_OPTIMISTIC_MS, position: pos, prevVp });
+      armOptimisticSettle(id, LEVEL_OPTIMISTIC_MS);
     }
     renderTstatControls();
     if (tstatSession.central) tstatSession.centralTstat.vp = pos;
@@ -4405,16 +4910,19 @@
   function syncMasterTargetMenu(state, session, datasetKey) {
     if (!state.menu || !session) return;
     const allIds = session.allIds || [];
-    const selectedSet = new Set(session.ids);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+    const selectedSet = deviceIdSet(session.ids);
+    const allSelected = allDeviceIdsSelected(allIds, session.ids);
     const selectAllBtn = state.menu.querySelector(".tstat-target-all");
     if (selectAllBtn) {
+      const selectAllName = selectAllBtn.querySelector(".tstat-target-name");
+      const label = selectAllControlLabel(allSelected);
+      if (selectAllName) selectAllName.textContent = label;
+      selectAllBtn.setAttribute("aria-label", label);
       selectAllBtn.classList.toggle("active", allSelected);
       selectAllBtn.setAttribute("aria-selected", allSelected ? "true" : "false");
     }
     for (const b of state.menu.querySelectorAll(".tstat-target-opt:not(.tstat-target-all)")) {
-      const id = Number(b.dataset[datasetKey]);
-      const on = selectedSet.has(id);
+      const on = selectedSet.has(String(b.dataset[datasetKey]));
       b.classList.toggle("active", on);
       if (on) b.setAttribute("aria-selected", "true");
       else b.removeAttribute("aria-selected");
@@ -4431,8 +4939,8 @@
     menu.setAttribute("aria-multiselectable", "true");
 
     const allIds = session.allIds || [];
-    const selectedSet = new Set(session.ids);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedSet.has(id));
+    const selectedSet = deviceIdSet(session.ids);
+    const allSelected = allDeviceIdsSelected(allIds, session.ids);
 
     const selectAllBtn = ce("button", "tstat-target-opt tstat-target-all");
     selectAllBtn.type = "button";
@@ -4440,7 +4948,9 @@
     const selectAllCheck = ce("span", "tstat-target-check");
     const selectAllInfo = ce("span", "tstat-target-info");
     const selectAllName = ce("span", "tstat-target-name");
-    selectAllName.textContent = "Select all";
+    const selectAllLabel = selectAllControlLabel(allSelected);
+    selectAllName.textContent = selectAllLabel;
+    selectAllBtn.setAttribute("aria-label", selectAllLabel);
     selectAllInfo.appendChild(selectAllName);
     selectAllBtn.appendChild(selectAllCheck);
     selectAllBtn.appendChild(selectAllInfo);
@@ -4451,9 +4961,10 @@
     selectAllBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       hapticTap();
-      const currentSelected = new Set(session.ids);
-      const currentlyAll = allIds.length > 0 && allIds.every((id) => currentSelected.has(id));
-      config.onApply(currentlyAll ? [] : allIds.slice());
+      const live = config.getSession();
+      const liveIds = live?.allIds || allIds;
+      const currentlyAll = allDeviceIdsSelected(liveIds, live?.ids || []);
+      config.onApply(currentlyAll ? [] : liveIds.slice());
     });
     menu.appendChild(selectAllBtn);
 
@@ -4472,16 +4983,18 @@
       info.appendChild(room);
       b.appendChild(check);
       b.appendChild(info);
-      if (selectedSet.has(dev.i)) {
+      if (selectedSet.has(String(dev.i))) {
         b.classList.add("active");
         b.setAttribute("aria-selected", "true");
       }
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         hapticTap();
-        const next = new Set(session.ids);
-        if (next.has(dev.i)) next.delete(dev.i);
-        else next.add(dev.i);
+        const live = config.getSession();
+        const next = deviceIdSet(live?.ids || []);
+        const key = String(dev.i);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
         config.onApply([...next]);
       });
       menu.appendChild(b);
@@ -4534,7 +5047,7 @@
   function applyFanMasterSelection(selectedIds) {
     if (!fanMasterSession) return;
     const allIds = fanMasterSession.allIds || ceilingFans.map((f) => f.i);
-    fanMasterSession.ids = selectedIds.filter((id) => allIds.includes(id));
+    fanMasterSession.ids = keepListedIds(selectedIds, allIds);
     publishMld({ fanMasterSession });
     updateFanMasterHead();
     renderFanMasterBody();
@@ -4544,7 +5057,7 @@
   function applyShadeMasterSelection(selectedIds) {
     if (!shadeMasterSession) return;
     const allIds = shadeMasterSession.allIds || windowShades.map((s) => s.i);
-    shadeMasterSession.ids = selectedIds.filter((id) => allIds.includes(id));
+    shadeMasterSession.ids = keepListedIds(selectedIds, allIds);
     publishMld({ shadeMasterSession });
     updateShadeMasterHead();
     renderShadeMasterBody();
@@ -4997,7 +5510,15 @@
     STATUS_EL.textContent = msg;
     STATUS_EL.classList.toggle("error", !!isErr);
   }
-  function flash(msg, isErr) { setStatus(msg, isErr); clearTimeout(flash._t); flash._t = setTimeout(() => setStatus(""), 2200); }
+  function flash(msg, isErr, front) {
+    setStatus(msg, isErr);
+    STATUS_EL.classList.toggle("status-front", !!front);
+    clearTimeout(flash._t);
+    flash._t = setTimeout(() => {
+      setStatus("");
+      STATUS_EL.classList.remove("status-front");
+    }, 2200);
+  }
 
   function hapticTap(pattern) {
     if (!cfg.enableHaptics) return;
@@ -5111,6 +5632,80 @@
     } catch {
       return false;
     }
+  }
+
+  function isIOS() {
+    const ua = navigator.userAgent || "";
+    if (/iPhone|iPad|iPod/.test(ua)) return true;
+    try {
+      return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+    } catch {
+      return false;
+    }
+  }
+
+  function isInstalledApp() {
+    if (isStandaloneDisplay()) return true;
+    try { return window.navigator.standalone === true; } catch { return false; }
+  }
+
+  function installMenuMode() {
+    if (installState.installed || isInstalledApp() || !window.isSecureContext) return "";
+    if (installState.evt) return "native";
+    if (installState.dismissed) return "manual";
+    if (isIOS()) return "ios";
+    return "";
+  }
+
+  function installHelpText() {
+    const ua = navigator.userAgent || "";
+    if (!isIOS()) {
+      return "Open your browser menu, then tap Install app or Add to Home screen.";
+    }
+    if (/FBAN|FBAV|Instagram|Line\//.test(ua)) {
+      return "Open this page in Safari first.\n\nThen tap Share, tap Add to Home Screen, keep Open as Web App on, and tap Add.";
+    }
+    let text = "Tap Share (or the ••• button, then Share).\nScroll and tap Add to Home Screen. On some versions it is under View More.\nKeep Open as Web App on, then tap Add.";
+    if (/CriOS|FxiOS|EdgiOS/.test(ua)) {
+      text += "\n\nIf Add to Home Screen is missing, open this page in Safari.";
+    }
+    return text;
+  }
+
+  function updateInstallMenuUI() {
+    if (!MENU_INSTALL_WRAP) return;
+    MENU_INSTALL_WRAP.hidden = !installMenuMode();
+  }
+
+  async function onInstallMenuClick() {
+    postCall("closeTopbarOverflowMenu");
+    const mode = installMenuMode();
+    if (mode === "native" && installState.evt) {
+      const evt = installState.evt;
+      installState.evt = null;
+      updateInstallMenuUI();
+      try {
+        await evt.prompt();
+        const choice = await evt.userChoice;
+        if (choice && choice.outcome === "accepted") installState.installed = true;
+        else installState.dismissed = true;
+      } catch {
+        installState.dismissed = true;
+      }
+      updateInstallMenuUI();
+      return;
+    }
+    if (mode === "ios" || mode === "manual") {
+      postCall("confirmAction", {
+        message: installHelpText(),
+        confirmLabel: "OK",
+        infoOnly: true,
+      });
+    }
+  }
+
+  if (MENU_INSTALL_BTN) {
+    MENU_INSTALL_BTN.addEventListener("click", () => { void onInstallMenuClick(); });
   }
 
   function initAndroidLocalImmersive() {
@@ -5241,6 +5836,7 @@
     if (MENU_LOCAL_URL_EL && document.activeElement !== MENU_LOCAL_URL_EL) {
       MENU_LOCAL_URL_EL.value = localUrl;
     }
+    updateInstallMenuUI();
   }
 
   function hideLocalModeBanner() {
@@ -6237,8 +6833,6 @@
   }
 
 
-  // __MLD_SPLIT__
-
   function currentNavOrderFromDom() {
     const nav = document.querySelector(".quick-nav");
     if (!nav) return [];
@@ -6250,6 +6844,39 @@
   function updateNavDraftOrderFromDom() {
     navReorderDraftOrder = currentNavOrderFromDom();
   }
+
+  function effectivePollInterval() {
+    const base = Math.max(2000, cfg.pollIntervalMs || POLL_DEFAULT);
+    if (cfg.useWebSocket && wsConnected) return Math.max(base, POLL_WS_FALLBACK);
+    return base;
+  }
+
+  function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+  function inTabView() {
+    return tabMode && activeTab !== "lights";
+  }
+
+  function updateTabActiveStates() {
+    if (QUICK_LIGHTS_BTN) QUICK_LIGHTS_BTN.classList.toggle("is-tab-active", tabMode && activeTab === "lights");
+    for (const { popup } of QUICK_NAV) {
+      if (!TAB_CATEGORIES.has(popup)) continue;
+      const btn = document.getElementById("quick-" + popup);
+      if (btn) btn.classList.toggle("is-tab-active", tabMode && activeTab === popup);
+    }
+  }
+
+  function normalizeDefaultTabId(id) {
+    const s = String(id || "").trim();
+    if (s === "lights" || TAB_CATEGORIES.has(s)) return s;
+    return "lights";
+  }
+
+  function syncCamerasViewClass(on) {
+    APP_EL?.classList.toggle("cameras-view", !!on);
+  }
+
+  // __MLD_SPLIT__
 
   function showAllNavForReorder() {
     const nav = document.querySelector(".quick-nav");
@@ -6316,7 +6943,7 @@
     return false;
   }
 
-  async function postJson(path, body) {
+  async function postJson(path, body, authPass) {
     try {
       const r = await fetch(withToken(path), {
         method: "POST",
@@ -6324,6 +6951,10 @@
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         body: JSON.stringify(body),
       });
+      if (r.status === 401) {
+        if (await continueAfterDashboard401(authPass)) return postJson(path, body, (authPass || 0) + 1);
+        return { ok: false, status: 401, error: "auth required" };
+      }
       if (!r.ok) {
         let msg = "Request failed";
         try {
@@ -6331,7 +6962,7 @@
           if (j?.error) msg = String(j.error);
         } catch {}
         flash(msg, true);
-        return { ok: false };
+        return { ok: false, status: r.status };
       }
       let data = {};
       try { data = await r.json(); } catch {}
@@ -6343,7 +6974,7 @@
     }
   }
 
-  async function postJsonSilent(path, body) {
+  async function postJsonSilent(path, body, authPass) {
     try {
       const r = await fetch(withToken(path), {
         method: "POST",
@@ -6351,6 +6982,9 @@
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(body),
       });
+      if (r.status === 401 && await continueAfterDashboard401(authPass)) {
+        return postJsonSilent(path, body, (authPass || 0) + 1);
+      }
       let data = {};
       try { data = await r.json(); } catch {}
       applyDashSessionFromResponse(data);
@@ -6392,6 +7026,11 @@
       if (currentCategory() === "security") renderSecurityPopup();
       if (result.status === 403 || result.error === "wrong pin") {
         padApi?.shake();
+        flash("Wrong PIN. Try again.", true, true);
+        return false;
+      }
+      if (result.status === 401) {
+        padApi?.close();
         return false;
       }
       if (result.error) flash(String(result.error), true);
@@ -6416,6 +7055,7 @@
     // postJson would flash a false error before the fallback succeeds.
     let result = await postJsonSilent("hub-mode", { mode });
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       const r = await fetch(withToken("hub-mode?mode=" + encodeURIComponent(mode)), {
         method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
@@ -6433,6 +7073,7 @@
   async function activateSceneApi(id) {
     let result = await postJson("scene/activate", { id });
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       const r = await fetch(withToken("scene/activate?id=" + encodeURIComponent(id)), {
         method: "GET", cache: "no-store", headers: { "Accept": "application/json" },
@@ -6452,6 +7093,7 @@
     if (scope === "room") body.roomId = roomId;
     let result = await postJson("lights/bulk", body);
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       let url = "lights/bulk?cmd=" + encodeURIComponent(cmd) + "&scope=" + encodeURIComponent(scope);
       if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
@@ -6473,6 +7115,7 @@
     if (scope === "room") body.roomId = roomId;
     let result = await postJson("snapshot/save", body);
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       let url = "snapshot/save?scope=" + encodeURIComponent(scope);
       if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
@@ -6494,6 +7137,7 @@
     if (scope === "room") body.roomId = roomId;
     let result = await postJson("snapshot/restore", body);
     if (result.ok) return true;
+    if (result.status === 401) return false;
     try {
       let url = "snapshot/restore?scope=" + encodeURIComponent(scope);
       if (scope === "room") url += "&roomId=" + encodeURIComponent(roomId);
@@ -6925,7 +7569,10 @@
       const valve = valves.find(x => x.i === id);
       if (valve) { deviceById.set(id, { type: "sensor", dev: normalizeValveForCard(valve) }); continue; }
       const mp = music.find(x => x.i === id);
-      if (mp) { deviceById.set(id, { type: "music", dev: mp }); continue; }
+      if (mp) {
+        if (musicHasControls(mp)) deviceById.set(id, { type: "music", dev: mp });
+        continue;
+      }
       const lk = locks.find(x => x.i === id);
       if (lk) { deviceById.set(id, { type: "lock", dev: lk }); continue; }
       const garage = garageDoors.find(x => x.i === id);
@@ -7098,6 +7745,7 @@
   }
 
   function enterReorderMode() {
+    if (renameMode) exitRenameMode();
     if (tabMode && activeTab === "cameras" && cameras.length) {
       if (!isLocalOrigin()) {
         flash("Camera reorder requires the local dashboard URL", true);
@@ -7204,6 +7852,153 @@
     buildDom();
   }
 
+  let renameMode = false;
+  let dataFetchSeq = 0;
+  let renameNameFloor = 0;
+  const heldDeviceNames = new Map();
+  const heldRoomNames = new Map();
+  let renameDialogEl = null;
+  function cleanRename(raw) {
+    return String(raw ?? "").replace(/[\u0000-\u001F\u007F]/g, " ").trim();
+  }
+
+  function beginDataFetch() {
+    return ++dataFetchSeq;
+  }
+
+  function isCurrentDataFetch(d) {
+    if (!d || d.__fetchSeq == null) return true;
+    return d.__fetchSeq === dataFetchSeq;
+  }
+
+  function markRenameNamesFresh() {
+    renameNameFloor = dataFetchSeq;
+  }
+
+  function holdDeviceName(id, name) {
+    heldDeviceNames.set(Number(id), name == null ? "" : String(name));
+    markRenameNamesFresh();
+  }
+
+  function holdRoomName(id, name) {
+    heldRoomNames.set(normalizeRoomId(id), String(name));
+    markRenameNamesFresh();
+  }
+
+  function applyRenameNameHolds(d) {
+    if (!d || d.__fetchSeq == null) return;
+    if (d.__fetchSeq > renameNameFloor) {
+      heldDeviceNames.clear();
+      heldRoomNames.clear();
+      return;
+    }
+    for (const room of d.rooms || []) {
+      const id = normalizeRoomId(room.id);
+      if (heldRoomNames.has(id)) room.name = heldRoomNames.get(id);
+    }
+    for (const key of ["devices", "outlets", "windowShades", "ceilingFans", "thermostats", "music", "sensors", "tempSensors", "valves"]) {
+      for (const dev of d[key] || []) {
+        if (heldDeviceNames.has(Number(dev.i))) dev.n = heldDeviceNames.get(Number(dev.i));
+      }
+    }
+  }
+
+  function tileDisplayName(dev, el) {
+    const full = dev?.n || ("Device " + (dev?.i ?? ""));
+    if (!el?.closest?.("#rooms")) return full;
+    const rid = normalizeRoomId(dev?.r);
+    return (dev?.n && rid !== -1 ? stripRoomPrefix(dev.n, roomMap.get(rid)) : null) || full;
+  }
+
+  function syncVisibleRoomNames() {
+    document.querySelectorAll(".room[data-room-id]").forEach((card) => {
+      const id = normalizeRoomId(card.dataset.roomId);
+      if (id === -1) return;
+      const name = roomMap.get(id) || "Room";
+      card.dataset.roomName = String(name).toLowerCase();
+      const nameEl = card.querySelector(".room-name");
+      if (nameEl && nameEl.textContent !== name) nameEl.textContent = name;
+    });
+  }
+
+  function renameSurface() {
+    if (reorderMode) return null;
+    const key = (quickPopupOpenType && quickPopupOpenType !== "lights")
+      ? quickPopupOpenType
+      : ((tabMode && activeTab) || "lights");
+    return "lights,favorites,blinds,fans,sensors,thermostats,music".split(",").includes(key) ? key : null;
+  }
+
+  function isRenameMode() {
+    return renameMode;
+  }
+
+  function updateRenameMenuVisibility() {
+    const btn = document.getElementById("menu-rename");
+    if (!btn) return;
+    btn.hidden = renameSurface() == null;
+  }
+
+  function refreshDeviceTiles(id) {
+    const nid = Number(id);
+    for (const rec of [devMap.get(nid), outletMap.get(nid), favDevMap.get(nid)]) {
+      if (rec?.data) syncTileState(rec, rec.data);
+    }
+  }
+
+  function applyDeviceLabel(id, name) {
+    const nid = Number(id);
+    const next = name == null ? "" : String(name);
+    holdDeviceName(nid, next);
+    for (const list of [devices, outlets, windowShades, ceilingFans, thermostats, music, sensors, tempSensors, valves]) {
+      for (const dev of list || []) if (Number(dev.i) === nid) dev.n = next;
+    }
+    for (const rec of [devMap.get(nid), outletMap.get(nid), favDevMap.get(nid)]) {
+      if (rec?.data) rec.data.n = next;
+    }
+    refreshDeviceTiles(nid);
+  }
+
+  function applyRoomName(id, name) {
+    const nid = normalizeRoomId(id);
+    const next = String(name);
+    holdRoomName(nid, next);
+    const room = rooms.find((r) => normalizeRoomId(r.id) === nid);
+    if (room) room.name = next;
+    roomMap.set(nid, next);
+    syncVisibleRoomNames();
+    for (const dev of devices) if (normalizeRoomId(dev.r) === nid) refreshDeviceTiles(dev.i);
+    for (const dev of outlets) if (normalizeRoomId(dev.r) === nid) refreshDeviceTiles(dev.i);
+    for (const dev of sensors.concat(tempSensors, valves)) if (normalizeRoomId(dev.r) === nid) showRenamed(dev);
+    applySearch();
+  }
+
+  function closeRenameDialog() {
+    if (renameDialogEl) renameDialogEl.remove();
+    renameDialogEl = null;
+  }
+
+  function setRenameDialog(el) {
+    renameDialogEl = el;
+  }
+
+  function setRenameMode(on) {
+    renameMode = !!on;
+  }
+
+  function exitRenameMode() {
+    if (!renameMode) return;
+    renameMode = false;
+    APP_EL?.classList.remove("rename-mode");
+    closeRenameDialog();
+    if (REORDER_DONE_BTN && !reorderMode) {
+      REORDER_DONE_BTN.hidden = true;
+      REORDER_DONE_BTN.textContent = "Done";
+      REORDER_DONE_BTN.setAttribute("aria-label", "Save order");
+      REORDER_DONE_BTN.title = "Save order";
+    }
+  }
+
   let topbarOverflowDismiss = null;
 
   function closeTopbarOverflowMenu() {
@@ -7218,12 +8013,13 @@
   }
 
   function openTopbarOverflowMenu() {
-    if (!OVERFLOW_MENU || !OVERFLOW_BTN || reorderMode) return;
+    if (!OVERFLOW_MENU || !OVERFLOW_BTN || reorderMode || renameMode) return;
     updateLocalModeMenuUI();
     updateCamerasLayoutMenuVisibility();
     updateSensorsOrgMenuVisibility();
     updateAddEmbedMenuVisibility();
     updateReorderMenuLabel();
+    updateRenameMenuVisibility();
     OVERFLOW_MENU.hidden = false;
     OVERFLOW_BTN.setAttribute("aria-expanded", "true");
     const onClick = (e) => {
@@ -7557,6 +8353,7 @@
   }
 
   function render(d) {
+    if (!isCurrentDataFetch(d)) return;
     replaceList(hubModes, d.hubModes);
     if (!hubModeLocked()) currentHubMode = d.currentHubMode || "";
     if (!hsmLocked()) {
@@ -7572,6 +8369,7 @@
     scenesPopupEnabled = d.scenesPopupEnabled !== false;
     roomClimateEnabled = d.roomClimateEnabled !== false;
     schedulerEnabled = d.schedulerEnabled !== false;
+    synagogueAvailable = d.synagogueAvailable === true;
     if (d.triggersEnabled != null) triggersEnabled = !!d.triggersEnabled;
     if (d.alertsArmed != null) applyAlertsArmed(!!d.alertsArmed);
     if (d.alertsArmSwitchId != null) {
@@ -7594,7 +8392,7 @@
     replaceList(ceilingFans, d.ceilingFans);
     if (!Array.isArray(valves)) valves = [];
     replaceList(valves, Array.isArray(d.valves) ? d.valves : []);
-    replaceList(music, d.music);
+    replaceList(music, (Array.isArray(d.music) ? d.music : []).filter(musicHasControls));
     replaceList(cameras, sortCamerasByOrder(Array.isArray(d.cameras) ? d.cameras : [], cfg.cameraOrder));
     if (Array.isArray(d.config?.favorites) && !postCall("isFavoritesReorderActive") && !embedEditorOpen && !globalThis.__MLD?.embedEditorOpen) {
       replaceList(favorites, d.config.favorites.map(Number));
@@ -7629,6 +8427,7 @@
     reapplyTstatDeviceModeLocks();
     reapplyTstatFanModeLocks();
     reapplyTstatVaneLocks();
+    reapplyTstatEcoLocks();
     applyTstatSessionModeLock();
 
     repopulateThermoByRoom();
@@ -7658,6 +8457,7 @@
     if (fullRerender && !reorderMode) buildDom();
     updateRoomSnapshotUi();
     updateStates();
+    syncVisibleRoomNames();
     updateClimateWidgets();
     applySearch();
     refreshQuickPopupIfOpen();
@@ -8090,11 +8890,26 @@
     rec.el.classList.toggle("off", !on);
     rec.stateEl.textContent = on ? "On" : "Off";
     const bulb = qs(".tile-bulb", rec.el);
-    if (bulb) bulb.setAttribute("aria-pressed", on ? "true" : "false");
+    if (bulb) {
+      bulb.setAttribute("aria-pressed", on ? "true" : "false");
+      const display = tileDisplayName(dev, rec.el);
+      bulb.setAttribute("aria-label", "Toggle " + display);
+    }
     const socket = qs(".tile-socket", rec.el);
-    if (socket) socket.setAttribute("aria-pressed", on ? "true" : "false");
+    if (socket) {
+      socket.setAttribute("aria-pressed", on ? "true" : "false");
+      const display = tileDisplayName(dev, rec.el);
+      socket.setAttribute("aria-label", "Toggle " + display);
+    }
     const nameEl = qs(".tile-name", rec.el);
-    if (nameEl) nameEl.classList.toggle("color-capable", rec.isDim);
+    if (nameEl) {
+      nameEl.classList.toggle("color-capable", rec.isDim);
+      const display = tileDisplayName(dev, rec.el);
+      if (nameEl.textContent !== display) nameEl.textContent = display;
+      if (dev.n && display !== dev.n) nameEl.title = dev.n;
+      else nameEl.removeAttribute("title");
+      rec.el.dataset.name = String(dev.n || "").toLowerCase();
+    }
     if (rec.isOutlet) {
       rec.levelEl.textContent = outletsSeparateTab ? roomLabel(dev.r) : "Outlet";
     } else {
@@ -8475,7 +9290,7 @@
     setSwitchOptimistic(id, next === "on" ? 1 : 0);
     updateStates();
     sendCmd(id, next).then((r) => {
-      if (!r?.ok) { clearSwitchOptimistic(id); refreshDevice(id); }
+      if (!r?.ok) refreshDevice(id);
     });
   }
 
@@ -8488,7 +9303,7 @@
     setSwitchOptimistic(id, next === "on" ? 1 : 0);
     updateStates();
     sendCmd(id, next).then((r) => {
-      if (!r?.ok) { clearSwitchOptimistic(id); refresh(); }
+      if (!r?.ok) refresh();
     });
   }
 
@@ -8501,13 +9316,13 @@
       setLevelOptimistic(id, 0);
       updateStates();
       sendCmd(id, "off").then((r) => {
-        if (!r?.ok) { clearSwitchOptimistic(id); refreshDevice(id); }
+        if (!r?.ok) refreshDevice(id);
       });
     } else {
       setSwitchOptimistic(id, 1, null);
       updateStates();
       sendCmd(id, "on").then((r) => {
-        if (!r?.ok) { clearSwitchOptimistic(id); refreshDevice(id); }
+        if (!r?.ok) refreshDevice(id);
       });
       reconcileDevice(id);
     }
@@ -8520,10 +9335,251 @@
     setTimeout(() => refreshDevice(id), 1500); // retry once in case the hub is slow
   }
 
-  async function refreshDevice(id) {
+  let commandMissToastAt = 0;
+
+  function flashCommandMiss() {
+    const now = Date.now();
+    if (now - commandMissToastAt < 2000) return;
+    commandMissToastAt = now;
+    flash("Command did not execute. Check the connectivity of the device.", true);
+  }
+
+  function kickDevicePoll(id) {
+    void getJson("device?id=" + id + "&refresh=1").catch(() => {});
+  }
+
+  function reopenOptimisticHold(id) {
+    const until = Date.now();
+    for (const map of optimisticHoldMaps()) {
+      const opt = map.get(id);
+      if (!opt) continue;
+      opt.checking = false;
+      opt.until = until;
+    }
+    if (tstatSession?.ids?.includes(id) && tstatSession.modeLockUntil) tstatSession.modeLockUntil = until;
+  }
+
+  function extendOptimisticHold(id) {
+    const until = Date.now() + 20000;
+    for (const map of optimisticHoldMaps()) {
+      const opt = map.get(id);
+      if (!opt) continue;
+      opt.until = until;
+      opt.checking = true;
+    }
+    if (tstatSession?.ids?.includes(id) && tstatSession.modeLockUntil) tstatSession.modeLockUntil = until;
+  }
+
+  function judgeOptimisticHold(id, snap) {
+    let progress = false;
+    let miss = false;
+    const mark = (result) => {
+      if (result === "progress") progress = true;
+      else if (result === "miss") miss = true;
+    };
+    if (snap.sw) {
+      const dev = devices.find((d) => d.i === id) || outlets.find((d) => d.i === id);
+      if (!dev || !!dev.s !== !!snap.sw.s) mark("miss");
+      else if (snap.sw.l != null && !optimisticNumsClose(dev.l, snap.sw.l, 2)) mark("miss");
+    }
+    if (snap.lv) {
+      const dev = devices.find((d) => d.i === id);
+      if (!dev || !optimisticNumsClose(dev.l, snap.lv.level, 2)) mark("miss");
+    }
+    if (snap.lock) {
+      const lock = locks.find((l) => l.i === id);
+      if (!lock) mark("miss");
+      else {
+        const want = String(snap.lock.st || "").toLowerCase();
+        const got = String(lock.st || "").toLowerCase();
+        if ((want === "locking" && got === "locking") || (want === "unlocking" && got === "unlocking")) mark("progress");
+        else mark(lockOptimisticSatisfied(snap.lock, lock) ? "ok" : "miss");
+      }
+    }
+    if (snap.garage) {
+      const door = garageDoors.find((g) => g.i === id);
+      if (!door) mark("miss");
+      else {
+        const want = String(snap.garage.st || "");
+        const got = String(door.st || "");
+        if ((want === "opening" || want === "open") && got === "opening") mark("progress");
+        else if ((want === "closing" || want === "closed") && got === "closing") mark("progress");
+        else mark(garageOptimisticSatisfied(snap.garage, door) ? "ok" : "miss");
+      }
+    }
+    if (snap.shade) {
+      const shade = windowShades.find((s) => s.i === id);
+      if (!shade) mark("miss");
+      else {
+        const want = snap.shade.st != null ? String(snap.shade.st) : "";
+        const got = String(shade.st || "");
+        if (got === "opening" && (want === "opening" || want === "open" || snap.shade.pos != null)) mark("progress");
+        else if (got === "closing" && (want === "closing" || want === "closed" || snap.shade.pos != null)) mark("progress");
+        else {
+          let ok = !want || want === got || (want === "opening" && got === "open") || (want === "closing" && got === "closed");
+          if (ok && snap.shade.pos != null && !optimisticNumsClose(shade.pos, snap.shade.pos, 2)) ok = false;
+          if (!ok) mark("miss");
+        }
+      }
+    }
+    if (snap.fan) {
+      const fan = ceilingFans.find((f) => f.i === id);
+      if (!fan) mark("miss");
+      else if (snap.fan.s != null && !!fan.s !== !!snap.fan.s) mark("miss");
+      else if (snap.fan.sp != null && String(fan.sp || "").toLowerCase() !== String(snap.fan.sp).toLowerCase()) mark("miss");
+    }
+    if (snap.valve) {
+      const valve = valves.find((v) => v.i === id);
+      if (!valve) mark("miss");
+      else {
+        const want = String(snap.valve.st || "");
+        const got = String(valve.st || "");
+        if ((want === "open" || want === "opening") && got === "opening") mark("progress");
+        else if ((want === "closed" || want === "closing") && got === "closing") mark("progress");
+        else if (got !== want) mark("miss");
+      }
+    }
+    if (snap.music) {
+      const dev = music.find((m) => m.i === id);
+      if (!dev) mark("miss");
+      else if (snap.music.st != null && dev.st !== snap.music.st) mark("miss");
+      else if (snap.music.v != null && !optimisticNumsClose(dev.v, snap.music.v, 2)) mark("miss");
+    }
+    if (snap.sp) {
+      const t = thermostats.find((x) => x.i === id);
+      if (!t) mark("miss");
+      else if (snap.sp.hsp != null && Number(t.hsp) !== Number(snap.sp.hsp)) mark("miss");
+      else if (snap.sp.csp != null && Number(t.csp) !== Number(snap.sp.csp)) mark("miss");
+    }
+    if (snap.mode || snap.session) {
+      const t = thermostats.find((x) => x.i === id);
+      const want = String((snap.mode && snap.mode.mode) || snap.session?.mode || "").toLowerCase();
+      if (!t || String(t.tm || "").toLowerCase() !== want) mark("miss");
+    }
+    if (snap.fanMode) {
+      const t = thermostats.find((x) => x.i === id);
+      const want = String(snap.fanMode.mode || "").toLowerCase();
+      if (!t || String(t.fm || "").toLowerCase() !== want) mark("miss");
+      else if (t.hasCfs && String(t.cfs || "").toLowerCase() !== want) mark("miss");
+    }
+    if (snap.vane) {
+      const t = thermostats.find((x) => x.i === id);
+      if (!t || String(t.vp || "").toLowerCase() !== String(snap.vane.position || "").toLowerCase()) mark("miss");
+    }
+    if (snap.eco) {
+      const t = thermostats.find((x) => x.i === id);
+      const want = String(snap.eco.mode || "").trim().toUpperCase();
+      const got = String(t?.eco || "").trim().toUpperCase();
+      if (!t || got !== want) mark("miss");
+    }
+    if (miss) return "miss";
+    if (progress) return "progress";
+    return "ok";
+  }
+
+  function finishTravelOptimistic(id, snap) {
+    if (snap.lock) {
+      const cur = locks.find((l) => l.i === id);
+      if (cur && (String(cur.st) === "locking" || String(cur.st) === "unlocking")) {
+        cur.lk = snap.lock.lk ? 1 : 0;
+        cur.st = snap.lock.lk ? "locked" : "unlocked";
+      }
+    }
+    if (snap.garage) {
+      const cur = garageDoors.find((g) => g.i === id);
+      if (cur && (cur.st === "opening" || cur.st === "closing")) {
+        cur.st = cur.st === "opening" ? "open" : "closed";
+      }
+    }
+  }
+
+  function repaintOptimisticViews(id) {
+    updateStates();
+    const n = Number(id);
+    let cat = "";
+    try { cat = currentCategory(); } catch { cat = ""; }
+    if (locks.some((l) => l.i === n) || garageDoors.some((g) => g.i === n)) {
+      if (cat === "locks") renderLocksPopup();
+      else if (cat === "favorites") postCall("refreshFavoritesPopup");
+    }
+    if (windowShades.some((s) => s.i === n)) {
+      refreshShadeViews();
+      if (shadeMasterPopup?.classList.contains("open")) postCall("updateShadeMasterBody");
+    }
+    if (ceilingFans.some((f) => f.i === n)) {
+      const fan = ceilingFans.find((f) => f.i === n);
+      if (fan) updateFanTile(fan);
+      if (cat === "fans") postCall("refreshFansPopup");
+      else if (cat === "favorites") postCall("refreshFavoritesPopup");
+    }
+    if (valves.some((v) => v.i === n)) {
+      if (cat === "sensors") postCall("refreshSensorsPopup");
+      else if (cat === "favorites") postCall("refreshFavoritesPopup");
+    }
+    if (music.some((m) => m.i === n)) {
+      if (cat === "music") postCall("renderMusicPopup");
+      else if (cat === "favorites") postCall("refreshFavoritesPopup");
+    }
+    if (thermostats.some((t) => t.i === n)) {
+      postCall("renderTstatDial");
+      updateClimateWidgets();
+      postCall("refreshOpenTstatQuickPopups");
+    }
+  }
+
+  async function settleOptimisticDevice(id, gen) {
+    const slot = optimisticSettle.get(id);
+    if (!slot) return;
+    const expect = gen == null ? slot.gen : gen;
+    if (slot.gen !== expect) return;
+    if (slot.inflight) return slot.inflight;
+    const job = runSettleOptimistic(id, expect);
+    slot.inflight = job;
     try {
-      const d = await getJson("device?id=" + id);
-      if (!d || d.i == null) return;
+      await job;
+    } finally {
+      if (slot.inflight === job) slot.inflight = null;
+    }
+  }
+
+  async function runSettleOptimistic(id, expect) {
+    const snap = captureOptimistic(id);
+    if (!snap) return;
+    extendOptimisticHold(id);
+    let data = null;
+    try {
+      data = await refreshDevice(id, {
+        refresh: deviceReportsSlow(id) ? false : undefined,
+        forceHub: true,
+      });
+    } catch (e) {
+      if (e?.code === "auth_required") {
+        reopenOptimisticHold(id);
+        return;
+      }
+      data = null;
+    }
+    if (optimisticSettle.get(id)?.gen !== expect) return;
+    if (!data) {
+      restoreOptimisticSnapshot(id, snap);
+      dropOptimisticHolds(id, snap);
+      repaintOptimisticViews(id);
+      flashCommandMiss();
+      return;
+    }
+    const result = judgeOptimisticHold(id, snap);
+    if (result === "progress") finishTravelOptimistic(id, snap);
+    dropOptimisticHolds(id, snap);
+    repaintOptimisticViews(id);
+    if (result === "miss") flashCommandMiss();
+  }
+
+  async function refreshDevice(id, opts) {
+    const skipRefresh = !!(opts && opts.refresh === false);
+    const forceHub = !!(opts && opts.forceHub);
+    try {
+      const d = await getJson("device?id=" + id + (skipRefresh ? "&refresh=0" : ""));
+      if (!d || d.i == null) return null;
       const numId = Number(d.i);
 
       const shade = windowShades.find(x => x.i === numId);
@@ -8531,7 +9587,7 @@
         if (d.st != null) shade.st = d.st;
         if (d.pos != null) shade.pos = d.pos;
         const opt = shadeOptimistic.get(numId);
-        if (opt && shadeOptimisticSatisfied(opt, shade)) clearShadeOptimistic(numId);
+        if (!forceHub && opt && shadeOptimisticSatisfied(opt, shade)) clearShadeOptimistic(numId);
         refreshShadeViews();
       }
 
@@ -8546,21 +9602,38 @@
           if (rec.data.rgb && d.sat != null) dev.sat = d.sat;
         }
         const opt = switchOptimistic.get(numId);
-        if (opt && !!dev?.s === !!opt.s) clearSwitchOptimistic(numId);
+        if (!forceHub && opt && !!dev?.s === !!opt.s) clearSwitchOptimistic(numId);
         updateStates();
-        if (shade && (d.st != null || d.pos != null)) return;
-        return;
+        return d;
+      }
+      const out = outlets.find((x) => x.i === numId);
+      if (out && d.s != null) {
+        out.s = d.s ? 1 : 0;
+        const opt = switchOptimistic.get(numId);
+        if (!forceHub && opt && !!out.s === !!opt.s) clearSwitchOptimistic(numId);
+        updateStates();
+        return d;
+      }
+      const bare = devices.find((x) => x.i === numId);
+      if (bare && (d.s != null || d.l != null)) {
+        if (d.s != null) bare.s = d.s ? 1 : 0;
+        if (d.l != null) bare.l = d.l;
       }
       // thermostat reconcile
       const t = thermostats.find(x => x.i === Number(d.i));
       if (t) {
-        const modeLocked = tstatModeLocked(t.i);
+        const modeLocked = !forceHub && tstatModeLocked(t.i);
         if (d.tm != null && !modeLocked) t.tm = d.tm;
         if (d.os != null && !modeLocked) t.os = d.os;
-        applyTstatSetpoints(t, { hsp: d.hsp, csp: d.csp });
+        if (forceHub) {
+          if (d.hsp != null) t.hsp = Number(d.hsp);
+          if (d.csp != null) t.csp = Number(d.csp);
+        } else {
+          applyTstatSetpoints(t, { hsp: d.hsp, csp: d.csp });
+        }
         if (d.temp != null) t.temp = Number(d.temp);
         if (d.hasFm != null) t.hasFm = d.hasFm;
-        if (d.fm != null && !tstatFanModeLocked(t.i)) {
+        if (d.fm != null && (forceHub || !tstatFanModeLocked(t.i))) {
           t.fm = d.fm;
           if (t.hasCfs) t.cfs = d.fm;
         }
@@ -8568,17 +9641,21 @@
         if (d.fs != null) t.fs = d.fs;
         if (d.hasCm != null) t.hasCm = d.hasCm;
         if (d.hasCfs != null) t.hasCfs = d.hasCfs;
-        if (d.cfs != null && !tstatFanModeLocked(t.i)) {
+        if (d.cfs != null && (forceHub || !tstatFanModeLocked(t.i))) {
           t.cfs = d.cfs;
           t.fm = d.cfs;
         }
         if (d.hasVp != null) t.hasVp = d.hasVp;
-        if (d.vp != null && !tstatVaneLocked(t.i)) t.vp = d.vp;
+        if (d.vp != null && (forceHub || !tstatVaneLocked(t.i))) t.vp = d.vp;
         if (d.vpLev != null) t.vpLev = d.vpLev;
+        if (d.hasEco != null) t.hasEco = d.hasEco;
+        if (Object.prototype.hasOwnProperty.call(d, "eco") && (forceHub || !tstatEcoLocked(t.i))) t.eco = d.eco;
+        if (d.ehsp != null) t.ehsp = Number(d.ehsp);
+        if (d.ecsp != null) t.ecsp = Number(d.ecsp);
         updateClimateWidgets();
         updateRoomMeta();
         refreshOpenTstatQuickPopups();
-        return;
+        return d;
       }
       const s = tempSensors.find(x => x.i === Number(d.i));
       const sen = sensors.find(x => x.i === Number(d.i));
@@ -8593,43 +9670,43 @@
         updateClimateWidgets();
         updateRoomMeta();
         refreshSensorViews();
-        return;
+        return d;
       }
       if (s && !sen && !hasControlRole) {
         applyTempSensorPayload(s, d);
         updateClimateWidgets();
         updateRoomMeta();
         refreshSensorViews();
-        return;
+        return d;
       }
       if (sen && !hasControlRole) {
         applySensorPayload(sen, d);
         refreshSensorViews();
-        return;
+        return d;
       }
       if (lock) {
         if (d.lk != null) lock.lk = d.lk ? 1 : 0;
         if (d.st != null) lock.st = d.st;
         const opt = lockOptimistic.get(Number(d.i));
-        if (opt && lockOptimisticSatisfied(opt, lock)) clearLockOptimistic(Number(d.i));
+        if (!forceHub && opt && lockOptimisticSatisfied(opt, lock)) clearLockOptimistic(Number(d.i));
         if (currentCategory() === "locks") renderLocksPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
+        return d;
       }
       if (garage) {
         if (d.st != null) garage.st = d.st;
         const opt = garageOptimistic.get(Number(d.i));
-        if (opt && garageOptimisticSatisfied(opt, garage)) clearGarageOptimistic(Number(d.i));
+        if (!forceHub && opt && garageOptimisticSatisfied(opt, garage)) clearGarageOptimistic(Number(d.i));
         if (currentCategory() === "locks") renderLocksPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
+        return d;
       }
-      if (shade && (d.st != null || d.pos != null)) return;
+      if (shade && (d.st != null || d.pos != null)) return d;
       if (fan) {
         if (d.s != null) fan.s = d.s ? 1 : 0;
         if (d.sp != null) fan.sp = d.sp;
         const opt = fanOptimistic.get(Number(d.i));
-        if (opt) {
+        if (!forceHub && opt) {
           let matched = true;
           if (opt.s != null && !!fan.s !== !!opt.s) matched = false;
           if (opt.sp != null && String(fan.sp || "").toLowerCase() !== String(opt.sp).toLowerCase()) matched = false;
@@ -8637,15 +9714,15 @@
         }
         updateFanTile(fan);
         if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
+        return d;
       }
       if (valve) {
         if (d.st != null) valve.st = d.st;
         const opt = valveOptimistic.get(Number(d.i));
-        if (opt?.st != null && valve.st === opt.st) clearValveOptimistic(Number(d.i));
+        if (!forceHub && opt?.st != null && valve.st === opt.st) clearValveOptimistic(Number(d.i));
         if (currentCategory() === "sensors") refreshSensorsPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
-        return;
+        return d;
       }
       if (mp) {
         if (d.st != null) mp.st = d.st;
@@ -8654,13 +9731,18 @@
         if (d.m != null) mp.m = d.m;
         if (d.f != null) mp.f = d.f;
         const mopt = musicOptimistic.get(Number(d.i));
-        if (mopt && (mopt.st == null || mp.st === mopt.st) && (mopt.v == null || mp.v === mopt.v)) {
+        if (!forceHub && mopt && (mopt.st == null || mp.st === mopt.st) && (mopt.v == null || mp.v === mopt.v)) {
           clearMusicOptimistic(Number(d.i));
         }
         if (currentCategory() === "music") renderMusicPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
+        return d;
       }
-    } catch {}
+      return d;
+    } catch (e) {
+      if (e?.code === "auth_required") throw e;
+      return null;
+    }
   }
 
   function reconcileLock(id) {
@@ -8706,7 +9788,6 @@
     }
     const result = await sendCmd(id, cmd, val);
     if (!result.ok) {
-      clearMusicOptimistic(id);
       reconcileMusic(id);
       if (currentCategory() === "music") renderMusicPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -8736,7 +9817,7 @@
       const next = Math.max(0, Math.min(100, base + delta));
       setMusicOptimistic(dev.i, { v: next });
       sendCmd(dev.i, "setVolume", next).then((result) => {
-        if (!result.ok) { clearMusicOptimistic(dev.i); reconcileMusic(dev.i); }
+        if (!result.ok) reconcileMusic(dev.i);
         else reconcileMusic(dev.i);
         if (currentCategory() === "music") renderMusicPopup();
         else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -8765,7 +9846,6 @@
     }
     const result = await sendCmd(id, cmd, null, pin);
     if (!result.ok) {
-      clearGarageOptimistic(id);
       reconcileGarage(id);
       if (currentCategory() === "locks") renderLocksPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -8786,7 +9866,6 @@
     else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
     const result = await sendCmd(id, cmd, null, pin);
     if (!result.ok) {
-      clearLockOptimistic(id);
       reconcileLock(id);
       if (currentCategory() === "locks") renderLocksPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -8817,7 +9896,6 @@
     }
     const result = await sendCmd(id, cmd, val);
     if (!result.ok) {
-      clearShadeOptimistic(id);
       reconcileShade(id);
       if (!quiet) {
         if (currentCategory() === "blinds") refreshBlindsPopup();
@@ -8849,7 +9927,6 @@
     }
     const result = await sendCmd(id, cmd, val);
     if (!result.ok) {
-      clearFanOptimistic(id);
       reconcileFan(id);
       updateFanTile(fan);
       if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -8952,18 +10029,26 @@
     const devs = devicesByRoom.get(rid) || [];
     if (!devs.length) return;
     const hasDimmer = devs.some(d => d.d);
+    const ids = devs.map((d) => d.i);
     for (const dev of devs) applySwitchCmdOptimistic(dev, cmd);
     updateStates();
-    bulkLightsApi(cmd, "room", rid);
+    void bulkLightsApi(cmd, "room", rid).then((ok) => {
+      if (ok) return;
+      for (const id of ids) abandonOptimistic(id);
+    });
     if (cmd === "on" && hasDimmer) setTimeout(refresh, 900); // reconcile restored levels
   }
 
   function allLights(cmd) {
     if (!devices.length) return;
     const hasDimmer = devices.some(d => d.d);
+    const ids = devices.map((d) => d.i);
     for (const dev of devices) applySwitchCmdOptimistic(dev, cmd);
     updateStates();
-    bulkLightsApi(cmd, "house");
+    void bulkLightsApi(cmd, "house").then((ok) => {
+      if (ok) return;
+      for (const id of ids) abandonOptimistic(id);
+    });
     if (cmd === "on" && hasDimmer) setTimeout(refresh, 900);
   }
 
@@ -9002,7 +10087,7 @@
     return el;
   }
 
-  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "fans", "outlets", "scheduling"]);
+  const WIDE_POPUP_TYPES = new Set(["favorites", "sensors", "thermostats", "blinds", "fans", "outlets", "scheduling", "synagogue"]);
   const HUB_MODE_POPUP_TYPE = "hub-mode";
 
   function syncQuickPopupWidth(popup, type) {
@@ -9707,13 +10792,8 @@
     const n = Number(ts);
     if (!Number.isFinite(n) || n <= 0) return "";
     try {
-      return new Date(n).toLocaleString([], {
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      });
+      const zone = typeof hubClockZone === "function" ? hubClockZone() : "";
+      return typeof formatHubWall === "function" ? formatHubWall(n, zone, { month: true }) : "";
     } catch {
       return "";
     }
@@ -10540,6 +11620,10 @@
 
 
 
+  function isFullFavoriteSize(size) {
+    return size === "full" || size === "tall" || size === "large" || size === "viewport";
+  }
+
   // __MLD_SPLIT2__
 
   function favoritesPopupSignature() {
@@ -10623,10 +11707,6 @@
     clearFavoriteSizeClasses(el);
     el.classList.add("fav-size-" + size);
     el.dataset.favSize = size;
-  }
-
-  function isFullFavoriteSize(size) {
-    return size === "full" || size === "tall" || size === "large" || size === "viewport";
   }
 
   function makeFavoriteEntryElement(entry) {
@@ -11457,7 +12537,7 @@
 
   function makeQuickTstatCard(t, map) {
     const tm = String(t.tm || "").toLowerCase();
-    const card = ce("div", "quick-fav-card quick-fav-tstat mode-" + (tm || "off"));
+    const card = ce("div", "quick-fav-card quick-fav-tstat " + tstatCardModeClass(t));
     card.dataset.name = String(t.n || "").toLowerCase();
     card.dataset.tstatId = String(t.i);
     syncFavoriteTstatCompactState(card, t);
@@ -11478,7 +12558,7 @@
 
     const info = ce("div", "quick-fav-tstat-info");
     info.appendChild(nameBtn);
-    const stateEl = ce("div", "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : ""));
+    const stateEl = ce("div", tstatStateElClass(stateInfo, temps.tone));
     const dot = ce("span", "quick-fav-tstat-dot");
     const stateTxt = ce("span", "quick-fav-tstat-state-txt");
     paintTstatStateTxt(stateTxt, stateInfo);
@@ -11490,7 +12570,9 @@
     paintTstatSetpoint(spEl, temps);
 
     const compactMode = ce("div", "quick-fav-tstat-mode" + (tm === "off" ? " is-off" : ""));
-    compactMode.textContent = tstatModeDisplayLabel(t.tm);
+    compactMode.textContent = tstatEcoOn(t) && tm !== "off"
+      ? ("Eco · " + tstatModeDisplayLabel(t.tm))
+      : tstatModeDisplayLabel(t.tm);
 
     const controls = ce("div", "quick-fav-tstat-controls");
     const minus = ce("button", "quick-fav-ctl quick-fav-step");
@@ -11514,9 +12596,13 @@
     plus.type = "button";
     plus.textContent = "+";
     plus.setAttribute("aria-label", "Increase setpoint");
-    const canAdjust = !!favoriteTstatTarget(t);
+    const canAdjust = !!favoriteTstatTarget(t) && !tstatEcoOn(t);
     minus.disabled = !canAdjust;
     plus.disabled = !canAdjust;
+    if (!canAdjust && tstatEcoOn(t)) {
+      minus.setAttribute("aria-label", "Setpoint locked while Eco is on");
+      plus.setAttribute("aria-label", "Setpoint locked while Eco is on");
+    }
     minus.addEventListener("click", (e) => {
       e.stopPropagation();
       adjustFavoriteTstat(t.i, -1);
@@ -11573,7 +12659,7 @@
     const rec = map.get(t.i);
     if (!rec) return;
     const tm = String(t.tm || "").toLowerCase();
-    const nextMode = "mode-" + (tm || "off");
+    const nextMode = tstatCardModeClass(t);
     for (const cls of rec.card.classList) {
       if (cls.startsWith("mode-")) rec.card.classList.remove(cls);
     }
@@ -11582,18 +12668,23 @@
     const temps = favoriteTstatTemps(t);
     const stateInfo = favoriteTstatState(t);
     paintTstatSetpoint(rec.spEl, temps);
-    rec.stateEl.className = "quick-fav-tstat-state" + (stateInfo.active ? " is-active" : "");
+    rec.stateEl.className = tstatStateElClass(stateInfo, temps.tone);
     paintTstatStateTxt(rec.stateTxt, stateInfo);
     rec.modeLabel.textContent = tstatModeDisplayLabel(t.tm);
     fitTstatModeLabel(rec.modeBtn);
     if (rec.dialTemp) rec.dialTemp.textContent = temps.current;
     if (rec.compactMode) {
-      rec.compactMode.textContent = tstatModeDisplayLabel(t.tm);
+      rec.compactMode.textContent = tstatEcoOn(t) && tm !== "off"
+        ? ("Eco · " + tstatModeDisplayLabel(t.tm))
+        : tstatModeDisplayLabel(t.tm);
       rec.compactMode.classList.toggle("is-off", tm === "off");
     }
-    const canAdjust = !!favoriteTstatTarget(t);
+    const canAdjust = !!favoriteTstatTarget(t) && !tstatEcoOn(t);
     rec.minus.disabled = !canAdjust;
     rec.plus.disabled = !canAdjust;
+    const locked = tstatEcoOn(t);
+    rec.minus.setAttribute("aria-label", locked ? "Setpoint locked while Eco is on" : "Decrease setpoint");
+    rec.plus.setAttribute("aria-label", locked ? "Setpoint locked while Eco is on" : "Increase setpoint");
     if (favTstatModeMenu && favTstatModeMenuId === t.i) syncFavoriteTstatModeMenu(t);
   }
 
@@ -11719,22 +12810,26 @@
 
   function formatTimeCardParts(style, now = new Date()) {
     const withSeconds = style === "time_seconds";
-    const parts = new Intl.DateTimeFormat(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-      ...(withSeconds ? { second: "2-digit" } : {}),
-    }).formatToParts(now);
-    const nums = [];
-    let dayPeriod = "";
-    for (const p of parts) {
-      if (p.type === "hour" || p.type === "minute" || p.type === "second") nums.push(p.value);
-      else if (p.type === "dayPeriod") dayPeriod = p.value;
+    const hour24 = typeof browserHour24 === "function" && browserHour24();
+    // One path for every clock: the hub's zone, or the hub's offset when a
+    // phone ignores that zone. Never a second, offset-only path that would
+    // skip daylight saving.
+    const zone = typeof hubClockZone === "function" ? hubClockZone() : "";
+    const bag = typeof hubWallBag === "function" ? hubWallBag(now.getTime(), zone, withSeconds) : null;
+    if (!bag) return { time: "", ampm: "", date: "", showDate: style === "time_date" };
+    const minute = bag.minute || "00";
+    let time;
+    let ampm = "";
+    if (hour24) time = String(bag.hour24).padStart(2, "0") + ":" + minute;
+    else {
+      ampm = bag.hour24 >= 12 ? "PM" : "AM";
+      time = (bag.hour24 % 12 || 12) + ":" + minute;
     }
-    const time = nums.join(":");
-    const date = style === "time_date"
-      ? now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+    if (withSeconds && bag.second) time += ":" + bag.second;
+    const date = style === "time_date" && bag.weekday
+      ? bag.weekday + ", " + bag.month + " " + bag.day
       : "";
-    return { time, ampm: dayPeriod, date, showDate: style === "time_date" };
+    return { time, ampm, date, showDate: style === "time_date" };
   }
 
   function paintTimeCardElements(root, style, now = new Date()) {
@@ -12544,6 +13639,7 @@
       case "fans": return ceilingFans.length > 0;
       case "outlets": return outletsSeparateTab && outlets.length > 0;
       case "scheduling": return schedulerEnabled;
+      case "synagogue": return synagogueAvailable;
       case "sensors": {
         const listFn = globalThis.__MLD?.mergedSensorList;
         return typeof listFn === "function" && listFn().length > 0;
@@ -12604,6 +13700,7 @@
           if (isPost3Ready()) postCall("renderSchedulerView");
           else void activateDeferredModule("scheduling");
           break;
+        case "synagogue": renderSynagogueView(); break;
       }
       return;
     }
@@ -12622,6 +13719,7 @@
         if (isPost3Ready()) postCall("renderSchedulerView");
         else void activateDeferredModule("scheduling");
         break;
+      case "synagogue": renderSynagogueView(); break;
     }
   }
 
@@ -12657,6 +13755,9 @@
       case "thermostats": renderThermostatsPopup(); break;
       case "scheduling":
         void activateDeferredModule("scheduling");
+        break;
+      case "synagogue":
+        renderSynagogueView();
         break;
       default:
         popup._body.className = "quick-body";
@@ -12761,23 +13862,16 @@
     if (CURRENT_CATEGORY_TITLE_EL) CURRENT_CATEGORY_TITLE_EL.textContent = currentCategoryLabel();
   }
 
-  function inTabView() {
-    return tabMode && activeTab !== "lights";
-  }
-
-  function updateTabActiveStates() {
-    if (QUICK_LIGHTS_BTN) QUICK_LIGHTS_BTN.classList.toggle("is-tab-active", tabMode && activeTab === "lights");
-    for (const { popup } of QUICK_NAV) {
-      if (!TAB_CATEGORIES.has(popup)) continue;
-      const btn = document.getElementById("quick-" + popup);
-      if (btn) btn.classList.toggle("is-tab-active", tabMode && activeTab === popup);
-    }
-  }
-
-  function normalizeDefaultTabId(id) {
-    const s = String(id || "").trim();
-    if (s === "lights" || TAB_CATEGORIES.has(s)) return s;
-    return "lights";
+  function renderSynagogueView() {
+    const body = currentBody();
+    if (!body) return;
+    if (body.querySelector(".synagogue-slot")) return;
+    setQuickBodyClass(body, "quick-body quick-body-synagogue");
+    body.innerHTML = "";
+    const host = ce("div", "synagogue-slot");
+    body.appendChild(host);
+    if (globalThis.mldSynagogue?.mount) globalThis.mldSynagogue.mount(host);
+    else host.textContent = "Synagogue did not load. Install mDash Synagogue, then reload this page.";
   }
 
   function applyDefaultTabIfNeeded() {
@@ -12786,10 +13880,6 @@
     const id = normalizeDefaultTabId(cfg.defaultTab);
     if (id === "lights") return;
     if (quickNavPopupHasContent(id)) showTab(id);
-  }
-
-  function syncCamerasViewClass(on) {
-    APP_EL?.classList.toggle("cameras-view", !!on);
   }
 
   function showTab(id) {
@@ -12834,7 +13924,9 @@
     updateSensorsOrgMenuVisibility();
     updateAddEmbedMenuVisibility();
     updateReorderMenuLabel();
+    updateRenameMenuVisibility();
     updateTabActiveStates();
+    if (isRenameMode() && !"lights,favorites,blinds,fans,sensors,thermostats,music".split(",").includes(id)) exitRenameMode();
     if (nonLights) {
       switch (id) {
         case "favorites": showFavoritesPanel(); break;
@@ -12846,6 +13938,7 @@
         case "fans": refreshFansPopup(); break;
         case "outlets": renderOutletsPopup(); break;
         case "scheduling": void activateDeferredModule("scheduling"); break;
+        case "synagogue": renderSynagogueView(); break;
       }
     }
     applySearch();
@@ -13027,6 +14120,7 @@
     cancel.textContent = "Cancel";
     const ok = ce("button", "confirm-btn");
     ok.type = "button";
+    el._cancel = cancel;
     panel.appendChild(msg);
     actions.appendChild(cancel);
     actions.appendChild(ok);
@@ -13046,13 +14140,15 @@
     return el;
   }
 
-  function confirmAction({ message, confirmLabel, danger = false }) {
+  function confirmAction({ message, confirmLabel, danger = false, infoOnly = false }) {
     return new Promise((resolve) => {
       cancelAllSlideGestures();
       const popup = ensureConfirmPopup();
       popup._msg.textContent = message;
+      popup._msg.classList.toggle("confirm-msg-multiline", !!infoOnly);
       popup._ok.textContent = confirmLabel;
-      popup._ok.classList.toggle("danger", danger);
+      popup._ok.classList.toggle("danger", !!danger && !infoOnly);
+      if (popup._cancel) popup._cancel.hidden = !!infoOnly;
       confirmPending = resolve;
       popup.hidden = false;
       popup.classList.add("open");
@@ -13320,7 +14416,13 @@
   }
 
   if (REORDER_DONE_BTN) {
-    REORDER_DONE_BTN.addEventListener("click", finishReorderMode);
+    REORDER_DONE_BTN.addEventListener("click", () => {
+      if (isRenameMode()) {
+        exitRenameMode();
+        return;
+      }
+      finishReorderMode();
+    });
   }
 
   if (REORDER_CANCEL_BTN) {
@@ -13339,6 +14441,14 @@
     MENU_REORDER_BTN.addEventListener("click", () => {
       closeTopbarOverflowMenu();
       enterReorderMode();
+    });
+  }
+
+  const MENU_RENAME_BTN = document.getElementById("menu-rename");
+  if (MENU_RENAME_BTN) {
+    MENU_RENAME_BTN.addEventListener("click", () => {
+      closeTopbarOverflowMenu();
+      enterRenameMode();
     });
   }
 
@@ -13561,6 +14671,7 @@
     const schedulerEpoch = postCall("schedulerResponseEpoch");
     try {
       const d = await fetchData();
+      if (!isCurrentDataFetch(d)) return;
       refreshLocalUrlFromConfig();
       updateLocalModeMenuUI();
       render(d);
@@ -13569,11 +14680,6 @@
     } catch (e) {
       setStatus("Cannot reach hub", true);
     }
-  }
-  function effectivePollInterval() {
-    const base = Math.max(2000, cfg.pollIntervalMs || POLL_DEFAULT);
-    if (cfg.useWebSocket && wsConnected) return Math.max(base, POLL_WS_FALLBACK);
-    return base;
   }
 
   function startPolling() {
@@ -13584,7 +14690,6 @@
   function restartPolling() {
     if (!document.hidden && !reorderMode) startPolling();
   }
-  function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 
   function clearWsReconnectTimer() {
     if (wsReconnectTimer) {
@@ -13702,15 +14807,30 @@
           const dev = devices.find((x) => x.i === Number(m.deviceId));
           if (m.name === "switch") {
             const s = (m.value === "on") ? 1 : 0;
+            const id = Number(m.deviceId);
+            const opt = switchOptimistic.get(id);
+            if (opt && !!s !== !!opt.s) return;
             if (dev) dev.s = s;
-            clearSwitchOptimistic(Number(m.deviceId));
+            if (opt) clearSwitchOptimistic(id);
             updateStates();
           }
           else if (m.name === "level" && rec.isDim) {
             const lvl = Math.round(Number(m.value));
             if (!isNaN(lvl)) {
+              const id = Number(m.deviceId);
+              const lv = levelOptimistic.get(id);
+              const opt = switchOptimistic.get(id);
+              if (lv && !optimisticNumsClose(lvl, lv.level, 2)) return;
+              if (opt && opt.l != null && !optimisticNumsClose(lvl, opt.l, 2)) return;
+              if (opt && opt.l == null && !!opt.s !== (lvl > 0)) return;
               if (dev) dev.l = lvl;
-              clearSwitchOptimistic(Number(m.deviceId));
+              if (lv) clearLevelOptimistic(id);
+              if (opt) {
+                const agrees = opt.l != null
+                  ? optimisticNumsClose(lvl, opt.l, 2)
+                  : (!!opt.s === (lvl > 0));
+                if (agrees) clearSwitchOptimistic(id);
+              }
               if (!rec.el.classList.contains("dragging")) updateStates();
             }
           }
@@ -13739,9 +14859,13 @@
         }
         const outletRec = outletMap.get(Number(m.deviceId)) || favDevMap.get(Number(m.deviceId));
         if (outletRec?.isOutlet && m.name === "switch") {
-          const out = outlets.find((x) => x.i === Number(m.deviceId));
-          if (out) out.s = (m.value === "on") ? 1 : 0;
-          clearSwitchOptimistic(Number(m.deviceId));
+          const s = (m.value === "on") ? 1 : 0;
+          const id = Number(m.deviceId);
+          const opt = switchOptimistic.get(id);
+          if (opt && !!s !== !!opt.s) return;
+          const out = outlets.find((x) => x.i === id);
+          if (out) out.s = s;
+          if (opt) clearSwitchOptimistic(id);
           updateStates();
           return;
         }
@@ -13804,6 +14928,9 @@
           }
           else if (name === "fanSpeed") t.fs = val;
           else if (name === "vanePosition" && !tstatVaneLocked(t.i)) t.vp = val;
+          else if (name === "ecoMode" && !tstatEcoLocked(t.i)) { t.hasEco = 1; t.eco = val; }
+          else if (name === "ecoHeatPoint") { const n = Number(val); if (!isNaN(n)) t.ehsp = n; }
+          else if (name === "ecoCoolPoint") { const n = Number(val); if (!isNaN(n)) t.ecsp = n; }
           else return;
           updateClimateWidgets();
           updateRoomMeta();
@@ -14556,7 +15683,7 @@
       close();
       try {
         const data = await fetchData();
-        render(data);
+        if (isCurrentDataFetch(data)) render(data);
       } catch {
         if (currentCategory() === "favorites") renderFavoritesPopup();
       }
@@ -14570,12 +15697,171 @@
     });
   }
 
+  async function postRename(path, body) {
+    let result = await postJsonSilent(path, body);
+    if (result.ok || result.error !== "missing params") return result;
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(body)) q.set(k, v == null ? "" : String(v));
+    try {
+      const r = await fetch(withToken(path + "?" + q), { cache: "no-store", headers: { Accept: "application/json" } });
+      let data = {};
+      try { data = await r.json(); } catch {}
+      applyDashSessionFromResponse(data);
+      return { ok: r.ok, data, error: data?.error };
+    } catch {
+      return { ok: false, error: "Request failed" };
+    }
+  }
+
+  function enterRenameMode() {
+    if (reorderMode) { flash("Finish reordering first", true); return; }
+    const surface = renameSurface();
+    if (!surface) { flash("Open a device tab to rename", true); return; }
+    setRenameMode(true);
+    APP_EL?.classList.add("rename-mode");
+    closeTopbarOverflowMenu();
+    if (REORDER_CANCEL_BTN) REORDER_CANCEL_BTN.hidden = true;
+    if (REORDER_DONE_BTN) {
+      REORDER_DONE_BTN.hidden = false;
+      REORDER_DONE_BTN.setAttribute("aria-label", "Done renaming");
+    }
+    flash(surface === "lights" || surface === "sensors" ? "Tap a room or device name to rename" : "Tap a device name to rename");
+  }
+
   // __MLD_SPLIT3__
+
+  document.addEventListener("click", (e) => {
+    if (!isRenameMode() || e.target?.closest?.(".confirm-popup")) return;
+    const surface = renameSurface();
+    if (!surface) return;
+    const roomNameEl = e.target?.closest?.(".room-name");
+    if (roomNameEl && (surface === "lights" || surface === "sensors")) {
+      const card = roomNameEl.closest(".room");
+      if (surface === "lights" && !card?.closest("#rooms")) return;
+      if (surface === "sensors" && !card?.classList.contains("sensor-room")) return;
+      const id = normalizeRoomId(card?.dataset.roomId);
+      if (id === -1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openRoomRenameDialog(id);
+      return;
+    }
+    const nameEl = e.target?.closest?.(".tile-name, .quick-fav-name, .music-name, .sensor-card-name, .quick-fav-tstat-name");
+    if (!nameEl) return;
+    const host = nameEl.closest("[data-id], [data-tstat-id]");
+    const rawId = host?.dataset.id || host?.dataset.tstatId;
+    if (!rawId) return;
+    if (surface === "favorites" ? !nameEl.closest(".quick-fav-grid") : !!nameEl.closest("[hidden]")) return;
+    if (surface === "lights" && !nameEl.closest("#rooms")) return;
+    const dev = renameableDevice(rawId);
+    if (!dev) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openDeviceRenameDialog(dev);
+  }, true);
+
+  function openRenameDialog(opts) {
+    closeRenameDialog();
+    const popup = ce("div", "confirm-popup open");
+    popup.setAttribute("role", "dialog");
+    popup.setAttribute("aria-modal", "true");
+    popup.setAttribute("aria-labelledby", "rename-dialog-heading");
+    popup.innerHTML = '<div class="confirm-panel fav-embed-editor-panel"><h2 class="fav-embed-editor-heading" id="rename-dialog-heading"></h2><p class="fav-embed-editor-help"></p><label class="fav-embed-field"><span>Name</span><input class="topbar-overflow-input fav-embed-title-input" type="text" maxlength="255"></label><p class="rename-preview" hidden></p><div class="fav-embed-editor-error" hidden></div><div class="confirm-actions"><button type="button" class="ghost-btn confirm-cancel">Cancel</button><button type="button" class="confirm-btn">Save</button></div></div>';
+    const panel = popup.firstElementChild;
+    popup.querySelector("h2").textContent = opts.title;
+    popup.querySelector(".fav-embed-editor-help").textContent = opts.help;
+    const input = popup.querySelector("input");
+    input.value = opts.value || "";
+    const preview = popup.querySelector(".rename-preview");
+    const err = popup.querySelector(".fav-embed-editor-error");
+    const save = popup.querySelector(".confirm-btn");
+    const paint = () => {
+      if (!opts.previewFor) return;
+      preview.hidden = false;
+      preview.textContent = opts.previewFor(cleanRename(input.value));
+    };
+    paint();
+    input.addEventListener("input", paint);
+    const close = () => closeRenameDialog();
+    popup.querySelector(".confirm-cancel").onclick = close;
+    bindPopupDismiss(popup, panel, null, close);
+    save.addEventListener("click", async () => {
+      const next = cleanRename(input.value);
+      if (opts.emptyInvalid && !next) {
+        err.hidden = false;
+        err.textContent = "Enter a name";
+        return;
+      }
+      err.hidden = true;
+      save.disabled = true;
+      const ok = await opts.onSave(next, err);
+      save.disabled = false;
+      if (ok) close();
+    });
+    appendPopup(popup);
+    setRenameDialog(popup);
+    requestAnimationFrame(() => { input.focus(); input.select(); });
+  }
+
+  function openDeviceRenameDialog(dev) {
+    const rid = normalizeRoomId(dev.r);
+    const roomName = rid === -1 ? null : (roomMap.get(rid) ?? null);
+    openRenameDialog({
+      title: "Rename device",
+      help: "Updates the Hubitat device label. Empty clears it.",
+      value: dev.n || "",
+      previewFor: renameSurface() === "lights" || renameSurface() === "sensors" ? ((label) => (
+        "Room tiles: " + (stripRoomPrefix(label, roomName) || label || "device name")
+      )) : null,
+      onSave: async (label, err) => {
+        const result = await postRename("device/label", { id: dev.i, label });
+        if (!result.ok) {
+          err.hidden = false;
+          err.textContent = result.error || "Could not rename device";
+          return false;
+        }
+        applyDeviceLabel(dev.i, result.data?.n != null ? String(result.data.n) : label);
+        showRenamed(dev);
+        flash("Device renamed");
+        return true;
+      },
+    });
+  }
+
+  function openRoomRenameDialog(roomId) {
+    const id = normalizeRoomId(roomId);
+    if (id === -1) return;
+    openRenameDialog({
+      title: "Rename room",
+      help: "This changes the room name in Hubitat. Devices stay in the room. Device labels are not changed.",
+      value: roomMap.get(id) || "",
+      emptyInvalid: true,
+      onSave: async (name, err) => {
+        const dup = rooms.some((r) => normalizeRoomId(r.id) !== id && String(r.name || "").trim().toLowerCase() === name.toLowerCase());
+        if (dup) {
+          err.hidden = false;
+          err.textContent = "A room with that name already exists";
+          return false;
+        }
+        const result = await postRename("room/name", { id, name });
+        if (!result.ok) {
+          err.hidden = false;
+          err.textContent = result.error || "Could not rename room";
+          return false;
+        }
+        applyRoomName(id, result.data?.name != null ? String(result.data.name) : name);
+        flash("Room renamed");
+        return true;
+      },
+    });
+  }
+
 
   // ---------- shades / fans / music / sensors / scenes (post3; keeps post2 under cloud MQTT limit) ----------
   function makeShadeTile(shade, context) {
     const inFav = context === "favorites";
     const tile = ce("div", "shade-tile" + (inFav ? " quick-fav-span" : ""));
+    tile.dataset.id = shade.i;
     tile.dataset.name = String(shade.n || "").toLowerCase();
     const head = ce("div", "quick-fav-row-head");
     const info = ce("div", "shade-info");
@@ -14753,6 +16039,7 @@
     const speeds = ceilingFanSpeeds(fan);
     const idx = speeds.indexOf(sp);
     const tile = ce("div", "fan-tile" + (on ? " is-on" : "") + (inFav ? " quick-fav-span" : ""));
+    tile.dataset.id = fan.i;
     tile.dataset.name = String(fan.n || "").toLowerCase();
     tile.dataset.speed = on ? sp : "off";
 
@@ -14951,6 +16238,7 @@
     const canPlayPause = ctrl.play || ctrl.pause;
 
     const row = ce("div", "music-row" + (playing ? " is-playing" : "") + (inFav ? " quick-fav-span" : ""));
+    row.dataset.id = dev.i;
     row.dataset.name = String(dev.n || "").toLowerCase();
 
     const art = ce("div", "music-art" + (playing ? " playing" : ""));
@@ -15007,7 +16295,12 @@
       playPauseBtn.innerHTML = isPlay ? MUSIC_PLAY_SVG : MUSIC_PAUSE_SVG;
       if (playing) playPauseBtn.classList.add("active");
       playPauseBtn.addEventListener("click", () => {
-        sendMusicCmd(dev.i, playing ? "pause" : "play");
+        const live = music.find((m) => m.i === dev.i) || dev;
+        const liveCtrl = musicControls(live);
+        const nowPlaying = isMusicPlaying(effectiveMusicStatus(live));
+        if (!nowPlaying) sendMusicCmd(dev.i, "play");
+        else if (liveCtrl.pause) sendMusicCmd(dev.i, "pause");
+        else sendMusicCmd(dev.i, "stop");
       });
       transport.appendChild(playPauseBtn);
     }
@@ -15063,10 +16356,12 @@
 
     row.appendChild(art);
     row.appendChild(infoHead);
-    const right = ce("div", "music-right");
-    if (transport.childElementCount) right.appendChild(transport);
-    if (ctrl.volume) right.appendChild(volWrap);
-    row.appendChild(right);
+    if (transport.childElementCount || ctrl.volume) {
+      const right = ce("div", "music-right");
+      if (transport.childElementCount) right.appendChild(transport);
+      if (ctrl.volume) right.appendChild(volWrap);
+      row.appendChild(right);
+    }
 
     if (inFav) {
       favMusicMap.set(dev.i, {
@@ -15119,11 +16414,11 @@
     const body = currentBody();
     setQuickBodyClass(body, "quick-body quick-body-music");
     body.innerHTML = "";
-    if (!music.length) {
-      body.textContent = "No speakers selected — add music players or additional speakers in the Hubitat app settings";
+    const sorted = sortByRoomThenFullName(music).filter(musicHasControls);
+    if (!sorted.length) {
+      body.textContent = "No speakers selected — add music players, speakers, or media-transport devices in the Hubitat app settings";
       return;
     }
-    const sorted = sortByRoomThenFullName(music);
     const list = ce("div", "quick-list music-list");
     for (const dev of sorted) list.appendChild(makeMusicRow(dev, "popup"));
     body.appendChild(list);
@@ -15504,7 +16799,6 @@
     }
     const result = await sendCmd(id, cmd);
     if (!result.ok) {
-      clearValveOptimistic(id);
       reconcileValve(id);
       if (currentCategory() === "sensors") refreshSensorsPopup();
       else if (currentCategory() === "favorites") postCall("refreshFavoritesPopup");
@@ -15808,6 +17102,7 @@
     const meta = SENSOR_TYPE_META[dev.t] || SENSOR_TYPE_META.generic;
     const card = ce("div", "sensor-card sensor-card--" + (dev.t || "generic"));
     card.style.setProperty("--sensor-accent", meta.accent);
+    card.dataset.id = dev.i;
     card.dataset.name = String(dev.n || "").toLowerCase();
     const top = ce("div", "sensor-card-top");
     const icon = ce("span", "sensor-card-icon");
@@ -16539,10 +17834,14 @@
   let schedSaveInFlight = false;
   const schedRowInFlight = new Set();
   let hubTimeZone = "";
+  let hubOffsetMin = null;
   let hubNowMs = 0;
   let sunTimes = { sunrise: null, sunset: null };
   let schedUse24Hour = false;
+  let holidaysAvailable = false;
+  globalThis.__MLD.holidayBridge = () => ({ schedules, use24: schedUse24Hour, tz: hubTimeZone, offsetMin: hubOffsetMin, now: hubNowMs });
   let schedDraft = null;     // in-progress create/edit draft
+  let parkedHoliday = null;  // holiday view kept while a schedule editor is open
   let schedStep = 1;         // 1 | 2 | 3
   let schedEditingId = null;
   let schedNameCustom = false;
@@ -16558,11 +17857,19 @@
   function applySchedulesFromData(data, requestEpoch) {
     if (!data) return;
     schedulerEnabled = data.schedulerEnabled !== false;
-    if (typeof data.hubTimeZone === "string") hubTimeZone = data.hubTimeZone.trim();
+    if (typeof data.hubTimeZone === "string") {
+      const raw = data.hubTimeZone.trim();
+      hubTimeZone = typeof usableTimeZone === "function" ? (usableTimeZone(raw) || "") : raw;
+    }
+    if (data.hubOffsetMin != null && data.hubOffsetMin !== "") {
+      const off = Number(data.hubOffsetMin);
+      hubOffsetMin = Number.isFinite(off) ? off : null;
+    }
     const hn = Number(data.hubNow);
     if (hn > 0) hubNowMs = hn;
     if (!schedulerEnabled) {
       schedDraft = null;
+      parkedHoliday = null;
       schedEditingId = null;
       schedStep = 1;
       schedNameCustom = false;
@@ -16585,9 +17892,11 @@
       sunTimes = { sunrise: data.sunTimes.sunrise ?? null, sunset: data.sunTimes.sunset ?? null };
     }
     schedUse24Hour = data.schedUse24Hour === true;
+    holidaysAvailable = data.holidaysAvailable === true;
     if (schedulerViewIsActive() && schedulerEnabled) {
       if (schedulesCloudOmitted) void ensureSchedulesLoaded();
-      renderSchedulerActive();
+      // A poll must not wipe an open editor. Cancel still shows the updated list.
+      if (!schedDraft) renderSchedulerActive();
     }
   }
 
@@ -16965,16 +18274,25 @@
     return hint;
   }
 
-  function fmtSchedTime(ms) {
+  function fmtSchedTime(ms, hm, on) {
+    const clock = typeof formatHubHm === "function" ? formatHubHm(hm, schedUse24Hour) : "";
+    if (clock) {
+      const day = String(on || "").trim();
+      if (day) return day + ", " + clock;
+      const n = Number(ms);
+      const zone = typeof usableTimeZone === "function" ? usableTimeZone(hubTimeZone) : hubTimeZone;
+      const date = Number.isFinite(n) && typeof formatHubDate === "function" ? formatHubDate(n, zone) : "";
+      return date ? date + ", " + clock : clock;
+    }
     if (ms == null) return "\u2014";
     try {
-      const d = new Date(Number(ms));
-      if (isNaN(d.getTime())) return "\u2014";
-      const opts = schedUse24Hour
-        ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
-        : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true };
-      if (hubTimeZone) opts.timeZone = hubTimeZone;
-      return d.toLocaleString([], opts);
+      const n = Number(ms);
+      if (!Number.isFinite(n)) return "\u2014";
+      const zone = typeof usableTimeZone === "function" ? usableTimeZone(hubTimeZone) : hubTimeZone;
+      const text = typeof formatHubWall === "function"
+        ? formatHubWall(n, zone, { month: true, hour24: schedUse24Hour })
+        : "";
+      return text || "\u2014";
     } catch { return "\u2014"; }
   }
 
@@ -17043,7 +18361,7 @@
       if (cool != null && cool !== "") bits.push("Cool " + cool + "\u00b0");
     }
     const fan = String(ac.fanMode || "").trim();
-    if (fan && fan.toLowerCase() !== "auto") bits.push("Fan " + fan);
+    if (fan) bits.push("Fan " + fan);
     return bits;
   }
 
@@ -17085,11 +18403,79 @@
       else scope = ids.length + " thermostats";
       return [scope].concat(schedThermoThenBits(ac)).filter(Boolean).join(" \u00b7 ");
     }
+    if (target === "locks" || target === "blinds" || target === "fans") {
+      const states = schedStateRows(ac.states);
+      const nouns = target === "locks" ? "locks" : target === "blinds" ? "blinds" : "fans";
+      const catalog = target === "locks"
+        ? (catalogs && catalogs.locks)
+        : target === "blinds"
+          ? (catalogs && catalogs.windowShades)
+          : (catalogs && catalogs.ceilingFans);
+      if (!states.length) return "No " + nouns + " selected";
+      const nameOf = (st) => schedCatalogName(catalog, st.id, target === "locks" ? "Lock" : target === "blinds" ? "Blind" : "Fan");
+      if (target === "locks") {
+        const locked = states.every((st) => st.locked !== false);
+        const unlocked = states.every((st) => st.locked === false);
+        if (states.length === 1) return (unlocked ? "Unlock " : "Lock ") + nameOf(states[0]);
+        if (locked) return "Lock " + states.length + " locks";
+        if (unlocked) return "Unlock " + states.length + " locks";
+        return "Set " + states.length + " locks";
+      }
+      if (target === "blinds") {
+        const open = states.every((st) => st.open === true);
+        const closed = states.every((st) => st.open !== true);
+        const pos = states[0] && states[0].position;
+        const samePos = open && pos != null && pos !== "" && states.every((st) => st.position === pos);
+        if (states.length === 1) {
+          const name = nameOf(states[0]);
+          if (states[0].open !== true) return "Close " + name;
+          return samePos ? ("Open " + name + " \u00b7 " + pos + "%") : ("Open " + name);
+        }
+        if (closed) return "Close " + states.length + " blinds";
+        if (open && samePos) return "Open " + states.length + " blinds \u00b7 " + pos + "%";
+        if (open) return "Open " + states.length + " blinds";
+        return "Set " + states.length + " blinds";
+      }
+      const on = states.every((st) => st.on === true);
+      const off = states.every((st) => st.on !== true);
+      const speed = states[0] && states[0].speed != null ? String(states[0].speed).trim() : "";
+      const sameSpeed = on && speed && states.every((st) => String(st.speed || "").trim().toLowerCase() === speed.toLowerCase());
+      if (states.length === 1) {
+        const name = nameOf(states[0]);
+        if (states[0].on !== true) return "Turn off " + name;
+        if (speed) return name + " \u00b7 " + schedFanSpeedWord(speed);
+        return "Turn on " + name;
+      }
+      if (off) return "Turn off " + states.length + " fans";
+      if (sameSpeed) return states.length + " fans \u00b7 " + schedFanSpeedWord(speed);
+      if (on) return "Turn on " + states.length + " fans";
+      return "Set " + states.length + " fans";
+    }
     if (target === "hubMode") {
       const mode = ac.mode ? String(ac.mode).trim() : "";
       return mode ? "Set hub mode to " + mode : "Change hub mode";
     }
     return "No action";
+  }
+
+  function schedStateRows(raw) {
+    if (raw == null || raw === "") return [];
+    const arr = Array.isArray(raw) ? raw : [raw];
+    return arr.filter((st) => st && typeof st === "object");
+  }
+
+  function schedCatalogName(list, id, fallback) {
+    const d = (list || []).find((x) => String(x.i) === String(id));
+    const nm = d && d.n ? String(d.n).trim() : "";
+    return nm || (fallback + " " + id);
+  }
+
+  function schedFanSpeedWord(sp) {
+    const key = String(sp || "").trim().toLowerCase();
+    const labels = { low: "Low", "medium-low": "Med-Low", medium: "Medium", "medium-high": "Med-High", high: "High" };
+    if (labels[key]) return labels[key];
+    if (!key) return "";
+    return key.charAt(0).toUpperCase() + key.slice(1);
   }
 
   function schedOnlyInModesList(s) {
@@ -17119,7 +18505,7 @@
     }
     if (s.nextFire != null) {
       const rel = fmtSchedRelativeFuture(s.nextFire);
-      const abs = fmtSchedTime(s.nextFire);
+      const abs = fmtSchedTime(s.nextFire, s.nextFireHm, s.nextFireOn);
       if (restriction === "blocked") {
         return {
           primary: "Won't run in " + currentHubMode + " mode",
@@ -17160,11 +18546,21 @@
   }
 
   function schedLastRunText(s) {
+    if (s?.lastResult?.skipped === "mode" && s.lastFired != null) {
+      const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
+      const when = fmtSchedTime(s.lastFired, s.lastFiredHm, s.lastFiredOn);
+      return {
+        primary: "Skipped",
+        secondary: [rel || when, rel ? when : "", "Hub mode was not allowed"].filter(Boolean).join(" \u00b7 "),
+        muted: true,
+        skipped: true,
+      };
+    }
     if (s.lastFired == null) return { primary: "Not yet run", secondary: "", muted: false };
     const rel = typeof formatSensorLastEvent === "function" ? formatSensorLastEvent(s.lastFired) : "";
     const note = schedLastResultNote(s);
-    const secondary = [rel ? fmtSchedTime(s.lastFired) : "", note].filter(Boolean).join(" \u00b7 ");
-    return { primary: rel || fmtSchedTime(s.lastFired), secondary, muted: !!note };
+    const secondary = [rel ? fmtSchedTime(s.lastFired, s.lastFiredHm, s.lastFiredOn) : "", note].filter(Boolean).join(" \u00b7 ");
+    return { primary: rel || fmtSchedTime(s.lastFired, s.lastFiredHm, s.lastFiredOn), secondary, muted: !!note };
   }
 
   function schedSearchText(s) {
@@ -17185,10 +18581,19 @@
       if (atFmt && atFmt !== tr.at) parts.push(atFmt);
     }
     if (s?.nextFire != null) {
-      parts.push(fmtSchedTime(s.nextFire));
+      parts.push(fmtSchedTime(s.nextFire, s.nextFireHm, s.nextFireOn));
       parts.push(fmtSchedRelativeFuture(s.nextFire));
     }
-    if (s?.lastFired != null) parts.push(fmtSchedTime(s.lastFired));
+    if (s?.lastFired != null) parts.push(fmtSchedTime(s.lastFired, s.lastFiredHm, s.lastFiredOn));
+    parts.push(schedActionDescription(s.action, { thermostats, locks, windowShades, ceilingFans }));
+    const actionTarget = String(s?.action?.target || "");
+    const nameCatalog = actionTarget === "locks" ? locks
+      : actionTarget === "blinds" ? windowShades
+      : actionTarget === "fans" ? ceilingFans
+      : null;
+    if (nameCatalog) {
+      for (const st of schedStateRows(s?.action?.states)) parts.push(schedCatalogName(nameCatalog, st.id, ""));
+    }
     return parts.join(" ").trim().toLowerCase();
   }
 
@@ -17203,8 +18608,8 @@
     parent.appendChild(line);
   }
 
-  function schedAppendStatusItem(parent, label, text) {
-    const item = ce("div", "sched-status-item" + (text.muted ? " is-muted" : ""));
+  function schedAppendStatusItem(parent, label, text, alignEnd) {
+    const item = ce("div", "sched-status-item" + (text.muted ? " is-muted" : "") + (alignEnd ? " is-end" : ""));
     const lbl = ce("span", "sched-status-lbl");
     lbl.textContent = label;
     const val = ce("span", "sched-status-val");
@@ -17227,6 +18632,7 @@
     if (!schedDraft.trigger.mode) schedDraft.trigger.mode = "";
     schedDraft.onlyInModes = Array.isArray(schedDraft.onlyInModes) ? schedDraft.onlyInModes : [];
     schedDraft.action = schedDraft.action || { target: "lights", states: [] };
+    schedEnsureStateList(schedDraft.action);
     schedEditingId = s.id;
     schedStep = 1;
     schedNameCustom = !!(schedDraft.name && String(schedDraft.name).trim());
@@ -17239,8 +18645,24 @@
       enabled: true,
       trigger: { kind: "daily", when: "clock", time: "19:30", offsetMin: 0, days: [], at: "", mode: "" },
       onlyInModes: [],
-      action: { target: "lights", states: [], "devices": [], mode: "heat", heat: 68, cool: 72, fanMode: "auto" }
+      action: { target: "lights", states: [], "devices": [], mode: null, heat: null, cool: null, fanMode: null }
     };
+  }
+
+  function schedEnsureStateList(action) {
+    const ac = action || schedDraft?.action;
+    if (!ac) return;
+    const target = String(ac.target || "");
+    if (!["lights", "outlets", "locks", "blinds", "fans"].includes(target)) return;
+    if (Array.isArray(ac.states)) return;
+    if (ac.states && typeof ac.states === "object") ac.states = [ac.states];
+    else ac.states = [];
+  }
+
+  function schedBlankAction(target) {
+    if (target === "thermostats") return { target, devices: [], mode: null, heat: null, cool: null, fanMode: null };
+    if (target === "hubMode") return { target, mode: "" };
+    return { target, states: [] };
   }
 
   async function schedApi(path, body) {
@@ -17278,7 +18700,24 @@
     schedRowInFlight.delete(String(id || ""));
   }
 
+  // A poll must not detach an open Shabbat screen. Moving that node flashes
+  // "Edit usual schedule" and resets the page scroll.
+  function holidaySubviewIsSettled() {
+    if (schedDraft) return false;
+    if (!holidaysAvailable || !globalThis.mldHoliday?.shouldPreserve?.()) return false;
+    const wrap = currentBody()?.querySelector(".sched-list-wrap");
+    if (!wrap) return false;
+    let slot = false;
+    let scheduleChrome = false;
+    for (const child of wrap.children) {
+      if (child.classList.contains("holiday-slot")) slot = true;
+      if (child.classList.contains("sched-section-head")) scheduleChrome = true;
+    }
+    return slot && !scheduleChrome;
+  }
+
   function renderSchedulerView() {
+    if (holidaySubviewIsSettled()) return;
     void ensureSchedulesLoaded({ force: true }).then(() => {
       if (schedulerViewIsActive()) renderSchedulerActive();
     });
@@ -17287,23 +18726,42 @@
 
   function renderSchedulerActive() {
     if (!schedulerViewIsActive()) return;
+    if (holidaySubviewIsSettled()) return;
     const popup = ensureQuickPopup();
     syncQuickPopupRef(popup);
     syncQuickPopupWidthForOpen(popup);
     const body = currentBody();
+    const keepHoliday = holidaysAvailable && globalThis.mldHoliday?.shouldPreserve?.();
+    const keptHoliday = keepHoliday ? (body.querySelector(".holiday-slot") || parkedHoliday) : null;
+    if (!keepHoliday) parkedHoliday = null;
+    if (keptHoliday?.isConnected) keptHoliday.remove();
     setQuickBodyClass(body, "quick-body quick-body-scheduler");
     body.innerHTML = "";
     if (schedDraft) {
+      parkedHoliday = keptHoliday;
       body.appendChild(renderSchedWorkflow());
     } else {
-      body.appendChild(renderSchedList());
+      parkedHoliday = null;
+      body.appendChild(renderSchedList(keptHoliday));
     }
     applySearch();
   }
 
   // ---------- saved schedules list ----------
-  function renderSchedList() {
+  function renderSchedList(keptHoliday) {
     const wrap = ce("div", "sched-list-wrap");
+    if (holidaysAvailable) {
+      if (keptHoliday && globalThis.mldHoliday?.reattach) {
+        wrap.appendChild(keptHoliday);
+        globalThis.mldHoliday.reattach(keptHoliday);
+      } else {
+        const holidayHost = ce("div", "holiday-slot");
+        wrap.appendChild(holidayHost);
+        if (globalThis.mldHoliday) globalThis.mldHoliday.mount(holidayHost);
+        else holidayHost.textContent = "Shabbat & holidays did not load. Reload the page.";
+      }
+    }
+    if (holidaysAvailable && globalThis.mldHoliday?.shouldPreserve?.()) return wrap;
     const header = ce("div", "sched-section-head");
     const title = ce("h3", "sched-section-title");
     title.textContent = "Schedules";
@@ -17392,7 +18850,7 @@
 
     const rule = ce("div", "sched-row-rule");
     schedAppendRuleLine(rule, "When", s.summary || "");
-    schedAppendRuleLine(rule, "Then", schedActionDescription(s.action, { thermostats }));
+    schedAppendRuleLine(rule, "Then", schedActionDescription(s.action, { thermostats, locks, windowShades, ceilingFans }));
     row.appendChild(rule);
 
     const onlyModes = Array.isArray(s.onlyInModes) ? s.onlyInModes.filter(Boolean) : [];
@@ -17403,8 +18861,9 @@
     }
 
     const status = ce("div", "sched-row-status");
-    schedAppendStatusItem(status, onlyModes.length ? "Next trigger" : "Next run", schedNextRunText(s));
-    schedAppendStatusItem(status, "Last ran", schedLastRunText(s));
+    const lastRun = schedLastRunText(s);
+    schedAppendStatusItem(status, lastRun.skipped ? "Last trigger" : "Last ran", lastRun);
+    schedAppendStatusItem(status, onlyModes.length ? "Next trigger" : "Next run", schedNextRunText(s), true);
     row.appendChild(status);
 
     const foot = ce("div", "sched-row-foot");
@@ -17446,9 +18905,10 @@
     delBtn.disabled = rowBusy;
     delBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (!confirm("Delete this schedule?")) return;
-      if (!schedBeginRowOp(s.id)) return;
       hapticTap();
+      const ok = await confirmAction({ message: "Delete this schedule?", confirmLabel: "Delete", danger: true });
+      if (!ok) return;
+      if (!schedBeginRowOp(s.id)) return;
       renderSchedulerActive();
       try {
         const res = await schedMutationApi("delete", { id: s.id });
@@ -17498,6 +18958,7 @@
       if (i < 3) steps.appendChild(ce("div", "sched-step-line"));
     }
     wrap.appendChild(steps);
+    if (schedDraft.action.target === "thermostats") schedTstatNormalize(schedDraft.action, schedTstatList(schedDraft.action.devices));
     wrap.appendChild(renderSchedNameField());
 
     if (schedStep === 1) wrap.appendChild(renderSchedStep1());
@@ -17796,16 +19257,22 @@
   function defaultOnceAt() {
     const ms = (hubNowMs || Date.now()) + 36e5;
     const o = { hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" };
-    if (hubTimeZone) o.timeZone = hubTimeZone;
+    const zone = typeof usableTimeZone === "function" ? usableTimeZone(hubTimeZone) : hubTimeZone;
+    if (zone) o.timeZone = zone;
     try {
       const p = {};
       for (const x of new Intl.DateTimeFormat("en-US", o).formatToParts(new Date(ms))) p[x.type] = x.value;
       return p.year + "-" + p.month + "-" + p.day + "T" + p.hour + ":" + p.minute;
-    } catch {
-      const d = new Date(ms);
-      const z = (n) => String(n).padStart(2, "0");
-      return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + "T" + z(d.getHours()) + ":" + z(d.getMinutes());
+    } catch {}
+    const bag = typeof hubWallBag === "function" ? hubWallBag(ms, zone, false) : null;
+    if (bag) {
+      const month = String(HUB_MONTHS.indexOf(String(bag.month)) + 1).padStart(2, "0");
+      return bag.year + "-" + month + "-" + String(bag.day).padStart(2, "0") + "T" +
+        String(bag.hour24).padStart(2, "0") + ":" + bag.minute;
     }
+    const d = new Date(ms);
+    const z = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + "T" + z(d.getHours()) + ":" + z(d.getMinutes());
   }
 
   function renderSchedOncePicker(tr) {
@@ -17850,14 +19317,21 @@
     const q = ce("p", "sched-question");
     q.textContent = "What type of device would you like to control?";
     wrap.appendChild(q);
+    const currentTarget = String(schedDraft.action?.target || "");
+    const deviceOpts = [
+      { k: "locks", label: "Locks", list: locks },
+      { k: "blinds", label: "Blinds", list: windowShades },
+      { k: "fans", label: "Fans", list: ceilingFans },
+    ].filter((o) => o.list.length || currentTarget === o.k);
     const opts = [
       { k: "lights", label: "Lights" },
       ...(outlets.length ? [{ k: "outlets", label: "Outlets" }] : []),
       { k: "thermostats", label: "Thermostats" },
+      ...deviceOpts.map(({ k, label }) => ({ k, label })),
       { k: "hubMode", label: "Hub mode" }
     ];
-    if (!opts.some((o) => o.k === schedDraft.action.target)) {
-      schedDraft.action.target = "lights";
+    if (!opts.some((o) => o.k === currentTarget)) {
+      schedDraft.action = schedBlankAction("lights");
     }
     const grid = ce("div", "sched-type-grid");
     for (const { k, label } of opts) {
@@ -17865,9 +19339,7 @@
       b.type = "button";
       b.textContent = label;
       b.addEventListener("click", () => {
-        schedDraft.action.target = k;
-        if ((k === "lights" || k === "outlets") && !schedDraft.action.states) schedDraft.action.states = [];
-        if (k === "thermostats" && !schedDraft.action.devices) schedDraft.action.devices = [];
+        if (schedDraft.action.target !== k) schedDraft.action = schedBlankAction(k);
         renderSchedulerActive();
       });
       grid.appendChild(b);
@@ -17906,6 +19378,9 @@
     const t = schedDraft.action.target;
     if (t === "lights") wrap.appendChild(renderSchedLightAction());
     else if (t === "outlets") wrap.appendChild(renderSchedOnOffDeviceAction(outlets, "Select outlets", "No outlets configured. Add outlets in the companion app device settings."));
+    else if (t === "locks") wrap.appendChild(renderSchedLockAction());
+    else if (t === "blinds") wrap.appendChild(renderSchedBlindAction());
+    else if (t === "fans") wrap.appendChild(renderSchedFanAction());
     else if (t === "thermostats") wrap.appendChild(renderSchedThermostatAction());
     else if (t === "hubMode") {
       const hubModeAction = renderSchedHubModeAction();
@@ -17915,7 +19390,11 @@
     return wrap;
   }
 
-  function renderSchedOnOffDeviceAction(devList, question, emptyMsg) {
+  function renderSchedOnOffDeviceAction(devList, question, emptyMsg, opts) {
+    const options = opts || {};
+    const makeState = options.makeState || ((d) => ({ id: d.i, on: true }));
+    const hintText = options.hint || "Choose on or off for every selected device below.";
+    schedEnsureStateList(schedDraft.action);
     const wrap = ce("div", "sched-action");
     const q = ce("p", "sched-question");
     q.textContent = question;
@@ -17966,6 +19445,13 @@
     }
 
     function refreshOnOffAction() {
+      selectedIds.clear();
+      for (const s of schedDraft.action.states || []) {
+        if (s && s.id != null && s.id !== "") selectedIds.add(String(s.id));
+      }
+      const paintRow = (d) => options.renderRow
+        ? options.renderRow(d, findState(d.i), refreshOnOffAction)
+        : renderRow(d);
       const oldPicker = wrap.querySelector(".sched-light-picker");
       const oldActions = wrap.querySelector(".sched-device-actions");
       const next = ce("div", "sched-light-picker");
@@ -17989,7 +19475,7 @@
           } else {
             for (const d of roomDevs) {
               selectedIds.add(String(d.i));
-              if (!findState(d.i)) schedDraft.action.states.push({ id: d.i, on: true });
+              if (!findState(d.i)) schedDraft.action.states.push(makeState(d));
             }
           }
           refreshOnOffAction();
@@ -18013,7 +19499,7 @@
               schedDraft.action.states = (schedDraft.action.states || []).filter((s) => String(s.id) !== String(d.i));
             } else {
               selectedIds.add(String(d.i));
-              schedDraft.action.states.push({ id: d.i, on: true });
+              schedDraft.action.states.push(makeState(d));
             }
             refreshOnOffAction();
           };
@@ -18046,7 +19532,7 @@
               schedDraft.action.states = (schedDraft.action.states || []).filter((s) => String(s.id) !== String(d.i));
             } else {
               selectedIds.add(String(d.i));
-              schedDraft.action.states.push({ id: d.i, on: true });
+              schedDraft.action.states.push(makeState(d));
             }
             refreshOnOffAction();
           };
@@ -18071,7 +19557,7 @@
         nm.textContent = r.name || "Room";
         hdr.appendChild(nm);
         selList.appendChild(hdr);
-        for (const d of selDevs) selList.appendChild(renderRow(d));
+        for (const d of selDevs) selList.appendChild(paintRow(d));
       }
       const unroomedSel = unroomed.filter((d) => selectedIds.has(String(d.i)));
       if (unroomedSel.length) {
@@ -18080,14 +19566,143 @@
         nm.textContent = "No room";
         hdr.appendChild(nm);
         selList.appendChild(hdr);
-        for (const d of unroomedSel) selList.appendChild(renderRow(d));
+        for (const d of unroomedSel) selList.appendChild(paintRow(d));
       }
-      schedMountDeviceActionsSection(wrap, oldActions, selList, "Choose on or off for every selected device below.");
+      schedMountDeviceActionsSection(wrap, oldActions, selList, hintText);
       schedSyncNameField();
     }
 
     refreshOnOffAction();
     return wrap;
+  }
+
+  function schedDeviceActionRow(d, redraw, paintBody) {
+    const row = ce("div", "sched-light-row");
+    const head = ce("div", "sched-light-row-head");
+    const nm = ce("div", "sched-light-name");
+    nm.textContent = d.n || ("Device " + d.i);
+    head.appendChild(nm);
+    const removeBtn = ce("button", "ghost-btn sched-mini-btn");
+    removeBtn.type = "button";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => {
+      schedDraft.action.states = (schedDraft.action.states || []).filter((s) => String(s.id) !== String(d.i));
+      redraw();
+    });
+    head.appendChild(removeBtn);
+    row.appendChild(head);
+    paintBody(row);
+    return row;
+  }
+
+  function schedTwoWay(row, leftOn, leftLabel, rightLabel, onLeft, onRight, tones) {
+    const onOff = ce("div", "sched-onoff");
+    const leftTone = leftOn && tones ? " " + tones[0] : "";
+    const rightTone = !leftOn && tones ? " " + tones[1] : "";
+    const left = ce("button", "sched-seg" + (leftOn ? " is-active" + leftTone : ""));
+    left.type = "button";
+    left.textContent = leftLabel;
+    left.addEventListener("click", onLeft);
+    const right = ce("button", "sched-seg" + (!leftOn ? " is-active" + rightTone : ""));
+    right.type = "button";
+    right.textContent = rightLabel;
+    right.addEventListener("click", onRight);
+    onOff.appendChild(left);
+    onOff.appendChild(right);
+    row.appendChild(onOff);
+  }
+
+  function schedDefaultFanSpeed(d) {
+    const speeds = ceilingFanSpeeds(d);
+    const cur = String(d.sp || "").trim().toLowerCase();
+    return speeds.find((sp) => String(sp).toLowerCase() === cur) || null;
+  }
+
+  function renderSchedLockAction() {
+    return renderSchedOnOffDeviceAction(locks, "Select locks", "No locks configured. Add locks in the companion app device settings.", {
+      hint: "Choose lock or unlock for every selected device below.",
+      makeState: (d) => ({ id: d.i, locked: true }),
+      renderRow: (d, st, redraw) => schedDeviceActionRow(d, redraw, (row) => {
+        const isLocked = st.locked !== false;
+        schedTwoWay(row, isLocked, "Lock", "Unlock", () => { st.locked = true; redraw(); }, () => { st.locked = false; redraw(); }, ["is-lock", "is-unlock"]);
+        if (!isLocked) {
+          const hint = ce("p", "sched-hint");
+          hint.textContent = "A saved schedule unlocks this door without asking for the PIN.";
+          row.appendChild(hint);
+        }
+      }),
+    });
+  }
+
+  function renderSchedBlindAction() {
+    return renderSchedOnOffDeviceAction(windowShades, "Select blinds", "No blinds configured. Add shades and blinds in the companion app device settings.", {
+      hint: "Choose open or close for every selected blind below.",
+      makeState: (d) => ({ id: d.i, open: true, position: d.hasPos ? 100 : null }),
+      renderRow: (d, st, redraw) => schedDeviceActionRow(d, redraw, (row) => {
+        const isOpen = st.open === true;
+        schedTwoWay(row, isOpen, "Open", "Close", () => {
+          st.open = true;
+          if (d.hasPos && (st.position == null || st.position === "")) st.position = 100;
+          redraw();
+        }, () => {
+          st.open = false;
+          st.position = null;
+          redraw();
+        });
+        if (isOpen && d.hasPos) {
+          if (st.position == null || st.position === "") st.position = 100;
+          const field = ce("div", "sched-field");
+          const fieldHead = ce("div", "sched-field-head");
+          const lbl = ce("label", "sched-field-label");
+          lbl.textContent = "Position";
+          const val = ce("span", "sched-slider-val");
+          val.textContent = (st.position ?? 100) + "%";
+          fieldHead.appendChild(lbl);
+          fieldHead.appendChild(val);
+          field.appendChild(fieldHead);
+          const { el: levelTrack } = makeLevelTrackSlider({
+            value: st.position ?? 100,
+            min: 1,
+            max: 100,
+            onChange: (level) => { st.position = level; val.textContent = level + "%"; },
+          });
+          field.appendChild(levelTrack);
+          row.appendChild(field);
+        }
+      }),
+    });
+  }
+
+  function renderSchedFanAction() {
+    return renderSchedOnOffDeviceAction(ceilingFans, "Select fans", "No fans configured. Add ceiling fans in the companion app device settings.", {
+      hint: "Choose on or off for every selected fan below. Set a speed when the fan is on.",
+      makeState: (d) => ({ id: d.i, on: true, speed: schedDefaultFanSpeed(d) }),
+      renderRow: (d, st, redraw) => schedDeviceActionRow(d, redraw, (row) => {
+        const isOn = st.on === true;
+        schedTwoWay(row, isOn, "On", "Off", () => {
+          st.on = true;
+          if (!st.speed) st.speed = schedDefaultFanSpeed(d);
+          redraw();
+        }, () => {
+          st.on = false;
+          st.speed = null;
+          redraw();
+        });
+        const speeds = ceilingFanSpeeds(d);
+        if (isOn && speeds.length) {
+          const seg = ce("div", "sched-segment");
+          for (const sp of speeds) {
+            const active = String(st.speed || "").toLowerCase() === String(sp).toLowerCase();
+            const b = ce("button", "sched-seg" + (active ? " is-active" : ""));
+            b.type = "button";
+            b.textContent = ceilingFanSpeedLabel(sp);
+            b.addEventListener("click", () => { st.speed = sp; redraw(); });
+            seg.appendChild(b);
+          }
+          row.appendChild(seg);
+        }
+      }),
+    });
   }
 
   function renderSchedLightAction() {
@@ -18302,13 +19917,179 @@
     return wrap;
   }
 
+  const SCHED_TSTAT_MODE_ORDER = ["heat", "cool", "auto", "emergencyheat", "off"];
+  const SCHED_TSTAT_DEFAULTS = { F: { heat: 68, cool: 72 }, C: { heat: 20, cool: 24 } };
+
+  // Same rules as thermostatSetpointsForMode / thermostatSettingError in the hub app and lib/scheduler-core.mjs.
+  function thermostatSetpointsForMode(mode) {
+    const key = normalizeTstatModeKey(mode);
+    if (!key) return { heat: true, cool: true };
+    return { heat: key === "heat" || key === "emergencyheat" || key === "auto", cool: key === "cool" || key === "auto" };
+  }
+
+  function thermostatSettingError(raw, unit) {
+    const num = (v) => (v == null || String(v).trim() === "" || !Number.isFinite(Number(v)) ? null : Math.round(Number(v)));
+    const mode = String(raw?.mode ?? "").trim();
+    const needs = thermostatSetpointsForMode(mode);
+    const heat = needs.heat ? num(raw?.heat) : null;
+    const cool = needs.cool ? num(raw?.cool) : null;
+    if (mode) {
+      if (needs.heat && heat == null) return "enter a heat setpoint";
+      if (needs.cool && cool == null) return "enter a cool setpoint";
+    } else if (heat == null && cool == null && !String(raw?.fanMode ?? "").trim()) {
+      return "choose a mode, setpoint, or fan mode";
+    }
+    if (heat != null && cool != null && heat >= cool) return "heat setpoint must be below cool setpoint";
+    const key = String(unit || "").replace(/°/g, "").trim().toUpperCase();
+    const range = key === "C" ? { min: 10, max: 32 } : (key === "F" ? { min: 50, max: 90 } : null);
+    if (range && heat != null && (heat < range.min || heat > range.max)) return "heat setpoint must be between " + range.min + " and " + range.max;
+    if (range && cool != null && (cool < range.min || cool > range.max)) return "cool setpoint must be between " + range.min + " and " + range.max;
+    return null;
+  }
+
+  function schedTstatList(ids) {
+    const want = new Set(schedIdList(ids));
+    return thermostats.filter((t) => want.has(String(t.i)));
+  }
+
+  /** Every selected thermostat's dial must accept the setpoints. No catalog falls back to °F. */
+  function schedTstatRangeError(ac) {
+    const selected = schedTstatList(ac?.devices);
+    const units = [...new Set((selected.length ? selected : [{ u: "F" }]).map((t) => normalizeTstatUnit(t.u)))];
+    for (const unit of units) {
+      const err = thermostatSettingError(ac, unit);
+      if (err) return err;
+    }
+    return null;
+  }
+
+  function schedTstatUnit(list) {
+    return normalizeTstatUnit(list?.[0]?.u);
+  }
+
+  function schedTstatMixedUnits(list) {
+    return new Set((list || []).map((t) => normalizeTstatUnit(t.u))).size > 1;
+  }
+
+  /** Values every selected device accepts, spelled as the first device spells them. */
+  function schedTstatShared(list, valuesOf, keyOf) {
+    if (!list?.length) return [];
+    const [first, ...rest] = list.map(valuesOf);
+    return first.filter((v) => rest.every((vals) => vals.some((o) => keyOf(o) === keyOf(v))));
+  }
+
+  function schedTstatModeChoices(list) {
+    const modes = schedTstatShared(list, supportedModes, normalizeTstatModeKey);
+    const rank = (m) => {
+      const i = SCHED_TSTAT_MODE_ORDER.indexOf(normalizeTstatModeKey(m));
+      return i < 0 ? SCHED_TSTAT_MODE_ORDER.length : i;
+    };
+    return modes.slice().sort((a, b) => rank(a) - rank(b));
+  }
+
+  function schedTstatFanChoices(list) {
+    return schedTstatShared(list, supportedFanModes, (v) => String(v).toLowerCase());
+  }
+
+  function schedTstatModeLabel(mode) {
+    return normalizeTstatModeKey(mode) === "emergencyheat" ? "Emergency heat" : tstatModeDisplayLabel(mode);
+  }
+
+  /** Sets the mode and fills any empty setpoint it uses from the first device (or a default). */
+  function schedTstatSetMode(ac, list, mode) {
+    ac.mode = mode;
+    const needs = thermostatSetpointsForMode(mode);
+    const unit = schedTstatUnit(list);
+    const seed = (sp, fallback) => clampSetpoint(sp != null && Number.isFinite(Number(sp)) ? Number(sp) : fallback, unit);
+    if (needs.heat && ac.heat == null) ac.heat = seed(list?.[0]?.hsp, SCHED_TSTAT_DEFAULTS[unit].heat);
+    if (needs.cool && ac.cool == null) ac.cool = seed(list?.[0]?.csp, SCHED_TSTAT_DEFAULTS[unit].cool);
+  }
+
+  /** Picks a mode every device supports, clears setpoints it doesn't use, and drops a fan mode the devices lack. */
+  function schedTstatNormalize(ac, list) {
+    if (!list?.length) return;
+    const choices = schedTstatModeChoices(list);
+    const modeKey = normalizeTstatModeKey(ac.mode);
+    if (!modeKey || !choices.some((m) => normalizeTstatModeKey(m) === modeKey)) {
+      const current = choices.find((m) => {
+        const k = normalizeTstatModeKey(m);
+        return k === normalizeTstatModeKey(list[0].tm) && k !== "off" && !tstatAuxMode(k);
+      });
+      const start = current || choices.find((m) => normalizeTstatModeKey(m) === "heat") || choices[0] || null;
+      if (start || modeKey || (ac.heat == null && ac.cool == null)) schedTstatSetMode(ac, list, start);
+    }
+    const needs = thermostatSetpointsForMode(ac.mode);
+    if (!needs.heat) ac.heat = null;
+    if (!needs.cool) ac.cool = null;
+    if (ac.fanMode && !schedTstatFanChoices(list).some((f) => String(f).toLowerCase() === String(ac.fanMode).toLowerCase())) {
+      ac.fanMode = null;
+    }
+  }
+
+  function renderSchedTstatSetpoint(label, key, unit) {
+    const field = ce("div", "sched-field");
+    const lbl = ce("label", "sched-field-label");
+    lbl.textContent = label + " (" + tstatTempSuffix(unit) + ")";
+    field.appendChild(lbl);
+    const range = tstatRange(unit);
+    const input = ce("input", "sched-input");
+    input.type = "number";
+    input.min = String(range.min);
+    input.max = String(range.max);
+    input.step = "1";
+    input.value = schedDraft.action[key] == null ? "" : String(schedDraft.action[key]);
+    input.addEventListener("input", () => {
+      const v = input.value.trim();
+      schedDraft.action[key] = v === "" || !Number.isFinite(Number(v)) ? null : Math.round(Number(v));
+      schedSyncNameField();
+    });
+    input.addEventListener("blur", () => {
+      const v = input.value.trim();
+      if (v === "" || !Number.isFinite(Number(v))) return;
+      const clamped = clampSetpoint(Math.round(Number(v)), unit);
+      schedDraft.action[key] = clamped;
+      input.value = String(clamped);
+      schedSyncNameField();
+    });
+    field.appendChild(input);
+    return field;
+  }
+
+  function schedTstatStateClass(mode) {
+    const key = normalizeTstatModeKey(mode);
+    if (key === "heat" || key === "emergencyheat") return "is-theat";
+    if (key === "cool") return "is-tcool";
+    if (key === "auto") return "is-tauto";
+    if (key === "off") return "is-toff";
+    if (tstatAuxMode(mode)) return "is-tfan";
+    return "";
+  }
+
   function renderSchedThermostatAction() {
     const wrap = ce("div", "sched-action");
     const q = ce("p", "sched-question");
     q.textContent = "Select thermostats and settings";
     wrap.appendChild(q);
+    const selected = schedTstatList(schedDraft.action.devices);
 
     const selectedIds = new Set(schedIdList(schedDraft.action.devices));
+    if (thermostats.length) {
+      const head = ce("div", "sched-actions-room-head");
+      const nm = ce("div", "sched-room-name");
+      nm.textContent = "Thermostats";
+      head.appendChild(nm);
+      const allOn = thermostats.every((t) => selectedIds.has(String(t.i)));
+      const allBtn = ce("button", "ghost-btn sched-mini-btn");
+      allBtn.type = "button";
+      allBtn.textContent = allOn ? "Deselect all" : "Select all";
+      allBtn.addEventListener("click", () => {
+        hapticTap();
+        schedDraft.action.devices = allOn ? [] : thermostats.map((t) => t.i);
+        renderSchedulerActive();
+      });
+      head.appendChild(allBtn);
+      wrap.appendChild(head);
+    }
     const list = ce("div", "sched-lights");
     for (const t of thermostats) {
       const sel = selectedIds.has(String(t.i));
@@ -18333,66 +20114,66 @@
     }
     wrap.appendChild(list);
 
-    if (!schedIdList(schedDraft.action.devices).length) {
+    if (!selected.length) {
       const note = ce("p", "sched-empty");
       note.textContent = "No thermostats selected.";
       wrap.appendChild(note);
-    } else {
+      return wrap;
+    }
+    const ac = schedDraft.action;
+    const unit = schedTstatUnit(selected);
+    const modes = schedTstatModeChoices(selected);
+    if (modes.length) {
       const modeField = ce("div", "sched-field");
       const mlbl = ce("label", "sched-field-label");
       mlbl.textContent = "System mode";
       modeField.appendChild(mlbl);
-      const modes = ["auto", "heat", "cool", "off"];
       const seg = ce("div", "sched-segment");
-      const sysMode = schedDraft.action.mode || "auto";
       for (const m of modes) {
-        const b = ce("button", "sched-seg " + (sysMode === m ? "is-active" : ""));
-        b.type = "button"; b.textContent = m;
+        const active = normalizeTstatModeKey(ac.mode) === normalizeTstatModeKey(m);
+        const tone = active ? schedTstatStateClass(m) : "";
+        const b = ce("button", "sched-seg" + (active ? " is-active" + (tone ? " " + tone : "") : ""));
+        b.type = "button";
+        b.textContent = schedTstatModeLabel(m);
         b.addEventListener("click", () => {
-          schedDraft.action.mode = m;
-          if (m === "heat") schedDraft.action.cool = null;
-          else if (m === "cool") schedDraft.action.heat = null;
+          schedTstatSetMode(ac, selected, m);
           renderSchedulerActive();
         });
         seg.appendChild(b);
       }
       modeField.appendChild(seg);
       wrap.appendChild(modeField);
+    } else {
+      const note = ce("p", "sched-empty");
+      note.textContent = selected.length > 1
+        ? "These thermostats don't share a system mode, so only setpoints will change."
+        : "This thermostat doesn't report its system modes, so only setpoints will change.";
+      wrap.appendChild(note);
+    }
 
-      if (sysMode !== "cool") {
-        const heatField = ce("div", "sched-field");
-        const hlbl = ce("label", "sched-field-label");
-        hlbl.textContent = "Heat setpoint (\u00b0F)";
-        heatField.appendChild(hlbl);
-        const hin = ce("input", "sched-input");
-        hin.type = "number"; hin.min = "40"; hin.max = "90"; hin.value = String(schedDraft.action.heat ?? 68);
-        hin.addEventListener("input", () => { schedDraft.action.heat = Number(hin.value); schedSyncNameField(); });
-        heatField.appendChild(hin);
-        wrap.appendChild(heatField);
-      }
+    const needs = thermostatSetpointsForMode(ac.mode);
+    if (needs.heat) wrap.appendChild(renderSchedTstatSetpoint("Heat setpoint", "heat", unit));
+    if (needs.cool) wrap.appendChild(renderSchedTstatSetpoint("Cool setpoint", "cool", unit));
+    if (schedTstatMixedUnits(selected)) {
+      const note = ce("p", "sched-empty");
+      note.textContent = "These thermostats use different temperature units, but each one gets the same setpoint number. Schedule them separately.";
+      wrap.appendChild(note);
+    }
 
-      if (sysMode !== "heat") {
-        const coolField = ce("div", "sched-field");
-        const clbl = ce("label", "sched-field-label");
-        clbl.textContent = "Cool setpoint (\u00b0F)";
-        coolField.appendChild(clbl);
-        const cin = ce("input", "sched-input");
-        cin.type = "number"; cin.min = "50"; cin.max = "100"; cin.value = String(schedDraft.action.cool ?? 72);
-        cin.addEventListener("input", () => { schedDraft.action.cool = Number(cin.value); schedSyncNameField(); });
-        coolField.appendChild(cin);
-        wrap.appendChild(coolField);
-      }
-
+    const fanModes = schedTstatFanChoices(selected);
+    if (fanModes.length) {
       const fanField = ce("div", "sched-field");
       const flbl = ce("label", "sched-field-label");
       flbl.textContent = "Fan mode";
       fanField.appendChild(flbl);
-      const fanModes = ["auto", "on", "circulate"];
       const fseg = ce("div", "sched-segment");
-      for (const m of fanModes) {
-        const b = ce("button", "sched-seg " + (schedDraft.action.fanMode === m ? "is-active" : ""));
-        b.type = "button"; b.textContent = m;
-        b.addEventListener("click", () => { schedDraft.action.fanMode = m; renderSchedulerActive(); });
+      const fanLabels = [...FAN_MODE_OPTS, ...COMFORT_FAN_SPEED_OPTS];
+      for (const m of [null, ...fanModes]) {
+        const active = m == null ? !ac.fanMode : String(ac.fanMode || "").toLowerCase() === String(m).toLowerCase();
+        const b = ce("button", "sched-seg " + (active ? "is-active" : ""));
+        b.type = "button";
+        b.textContent = m == null ? "No change" : tstatChoiceLabel(fanLabels, m);
+        b.addEventListener("click", () => { ac.fanMode = m; renderSchedulerActive(); });
         fseg.appendChild(b);
       }
       fanField.appendChild(fseg);
@@ -18421,7 +20202,7 @@
   function autoSchedName() {
     const fn = globalThis.autoScheduleName;
     if (typeof fn !== "function") return "";
-    return fn(schedDraft, { rooms, devices, outlets, thermostats }, {
+    return fn(schedDraft, { rooms, devices, outlets, thermostats, locks, windowShades, ceilingFans }, {
       clockTime: schedFmtClockTime,
       dateTimeLocal: schedFmtDateTimeLocal,
     });
@@ -18473,12 +20254,18 @@
   async function saveSchedule(e) {
     if (schedSaveInFlight) return;
     if (!validateStep1()) { schedStep = 1; renderSchedulerActive(); return; }
+    schedEnsureStateList(schedDraft.action);
     const ac = schedDraft.action;
     if (ac.target === "lights" && (!ac.states || !ac.states.length)) { flash("Select at least one light", true); return; }
     if (ac.target === "outlets" && (!ac.states || !ac.states.length)) { flash("Select at least one outlet", true); return; }
+    if (ac.target === "locks" && (!ac.states || !ac.states.length)) { flash("Select at least one lock", true); return; }
+    if (ac.target === "blinds" && (!ac.states || !ac.states.length)) { flash("Select at least one blind", true); return; }
+    if (ac.target === "fans" && (!ac.states || !ac.states.length)) { flash("Select at least one fan", true); return; }
     if (ac.target === "thermostats") {
       ac.devices = schedIdList(ac.devices);
       if (!ac.devices.length) { flash("Select at least one thermostat", true); return; }
+      const tstatErr = thermostatSettingError(ac) || schedTstatRangeError(ac);
+      if (tstatErr) { flash(tstatErr.charAt(0).toUpperCase() + tstatErr.slice(1), true); return; }
     }
     if (ac.target === "hubMode" && !ac.mode) { flash("Pick a hub mode", true); return; }
     const payload = {

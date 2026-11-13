@@ -1,0 +1,235 @@
+#!/usr/bin/env node
+// The child app cannot run in Node. Check that its occasion table and rules match the JS core.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const groovy = readFileSync(join(root, "app/mDashHolidays.groovy"), "utf8");
+const parent = readFileSync(join(root, "app/ModernLightsDashboard.groovy.template"), "utf8");
+const build = readFileSync(join(root, "build.mjs"), "utf8");
+const holidayJs = readFileSync(join(root, "src/holiday.js"), "utf8");
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
+
+for (const piece of [
+  "Tishrei 1,2 roshHashana",
+  "10 yomKippur",
+  "15,16 sukkot",
+  "22,23 shemini",
+  "Nisan 15,16 pesachFirst",
+  "21,22 pesachLast",
+  "Sivan 6,7 shavuot",
+  "repeatLaterNights",
+  "2L * 60 * 60 * 1000",
+  "mDash Holidays:",
+  "holidayParentPause",
+  "HOLIDAY_API_VERSION 2",
+  "apiVersion: 2",
+  "parent.holidaySupportedKinds()",
+  'return ["light", "outlet"]',
+  "parent.thermostatSettingError",
+  "skipped a late unlock",
+  "holidayCloneStates(raw)",
+]) {
+  assert(groovy.includes(piece), `child app missing ${piece}`);
+}
+assert((groovy.match(/apiVersion: 2/g) || []).length >= 3, "status, preview, and try-now return apiVersion 2");
+assert(/holidayTemplateSlots[\s\S]*"night"[\s\S]*"evening"[\s\S]*template\?\.custom/.test(groovy), "every time slot is checked for conflicting commands");
+{
+  const save = groovy.slice(groovy.indexOf("def holidaysSave"), groovy.indexOf("def holidaysSkip"));
+  const checked = save.indexOf("holidayTemplateErrors");
+  const stored = save.indexOf("templates[id] = holidayPlain(body.template)");
+  assert(checked >= 0 && stored > checked, "a rejected schedule must not be stored");
+}
+assert(groovy.includes("holidayModeThisRun"), "device commands in the same run must not reread a stale location.mode");
+assert(groovy.includes("def holidayPlain"), "JSON saved into state must be copied into plain maps");
+assert(groovy.includes("def holidayPutCalendar"), "calendar fetches must replace state.calendar");
+{
+  const put = groovy.slice(groovy.indexOf("def holidayPutCalendar"), groovy.indexOf("def holidayPaused"));
+  assert(put.includes("holidayDropBuilt()"), "replacing the stored calendar must drop the cached timeline");
+}
+assert(groovy.includes("singleThreaded: true"), "mode changes and the schedule must not run at the same time");
+assert(groovy.includes("config.pausedOccasions = list"), "pausing one occasion must be written back onto state.config");
+assert(groovy.includes("afterEnd ? at < (day.end as long)"), "a custom time after the end is outside the day when it lands early");
+assert(groovy.includes("holidayWatch"), "a lost one-shot fire is picked up on the hourly watch");
+assert(/holidayReconcile[\s\S]*finally \{[\s\S]*holidayArm\(\)/.test(groovy), "a failed run still re-arms the next fire");
+assert(groovy.includes("replayHeld"), "devices held for Do not start stay pending until that mode is set");
+assert(groovy.includes("holidayMarkPassedDone(true)"), "a save must leave held and catch-up actions pending");
+{
+  const pauseSave = groovy.slice(groovy.indexOf("def holidaySavePause"), groovy.indexOf("def holidayTogglePause(String occasion)"));
+  assert(pauseSave.includes("holidayArm()"), "pausing one occasion still re-arms the next action");
+  assert(!pauseSave.includes("holidaysStatus"), "pausing one occasion does not rebuild the holiday list");
+  const toggle = holidayJs.slice(holidayJs.indexOf("async function togglePause"), holidayJs.indexOf("async function removeSchedule"));
+  assert(toggle.includes("applyPause"), "the Active button updates before the hub answers");
+  assert(!toggle.includes("acceptStatus"), "pausing does not replace the loaded holidays");
+  assert(toggle.indexOf("render()") < toggle.indexOf("post("), "the Active button paints before the save request");
+}
+{
+  const rowToggle = holidayJs.slice(holidayJs.indexOf("function pauseToggle"), holidayJs.indexOf("function whenLine"));
+  assert(rowToggle.includes('row.occasion === "shabbat"'), "a Shabbat row is handled apart from a holiday row");
+  assert(rowToggle.includes("setSkip(row.spanId"), "a Shabbat row skips that week");
+  assert(rowToggle.includes("togglePause(row.occasion)"), "a holiday row still pauses that holiday");
+  assert(rowToggle.includes("Week skipped"), "a skipped Shabbat week says so on the button");
+  const weekSkip = holidayJs.slice(holidayJs.indexOf("async function setSkip"), holidayJs.indexOf("function alsoControlled"));
+  assert(weekSkip.includes("applySkip"), "skipping one week updates before the hub answers");
+  assert(!weekSkip.includes("acceptStatus"), "skipping one week does not reload the holiday list");
+  assert(weekSkip.includes("rememberRevision"), "skipping one week keeps the loaded list");
+  const skipSave = groovy.slice(groovy.indexOf("def holidaysSkip"), groovy.indexOf("def holidaysTest"));
+  assert(skipSave.includes("active.held = false"), "undoing a skipped week releases the hold");
+  assert(skipSave.includes("active.ended = false"), "undoing a skipped week lets later actions run");
+  assert(groovy.includes("def holidayPruneSkipped"), "a skipped week is dropped after its date");
+  assert(groovy.includes("def holidayPruneEarlyWeeks"), "a one-week Early Shabbat choice is dropped after that Shabbat");
+  const detail = holidayJs.slice(holidayJs.indexOf("function renderDetail"), holidayJs.indexOf("function renderByLight"));
+  assert(detail.includes("Pause every week"), "Shabbat detail can pause every week");
+  assert(detail.includes('togglePause("shabbat")'), "pause every week still pauses the Shabbat occasion");
+  assert(detail.includes("Skip this week"), "Shabbat detail skips this week");
+  assert(holidayJs.includes("Early Shabbat this week"), "a Shabbat week can turn early Shabbat on or off");
+  assert(!holidayJs.includes("Early Friday"), "early Friday is no longer a timing control");
+  assert(detail.includes("Skip this time"), "a holiday detail still skips this occurrence");
+  assert(detail.includes("Change this time only"), "a span can be changed once");
+  assert(detail.includes("Use the usual schedule"), "a one-time change can be removed");
+  assert(holidayJs.includes("once: true"), "a one-time change is saved apart from the usual schedule");
+  assert(groovy.includes("config.spanOverrides = overrides"), "a one-time schedule is stored on the occasion config");
+  assert(groovy.includes("holidayOnceTemplate"), "expansion uses a one-time schedule for that span");
+  assert(groovy.includes("def holidayPruneOverrides"), "a one-time schedule is dropped after its date");
+  const trial = groovy.slice(groovy.indexOf("def holidaysTest"), groovy.indexOf("// --- state ---"));
+  assert(trial.includes("spanOverrides"), "trying actions now uses a one-time schedule");
+}
+assert(groovy.includes("def holidaySettingText"), "zero minutes stay zero in the calendar request");
+assert(groovy.includes("def holidayLocationProblem"), "a missing postal code is checked before HebCal");
+assert(groovy.includes("which is not a location"), "an all-zero postal code is reported as unset");
+assert(groovy.includes("cannot be loaded until the hub has a location"), "a blank postal code tells the user where to fix it");
+{
+  const fetch = groovy.slice(groovy.indexOf("def holidayFetch(boolean force)"), groovy.indexOf("def holidayFetchRetry"));
+  assert(fetch.indexOf("holidayLocationProblem") >= 0 && fetch.indexOf("holidayLocationProblem") < fetch.indexOf("httpGet"), "fetch checks the postal code before calling HebCal");
+  assert(!fetch.includes("Hub location is not set"), "a missing place names the postal code");
+}
+assert(parent.includes("holidayLocationNotice"), "the app page asks the child about the postal code");
+assert(parent.includes("Postal code needed"), "the app page shows a missing postal code");
+assert(holidayJs.includes("function appendLocationWarnings"), "the dashboard shows the postal-code warning");
+assert(holidayJs.includes("Shabbat and holiday times are not loaded yet."), "an empty list says times are not loaded when the hub has no place");
+assert(!groovy.includes("candleMin ?: 18"), "zero candle minutes must not fall back to 18");
+assert(!groovy.includes("hav.minutes ?: 42"), "zero havdalah minutes must not fall back to 42");
+assert(groovy.includes("templates: templates"), "upload preview can keep template slots the file left out");
+assert(groovy.includes("def holidayActionStillPending"), "save must tell a still-due action from one that already passed");
+{
+  const resume = groovy.slice(groovy.indexOf("def holidayTogglePause"), groovy.indexOf("def holidayStartTestSpan"));
+  assert(resume.includes("holidayMarkPassedDone()"), "resuming still marks past actions so they are not replayed");
+  assert(!resume.includes("holidayMarkPassedDone(true)"), "resume does not keep the catch-up window");
+}
+assert(groovy.includes('a.kind == "modeEnter" && spanOpen'), "an early mode change still runs when the job is a minute late");
+
+assert(parent.includes("holidayUploadStoredTemplate"), "omitted template slots stay as saved");
+assert(parent.includes("the name and the id are different devices"), "a disagreeing device name and id is rejected");
+assert(parent.includes('path("/holidays")'), "parent must expose /holidays");
+assert(parent.includes('path("/holidays/schema")'), "parent must expose the holiday schema download");
+{
+  const imported = groovy.slice(groovy.indexOf("def holidaysImport"), groovy.indexOf("def holidayEnsureState"));
+  assert(imported.includes("def holidaysImport"), "child accepts a holiday file in one write");
+  const checked = imported.indexOf("holidayTemplateErrors");
+  const stored = imported.indexOf("state.config = config");
+  assert(checked >= 0 && stored > checked, "a rejected holiday file must not be stored");
+  assert(imported.includes('clean.remove("paused")'), "a holiday file must not pause the module");
+  assert(imported.includes('clean.remove("fridayOverrideDate")'), "a holiday file must not set an old one-time Friday");
+  assert(imported.includes('clean.remove("earlyShabbatWeeks")'), "a holiday file must not set a one-week Early Shabbat choice");
+  assert(imported.includes("holidayMarkPassedDone(true, false)"), "a holiday file does not replay device actions already due");
+  assert(imported.includes("holidayNotScheduledReason"), "a holiday file reports when it was saved but not scheduled");
+  assert(imported.includes("holidayQueryChanged()"), "a candle-lighting change refetches the calendar");
+  assert(imported.includes("holidayArm()"), "a holiday file re-arms the next action");
+  assert(!imported.includes("holidaysStatus"), "a holiday file must not rebuild the calendar list");
+  assert(!imported.includes("spanOverrides"), "a holiday file must not touch one-time edits");
+}
+assert(parent.includes('path("/holidays/later")'), "parent must expose /holidays/later");
+assert(parent.includes("child.holidaysLater()"), "parent must ask the child for later holidays");
+assert(parent.includes("params?.span"), "parent reads which later holiday was opened");
+assert(parent.includes("child.holidaysLater(spanId)"), "parent asks for one later holiday when that holiday is opened");
+assert(groovy.includes('holidayBuildFrom(state.config, nowMs, "near")'), "the first holiday load skips later occasions");
+assert(groovy.includes("def holidaysLater"), "later holidays load on their own request");
+assert(groovy.includes('holidayBuildFrom(state.config, nowMs, "later", wanted)'), "one later holiday is built on its own");
+assert(groovy.includes("boolean listOnly = scope == \"later\" && !wanted"), "the later list skips timelines");
+assert(groovy.includes("row.deviceCount = holidayDeviceCount"), "later rows count devices without a timeline");
+{
+  const buildFrom = groovy.slice(groovy.indexOf("def holidayBuildFrom"), groovy.indexOf("def holidayListedNear"));
+  assert(buildFrom.indexOf("if (listOnly)") < buildFrom.indexOf("holidayActionsFor"), "timelines are built after the later list has already returned");
+}
+assert(groovy.includes("holidayListedNear"), "the child uses the same two-week cutoff as the dashboard");
+assert(holidayJs.includes('getJson("holidays/later"'), "the dashboard loads later holidays when that section opens");
+assert(holidayJs.includes('holidays/later?span='), "opening a later holiday loads that timeline");
+assert(parent.includes("def holidayRunAction"), "parent must run holiday device actions");
+assert(parent.includes("def holidaySupportedKinds()"), "parent must tell the child which device kinds it can run");
+assert(/def holidayRunKind[\s\S]*runShadeCmd\(dev,/.test(parent), "blinds go through runShadeCmd");
+assert(/def holidayRunKind[\s\S]*runFanCmd\(dev,/.test(parent), "fans go through runFanCmd");
+assert(/def holidayRunKind[\s\S]*runLockCmd\(dev,/.test(parent), "locks go through runLockCmd");
+assert(/def holidayRunKind[\s\S]*runThermostatSetting\(dev, st\)/.test(parent), "thermostats go through runThermostatSetting");
+assert(/kind == "light"\) \{[\s\S]*?runScheduleLightAction/.test(parent), "only lights reach the light action");
+assert(!/for \(st in states\) \{[\s\S]{0,500}def one = \[states: \[\[id: st\?\.id, on:/.test(parent), "states are not rebuilt as lights before the kind is known");
+assert(parent.includes("holidayFilePresent"), "parent enables holidays when mld-holiday.js is present");
+assert(parent.includes("holidaysAvailable"), "parent must report holidaysAvailable");
+{
+  const poll = parent.slice(parent.indexOf("def holidaysAvailable"), parent.indexOf("def holidaySetUserPaused"));
+  assert(!poll.includes("holidayIsAvailable"), "the dashboard poll must not enter the holiday child");
+  assert(poll.includes("holidayUserPaused"), "the poll remembers the holiday pause flag");
+  assert(poll.includes("holidayPauseFlagSoon"), "an upgraded hub reads the pause flag outside the poll");
+}
+{
+  // The poll holds the dashboard app's gate. Each child calls back into it to run
+  // devices, so a poll that enters a child can lock both for 120 seconds.
+  const poll = parent.slice(parent.indexOf("def renderData()"), parent.indexOf("def pollSlotId()"));
+  assert(poll.includes("synagogueSyncSoon()"), "the poll only queues the Synagogue sync");
+  assert(!poll.includes("synagogueSyncChild()"), "the dashboard poll must not enter the Synagogue app");
+  assert(!poll.includes("synagogueIsHidden") && !poll.includes("holidayIsAvailable") && !poll.includes("holidayParentPause"), "the dashboard poll must not call a child app");
+  const soon = parent.slice(parent.indexOf("def synagogueSyncSoon"), parent.indexOf("def synagogueSyncChild"));
+  assert(soon.includes('runIn(1, "synagogueSyncChild"'), "the Synagogue sync runs as its own call");
+  assert(!soon.includes("child."), "queueing the Synagogue sync does not touch the child");
+  const seed = parent.slice(parent.indexOf("def holidayPauseFlagSoon"), parent.indexOf("def holidaySeedPauseFlag"));
+  assert(seed.includes('runIn(1, "holidaySeedPauseFlag"'), "the pause flag read runs as its own call");
+}
+{
+  // Dashboard copies of the settings can be stale, and Pause has its own button.
+  const merge = groovy.slice(groovy.indexOf("def holidayMergeSettings"), groovy.indexOf("def holidayPlain"));
+  assert(merge.includes('"paused"'), "a settings save from the dashboard must not change the pause flag");
+  assert(groovy.includes("def holidayUserPaused()"), "the parent can read the user's pause flag");
+}
+{
+  // Timers read sunrise and sunset from this app. A call into the dashboard app waits on its gate.
+  const sun = groovy.slice(groovy.indexOf("def holidaySun("), groovy.indexOf("def holidayDeviceKinds"));
+  assert(sun.includes("getSunriseAndSunset("), "the holiday app reads sun times itself");
+  assert(!sun.includes("parent."), "the holiday app must not ask the dashboard app for sun times");
+  assert(groovy.includes("def holidayNoteLateStart"), "a late holiday action is logged");
+}
+assert(!parent.includes('app(name: "mDashHolidays"'), "parent must not offer a child-app install button");
+assert(!parent.includes("mld-holiday.js</code></li><li><code>mld-manifest"), "holiday file stays off the required twelve");
+assert(build.includes('asset.name !== "mld-holiday.js"'), "Modern Dashboard package must not ship mld-holiday.js");
+assert(build.includes("holidayPackageManifest.json"), "holiday file must be its own HPM package");
+{
+  const postFn = holidayJs.match(/async function post\(path, body\) \{[\s\S]*?\n\}/);
+  assert(postFn, "holiday post helper parseable");
+  assert(postFn[0].includes("postJsonSilent"), "holiday save must not flash before the caller");
+  assert(!postFn[0].includes('error: "Could not save" }'), "holiday post must not replace the hub error");
+  assert(postFn[0].includes("res?.error"), "holiday post keeps the hub error");
+  assert(postFn[0].includes("status === 401"), "a rejected password session stays on the password dialog");
+}
+{
+  const avail = groovy.slice(groovy.indexOf("def holidayIsAvailable"), groovy.indexOf("def holidayDefaultsSnapshot"));
+  assert(!avail.includes("holidayEnsureState"), "the poll check does not rebuild holiday state");
+}
+assert(groovy.includes("def holidayNextFireAt"), "the scheduler finds the next fire without expanding every span");
+assert(groovy.includes("def holidayDefaultsSnapshot"), "candle lighting can be read without a timeline");
+assert(!groovy.slice(groovy.indexOf("def holidayArm"), groovy.indexOf("def holidayFire")).includes("holidayBuild(now())"), "arming does not build every timeline");
+assert(parent.includes("LOCAL_FILE_NAME_CACHE_TTL"), "the file manager listing is cached");
+assert(parent.includes("clearLocalFileNameCache"), "the app page refreshes the file list");
+assert(parent.includes("getChildAppById"), "a child app is remembered by id");
+{
+  const defs = parent.slice(parent.indexOf("def synagogueHolidayDefaults"), parent.indexOf("def synagogueScheduleNames"));
+  assert(defs.indexOf("holidayDefaultsSnapshot") >= 0 && defs.indexOf("holidayDefaultsSnapshot") < defs.indexOf("holidaysStatus"), "synagogue defaults try the small holiday read first");
+}
+const synagogue = readFileSync(join(root, "app/mDashSynagogue.groovy"), "utf8");
+{
+  const hidden = synagogue.slice(synagogue.indexOf("def synagogueIsHidden"), synagogue.indexOf("def synagogueHidden"));
+  assert(!hidden.includes("synagogueEnsureState"), "the poll check does not rebuild synagogue state");
+}
+
+console.log("holiday source ok");

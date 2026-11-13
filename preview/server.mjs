@@ -4,6 +4,7 @@
 // Run:  node preview/server.mjs   then open http://localhost:4321/
 
 import { readFileSync, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createServer } from "node:http";
@@ -16,7 +17,25 @@ import {
   scheduleOffsetMin,
   scheduleTriggerWhen,
   modeCycleError,
+  thermostatSettingNormalized,
+  deviceStatesNormalized,
+  scheduleStateList,
+  scheduleFanSpeedMatch,
 } from "../lib/scheduler-core.mjs";
+import {
+  HOLIDAY_API_VERSION,
+  emptyConfig,
+  expandUpcoming,
+  isListedNear,
+  preflight,
+  conflictingSchedules,
+  sameMinuteWarnings,
+  devicesInActions,
+  templateBadge,
+  zonedMs,
+  zonedParts,
+  addDays,
+} from "../lib/holiday-core.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -77,6 +96,7 @@ const MOCK_TRACKS = [
 const AUDIO_F_FULL = 127;
 const AUDIO_F_CHROMECAST = 39; // play|pause|stop|volume
 const AUDIO_F_AIRPLAY = 111;   // play|pause|stop|next|volume|mute (no prev)
+const AUDIO_F_TRANSPORT = 7;   // play|pause|stop (HomeKit / mediaTransport)
 const HSM_VALID_MODES = new Set([
   "disarm", "armAway", "armHome", "armNight",
   "armAll", "disarmAll", "armRules", "disarmRules", "cancelAlerts",
@@ -115,6 +135,46 @@ state.schedules = [{
   summary: "When mode is Away",
 }];
 for (const s of state.schedules) mockRecomputeNextFire(s);
+state.holidaysAvailable = true;
+state.synagogueAvailable = true;
+state.holiday = emptyConfig();
+state.holiday.occasions = {
+  roshHashana: "shabbat",
+  yomKippur: "shabbat",
+  sukkot: "shabbat",
+  shemini: "shabbat",
+  pesachFirst: "shabbat",
+  pesachLast: "shabbat",
+  shavuot: "shabbat",
+};
+state.holiday.settings.holidayMode = "Night";
+state.holiday.settings.endMode = "Day";
+state.holiday.settings.doNotStartModes = ["Away"];
+state.holiday.revision = 1;
+state.holiday.skipped = [];
+state.holiday.pausedOccasions = [];
+state.holiday.spanOverrides = {};
+state.holiday.showMissed = false;
+state.holiday.templates.shabbat = {
+  start: {
+    states: [
+      { id: "1", kind: "light", on: true, level: 80 },
+      { id: "2", kind: "light", on: false },
+      { id: "5001", kind: "blind", open: true, position: 40 },
+      { id: "5003", kind: "blind", open: false },
+      { id: "5101", kind: "fan", on: true, speed: "medium" },
+      { id: "3001", kind: "lock", locked: false },
+      { id: "1005", kind: "thermostat", mode: "cool", cool: 72, fanMode: "quiet" },
+    ],
+    repeatLaterNights: false,
+  },
+  night: [{ time: "23:00", states: [{ id: "1", kind: "light", on: false }, { id: "1005", kind: "thermostat", mode: "heat", heat: 68 }] }],
+  morning: [{ time: "08:00", states: [{ id: "3", kind: "light", on: true }] }],
+  afternoon: [],
+  evening: [],
+  end: { states: [], offStillOn: true },
+  custom: [],
+};
 state.notifications = [{
   id: "n_demo_1",
   text: "Washer cycle finished — demo notification. Dismiss or Mark as Read clears it on every tablet.",
@@ -197,6 +257,7 @@ function buildMockData(count) {
     { i: 1003, n: "Office Thermostat", r: 4, tm: "off", os: "idle", hsp: 65, csp: 75, temp: 70, u: "F", hasFm: 1, fm: "circulate", hasFs: 0, fs: null, supM: "heat,off", supFM: "", fsLev: null },
     { i: 1004, n: "Basement Thermostat", r: 9, tm: "heat", os: "idle", hsp: 68, csp: 72, temp: 67, u: "F", hasFm: 1, fm: "auto", hasFs: 0, fs: null, supM: "heat,off", fsLev: null },
     { i: 1005, n: "Dining Mini-Split", r: 10, tm: "cool", os: "cooling", hsp: 68, csp: 72, temp: 73, u: "F", hasFm: 1, fm: "auto", hasFs: 0, fs: null, supM: "off,heat,cool,dry,fan,auto", supFM: "auto,quiet,low,medium,high,powerful", fsLev: null, hasCm: 1, hasCfs: 1, cfs: "auto", hasVp: 1, vp: "auto", vpLev: "auto,swing,lowest,low,middle,high,highest" },
+    { i: 1006, n: "Hall Nest", r: 5, tm: "cool", os: "idle", hsp: 68, csp: 72, temp: 71, u: "F", hasFm: 1, fm: "auto", hasFs: 0, fs: null, supM: "heat,cool,auto,off", supFM: "auto,on", fsLev: null, hasEco: 1, eco: "MANUAL_ECO", ehsp: 60, ecsp: 76 },
   ];
   const tempSensors = [
     { i: 2001, n: "Kitchen Sensor", r: 2, temp: 71, u: "F", bat: 85, ex: [{ k: "battery", v: 85, u: "%" }, { k: "humidity", v: 48, u: null }] },
@@ -238,6 +299,7 @@ function buildMockData(count) {
     { i: 4003, n: "Living Room Chromecast", r: 1, st: "playing", v: 60, tr: "YouTube", m: "unmuted", f: AUDIO_F_CHROMECAST },
     { i: 4004, n: "Office HomePod", r: 4, st: "playing", v: 28, tr: "Khruangbin — Texas Sun", m: "unmuted", trackIdx: 3, f: AUDIO_F_AIRPLAY },
     { i: 4005, n: "Patio Speaker", r: 7, st: "stopped", v: 0, tr: "", m: "muted", trackIdx: 2, f: AUDIO_F_FULL },
+    { i: 4007, n: "Living Room TV", r: 1, st: "paused", v: null, tr: "", m: "unmuted", f: AUDIO_F_TRANSPORT },
   ];
   const cameras = [
     { i: 4201, n: "Front Door", u: "http://127.0.0.1:1984/webrtc.html?src=front_door_sub&media=video+audio", uh: "http://127.0.0.1:1984/webrtc.html?src=front_door&media=video+audio", t: "webrtc" },
@@ -260,7 +322,7 @@ function buildMockData(count) {
   return { config: { pollIntervalMs: 5000, useWebSocket: false, dashboardName: "mDash", defaultTab: "lights", roomOrder: [], navOrder: [], cameraOrder: [], thermostatOrder: [], favorites: [1, 5, 1001, 2103, 2201, 5101], favoriteSizes: {}, htmlSizes: {}, htmlZooms: {}, htmlTitles: {}, embedCards: [], timeCards: [], notificationCards: [], favoritesLayout: [] }, htmlTiles: mockHtmlTilesCatalog(), rooms, devices, outlets: [
     { i: 601, n: "Kitchen Outlet", r: 2, s: 1 },
     { i: 602, n: "Office Outlet", r: 4, s: 0 },
-  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, hubTimeZone: (Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Denver"), hubNow: Date.now(), triggersEnabled: true, alertsArmed: true, alertsArmSwitchId: 9100, triggerSourceIds: [101, 201], triggerActions: [], unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: true, dashboardPasswordRequired: true, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
+  ], thermostats, tempSensors, sensors, valves, locks, garageDoors, music, cameras, windowShades, ceilingFans, hubModes: ["Day", "Evening", "Night", "Away"], currentHubMode: "Day", hsmStatus: "disarmed", hsmAlert: "water", hsmAlertDesc: "Basement leak sensor", hsmEnabled: true, hsmPinEnabled: true, hsmPinRequired: true, thermostatsPopupEnabled: true, outletsSeparateTab: false, roomClimateEnabled: true, schedulerEnabled: true, schedUse24Hour: false, hubTimeZone: (Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Denver"), hubNow: Date.now(), triggersEnabled: true, alertsArmed: true, alertsArmSwitchId: 9100, triggerSourceIds: [101, 201], triggerActions: [], unlockPinEnabled: true, unlockPinRequired: true, dashboardPasswordEnabled: false, dashboardPasswordRequired: false, scenes: [{ id: 1, n: "Good Morning" }, { id: 2, n: "Movie Time" }, { id: 3, n: "Good Night" }, { id: 4, n: "Away" }], schedules: [], sunTimes: mockSunTimes(), notifications: [], tileNotifications: [], notificationDeviceIds: [9001], tileNotificationDeviceIds: [9002] };
 }
 
 function tstatOstateForMode(tm) {
@@ -633,6 +695,14 @@ function applyCmd(id, c, v, pin) {
       else if (c === "modeCool") t.tm = "cool";
       else if (c === "off") t.tm = "off";
       t.os = tstatOstateForMode(t.tm);
+    } else if (c === "setEcoMode" && t.hasEco) {
+      if (v === "MANUAL_ECO" || v === "OFF") {
+        if (String(t.tm || "").toLowerCase() === "off" && v === "MANUAL_ECO") return { ok: false, error: "Command not allowed in current thermostat mode." };
+        t.eco = v;
+        if (v !== "OFF") t.os = "idle";
+      }
+    } else if ((c === "setHeat" || c === "setCool") && t.hasEco && t.eco && String(t.eco).toUpperCase() !== "OFF") {
+      return { ok: true };
     } else if (c === "setHeat") { t.hsp = Math.round(Number(v)); if (t.tm === "heat") t.os = t.temp < t.hsp ? "heating" : "idle"; }
     else if (c === "setCool") { t.csp = Math.round(Number(v)); if (t.tm === "cool" || t.tm === "dry") t.os = t.temp > t.csp ? "cooling" : "idle"; }
     else if (c === "setFanMode" && t.hasFm) {
@@ -724,6 +794,48 @@ function applyCmd(id, c, v, pin) {
     return { ok: true };
   }
   return { ok: false, error: "device not found" };
+}
+
+const mockHardwareNames = new Map();
+let mockHardwareSeeded = false;
+
+function mockDeviceLists() {
+  return [
+    state.devices, state.outlets, state.thermostats, state.tempSensors, state.sensors,
+    state.locks, state.garageDoors, state.windowShades, state.ceilingFans, state.music,
+    state.cameras, state.valves,
+  ];
+}
+
+function seedMockHardwareNames() {
+  if (mockHardwareSeeded) return;
+  mockHardwareSeeded = true;
+  for (const list of mockDeviceLists()) {
+    for (const dev of list || []) {
+      if (dev?.i == null || mockHardwareNames.has(dev.i)) continue;
+      mockHardwareNames.set(dev.i, String(dev.n || ("Device " + dev.i)));
+    }
+  }
+}
+
+function findMockNamedDevice(id) {
+  seedMockHardwareNames();
+  const nid = Number(id);
+  for (const list of mockDeviceLists()) {
+    const dev = (list || []).find((d) => Number(d.i) === nid);
+    if (dev) return dev;
+  }
+  return null;
+}
+
+function mockRoomMemberIds(roomId) {
+  const ids = [];
+  for (const list of mockDeviceLists()) {
+    for (const dev of list || []) {
+      if (Number(dev.r) === Number(roomId)) ids.push(Number(dev.i));
+    }
+  }
+  return ids.sort((a, b) => a - b);
 }
 
 function readJsonBody(req) {
@@ -849,6 +961,129 @@ const mime = {
   "/app.js": "application/javascript",
 };
 
+function holidayNextWeekday(startDate, weekday, tz) {
+  let date = startDate;
+  for (let i = 0; i < 21; i++) {
+    if (zonedParts(zonedMs(date, "12:00", tz), tz).weekday === weekday) return date;
+    date = addDays(date, 1);
+  }
+  return startDate;
+}
+
+function holidayIso(date, hhmm, tz) {
+  return new Date(zonedMs(date, hhmm, tz)).toISOString();
+}
+
+function holidayFixtureItems(now = Date.now()) {
+  const tz = "America/New_York";
+  const today = zonedParts(now, tz).date;
+  const friday = holidayNextWeekday(today, "Fri", tz);
+  const saturday = addDays(friday, 1);
+  const wed = holidayNextWeekday(addDays(saturday, 1), "Wed", tz);
+  const thu = addDays(wed, 1);
+  const tue = addDays(wed, -1);
+  return [
+    { category: "candles", date: holidayIso(friday, "18:30", tz) },
+    { category: "havdalah", date: holidayIso(saturday, "19:40", tz) },
+    { category: "candles", date: holidayIso(tue, "18:20", tz) },
+    { category: "holiday", date: wed, hdate: "15 Nisan 5787", yomtov: true },
+    { category: "candles", date: holidayIso(wed, "18:19", tz) },
+    { category: "holiday", date: thu, hdate: "16 Nisan 5787", yomtov: true },
+    { category: "havdalah", date: holidayIso(thu, "19:30", tz) },
+    ...holidayBlock(tz, addDays(today, 45), ["1 Tishrei 5788", "2 Tishrei 5788"]),
+    ...holidayBlock(tz, addDays(today, 55), ["10 Tishrei 5788"]),
+    ...holidayBlock(tz, addDays(today, 65), ["15 Tishrei 5788", "16 Tishrei 5788"]),
+    ...holidayBlock(tz, addDays(today, 78), ["22 Tishrei 5788", "23 Tishrei 5788"]),
+    ...holidayBlock(tz, addDays(today, 95), ["21 Nisan 5788", "22 Nisan 5788"]),
+    ...holidayBlock(tz, addDays(today, 115), ["6 Sivan 5788", "7 Sivan 5788"]),
+  ];
+}
+
+function holidayBlock(tz, firstDate, hdates) {
+  const items = [{ category: "candles", date: holidayIso(addDays(firstDate, -1), "18:05", tz) }];
+  hdates.forEach((hdate, i) => {
+    const date = addDays(firstDate, i);
+    items.push({ category: "holiday", date, hdate, yomtov: true });
+    if (i < hdates.length - 1) items.push({ category: "candles", date: holidayIso(date, "18:10", tz) });
+    else items.push({ category: "havdalah", date: holidayIso(date, "19:15", tz) });
+  });
+  return items;
+}
+
+function holidayPreviewPayload(draft) {
+  const tz = "America/New_York";
+  const config = {
+    settings: { ...state.holiday.settings, ...(draft?.settings || {}) },
+    templates: { ...state.holiday.templates },
+    occasions: { ...state.holiday.occasions },
+    spanOverrides: { ...(state.holiday.spanOverrides || {}) },
+  };
+  if (draft?.spanId && draft?.template) config.spanOverrides[String(draft.spanId)] = draft.template;
+  if (draft?.occasion && draft?.choice) config.occasions[draft.occasion] = draft.choice;
+  if (draft?.occasion && draft?.template) config.templates[draft.occasion] = draft.template;
+  const now = Date.now();
+  const { spans, actions } = expandUpcoming(holidayFixtureItems(now), config, tz, now);
+  const skipped = new Set(state.holiday.skipped || []);
+  const overrides = config.spanOverrides || {};
+  const packed = spans.map((span) => ({
+    ...span,
+    skipped: skipped.has(span.id),
+    once: !!overrides[span.id],
+    onceTemplate: overrides[span.id] || null,
+    actions: actions.filter((a) => a.spanId === span.id),
+    warnings: sameMinuteWarnings((actions || []).filter((a) => a.spanId === span.id)),
+  }));
+  const rows = packed.map((span, index) => ({
+    spanId: span.id,
+    name: span.name,
+    start: span.start,
+    end: span.end,
+    occasion: span.occasion,
+    skipped: span.skipped,
+    paused: (state.holiday.pausedOccasions || []).includes(span.occasion),
+    once: span.once,
+    badge: span.skipped ? "skipped" : templateBadge(span.days?.[0]?.occasion || span.occasion, config),
+    inProgress: !span.skipped && span.start <= now && span.end > now,
+    warning: index === 0 && state.holiday.showMissed ? "Missed while the hub was offline" : "",
+  }));
+  return {
+    ok: true,
+    apiVersion: HOLIDAY_API_VERSION,
+    tz,
+    now,
+    revision: state.holiday.revision,
+    paused: false,
+    preflight: preflight(config.settings, { lat: 40.7, lon: -74, tz }, ["Day", "Evening", "Night", "Away"]),
+    settings: state.holiday.settings,
+    occasions: state.holiday.occasions,
+    templates: state.holiday.templates,
+    calendar: { fetchedAt: now, error: "", query: "preview" },
+    rows,
+    spans: packed,
+    conflicts: conflictingSchedules(state.schedules, config.settings.holidayMode),
+    deviceKinds: ["light", "outlet", "blind", "fan", "lock", "thermostat"],
+    modes: ["Day", "Evening", "Night", "Away"],
+  };
+}
+
+function partitionHolidayList(payload) {
+  const nearRows = [];
+  const laterRows = [];
+  const nearSpans = [];
+  const laterSpans = [];
+  (payload.spans || []).forEach((span, i) => {
+    const row = payload.rows?.[i];
+    if (isListedNear(span.start, payload.now, payload.tz)) {
+      nearSpans.push(span);
+      if (row) nearRows.push(row);
+    } else {
+      laterSpans.push(span);
+      if (row) laterRows.push(row);
+    }
+  });
+  return { nearRows, laterRows, nearSpans, laterSpans };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
@@ -895,6 +1130,14 @@ const server = createServer(async (req, res) => {
   if (p === "/app-post3.js") {
     res.writeHead(200, { "Content-Type": "application/javascript" });
     return res.end(readDist("mld-app-post3.js"));
+  }
+  if (p === "/app-holiday.js") {
+    res.writeHead(200, { "Content-Type": "application/javascript" });
+    return res.end(readDist("mld-holiday.js"));
+  }
+  if (p === "/app-synagogue.js") {
+    res.writeHead(200, { "Content-Type": "application/javascript" });
+    return res.end(readDist("mld-synagogue.js"));
   }
   if (p === "/manifest.webmanifest") {
     res.writeHead(200, { "Content-Type": "application/manifest+json" });
@@ -995,7 +1238,10 @@ const server = createServer(async (req, res) => {
     // nudge thermostats so the room icon color / temp change during preview
     if (state.thermostats?.length && Math.random() < 0.25) {
       const t = state.thermostats[Math.floor(Math.random() * state.thermostats.length)];
-      if (t.tm === "heat") { t.temp = Math.max(t.hsp - 4, t.temp + (Math.random() < 0.5 ? -1 : 1)); t.os = t.temp >= t.hsp ? "idle" : "heating"; }
+      const ecoOn = t.hasEco && String(t.eco || "").toUpperCase() !== "OFF" && t.eco;
+      if (ecoOn) {
+        t.os = "idle";
+      } else if (t.tm === "heat") { t.temp = Math.max(t.hsp - 4, t.temp + (Math.random() < 0.5 ? -1 : 1)); t.os = t.temp >= t.hsp ? "idle" : "heating"; }
       else if (t.tm === "cool") { t.temp = Math.min(t.csp + 4, t.temp + (Math.random() < 0.5 ? -1 : 1)); t.os = t.temp <= t.csp ? "idle" : "cooling"; }
       else if (t.fm === "on" || t.fm === "circulate") { t.os = "fan"; }
       else { t.os = "idle"; }
@@ -1058,6 +1304,11 @@ const server = createServer(async (req, res) => {
         s: dev.s, l: dev.l, k: dev.k ?? null, h: dev.h ?? null, sat: dev.sat ?? null,
       }));
     }
+    const outlet = state.outlets?.find(d => d.i === id);
+    if (outlet) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ i: outlet.i, s: outlet.s }));
+    }
     const t = state.thermostats?.find(d => d.i === id);
     if (t) {
       res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -1066,6 +1317,8 @@ const server = createServer(async (req, res) => {
         hasFm: t.hasFm, fm: t.fm, hasFs: t.hasFs, fs: t.fs,
         hasCm: t.hasCm || 0, hasCfs: t.hasCfs || 0, cfs: t.cfs ?? null,
         hasVp: t.hasVp || 0, vp: t.vp ?? null, vpLev: t.vpLev ?? null,
+        hasEco: t.hasEco || 0,
+        ...(t.hasEco ? { eco: t.eco ?? null, ehsp: t.ehsp ?? null, ecsp: t.ecsp ?? null } : {}),
       }));
     }
     const s = state.tempSensors?.find(d => d.i === id);
@@ -1694,6 +1947,88 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     return res.end(JSON.stringify({ ok: true, tileNotifications: state.tileNotifications }));
   }
+  if (p === "/device/label") {
+    let body = null;
+    if (req.method === "POST") {
+      try { body = await readJsonBody(req); } catch {
+        res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+      }
+    }
+    const hasLabel = body && Object.prototype.hasOwnProperty.call(body, "label")
+      || url.searchParams.has("label");
+    const id = body?.id ?? url.searchParams.get("id");
+    if (id == null || !hasLabel) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "missing params" }));
+    }
+    const dev = findMockNamedDevice(id);
+    if (!dev) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "device not found" }));
+    }
+    const label = String((body && Object.prototype.hasOwnProperty.call(body, "label") ? body.label : url.searchParams.get("label")) ?? "")
+      .replace(/[\u0000-\u001F\u007F]/g, " ")
+      .trim();
+    if (label.length > 255) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "label too long" }));
+    }
+    dev.n = label || mockHardwareNames.get(dev.i) || ("Device " + dev.i);
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ ok: true, id: dev.i, n: dev.n }));
+  }
+  if (p === "/room/name") {
+    let body = null;
+    if (req.method === "POST") {
+      try { body = await readJsonBody(req); } catch {
+        res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        return res.end(JSON.stringify({ ok: false, error: "invalid json" }));
+      }
+    }
+    const hasName = body && Object.prototype.hasOwnProperty.call(body, "name")
+      || url.searchParams.has("name");
+    const idRaw = body?.id ?? url.searchParams.get("id");
+    if (idRaw == null || !hasName) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "missing params" }));
+    }
+    const id = Number(idRaw);
+    if (id === -1) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "unassigned is not a room" }));
+    }
+    const name = String((body && Object.prototype.hasOwnProperty.call(body, "name") ? body.name : url.searchParams.get("name")) ?? "")
+      .replace(/[\u0000-\u001F\u007F]/g, " ")
+      .trim();
+    if (!name) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "room name required" }));
+    }
+    if (name.length > 255) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "room name too long" }));
+    }
+    const room = (state.rooms || []).find((r) => Number(r.id) === id);
+    if (!room) {
+      res.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "room not found" }));
+    }
+    const dup = (state.rooms || []).find((r) => Number(r.id) !== id && String(r.name || "").trim().toLowerCase() === name.toLowerCase());
+    if (dup) {
+      res.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "a room with that name already exists" }));
+    }
+    const before = mockRoomMemberIds(id);
+    if (String(room.name || "").trim() !== name) room.name = name;
+    const after = mockRoomMemberIds(id);
+    if (before.join(",") !== after.join(",")) {
+      res.writeHead(500, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "room membership changed unexpectedly" }));
+    }
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ ok: true, id: room.id, name: room.name }));
+  }
   if (p === "/favorites") {
     ensureEmbedConfig();
     const idsParam = url.searchParams.get("ids");
@@ -2200,6 +2535,140 @@ const server = createServer(async (req, res) => {
       favoritesLayout: reconciled,
     }));
   }
+  if (p.startsWith("/synagogue")) {
+    const auth = requireDashAuth(res, url, null);
+    if (!auth) return;
+    const sub = p.replace(/^\/synagogue\/?/, "");
+    let body = null;
+    if (req.method !== "GET") {
+      try { body = await readJsonBody(req); } catch { body = {}; }
+    }
+    const op = sub === "preview" ? "preview" : sub === "skip" ? "skip" : sub === "save" ? "save" : "status";
+    if ((op === "save" || op === "skip" || op === "preview") && body?.revision != null && Number(body.revision) !== synagoguePreviewState.revision) {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify({ ok: false, error: "Changed on another device. Reload.", revision: synagoguePreviewState.revision }));
+    }
+    if (sub === "skip" && body && !body.op) body.op = "skip";
+    try {
+      const ics = await synagoguePreviewIcs(synagoguePreviewState.config, body);
+      const data = await synagoguePreviewCall({
+        op,
+        tz: state.hubTimeZone,
+        now: Number(process.env.SYNAGOGUE_PREVIEW_AT) || Date.now(),
+        revision: synagoguePreviewState.revision,
+        config: synagoguePreviewState.config,
+        body,
+        ics,
+        demo: true,
+      agendaDays: [7, 14, 21].includes(Number(url.searchParams.get("days"))) ? Number(url.searchParams.get("days")) : 7,
+      });
+      if (data?.config && (op === "save" || op === "skip")) {
+        synagoguePreviewState.config = data.config;
+        synagoguePreviewState.revision += 1;
+        data.revision = synagoguePreviewState.revision;
+      } else if (data && !synagoguePreviewState.config && data.config) {
+        synagoguePreviewState.config = data.config;
+        data.revision = synagoguePreviewState.revision;
+      } else if (data) {
+        data.revision = synagoguePreviewState.revision;
+      }
+      const client = data && typeof data === "object" ? { ...data } : data;
+      if (client && typeof client === "object") delete client.config;
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+      return res.end(JSON.stringify(client));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: false, error: err.message || "Synagogue preview failed" }));
+    }
+  }
+  if (p.startsWith("/holidays")) {
+    const sub = p.replace(/^\/holidays\/?/, "");
+    let body = null;
+    if (req.method !== "GET") {
+      try { body = await readJsonBody(req); } catch { body = {}; }
+    }
+    if (sub === "save" && body) {
+      if (body.revision != null && Number(body.revision) !== state.holiday.revision) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "Changed on another device — reload.", revision: state.holiday.revision }));
+      }
+      if (body.settings) state.holiday.settings = { ...state.holiday.settings, ...body.settings };
+      if (body.pauseOccasion) {
+        const id = String(body.pauseOccasion);
+        const list = state.holiday.pausedOccasions || [];
+        state.holiday.pausedOccasions = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+      }
+      if (body.spanId && body.clearOnce) {
+        const id = String(body.spanId);
+        state.holiday.spanOverrides = { ...(state.holiday.spanOverrides || {}) };
+        delete state.holiday.spanOverrides[id];
+      } else if (body.spanId && body.once && body.template) {
+        const id = String(body.spanId);
+        state.holiday.spanOverrides = { ...(state.holiday.spanOverrides || {}), [id]: body.template };
+      } else if (body.occasion && body.choice) {
+        state.holiday.occasions[body.occasion] = body.choice || "own";
+        if (body.template) state.holiday.templates[body.occasion] = body.template;
+      }
+      state.holiday.revision += 1;
+    }
+    if (sub === "skip" && body?.spanId) {
+      const id = String(body.spanId);
+      if (body.undo) state.holiday.skipped = state.holiday.skipped.filter((x) => x !== id);
+      else if (!state.holiday.skipped.includes(id)) state.holiday.skipped.push(id);
+      state.holiday.revision += 1;
+    }
+    if (url.searchParams.get("missed") === "1") state.holiday.showMissed = true;
+    const payload = holidayPreviewPayload(body && sub === "preview" ? body : null);
+    if (sub === "preview") {
+      const wantedId = body?.spanId ? String(body.spanId) : "";
+      const wanted = body?.occasion;
+      const span = wantedId
+        ? (payload.spans.find((s) => s.id === wantedId) || null)
+        : (payload.spans.find((s) => (s.days || []).some((d) => d.occasion === wanted)) || payload.spans[0] || null);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, apiVersion: HOLIDAY_API_VERSION, tz: "America/New_York", span, warnings: span?.warnings || [] }));
+    }
+    const split = partitionHolidayList(payload);
+    if (sub === "later") {
+      const spanId = url.searchParams.get("span");
+      if (spanId) {
+        const span = split.laterSpans.find((s) => s.id === spanId) || null;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify(span
+          ? { ok: true, apiVersion: payload.apiVersion, tz: payload.tz, now: payload.now, revision: payload.revision, span }
+          : { ok: false, error: "That holiday is no longer on the calendar.", revision: payload.revision, apiVersion: payload.apiVersion }));
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({
+        ok: true,
+        apiVersion: payload.apiVersion,
+        tz: payload.tz,
+        now: payload.now,
+        revision: payload.revision,
+        rows: split.laterRows.map((row) => {
+          const span = split.laterSpans.find((s) => s.id === row.spanId);
+          return { ...row, deviceCount: devicesInActions(span?.actions || []).length };
+        }),
+        spans: split.laterSpans.map((span) => ({
+          id: span.id,
+          name: span.name,
+          start: span.start,
+          end: span.end,
+          occasion: span.occasion,
+          days: span.days,
+          skipped: span.skipped === true,
+          paused: span.paused === true,
+          once: span.once === true,
+        })),
+        laterCount: split.laterRows.length,
+      }));
+    }
+    payload.rows = split.nearRows;
+    payload.spans = split.nearSpans;
+    payload.laterCount = split.laterRows.length;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify(payload));
+  }
   // ---------- scheduler mock ----------
   if (p.startsWith("/schedules")) {
     if (!schedulerMockEnabled()) return sendSchedulerDisabled(res);
@@ -2277,6 +2746,64 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       return res.end(JSON.stringify({ ok: true, id, enabled: s.enabled, schedules: mockSchedulesList() }));
     }
+    if (sub === "upload") {
+      const items = mockBundleItems(body);
+      if (!items) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: "expected a schedules array" }));
+      }
+      const skipped = [];
+      const importedIds = new Set();
+      for (const raw of items) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          skipped.push({ name: "", error: "each schedule must be an object" });
+          continue;
+        }
+        const named = mockApplyDeviceNames(raw);
+        if (named.error) {
+          skipped.push({ name: String(raw.name || ""), error: named.error });
+          continue;
+        }
+        const name = String(raw.name || "").trim();
+        const same = name
+          ? state.schedules.filter((s) => String(s.name || "").trim().toLowerCase() === name.toLowerCase())
+          : [];
+        if (same.length > 1) {
+          skipped.push({ name, error: "more than one schedule is named " + name });
+          continue;
+        }
+        const id = (raw.id && String(raw.id).trim()) || (same.length === 1 ? same[0].id : ("sc-" + Date.now() + "-" + Math.floor(Math.random() * 100000)));
+        const existing = state.schedules.find((s) => s.id === id);
+        const prepared = {
+          ...raw,
+          action: named.action,
+          enabled: raw.enabled == null ? true : (raw.enabled === true || String(raw.enabled).toLowerCase() === "true"),
+        };
+        const s = mockNormalizeSchedule(prepared, id, existing);
+        const validationError = validateSchedulePayload(s) || mockUnknownDeviceError(s) || modeCycleError(state.schedules, s);
+        if (validationError) {
+          skipped.push({ name: s.name, error: validationError });
+          continue;
+        }
+        mockRecomputeNextFire(s);
+        if (existing) Object.assign(existing, s);
+        else state.schedules.push(s);
+        importedIds.add(String(id));
+      }
+      const imported = importedIds.size;
+      if (!imported) {
+        res.writeHead(422, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({
+          ok: false,
+          error: skipped[0]?.error || "nothing to import",
+          imported: 0,
+          skipped,
+          schedules: mockSchedulesList(),
+        }));
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ok: true, imported, skipped, schedules: mockSchedulesList() }));
+    }
     if (sub === "test") {
       const forced = body?.simulateResult;
       const lastResult = forced === "missing"
@@ -2334,6 +2861,33 @@ function mockScheduleSummary(s) {
   return tr.kind || "";
 }
 
+function mockNormalizeAction(action) {
+  if (!action) return { target: "lights", states: [] };
+  const target = String(action.target || "lights");
+  if (target === "thermostats") return { target: "thermostats", devices: action.devices, ...thermostatSettingNormalized(action) };
+  if (target === "locks" || target === "blinds" || target === "fans") {
+    const normalized = deviceStatesNormalized(target, action.states);
+    if (normalized.error) return { target, states: scheduleStateList(action.states) };
+    if (target === "blinds") {
+      for (const st of normalized.states) {
+        const shade = (state.windowShades || []).find((s) => String(s.i) === String(st.id));
+        if (shade && !shade.hasPos) delete st.position;
+      }
+    }
+    if (target === "fans") {
+      for (const st of normalized.states) {
+        if (st.on !== true || !st.speed) continue;
+        const fan = (state.ceilingFans || []).find((f) => String(f.i) === String(st.id));
+        if (!fan) continue;
+        const match = scheduleFanSpeedMatch(fan.supSp, st.speed);
+        if (match) st.speed = match;
+      }
+    }
+    return { target, states: normalized.states };
+  }
+  return action;
+}
+
 function mockNormalizeSchedule(body, id, existing) {
   const tr = body?.trigger || {};
   let when = String(tr.when || "clock").toLowerCase();
@@ -2357,13 +2911,93 @@ function mockNormalizeSchedule(body, id, existing) {
       mode: tr.mode || "",
     },
     onlyInModes: kind === "mode" ? [] : (body?.onlyInModes || []),
-    action: body?.action || { target: "lights", states: [] },
+    action: mockNormalizeAction(body?.action),
     lastFired: existing?.lastFired ?? null,
     lastResult: existing?.lastResult ?? null,
     nextFire: null,
     ts: Date.now(),
   };
   return s;
+}
+
+function mockBundleItems(body) {
+  if (Array.isArray(body)) return body;
+  if (body && Array.isArray(body.schedules)) return body.schedules;
+  if (body && (body.trigger || body.action)) return [body];
+  return null;
+}
+
+function mockResolveDeviceToken(token, devices) {
+  let id = null;
+  let name = null;
+  if (token && typeof token === "object") {
+    if (token.id != null && String(token.id).trim()) id = String(token.id).trim();
+    else name = String(token.name || token.label || "").trim();
+  } else {
+    const text = String(token ?? "").trim();
+    if (!text) return { error: "device needs a name or id" };
+    if (/^\d+$/.test(text)) id = text;
+    else name = text;
+  }
+  const list = devices || [];
+  if (id) {
+    const dev = list.find((d) => String(d.i) === id);
+    if (!dev) return { error: "device " + id + " is not selected in this app" };
+    return { id: dev.i };
+  }
+  if (!name) return { error: "device needs a name or id" };
+  const label = (d) => String(d.n || "");
+  const exact = list.filter((d) => label(d) === name);
+  if (exact.length === 1) return { id: exact[0].i };
+  const folded = list.filter((d) => label(d).toLowerCase() === name.toLowerCase());
+  if (folded.length === 1) return { id: folded[0].i };
+  const needle = name.toLowerCase();
+  const partial = list.filter((d) => label(d).toLowerCase().includes(needle));
+  if (partial.length === 1) return { id: partial[0].i };
+  const pool = partial.length ? partial : (folded.length ? folded : exact);
+  if (!pool.length) return { error: "no device named " + name };
+  return { error: "more than one device matches " + name + ": " + pool.slice(0, 8).map(label).join(", ") };
+}
+
+function mockApplyDeviceNames(raw) {
+  const action = raw?.action && typeof raw.action === "object" ? { ...raw.action } : {};
+  const target = String(action.target || "lights");
+  if (target === "lights" || target === "outlets") {
+    const devices = target === "lights" ? state.devices : state.outlets;
+    const states = Array.isArray(action.states) ? action.states.map((st) => ({ ...st })) : null;
+    if (!states) return { action };
+    const next = [];
+    for (const st of states) {
+      if (!st || typeof st !== "object") return { error: "each device state must be an object" };
+      const token = st.id != null && String(st.id).trim() ? st.id : (st.name || st.label);
+      const resolved = mockResolveDeviceToken(token, devices);
+      if (resolved.error) return { error: resolved.error };
+      next.push({ ...st, id: resolved.id });
+    }
+    action.states = next;
+  } else if (target === "thermostats") {
+    const list = Array.isArray(action.devices) ? action.devices : (action.devices != null && String(action.devices).trim() ? [action.devices] : []);
+    const ids = [];
+    for (const item of list) {
+      const resolved = mockResolveDeviceToken(item, state.thermostats);
+      if (resolved.error) return { error: resolved.error };
+      ids.push(String(resolved.id));
+    }
+    action.devices = ids;
+  } else if (target === "locks" || target === "blinds" || target === "fans") {
+    const devices = target === "locks" ? state.locks : target === "blinds" ? state.windowShades : state.ceilingFans;
+    const states = scheduleStateList(action.states).map((st) => ({ ...st }));
+    if (!states.length && action.states == null) return { action };
+    const next = [];
+    for (const st of states) {
+      const token = st.id != null && String(st.id).trim() ? st.id : (st.name || st.label);
+      const resolved = mockResolveDeviceToken(token, devices);
+      if (resolved.error) return { error: resolved.error };
+      next.push({ ...st, id: resolved.id });
+    }
+    action.states = next;
+  }
+  return { action };
 }
 
 function mockUnknownDeviceError(s) {
@@ -2385,6 +3019,19 @@ function mockUnknownDeviceError(s) {
     for (const id of raw) {
       if (id != null && !ids.has(String(id))) return "thermostat " + id + " is not available in the thermostats picker";
     }
+  } else if (target === "locks" || target === "blinds" || target === "fans") {
+    const list = target === "locks" ? state.locks : target === "blinds" ? state.windowShades : state.ceilingFans;
+    const ids = new Set((list || []).map((d) => String(d.i)));
+    for (const st of scheduleStateList(ac.states)) {
+      if (st?.id != null && !ids.has(String(st.id))) return "device " + st.id + " is not available in the " + target + " picker";
+    }
+    if (target === "fans") {
+      for (const st of scheduleStateList(ac.states)) {
+        if (st?.on !== true || !st.speed) continue;
+        const fan = (list || []).find((d) => String(d.i) === String(st.id));
+        if (fan && !scheduleFanSpeedMatch(fan.supSp, st.speed)) return "fan speed " + st.speed + " is not supported";
+      }
+    }
   }
   return null;
 }
@@ -2403,6 +3050,116 @@ function mockSchedulesList() {
     onlyInModes: s.onlyInModes || [],
     ts: s.ts,
   }));
+}
+
+const PREVIEW_SHUL_ICS = `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:preview-mincha
+SUMMARY:Weekday Mincha
+DTSTART;TZID=America/Denver:20261014T174000
+DTEND;TZID=America/Denver:20261014T181000
+RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH
+END:VEVENT
+BEGIN:VEVENT
+UID:preview-board
+SUMMARY:Board meeting
+LOCATION:Ballroom
+DTSTART;TZID=America/Denver:20261015T190000
+DTEND;TZID=America/Denver:20261015T203000
+RRULE:FREQ=WEEKLY;BYDAY=TH
+END:VEVENT
+BEGIN:VEVENT
+UID:preview-kiddush
+SUMMARY:Kiddush
+DTSTART;TZID=America/Denver:20261017T120000
+DTEND;TZID=America/Denver:20261017T130000
+RRULE:FREQ=WEEKLY;BYDAY=SA
+END:VEVENT
+BEGIN:VEVENT
+UID:preview-rental
+SUMMARY:Rental - Cohen
+LOCATION:Social hall
+DTSTART;TZID=America/Denver:20261018T180000
+DTEND;TZID=America/Denver:20261018T200000
+END:VEVENT
+END:VCALENDAR
+`;
+
+async function loadPreviewIcs(url) {
+  const text = String(url || "");
+  if (text === "https://preview.local/shul.ics") return PREVIEW_SHUL_ICS;
+  if (!text.startsWith("https://")) return "";
+  try {
+    const res = await fetch(text, { redirect: "follow", signal: AbortSignal.timeout(8000) });
+    if (!res.ok || !String(res.url || "").startsWith("https://")) return "";
+    return await res.text();
+  } catch {
+    return "";
+  }
+}
+
+async function synagoguePreviewIcs(config, body) {
+  const list = [...(config?.calendars || [])];
+  if ((body?.op === "calendar" || body?.op === "checkCalendar") && body.calendar?.id) {
+    const incoming = { ...body.calendar };
+    const idx = list.findIndex((cal) => cal.id === incoming.id);
+    if (idx >= 0) list[idx] = { ...list[idx], ...incoming, url: incoming.url || list[idx].url };
+    else list.push(incoming);
+  }
+  if (body?.op === "deleteCalendar" && body.id) {
+    const id = String(body.id);
+    for (let i = list.length - 1; i >= 0; i -= 1) if (list[i].id === id) list.splice(i, 1);
+  }
+  const ics = {};
+  for (const cal of list) {
+    if (!cal?.id || !cal.url) continue;
+    ics[cal.id] = await loadPreviewIcs(cal.url);
+  }
+  return ics;
+}
+
+const synagoguePreviewState = { revision: 1, config: null };
+let synagogueProc = null;
+let synagogueQueue = Promise.resolve();
+let synagogueBuf = "";
+let synagogueWait = null;
+
+function ensureSynagogueProc() {
+  if (synagogueProc) return;
+  synagogueProc = spawn("groovy", ["preview/verify-synagogue.groovy", "serve"], { cwd: root });
+  synagogueProc.stdout.setEncoding("utf8");
+  synagogueProc.stderr.setEncoding("utf8");
+  synagogueProc.stdout.on("data", (chunk) => {
+    synagogueBuf += chunk;
+    let nl = synagogueBuf.indexOf("\n");
+    while (nl >= 0) {
+      const line = synagogueBuf.slice(0, nl).trim();
+      synagogueBuf = synagogueBuf.slice(nl + 1);
+      if (line && synagogueWait) {
+        const wait = synagogueWait;
+        synagogueWait = null;
+        try { wait.resolve(JSON.parse(line)); }
+        catch (err) { wait.reject(err); }
+      }
+      nl = synagogueBuf.indexOf("\n");
+    }
+  });
+  synagogueProc.on("exit", () => { synagogueProc = null; });
+}
+
+function synagoguePreviewCall(payload) {
+  synagogueQueue = synagogueQueue.then(() => new Promise((resolve, reject) => {
+    ensureSynagogueProc();
+    synagogueWait = { resolve, reject };
+    synagogueProc.stdin.write(JSON.stringify(payload) + "\n");
+    setTimeout(() => {
+      if (synagogueWait && synagogueWait.resolve === resolve) {
+        synagogueWait = null;
+        reject(new Error("Synagogue preview timed out"));
+      }
+    }, 60000);
+  }));
+  return synagogueQueue;
 }
 
 const PORT = process.env.PORT || 4321;

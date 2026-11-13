@@ -1,5 +1,464 @@
 # Changelog
 
+## 0.4.78
+
+- **Dashboard:** A Nest thermostat shows Eco. While Eco is on, the dial shows that range and the usual setpoint stays locked. Favorites show Eco beside the mode. Update Modern Dashboard.
+
+## 0.4.77
+
+- **Dashboard:** After you change a device, the tile stays on that state only if the device changed. If it did not, the tile goes back and a message says to check the device. Update Modern Dashboard.
+
+- **Dashboard:** Shelly, Tasmota, and ESPHome devices are asked again after a command, so the hub learns the new state when their live connection drops. Update Modern Dashboard.
+
+## 0.4.76
+
+- **Dashboard:** A clock that a phone refuses to move still shows the hub's hour and date. Shabbat timeline days keep the hub's date. Update Modern Dashboard.
+
+- **Shabbat & holidays:** Day headings stay on the hub's calendar when the phone is in another time zone. Update mDash Shabbat and Holidays.
+
+- **Synagogue:** Calendar link times stay on the hub's calendar day. Update mDash Synagogue.
+
+## 0.4.75
+
+- **Dashboard:** A schedule keeps the hub's date with its hour. The time tile uses the hub's clock and the phone's 12-hour or 24-hour choice. Update Modern Dashboard.
+
+- **Synagogue:** A service date stays on the hub's calendar day. Update mDash Synagogue.
+
+## 0.4.74
+
+- **Dashboard:** A clock on the phone no longer replaces the hub's hour. Schedules and notifications stay on the time the hub will use. Update Modern Dashboard.
+
+- **Shabbat & holidays:** Candle lighting and the other times stay on the hub's clock. Update mDash Shabbat and Holidays.
+
+- **Synagogue:** Service times are the times the hub will run. Update mDash Synagogue.
+
+## 0.4.73
+
+- **Dashboard:** Clocks show the hub's time. Schedules, notifications, and the time tile stay on that clock when the phone is in another time zone. Update Modern Dashboard.
+
+- **Shabbat & holidays:** Candle lighting and the other times stay on the hub's clock. Update mDash Shabbat and Holidays.
+
+- **Synagogue:** Service times stay on the hub's clock. Update mDash Synagogue.
+
+## 0.4.72
+
+- **Dashboard:** After an update, the dashboard can still read its files from the hub. A schedule import and a test action stay saved. Update Modern Dashboard.
+
+- **Shabbat & holidays:** A saved schedule stays as data the hub can keep. If an update clears the remembered sunrise and sunset, the next check loads them again. Update mDash Shabbat and Holidays.
+
+- **Synagogue:** A saved schedule stays as data the hub can keep. Prayer times still load after an update, and a cleared schedule memory is rebuilt. Update mDash Synagogue.
+
+## 0.4.71
+
+- **Synagogue:** Closed dates stop services for a stretch, such as a renovation or a summer weekday break. Weekday closures leave Shabbat and Yom Tov running. A service that has already started still gets its end cues. Update mDash Synagogue.
+
+- **Synagogue:** One service can warm up earlier without changing the saved program or moving the lights. Agenda shows today's times from the times the hub already loaded. Update mDash Synagogue.
+
+- **Synagogue:** Problem alerts go to the phones chosen in the Synagogue app. Nothing is sent during Shabbat or Yom Tov, and an overnight calendar or times problem waits until morning. A backup downloads the schedule so it can be restored. Calendar links are left out of the backup. Update mDash Synagogue.
+
+## 0.4.70
+
+- **Dashboard:** The first check after an update can still tell whether Shabbat and holidays are paused. Update Modern Dashboard.
+
+## 0.4.69
+
+- **Dashboard:** The menu includes Install app. On Android it installs the app. On iPhone and iPad it shows how to add it to the Home Screen. The item stays hidden once the app is already open from the home screen. Update Modern Dashboard.
+
+- **Dashboard:** A refresh no longer steps into the Shabbat or synagogue app, so a slow refresh does not hold the next schedule. An open Shabbat week stays where it is while the dashboard refreshes. Update Modern Dashboard.
+
+- **Shabbat & holidays:** An action after havdalah still runs after that day leaves the list. A missing sunrise or sunset no longer skips candle lighting. Pause stays paused when an older page is still open. Update Modern Dashboard and mDash Shabbat and Holidays.
+
+- **Synagogue:** Prayer times read sunrise and sunset in the synagogue app, so a dashboard refresh does not delay them. Update mDash Synagogue.
+
+## 0.4.68
+
+- **Dashboard:** A refresh keeps its device cache on this dashboard, so another
+  app on the hub does not reuse it. Update Modern Dashboard.
+
+## 0.4.67
+
+- **Dashboard:** Each refresh reuses today's sunrise and sunset, the schedule list,
+  and each device's room and capabilities. A room move, a rename, or a driver
+  change shows up within 30 seconds, or right away when the app is saved. On,
+  off, level, and sensor readings are still read every time. Update Modern
+  Dashboard.
+
+## 0.4.66
+
+- **Shabbat & holidays:** The dashboard asks the hub for less on each refresh, and a holiday timeline is built once and reused. A module file added or removed in File Manager can take up to 30 seconds to show up, or shows up right away when the app page is opened. Update Modern Dashboard, mDash Shabbat and Holidays, and mDash Synagogue.
+
+- **Climate:** Select all in the thermostat menu selects every thermostat, including when device ids arrive as text. When they are already all selected, the button says Deselect all. Fans and shades use the same label. Selecting every thermostat in a room still changes the setpoint. Scheduler thermostat steps have the same Select all / Deselect all control.
+
+- **Synagogue:** Optional mDash Synagogue package. A Synagogue tab programs
+  prayer times from HebCal, with lights, outlets, locks, and thermostats, and
+  can use Shabbat as the template for Yom Tov. Calendars accept a secret
+  https or webcal link. Title rules and one-time bookings join the same
+  timeline. Install it separately. Update Modern Dashboard and mDash Synagogue.
+
+- **Synagogue:** Opening the tab, saving, and running a cue reuse one schedule
+  build instead of calculating it again. Holiday search keeps the cursor in
+  the field. Update mDash Synagogue.
+
+## 0.4.65
+
+- **Shabbat & holidays:** Early Shabbat starts at a chosen time when sunset is
+  late enough, and stays at candle lighting when sunset is earlier. One week
+  can be turned on or off from that week's page. Update Modern Dashboard and
+  mDash Shabbat and Holidays.
+
+- **Shabbat & holidays:** **Later, after the next two weeks** opens on a slower
+  hub. The list loads first, and a holiday's timeline loads when that holiday
+  is opened. Update Modern Dashboard and mDash Shabbat and Holidays.
+
+- **Scheduler:** **Upload** previews a file. **Submit** saves the green rows.
+  Update Modern Dashboard.
+
+## 0.4.64
+
+- **Scheduler:** **Upload schedules…** shows which rows will be saved and which
+  will be skipped, and the result says what was saved. Update Modern Dashboard.
+
+- **Shabbat & holidays:** after a holiday file is uploaded, the page says
+  whether the next action was scheduled, saved but not scheduled, or will be
+  tried again shortly. Update Modern Dashboard and mDash Shabbat and Holidays.
+
+- **Dashboard:** lock, unlock, and thermostat modes use their own colors on a
+  schedule and on a Shabbat or holiday. Lights and outlets are listed
+  separately. Update Modern Dashboard and mDash Shabbat and Holidays.
+
+## 0.4.63
+
+- **Shabbat & holidays:** **Upload schedules…** accepts a Shabbat and holidays
+  file when that module is installed. Occasions and template slots in the file
+  replace those choices; anything left out stays as it is. The schema is on
+  that page, and it can be downloaded or copied. Update Modern Dashboard and
+  mDash Shabbat and Holidays.
+
+- **Shabbat & holidays:** candle-lighting or havdalah set to 0 minutes stays at
+  0. Update mDash Shabbat and Holidays.
+
+## 0.4.62
+
+- **Scheduler:** the schema on **Upload schedules…** stays off the page. Download
+  and Copy still get the full file, and the local download is labeled Local
+  Network Download. Update Modern Dashboard.
+
+## 0.4.61
+
+- **Scheduler:** Download and Copy on **Upload schedules…** stay readable, and
+  the schema preview is one line. Update Modern Dashboard.
+
+## 0.4.60
+
+- **Scheduler:** **Upload schedules…** shows the schema and device list open.
+  The schema can be downloaded or copied, and the paste box can take a JSON
+  file. Update Modern Dashboard.
+
+## 0.4.59
+
+- **Shabbat & holidays:** the buttons on a week or holiday line up in two
+  columns, and stay on one line when the page is narrow. Update mDash Shabbat
+  and Holidays.
+
+## 0.4.58
+
+- **Shabbat & holidays:** a Shabbat week or a holiday can be changed once.
+  The usual schedule stays as it is. Update mDash Shabbat and Holidays.
+
+- **Shabbat & holidays:** turning a skipped Shabbat week back on while it is
+  in progress lets the rest of the week run. Update mDash Shabbat and Holidays.
+
+- **Scheduler:** Last ran sits on the left and Next run on the right, including
+  on a phone. Update Modern Dashboard.
+
+## 0.4.57
+
+- **Shabbat & holidays:** the Active button on a Shabbat week skips only that
+  week. Pause every week is on that week's page. A holiday's Active button
+  still pauses that holiday. Update mDash Shabbat and Holidays.
+
+- **Shabbat & holidays:** Active and Paused update immediately. Pausing one
+  occasion no longer reloads the holiday list. Update mDash Shabbat and Holidays.
+
+## 0.4.56
+
+- **Shabbat & holidays:** holidays more than two weeks away load when that
+  section is opened, so the first load stays smaller. Update Modern Dashboard
+  and mDash Shabbat and Holidays.
+
+## 0.4.55
+
+- **Scheduler:** the schema on **Upload schedules…** is shown again. It had been
+  blank. Update Modern Dashboard.
+
+## 0.4.54
+
+- **Scheduler:** schedules can lock or unlock, open or close blinds, and turn
+  fans on or off at a speed that fan reports. A scheduled unlock does not ask
+  for the PIN. Update Modern Dashboard.
+
+- **Scheduler:** an assistant on your home network can create schedules. Away
+  from home, **Upload schedules…** in the Hubitat app has the schema and a
+  device list to give the assistant. Paste the JSON it returns there.
+
+## 0.4.53
+
+- **Shabbat & holidays:** saving a schedule, pausing one occasion, or changing
+  settings no longer cancels lights that are still waiting on Do not start, or
+  scenes the hub can still catch up. Update mDash Shabbat and Holidays.
+
+- **Scheduler:** a sunrise or sunset time the hub missed still runs if it is
+  less than ten minutes late, and it is not run twice. Update Modern Dashboard.
+
+- **Security:** when the dashboard password session is no longer accepted,
+  tapping a device asks for the password again.
+
+- **Shabbat & holidays:** a save the hub rejects shows the hub's message.
+
+- **Dashboard:** a refresh that arrives late no longer replaces a newer device state.
+
+- **Scheduler:** a schedule skipped because the hub is in the wrong mode is not
+  run later in the catch-up window. Update Modern Dashboard.
+
+- **Scheduler:** turning an expired one-time schedule back on is rejected, and a
+  disabled one is kept so its time can be changed. Update Modern Dashboard.
+
+## 0.4.52
+
+- **Scheduler:** a daily or weekly clock time the hub missed still runs if it is
+  less than ten minutes late, and it is not run twice. A sunrise or sunset
+  schedule keeps its next run when saving the last result fails. Update Modern
+  Dashboard.
+
+- **Shabbat & holidays:** a missed start is picked up within the hour, and a
+  mode change that arrives a minute late still starts the holiday. Devices held
+  for Do not start stay pending until that mode is set. Update mDash Shabbat
+  and Holidays.
+
+## 0.4.51
+
+- **Shabbat & holidays:** if the hub does not enter the holiday mode, the change
+  is retried and device commands wait. A custom time set for after the end stays
+  after the end, and pausing one occasion is saved. Update mDash Shabbat and
+  Holidays.
+
+## 0.4.50
+
+- **Shabbat & holidays:** saving a schedule, pausing, and refreshing the calendar
+  no longer fail when Hubitat rejects the stored state. Update mDash Shabbat
+  and Holidays.
+
+## 0.4.49
+
+- **Shabbat & holidays:** the upcoming list covers the next two weeks. The timing
+  sentence states the Early Friday rule. Next moves on when another step still
+  has a problem, and Save names that step.
+
+- **Shabbat & holidays:** the later list and room lists use the same chevron as
+  the rest of the dashboard. On By device, a longer holiday is drawn longer,
+  and the times under a short bar stay apart.
+  A selected choice stays marked for assistive technology, and setup progress
+  reports the step.
+
+- **Shabbat & holidays:** opening a holiday lists what happens before the bars.
+  The bars are taller, and a short segment puts its label underneath. A custom
+  time reads as a sentence. On, Off, and Leave as-is work for blinds, fans, and
+  locks in a room, and Set works for thermostats.
+
+- **Shabbat & holidays:** the list leads with when the next one starts, and each
+  card says whether it follows Shabbat and how many devices it changes. Settings
+  is its own screen. The setup wizard runs when the hub modes have not been chosen.
+
+- **Shabbat & holidays:** morning, afternoon, and evening times no longer start
+  at 9:00 PM. Close asks before discarding unsaved setup. Remove schedule sits
+  apart from the try-now actions, and a device you are not changing says
+  Leave as-is. Opening one holiday hides the regular schedules underneath.
+
+- **Shabbat & holidays:** cool, heat, and fan labels in the schedule use dark
+  or light text that stays readable on the colored chip.
+
+## 0.4.48
+
+- **Shabbat & holidays:** the timeline expand control is an icon, so the bar
+  keeps more of the row.
+
+## 0.4.47
+
+- **Shabbat & holidays:** the schedule preview stays on screen. A dashboard
+  refresh no longer restarts it.
+
+## 0.4.46
+
+- **Shabbat & holidays:** setpoints, speeds, positions, and lock labels sit
+  inset from the time ticks on each timeline section.
+
+## 0.4.45
+
+- **Shabbat & holidays:** lock timelines show Locked and Unlocked on each
+  section. The time tick at each change stays.
+
+## 0.4.44
+
+- **Shabbat & holidays:** fan timelines show each speed, and blind timelines
+  show how far open they are. The time tick at each change stays.
+
+## 0.4.43
+
+- **Shabbat & holidays:** a thermostat timeline is red for heat, blue for cool,
+  and green for fan, with the setpoint on each section. The time tick at each
+  change stays.
+
+## 0.4.42
+
+- **Shabbat & holidays:** candle lighting, night, morning, afternoon, evening,
+  havdalah, and custom times can set blinds, ceiling fans, locks, and
+  thermostats. Each device uses its own open position, fan speed, or
+  thermostat mode. A missed unlock is not replayed after a delay. Update both
+  Modern Dashboard and mDash Shabbat and Holidays.
+
+## 0.4.41
+
+- **Shabbat & holidays:** the Modern Dashboard app page does not mention the
+  feature unless `mld-holiday.js` is already in File Manager.
+- **Scheduling:** thermostat schedules offer only the modes and fan modes the
+  chosen thermostats support, and show setpoints in each thermostat's unit
+  with its dial's range. A schedule sends only the setpoints its mode uses: a
+  heat schedule no longer also sends a hidden cool setpoint, and an off
+  schedule sends none. Thermostats without a fan mode no longer report a
+  failed run. Saving asks for any missing setpoint and requires heat below
+  cool in auto.
+
+## 0.4.40
+
+- **Shabbat & holidays:** `mld-holiday.js` is its own Hubitat Package Manager
+  package, **mDash Shabbat and Holidays**. It is not part of Modern Dashboard.
+  Install that package only if you want the feature. A Modern Dashboard install
+  does not include the file.
+
+## 0.4.39
+
+- **Shabbat & holidays:** the dashboard app no longer tries to install the
+  module. `mld-holiday.js` is an optional Hubitat Package Manager file, and
+  the feature turns on when that file is in File Manager.
+
+## 0.4.38
+
+- **Shabbat & holidays:** screens have more space between the text and the
+  edges of the screen.
+
+## 0.4.37
+
+- **Scheduling:** deleting a schedule asks you to confirm first.
+
+## 0.4.36
+
+- **Shabbat & holidays:** Other Holidays lists every holiday that has a
+  schedule and falls after the next two weeks.
+
+## 0.4.35
+
+- **Shabbat & holidays:** each schedule on the list can be paused. A paused
+  schedule stays listed and does not turn lights on or change the hub mode
+  until you resume it.
+
+## 0.4.34
+
+- **Shabbat & holidays:** holidays after the next two weeks stay on the list,
+  folded under Later until you open them.
+
+## 0.4.33
+
+- **Shabbat & holidays:** the list shows the next time for every holiday that
+  has a schedule, not only the ones in the next two weeks.
+
+## 0.4.32
+
+- **Shabbat & holidays:** the one-line timeline marks the time each light changes.
+
+## 0.4.31
+
+- **Shabbat & holidays:** each time step has a Next button at the top as well
+  as the bottom, so a long light list does not have to be scrolled past.
+
+## 0.4.30
+
+- **Shabbat & holidays:** the expanded timeline marks the time each light
+  changes, the same way it marks midnight.
+
+## 0.4.29
+
+- **Shabbat & holidays:** an On button is gold only when that choice is selected.
+
+## 0.4.28
+
+- **Shabbat & holidays:** schedule rows, the light timeline, and the setup
+  questions are easier to scan. On, off, and skip are distinct, and each step
+  shows how far along you are.
+
+## 0.4.27
+
+- **Shabbat & holidays:** each light’s timeline fits on one line. Expand opens
+  a closer view split across several lines. Night and morning questions note
+  that a light can also go the other way.
+
+## 0.4.26
+
+- **Shabbat & holidays:** brightness and white balance use the same drag tracks
+  as the rest of the dashboard.
+
+## 0.4.25
+
+- **Shabbat & holidays:** havdalah only turns off the lights you choose. The
+  “turn off what is still on” option is gone.
+
+## 0.4.24
+
+- **Shabbat & holidays:** a saved schedule can be removed. Extra times on a
+  night, morning, afternoon, or evening step can be removed too.
+
+## 0.4.23
+
+- **Shabbat & holidays (optional):** a separate child app and dashboard script
+  schedule lights and outlets for Shabbat and Yom Tov, and change hub mode at
+  candle lighting and havdalah. Times come from HebCal for the hub’s location.
+  Each holiday can reuse the Shabbat schedule, start from it, or be skipped.
+  Upcoming occasions appear on the Schedules list. A timeline shows each light
+  on and off across the whole span, including a two- or three-day holiday.
+  If the hub was off, light changes from the last two hours that never ran are
+  caught up. Install from Hubitat Package Manager as an optional app, and upload
+  `mld-holiday.js`.
+
+## 0.4.22
+
+- **Rename:** on Lights, Favorites, Blinds, Fans, Sensors, Thermostats, or Music,
+  **More options → Rename**, then tap a name. Lights and Sensors can also rename
+  a room title. Device renames write Hubitat’s Device Label. Room renames write
+  the hub room name and keep that room’s devices. **Done** leaves the mode.
+  **Unassigned** cannot be renamed.
+
+## 0.4.21
+
+- **Thermostats:** Fan / Dry / Dehumidify cards use the green accent (including
+  `fan_only` from drivers). The status dot pulses green in those modes instead
+  of inheriting heat/cool color.
+
+## 0.4.20
+
+- **Thermostats:** Fan-only cards show **Fan** on the setpoint instead of a dash.
+  Dry / Fan / Dehumidify use the mode name on the now-temp line so those states
+  stay readable.
+
+## 0.4.19
+
+- **Music:** HomeKit / media-transport devices (`mediaTransport`) can be selected
+  in app preferences and appear on the Music tab with play/pause/stop (and
+  volume when advertised). Bluetooth speakers show only when they have volume or
+  transport; TTS-only announcement speakers are not listed. Volume uses
+  `setVolume` or `setLevel`; play falls back to stop when the driver has no
+  pause command.
+- **Sensors:** C-8 Pro BTHome / Shelly BLU devices stay on the Sensors tab
+  (typed pickers or Other / generic sensors), not Music.
+
 ## 0.4.18
 
 - **Fix:** dashboard boot no longer dies with “Cannot reach hub” when the

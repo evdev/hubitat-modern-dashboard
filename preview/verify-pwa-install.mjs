@@ -115,4 +115,20 @@ const simulated = {
 const bytes = Buffer.byteLength(JSON.stringify(simulated));
 if (bytes > 2048) throw new Error(`simulated cloud manifest too large: ${bytes} bytes`);
 console.log(`ok simulated cloud manifest ${bytes} bytes`);
+
+const appJs = readFileSync(join(root, "dist", "upload", "mld-app.js"), "utf8");
+const appCore = readFileSync(join(root, "dist", "upload", "mld-app-core.js"), "utf8");
+if (!builtIndex.includes('id="menu-install"')) {
+  throw new Error("built index missing Install app menu item");
+}
+if (!appJs.includes("beforeinstallprompt") || !appJs.includes("appinstalled")) {
+  throw new Error("first script chunk must capture beforeinstallprompt and appinstalled");
+}
+if (!appCore.includes("navigator.standalone")) {
+  throw new Error("core chunk must detect navigator.standalone");
+}
+const CLOUD_SAFE_JS_BLOB = 118 * 1024;
+if (Buffer.byteLength(appJs) >= CLOUD_SAFE_JS_BLOB) {
+  throw new Error(`mld-app.js exceeds cloud-safe limit: ${Buffer.byteLength(appJs)}`);
+}
 console.log("PWA install contract verified");

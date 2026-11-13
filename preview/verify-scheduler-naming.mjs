@@ -42,7 +42,7 @@ assert(
   "autoSchedName must call globalThis.autoScheduleName (Hubitat split JS files)"
 );
 assert(
-  appJs.includes("fn(schedDraft, { rooms, devices, outlets, thermostats }"),
+  appJs.includes("fn(schedDraft, { rooms, devices, outlets, thermostats, locks, windowShades, ceilingFans }"),
   "autoSchedName must delegate to autoScheduleName with live catalogs"
 );
 assert(
@@ -99,6 +99,18 @@ const catalogs = {
     { i: 32, n: "Kitchen Thermostat", r: 1 },
     { i: 33, n: "Hall Upstairs", r: 2 },
     { i: 37, n: "Living Room Thermostat", r: 1 },
+  ],
+  locks: [
+    { i: 3001, n: "Front Door", r: 11 },
+    { i: 3002, n: "Garage Entry", r: 6 },
+  ],
+  windowShades: [
+    { i: 5001, n: "Living Room Shade", r: 1 },
+    { i: 5002, n: "Kitchen Shade", r: 1 },
+  ],
+  ceilingFans: [
+    { i: 5103, n: "Patio DC Fan", r: 7 },
+    { i: 5101, n: "Living Room Fan", r: 1 },
   ],
 };
 
@@ -347,6 +359,43 @@ assert(
     catalogs
   ) === "Hall Thermostat \u00b7 Auto \u00b7 Heat 68\u00b0 \u00b7 Cool 72\u00b0 \u00b7 Fan on",
   "auto mode lists both setpoints without duplicating heat/cool as the mode word"
+);
+
+assert(
+  nameOf({
+    trigger: { kind: "daily", when: "clock", time: "22:00" },
+    action: { target: "locks", states: [{ id: 3001, locked: true }] },
+  }) === "Front Door Locked at 10:00 PM",
+  "lock schedule name"
+);
+assert(
+  nameOf({
+    trigger: { kind: "daily", when: "sunrise", offsetMin: 0 },
+    action: { target: "blinds", states: [{ id: 5001, open: true }, { id: 5002, open: true }] },
+  }) === "Kitchen Blinds Open at Sunrise",
+  "blinds in one room share the room name"
+);
+assert(
+  nameOf({
+    trigger: { kind: "daily", when: "clock", time: "21:00" },
+    action: { target: "fans", states: [{ id: 5103, on: true, speed: "4" }] },
+  }) === "Patio DC Fan 4 at 9:00 PM",
+  "fan speed is part of the name"
+);
+assert(
+  schedActionDescription({ target: "locks", states: [{ id: 3001, locked: false }] }, catalogs) === "Unlock Front Door",
+  "Then line names one unlock"
+);
+assert(
+  schedActionDescription(
+    { target: "blinds", states: [{ id: 5001, open: true, position: 40 }, { id: 5002, open: true, position: 40 }] },
+    catalogs
+  ) === "Open 2 blinds \u00b7 40%",
+  "Then line counts blinds that share a position"
+);
+assert(
+  schedActionDescription({ target: "fans", states: [{ id: 5103, on: true, speed: "4" }] }, catalogs) === "Patio DC Fan \u00b7 4",
+  "Then line names a fan speed"
 );
 
 console.log("ok unit: scheduler default naming");

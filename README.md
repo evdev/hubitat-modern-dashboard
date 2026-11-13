@@ -44,6 +44,7 @@ cap.
   - [Notifications](#notifications)
   - [Dashboard triggers](#dashboard-triggers)
   - [Scheduler](#scheduler)
+  - [Synagogue](#synagogue)
   - [Favorites](#favorites)
   - [Search, collapse & reorder](#search-collapse--reorder)
   - [UI preferences](#ui-preferences)
@@ -65,8 +66,9 @@ cap.
 2. **Minimal-effort configuration** — install the app, pick devices in Hubitat
    preferences, open the link. Rooms and layout come from your Hubitat room
    assignments. Customization is optional, not required.
-3. **Installable PWA** — open the cloud URL on your phone and add it to your home
-   screen (Android Chrome: Install app; iOS Safari: Add to Home Screen).
+3. **Installable PWA** — open the cloud URL on your phone and use **Install app**
+   in the menu (Android Chrome installs directly; iPhone and iPad get Add to
+   Home Screen steps).
 4. **Simple remote scheduler** — create daily, weekly, one-time, sunrise/sunset,
    and mode-change schedules from the dashboard itself. No Hubitat login, no Rule
    Machine, no external service — just the same OAuth dashboard URL.
@@ -93,6 +95,8 @@ room header shows as **Island**, not "Kitchen Island".
 | Color / white balance | Tap the device **name** to open the color popup |
 | Room all on / all off | Use the **On** / **Off** buttons in the room header (lights only) |
 | Whole house all on / all off | Use **All on** / **All off** in the top bar (lights only) |
+
+**Rename:** On Lights, Favorites, Blinds, Fans, Sensors, Thermostats, or Music, open **More options → Rename**, then tap a name. Lights and Sensors can also rename a room title. **Done** leaves the mode. A device rename writes Hubitat’s Device Label (the name shown here and on the Devices page). The Device Name is left as-is. A room rename writes the Hubitat room name and keeps that room’s devices. **Unassigned** is not a room. Favorites show the full device label; room tiles still drop a leading room name.
 
 **Color popup:** RGB bulbs get white (color temperature) and/or color tabs as
 supported by the device. Changes apply live while you adjust; click outside the
@@ -259,16 +263,22 @@ Hub mode can also be used as a **scheduler trigger** or **scheduler action**
 
 ### Music & media
 
-Two device pickers in app preferences:
+Three device pickers in app preferences. Devices that appear in more than one
+list are shown once.
 
 | Picker | Typical devices | Controls |
 | ------ | ----------------- | -------- |
 | **Music / media players** | Sonos, Echo Speaks, AirPlay | Transport (prev/play-pause/stop/next when supported), volume, current track |
-| **Additional speakers** | Chromecast, Google Home | Play/pause/stop, volume (per device capabilities) |
+| **Additional speakers** | Chromecast, Google Home, Bluetooth speakers with volume | Play/pause/stop, volume (per device capabilities) |
+| **Media transport** | HomeKit speakers, TVs / set-top boxes | Play/pause/stop (and volume when advertised) |
 
 The **Music** quick-nav popup lists all configured players. The top-bar **All
 music** button appears when multiple players are selected. An animated equalizer
 on the album icon indicates playback (respects reduced-motion preferences).
+
+TTS-only speakers (speak / playTrack with no volume or transport) are not listed
+— use Rule Machine for those. C-8 Pro **BTHome** sensors belong on the
+**Sensors** tab, not Music.
 
 ### Cameras
 
@@ -307,6 +317,10 @@ to keep hub CPU and network load low (especially for native RTSP MJPEG).
 Most sensors are **read-only** on the dashboard. Select them in the **Sensors**
 section of app preferences (motion, contact, water, presence, humidity,
 illuminance, smoke/CO, valves) plus **Temperature sensors** for display-only temperature.
+
+C-8 Pro **BTHome** / Shelly BLU devices (Bluetooth Integration) use the matching
+typed lists. Occupancy-only and button devices that do not match a typed picker
+go under **Other / generic sensors**. BTHome is not listed on the Music tab.
 
 The **Sensors** quick-nav popup aggregates all selected sensors and valves.
 Temperature sensors also appear in room headers. Battery percentage is shown when
@@ -432,6 +446,9 @@ triggers.
 | ------ | ------- |
 | Lights | Per-room or per-device; on/off; dim level; color temperature (CT devices) |
 | Outlets | Per-room or per-device; on/off only (devices from the **Outlets** picker) |
+| Locks | Per-room or per-device; lock or unlock. A scheduled unlock does not ask for the PIN |
+| Blinds | Per-room or per-device; open or close; position when that shade supports it |
+| Fans | Per-room or per-device; on or off; speed from the speeds that fan reports |
 | Thermostats | Mode, heat/cool setpoints, fan mode |
 | Hub mode | Set location mode |
 
@@ -444,6 +461,100 @@ as 24h for reliable firing).
 On the **cloud** URL, schedules load when you open the Scheduler (`GET /schedules`)
 instead of arriving with every `/data` poll, so the main payload stays under
 Hubitat Cloud's size limit. Local mode includes schedules in `/data` as usual.
+
+**Schedule files for an assistant**
+
+In the Hubitat app, open **Dashboard options — advanced**, then **Upload schedules…**.
+That page shows the schema and a download for it, and a download of the device
+list. The list is the devices selected in the app and only the controls a
+schedule can set, plus hub mode names. Give both to your assistant, then paste
+the JSON it returns on that same page. **Upload** previews the file. **Submit**
+saves the green rows. The schema file is
+[`lib/schedule-upload.schema.json`](lib/schedule-upload.schema.json).
+
+When **mDash Shabbat and Holidays** is installed, that same page also shows the
+Shabbat and holidays schema and accepts that file in the same paste box. The
+holiday schema is hidden when the module is not installed.
+
+A schedule whose name already exists is replaced. Devices are matched by name to
+the lights, outlets, locks, blinds, fans, and thermostats selected in the app.
+
+```json
+{
+  "schedules": [
+    {
+      "name": "Porch at sunset",
+      "trigger": { "kind": "daily", "when": "sunset", "offsetMin": 0 },
+      "action": {
+        "target": "lights",
+        "states": [{ "name": "Porch", "on": true, "level": 40 }]
+      }
+    }
+  ]
+}
+```
+
+`trigger.kind` is `daily`, `weekly`, `once`, or `mode`. Clock times use
+`"when": "clock"` and `"time": "19:30"`. Weekly schedules add `"days": ["MON","FRI"]`.
+One-time schedules use `"at": "2026-10-09T19:30"` in hub local time. Omit
+`enabled` to leave the schedule on.
+
+### Synagogue
+
+**mDash Synagogue** is a separate package. Leave it uninstalled unless you want
+it. After Hubitat Package Manager installs it, open Modern Dashboard and tap
+Done so the hub can start the child app. A **Synagogue** tab then appears.
+
+The tab is where you program the building. The hub computes the times. Set up a
+space, such as the sanctuary, with the lights, outlets, locks, and thermostats
+already selected in Modern Dashboard. Each space has cues: heat an hour before,
+lights two minutes before, and lights off at the end. Services are scheduled by
+day: weekdays, Shabbat, and each holiday. A holiday can use the Shabbat schedule
+as it is, or start from it and change it. A time can be a clock time or a number
+of minutes before or after a HebCal time, such as sunset. The hub location has
+to be set under Settings, Hub Details.
+
+**Calendars** takes a secret https or webcal link, such as a Google Calendar
+iCal address. The hub fetches it. The link stays on the hub and is shown only
+by its last six characters. A title rule sends matching events to a space, and
+those events join the same timeline as the services, including the stay-on gap.
+One-time bookings do too. All-day events are ignored. A repeat the hub cannot
+apply is named and skipped.
+
+**Closed dates** stop services for a stretch, such as a renovation or a summer
+weekday break. Weekday closures leave Shabbat and Yom Tov running. A service
+that has already started keeps its end cues, so a room is not left on. A closure
+can also stop bookings and calendar events. Guest door codes are not stored
+here. Put those in Hubitat's lock code tools. A booking still unlocks at the
+start and locks at the end through the space's cues.
+
+**Warm up earlier** moves only the heat for one service. It does not change the
+saved program, and it does not move lights.
+
+**Today's times** is a strip at the top of Agenda. It uses the times the hub
+already loaded. It does not add a tile to the main dashboard.
+
+**Alerts** are for problems only: a device did not respond, a scheduled unlock
+was skipped because it was too late, or the times or a calendar are out of date.
+Choose the phones in the Hubitat app, under Synagogue, not in the dashboard.
+Nothing is sent during Shabbat or Yom Tov. If something goes wrong then, one
+message is sent after it ends. Nothing is sent overnight for an out-of-date
+calendar or times.
+
+**Backup** downloads the schedule so it can be restored after a hub reset or a
+bad edit. Calendar links are not in the backup. After a restore, paste each
+link again. Restoring replaces the schedule and can be undone for a short time.
+
+**AI assistant (MCP)**
+
+In the Hubitat app, turn on **Allow an AI assistant to create schedules**. The
+page shows a link on your home network. Point the assistant at that link.
+It can list devices and create, change, and delete schedules. It does not ask
+for the dashboard password.
+
+There is no cloud assistant link. Away from home, open **Upload schedules…** in the
+Hubitat app, give your assistant the schema and device list, and paste the JSON
+it returns.
 
 **Import from Simple Automation Rules**
 
@@ -464,6 +575,70 @@ the new schedules.
 **Not imported (by design):** device/motion/contact triggers, Mode Transition
 (from→to), leave-mode `offMode` pairs, and Toggle. Create those manually in the
 Scheduler if needed.
+
+### Shabbat & holidays
+
+Optional separate package. In Hubitat Package Manager, install **mDash Shabbat
+and Holidays** only if you want this feature. That package installs
+`mld-holiday.js`. Modern Dashboard does not install the file. When the file is
+in File Manager, Shabbat & holidays turns on by itself. Do not add the holiday
+app from the Modern Dashboard app page. Hiding the scheduler also pauses this
+module.
+
+The wizard asks where you are (diaspora or Israel), which hub mode to enter at
+candle lighting, and which mode to return to at the end. Shabbat is set up
+first. Each Yom Tov can use that schedule as-is, start from a copy, use a new
+schedule, or be skipped. Skipped holidays do not change the hub mode. A Shabbat
+that falls on or next to a skipped holiday still runs.
+
+**Holiday files** use the same **Upload schedules…** page. The Shabbat and
+holidays schema is shown there only when this module is installed. Paste the
+JSON or choose the file, tap **Upload** to preview it, then tap **Submit**.
+An occasion in the file replaces that occasion's choice. Template slots included in the file replace those slots.
+Slots left out stay as they are, and an empty list clears a slot. Occasions left
+out of the file stay as they are. Devices are matched by name. If a name and an
+id are both set and they are different devices, that occasion is skipped. The schema file is
+[`lib/holiday-upload.schema.json`](lib/holiday-upload.schema.json).
+
+```json
+{
+  "occasions": [
+    {
+      "id": "shabbat",
+      "choice": "own",
+      "template": {
+        "start": { "states": [{ "kind": "light", "name": "Dining", "on": true, "level": 40 }] },
+        "end": { "states": [{ "kind": "light", "name": "Dining", "on": false }] }
+      }
+    },
+    { "id": "yomKippur", "choice": "shabbat" }
+  ]
+}
+```
+
+Candle-lighting and havdalah times come from [HebCal](https://www.hebcal.com)
+for the hub’s latitude and longitude. A Jewish day runs from candle lighting
+until the next candle lighting or havdalah, so the second night of a holiday is
+after nightfall. Rosh Hashana is two days in Israel as well. Chol HaMoed,
+Chanukah, Purim, and fast days are not included.
+
+On the Schedules list, each upcoming occasion is one short row. Tap it for the
+full schedule: a timeline per light or outlet, in the hub’s time zone, with on
+and off labeled in text. **Timeline by light** shows one light across upcoming
+occasions.
+
+If the hub is in a mode you marked “do not start” (for example Away) at candle
+lighting, nothing starts. Switching the hub into the holiday mode during that
+span continues it. Switching to Home does not. If the hub was off, light and
+outlet actions from the last two hours that never ran are applied when it comes
+back (only the latest state for each device). Older missed light actions are
+not replayed. The holiday mode is still corrected for a span that already
+started, unless that span was held because the house was Away.
+
+If Shabbat and Holiday Scheduler is also installed, turn off its mode switching
+so the hub is not switched twice. Rule Machine and motion rules should be
+limited to modes other than the holiday mode. mDash schedules with no mode
+restriction still run during the holiday; the wizard lists them.
 
 ### Favorites
 
@@ -591,6 +766,8 @@ does not appear when you expect it.
 
 1. **Install from the cloud URL.** iOS **Add to Home Screen** requires the HTTPS
    cloud link. You cannot install a full standalone PWA from the local HTTP URL.
+   On an iPhone or iPad, **Install app** in the menu explains the Share sheet
+   steps. It stays hidden when the dashboard is already open from the Home Screen.
 2. **Installed PWA stays on the cloud origin.** The home-screen app loads
    `cloud.hubitat.com`. That is correct for remote access and PWA install.
 3. **Switching to local mode leaves the PWA origin.** If you tap **Open local
@@ -640,8 +817,11 @@ Use the **Cloud** link from the app page (`cloud.hubitat.com`, path includes
 
 | Platform | How to install |
 | -------- | -------------- |
-| **Android Chrome** | Open the cloud URL → menu → **Install app** (or the install banner) |
-| **iOS Safari** | Open the cloud URL → **Share** → **Add to Home Screen** |
+| **Android Chrome** | Open the cloud URL → menu → **Install app** |
+| **Desktop Chrome or Edge** | Same **Install app** menu item, when the browser offers install |
+| **iPhone and iPad** | Open the cloud URL in Safari → menu → **Install app** for the steps. Tap Share, then Add to Home Screen, and leave Open as Web App on |
+
+The **Install app** item is hidden when the dashboard is already open as the installed app, and on the local `http://` hub address. iOS cannot tell that the icon is already on the Home Screen while you are still in Safari, so the item can still appear in that tab. Browsers that never offer an install prompt, such as Firefox on Android, do not show the item.
 
 The installed app opens in a standalone window branded **mDash**. A pass-through
 service worker is registered (required for Chrome install criteria) but **does
@@ -832,7 +1012,7 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | ------- | ------- | ------- | ----- |
 | Lights & outlets | Lights, outlets, separate Outlets tab | — | See [device selection](#device-selection) |
 | Climate | Thermostats, temperature sensors, room cards, quick menu | — | See [device selection](#device-selection) |
-| Shades, fans & media | Shades, blinds, fans, music, speakers | — | See [device selection](#device-selection) |
+| Shades, fans & media | Shades, blinds, fans, music, speakers, media transport | — | See [device selection](#device-selection) |
 | Locks & garage | Locks, garage doors, unlock PIN | — | See [device selection](#device-selection) |
 | Sensors | Motion, contact, water, presence, etc. | — | See [device selection](#device-selection) |
 | Cameras | go2rtc and/or native RTSP cameras | — | See [device selection](#device-selection) |
@@ -869,13 +1049,13 @@ All settings below are in **Apps → Modern Dashboard** (the installed app insta
 | Blinds (Window Blind) | — | — | Blinds popup; All blinds bulk |
 | Shades (Switch Level) | — | — | Blinds popup; All blinds bulk — pick shades only; list also includes normal dimmers |
 | Ceiling fans | — | — | Fans popup; All fans bulk |
-| Music / speakers | — | — | Music popup |
+| Music / speakers | — | — | Music popup (musicPlayer, audioVolume, mediaTransport) |
 | Cameras (go2rtc) | — | — | Cameras tab (local URL only; requires category tabs) |
 | Cameras (native RTSP) | — | — | C-8 Pro; hub MJPEG proxy; Cameras tab (local URL only) |
 | HTML source devices | — | — | Favorites HTML tiles (discovered attributes) |
 | Popup notification devices | — | — | Full-screen notification popup queue |
 | Tile notification devices | — | — | Favorites notifications tile queue |
-| Motion, contact, water, etc. | — | — | Sensors popup |
+| Motion, contact, water, etc. | — | — | Sensors popup (includes C-8 Pro BTHome / Shelly BLU) |
 | Valves | — | — | Sensors popup (open/close) |
 | Hub scenes | — | — | Scenes popup (all hub scenes) |
 | Hub mode | — | Trigger & action | Hub mode popup |
