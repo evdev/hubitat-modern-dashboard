@@ -167,6 +167,18 @@ assert(/def holidayRunKind[\s\S]*runThermostatSetting\(dev, st\)/.test(parent), 
 assert(/kind == "light"\) \{[\s\S]*?runScheduleLightAction/.test(parent), "only lights reach the light action");
 assert(!/for \(st in states\) \{[\s\S]{0,500}def one = \[states: \[\[id: st\?\.id, on:/.test(parent), "states are not rebuilt as lights before the kind is known");
 assert(parent.includes("holidayFilePresent"), "parent enables holidays when mld-holiday.js is present");
+assert(parent.includes('if (!holidayFilePresent()) html = omitDashboardScript(html, "app-holiday.js")'), "dashboard HTML omits the holiday script when the file is absent");
+{
+  const renderHoliday = parent.slice(parent.indexOf("def renderJsHoliday()"), parent.indexOf("def renderJsSynagogue()"));
+  assert(renderHoliday.includes("if (!holidayFilePresent())"), "a missing holiday file is not fetched");
+  assert(renderHoliday.indexOf("holidayFilePresent()") < renderHoliday.indexOf("readLocalAsset"), "the file check happens before the File Manager fetch");
+  assert(!renderHoliday.includes("console.warn"), "a missing holiday file does not warn");
+}
+{
+  const fetchFn = parent.slice(parent.indexOf("def fetchLocalAssetUncached"), parent.indexOf("def syncAssetCacheWithFileManagerHtml"));
+  assert(fetchFn.includes("assetJsHolidayFile()") && fetchFn.includes("status code: 404"), "a missing holiday file is not logged");
+  assert(/if\s*\(!optionalMiss\)\s*log\.error/.test(fetchFn), "the 404 log is skipped for the optional holiday file");
+}
 assert(parent.includes("holidaysAvailable"), "parent must report holidaysAvailable");
 {
   const poll = parent.slice(parent.indexOf("def holidaysAvailable"), parent.indexOf("def holidaySetUserPaused"));

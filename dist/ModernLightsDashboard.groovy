@@ -1,4 +1,4 @@
-// Modern Dashboard v0.4.78
+// Modern Dashboard v0.4.79
 // Author: Ephrayim (evdev)
 // Distribution: https://github.com/evdev/hubitat-modern-dashboard
 // License: Apache License 2.0 (see LICENSE in repository)
@@ -16,7 +16,7 @@ import groovy.transform.Field
 @Field private static String LOCAL_ASSET_CACHE_VERSION = ""
 @Field private static int LOCAL_ASSET_CACHE_BYTES = 0
 @Field private static final int LOCAL_ASSET_CACHE_MAX_BYTES = 768 * 1024
-@Field private static final String MLD_DEPLOYED_VERSION = "0.4.78"
+@Field private static final String MLD_DEPLOYED_VERSION = "0.4.79"
 @Field private static List LOCAL_FILE_NAME_CACHE = null
 @Field private static long LOCAL_FILE_NAME_CACHE_AT = 0L
 @Field private static final long LOCAL_FILE_NAME_CACHE_TTL = 30000L
@@ -87,7 +87,7 @@ def mainPage() {
                 "<b>Hub-only:</b> UI and API run on your hub — no Maker API." +
                 (schedulerDisabled != true ? " <b>Scheduler:</b> manage schedules from the dashboard, including remotely." : "")
             )
-            paragraph "<small>Version 0.4.78 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
+            paragraph "<small>Version 0.4.79 · Ephrayim (evdev) · Apache License 2.0 · <a href='https://github.com/evdev/hubitat-modern-dashboard' target='_blank'>Source</a></small>"
         }
         if (assetsOk) {
             section("Dashboard links") {
@@ -3041,7 +3041,11 @@ def fetchLocalAssetUncached(String fileName) {
             }
         }
     } catch (e) {
-        log.error "fetchLocalAssetUncached ${fileName}: ${e.message}"
+        // Shabbat and Synagogue are optional. A hub without the file must not log the 404.
+        def msg = e?.message?.toString() ?: "${e}"
+        def optionalFile = fileName == assetJsHolidayFile() || fileName == assetJsSynagogueFile()
+        def optionalMiss = optionalFile && (msg.contains("status code: 404") || msg.contains("Not Found"))
+        if (!optionalMiss) log.error "fetchLocalAssetUncached ${fileName}: ${msg}"
     }
     return result
 }
@@ -3089,6 +3093,13 @@ def rewriteDashboardAssetRefsToFileManager(String html) {
         }
     }
     return html
+}
+
+/** Drop one dashboard <script src="asset.js"> tag, including a version or access token query. */
+def omitDashboardScript(String html, String assetPath) {
+    if (!html || !assetPath) return html
+    def escaped = assetPath.replace(".", "\\.")
+    return html.replaceAll("(?s)<script[^>]*\\ssrc=\"" + escaped + "(\\?[^\"]*)?\"[^>]*>\\s*</script>\\s*", "")
 }
 
 // File Manager asset names (uploaded to /local/)
@@ -3443,7 +3454,7 @@ def renderIndex() {
     // and do not proxy icons through Hubitat Cloud (binary responses get corrupted).
     // Version lives in the FILENAME, not a query string: raw.githubusercontent.com
     // caches by path only and ignores "?v=" for cache-key purposes (0.3.86).
-    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-192-0.4.78.png"
+    def iconHref = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-192-0.4.79.png"
     html = html.replaceAll(/href="icons\/icon-192\.png[^"]*"/, "href=\"${iconHref}\"")
     def title = htmlEsc(resolvedDashboardName())
     html = html.replace('<title>mDash</title>', "<title>${title}</title>")
@@ -3461,6 +3472,9 @@ def renderIndex() {
         html = appendAccessToken(html, "content", "app-holiday.js", token)
         html = appendAccessToken(html, "content", "app-synagogue.js", token)
     }
+    // Optional packages. A missing file must not be requested: Hubitat logs that 404.
+    if (!holidayFilePresent()) html = omitDashboardScript(html, "app-holiday.js")
+    if (!synagogueFilePresent()) html = omitDashboardScript(html, "app-synagogue.js")
     html = rewriteDashboardAssetRefsToFileManager(html)
     renderNoStore("text/html", html, 200)
 }
@@ -3508,14 +3522,28 @@ def renderJsPost3() {
 }
 
 def renderJsHoliday() {
+    if (!holidayFilePresent()) {
+        renderNoStore("application/javascript", "globalThis.mldHolidayMissing=true;", 200)
+        return
+    }
     def js = readLocalAsset(assetJsHolidayFile())
-    if (!js) { js = "globalThis.mldHolidayMissing=true;console.warn('Upload mld-holiday.js to File Manager');" }
+    if (!js) {
+        renderNoStore("application/javascript", "globalThis.mldHolidayMissing=true;", 200)
+        return
+    }
     renderVersionedAsset("application/javascript", js)
 }
 
 def renderJsSynagogue() {
+    if (!synagogueFilePresent()) {
+        renderNoStore("application/javascript", "globalThis.mldSynagogueMissing=true;", 200)
+        return
+    }
     def js = readLocalAsset(assetJsSynagogueFile())
-    if (!js) { js = "globalThis.mldSynagogueMissing=true;console.warn('Upload mld-synagogue.js to File Manager');" }
+    if (!js) {
+        renderNoStore("application/javascript", "globalThis.mldSynagogueMissing=true;", 200)
+        return
+    }
     renderVersionedAsset("application/javascript", js)
 }
 
@@ -3542,7 +3570,7 @@ def renderManifest() {
     // Version lives in the FILENAME (not "?v="): raw.githubusercontent.com ignores query
     // strings for cache-key purposes, so a query-only bump never busts its edge cache (0.3.86).
     for (def size : ["192", "512", "1024"]) {
-        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-${size}-0.4.78.png"
+        def src = "https://raw.githubusercontent.com/evdev/hubitat-modern-dashboard/master/dist/upload/mld-icon-${size}-0.4.79.png"
         def sizes = "${size}x${size}"
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"any"}'
         icons << '{"src":' + jsonStr(src) + ',"sizes":"' + sizes + '","type":"image/png","purpose":"maskable"}'

@@ -1906,6 +1906,7 @@
     const os = String(t?.os || "").toLowerCase();
     const tm = String(t?.tm || "").toLowerCase();
     const fmOn = !!(t?.hasFm && fanModeActive(t.fm));
+    if (postCall("tstatEcoOn", t) && tm !== "off") return "state-eco";
     if (tm === "heat" || tm === "emergency heat") return "state-heat";
     if (tm === "cool" || tm === "dry") return "state-cool";
     if (tm === "fan") return "state-fan";
@@ -1942,7 +1943,7 @@
   // pick the most "active" thermostat in a room for the icon color
   function roomTstatState(rid) {
     const list = thermoByRoom.get(normalizeRoomId(rid)) || [];
-    const rank = { "state-heat": 3, "state-cool": 2, "state-fan": 1, "state-off": 0 };
+    const rank = { "state-heat": 4, "state-cool": 3, "state-eco": 2, "state-fan": 1, "state-off": 0 };
     let best = "state-off";
     for (const t of list) {
       const cls = tstatStateClass(t);
@@ -3571,7 +3572,7 @@
     }
   }
 
-  function renderTstatModeButtons(popup, supported, tm, noneSelected) {
+  function renderTstatModeButtons(popup, supported, tm, noneSelected, ecoHolding) {
     const modes = popup._modes;
     modes.replaceChildren();
     popup._modeBtns = {};
@@ -3593,7 +3594,7 @@
         b.setAttribute("aria-label", "Set thermostat to " + label);
         b.addEventListener("click", (e) => { e.stopPropagation(); e.preventDefault(); setTstatMode(cmd, k); });
       }
-      b.classList.toggle("active", tm === k);
+      b.classList.toggle("active", !ecoHolding && tm === k);
       b.disabled = noneSelected;
       modes.appendChild(b);
       popup._modeBtns[k] = b;
@@ -3641,10 +3642,10 @@
     }
     const supM = tstatControlModes(t);
     const tm = String(t.tm || "").toLowerCase();
-    renderTstatModeButtons(popup, supM, tm, noneSelected);
-    popup._modeSection.style.display = supM.length ? "" : "none";
-
     const singleDevice = tstatSession.ids?.length === 1 && !tstatSession.central && !tstatSession.roomGroup;
+    const ecoHolding = !!(singleDevice && tstatEcoOn(t) && tm !== "off");
+    renderTstatModeButtons(popup, supM, tm, noneSelected, ecoHolding);
+    popup._modeSection.style.display = supM.length ? "" : "none";
     const showEco = !!(singleDevice && tstatHasEco(t));
     popup._ecoSection.style.display = showEco ? "" : "none";
     if (showEco && popup._ecoBtn) {
@@ -3880,6 +3881,7 @@
   // Accent class from mode family so fan_only / dry / dehumidify all get green.
   function tstatCardModeClass(t) {
     const tm = String(t?.tm || "").toLowerCase();
+    if (tstatEcoOn(t) && tm !== "off") return "mode-eco";
     if (tstatAuxMode(tm)) return "mode-fan";
     if (tm === "emergency heat" || tm === "emergencyheat") return "mode-heat";
     return tstatModeClassName(tm);
@@ -3901,6 +3903,12 @@
     if (m === "fan" || m === "fanonly") return "Fan";
     if (m === "dehumidify" || m === "dehumidification") return "Dehumidify";
     return tm || "—";
+  }
+
+  function tstatModeButtonLabel(t) {
+    const tm = String(t?.tm || "").toLowerCase();
+    if (tstatEcoOn(t) && tm !== "off") return "Eco";
+    return tstatModeDisplayLabel(t?.tm);
   }
 
   // Nest Eco is an overlay. Anything other than OFF means the Eco range is the hold.
@@ -3981,22 +3989,30 @@
     armOptimisticSettle(id, 4000);
   }
 
+  function commitEcoMode(id, on) {
+    const t = thermostats.find((x) => x.i === id);
+    if (!tstatHasEco(t)) return false;
+    if (on && String(t.tm || "").toLowerCase() === "off") return false;
+    const mode = on ? "MANUAL_ECO" : "OFF";
+    if (String(t.eco || "") === mode) return false;
+    applyTstatEcoOptimistic(id, mode);
+    updateClimateWidgets();
+    refreshOpenTstatQuickPopups();
+    sendCmd(id, "setEcoMode", mode);
+    reconcileTstat(id);
+    return true;
+  }
+
   function setEcoMode(on) {
     if (!tstatSession || tstatSession.ids?.length !== 1) return;
     const id = tstatSession.ids[0];
     const t = thermostats.find((x) => x.i === id);
     if (!tstatHasEco(t)) return;
-    if (String(t.tm || "").toLowerCase() === "off") return;
+    if (on && String(t.tm || "").toLowerCase() === "off") return;
     const mode = on ? "MANUAL_ECO" : "OFF";
     if (String(t.eco || "") === mode) return;
     hapticTap();
-    applyTstatEcoOptimistic(id, mode);
-    renderTstatDial();
-    renderTstatControls();
-    updateClimateWidgets();
-    refreshOpenTstatQuickPopups();
-    sendCmd(id, "setEcoMode", mode);
-    reconcileTstat(id);
+    commitEcoMode(id, on);
   }
 
   let tstatModeLabelRo = null;
@@ -4140,7 +4156,7 @@
     const tone = favoriteTstatTone(t);
     if (tstatEcoOn(t) && tm !== "off") {
       const value = tstatEcoRangeLabel(t);
-      return { current, setpoint: value, value, unit: "", tone, eco: true };
+      return { current, setpoint: value, value, unit: "", tone: "eco", eco: true };
     }
     if (tm === "off") return { current, setpoint: "Off", value: "Off", unit: "", tone: "off" };
     if (tstatFanOnlyMode(tm)) return { current, setpoint: "Fan", value: "Fan", unit: "", tone };
@@ -4306,19 +4322,31 @@
   function syncFavoriteTstatModeMenu(t) {
     if (!favTstatModeMenu) return;
     const current = String(t?.tm || "").toLowerCase();
+    const ecoOn = tstatEcoOn(t) && current !== "off";
     for (const b of favTstatModeMenu.querySelectorAll(".quick-fav-mode-opt")) {
       const key = b.dataset.modeKey;
-      const active = key === current;
+      const active = key === "eco" ? ecoOn : (!ecoOn && key === current);
       b.classList.toggle("active", active);
+      if (key === "eco") b.disabled = current === "off";
       if (active) b.setAttribute("aria-selected", "true");
       else b.removeAttribute("aria-selected");
     }
   }
 
   function applyFavoriteTstatMode(id, key) {
+    const t = thermostats.find((x) => x.i === id);
+    if (!t) return;
+    const current = String(t.tm || "").toLowerCase();
+    const ecoOn = tstatEcoOn(t) && current !== "off";
+    if (key === current && !ecoOn) {
+      closeFavoriteTstatModeMenu();
+      return;
+    }
     const { cmd } = modeCmdForKey(key);
     hapticTap();
     closeFavoriteTstatModeMenu();
+    if (ecoOn) commitEcoMode(id, false);
+    if (key === current) return;
     applyTstatModeOptimistic([id], key);
     if (tstatSession?.ids?.includes(id)) {
       tstatSession.modeLockUntil = Date.now() + 4000;
@@ -4341,6 +4369,34 @@
     const menu = ce("div", "quick-fav-mode-menu");
     menu.setAttribute("role", "listbox");
     const current = String(t.tm || "").toLowerCase();
+    const ecoOn = tstatEcoOn(t) && current !== "off";
+
+    if (tstatHasEco(t)) {
+      const ecoBtn = ce("button", "tstat-mode quick-fav-mode-opt");
+      ecoBtn.type = "button";
+      ecoBtn.setAttribute("role", "option");
+      ecoBtn.dataset.modeKey = "eco";
+      ecoBtn.textContent = "Eco";
+      ecoBtn.disabled = current === "off";
+      ecoBtn.setAttribute("aria-label", current === "off" ? "Eco needs heat, cool, or auto" : "Eco");
+      if (ecoOn) {
+        ecoBtn.classList.add("active");
+        ecoBtn.setAttribute("aria-selected", "true");
+      }
+      ecoBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const live = thermostats.find((x) => x.i === tstatId);
+        const liveTm = String(live?.tm || "").toLowerCase();
+        if (!live || liveTm === "off" || (tstatEcoOn(live) && liveTm !== "off")) {
+          closeFavoriteTstatModeMenu();
+          return;
+        }
+        hapticTap();
+        closeFavoriteTstatModeMenu();
+        commitEcoMode(tstatId, true);
+      });
+      menu.appendChild(ecoBtn);
+    }
 
     for (const m of modes) {
       const key = String(m).toLowerCase();
@@ -4350,13 +4406,12 @@
       b.setAttribute("role", "option");
       b.dataset.modeKey = key;
       b.textContent = tstatModeDisplayLabel(key);
-      if (key === current) {
+      if (!ecoOn && key === current) {
         b.classList.add("active");
         b.setAttribute("aria-selected", "true");
       }
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (key === current) { closeFavoriteTstatModeMenu(); return; }
         applyFavoriteTstatMode(tstatId, key);
       });
       menu.appendChild(b);
@@ -5490,7 +5545,7 @@
       if (!info) continue;
       rec.tempEl.textContent = formatRoomTemp(info.device);
       if (rec.iconEl) {
-        rec.iconEl.classList.remove("state-off", "state-heat", "state-cool", "state-fan");
+        rec.iconEl.classList.remove("state-off", "state-heat", "state-cool", "state-fan", "state-eco");
         if (info.controllable) {
           const cls = roomTstatState(rid);
           rec.iconEl.classList.add(cls);
@@ -12582,7 +12637,7 @@
     const modeBtn = ce("button", "quick-fav-ctl quick-fav-ctl-mode");
     modeBtn.type = "button";
     const modeLabel = ce("span", "quick-fav-ctl-mode-label");
-    modeLabel.textContent = tstatModeDisplayLabel(t.tm);
+    modeLabel.textContent = tstatModeButtonLabel(t);
     const modeCaret = ce("span", "quick-fav-ctl-mode-caret");
     modeCaret.setAttribute("aria-hidden", "true");
     modeCaret.textContent = "▾";
@@ -12670,7 +12725,7 @@
     paintTstatSetpoint(rec.spEl, temps);
     rec.stateEl.className = tstatStateElClass(stateInfo, temps.tone);
     paintTstatStateTxt(rec.stateTxt, stateInfo);
-    rec.modeLabel.textContent = tstatModeDisplayLabel(t.tm);
+    rec.modeLabel.textContent = tstatModeButtonLabel(t);
     fitTstatModeLabel(rec.modeBtn);
     if (rec.dialTemp) rec.dialTemp.textContent = temps.current;
     if (rec.compactMode) {

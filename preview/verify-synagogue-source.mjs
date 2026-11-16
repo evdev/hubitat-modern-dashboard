@@ -21,6 +21,18 @@ assert(groovy.includes('name: "mDash Synagogue"'), "child app name is mDash Syna
 assert(!groovy.includes("Shabbat") || groovy.includes("shabbat"), "the app label must not be the holiday child");
 assert(!/name: ".*Shabbat/.test(groovy) && !/name: ".*Holiday/.test(groovy), "definition name must not contain Shabbat or Holiday");
 assert(parent.includes("synagogueFilePresent"), "parent detects the synagogue file");
+assert(parent.includes('if (!synagogueFilePresent()) html = omitDashboardScript(html, "app-synagogue.js")'), "dashboard HTML omits the synagogue script when the file is absent");
+{
+  const renderSynagogue = parent.slice(parent.indexOf("def renderJsSynagogue()"), parent.indexOf("def renderManifest()"));
+  assert(renderSynagogue.includes("if (!synagogueFilePresent())"), "a missing synagogue file is not fetched");
+  assert(renderSynagogue.indexOf("synagogueFilePresent()") < renderSynagogue.indexOf("readLocalAsset"), "the file check happens before the File Manager fetch");
+  assert(!renderSynagogue.includes("console.warn"), "a missing synagogue file does not warn");
+}
+{
+  const fetchFn = parent.slice(parent.indexOf("def fetchLocalAssetUncached"), parent.indexOf("def syncAssetCacheWithFileManagerHtml"));
+  assert(fetchFn.includes("assetJsSynagogueFile()") && fetchFn.includes("status code: 404"), "a missing synagogue file is not logged");
+  assert(/if\s*\(!optionalMiss\)\s*log\.error/.test(fetchFn), "the 404 log is skipped for the optional synagogue file");
+}
 assert(parent.includes("synagogueAvailable"), "parent reports synagogueAvailable");
 assert(parent.includes('addChildApp("mDash", "mDash Synagogue", "Synagogue")'), "parent adds the synagogue child");
 assert(parent.includes('"synagogue"'), "synagogue is a nav key");

@@ -3041,7 +3041,11 @@ def fetchLocalAssetUncached(String fileName) {
             }
         }
     } catch (e) {
-        log.error "fetchLocalAssetUncached ${fileName}: ${e.message}"
+        // Shabbat and Synagogue are optional. A hub without the file must not log the 404.
+        def msg = e?.message?.toString() ?: "${e}"
+        def optionalFile = fileName == assetJsHolidayFile() || fileName == assetJsSynagogueFile()
+        def optionalMiss = optionalFile && (msg.contains("status code: 404") || msg.contains("Not Found"))
+        if (!optionalMiss) log.error "fetchLocalAssetUncached ${fileName}: ${msg}"
     }
     return result
 }
@@ -3089,6 +3093,13 @@ def rewriteDashboardAssetRefsToFileManager(String html) {
         }
     }
     return html
+}
+
+/** Drop one dashboard <script src="asset.js"> tag, including a version or access token query. */
+def omitDashboardScript(String html, String assetPath) {
+    if (!html || !assetPath) return html
+    def escaped = assetPath.replace(".", "\\.")
+    return html.replaceAll("(?s)<script[^>]*\\ssrc=\"" + escaped + "(\\?[^\"]*)?\"[^>]*>\\s*</script>\\s*", "")
 }
 
 // File Manager asset names (uploaded to /local/)
@@ -3461,6 +3472,9 @@ def renderIndex() {
         html = appendAccessToken(html, "content", "app-holiday.js", token)
         html = appendAccessToken(html, "content", "app-synagogue.js", token)
     }
+    // Optional packages. A missing file must not be requested: Hubitat logs that 404.
+    if (!holidayFilePresent()) html = omitDashboardScript(html, "app-holiday.js")
+    if (!synagogueFilePresent()) html = omitDashboardScript(html, "app-synagogue.js")
     html = rewriteDashboardAssetRefsToFileManager(html)
     renderNoStore("text/html", html, 200)
 }
@@ -3508,14 +3522,28 @@ def renderJsPost3() {
 }
 
 def renderJsHoliday() {
+    if (!holidayFilePresent()) {
+        renderNoStore("application/javascript", "globalThis.mldHolidayMissing=true;", 200)
+        return
+    }
     def js = readLocalAsset(assetJsHolidayFile())
-    if (!js) { js = "globalThis.mldHolidayMissing=true;console.warn('Upload mld-holiday.js to File Manager');" }
+    if (!js) {
+        renderNoStore("application/javascript", "globalThis.mldHolidayMissing=true;", 200)
+        return
+    }
     renderVersionedAsset("application/javascript", js)
 }
 
 def renderJsSynagogue() {
+    if (!synagogueFilePresent()) {
+        renderNoStore("application/javascript", "globalThis.mldSynagogueMissing=true;", 200)
+        return
+    }
     def js = readLocalAsset(assetJsSynagogueFile())
-    if (!js) { js = "globalThis.mldSynagogueMissing=true;console.warn('Upload mld-synagogue.js to File Manager');" }
+    if (!js) {
+        renderNoStore("application/javascript", "globalThis.mldSynagogueMissing=true;", 200)
+        return
+    }
     renderVersionedAsset("application/javascript", js)
 }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.79
+
+- **Thermostats:** Eco can be turned on from a favorite's mode menu. While Eco is on, the favorite, the room icon, and the mode button show Eco in green. Choosing another mode turns Eco off. Eco stays unavailable while the thermostat is off. Update Modern Dashboard.
+
+- **Dashboard:** A dashboard file that is not installed is left out of the page, so the hub does not log a missing-file error for it. Update Modern Dashboard.
+
 ## 0.4.78
 
 - **Dashboard:** A Nest thermostat shows Eco. While Eco is on, the dial shows that range and the usual setpoint stays locked. Favorites show Eco beside the mode. Update Modern Dashboard.
