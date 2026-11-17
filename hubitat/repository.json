@@ -50,6 +50,18 @@
 				"Temperature & Humidity",
 				"Cloud"
 			]
+		},
+		{
+			"id": "e8abccd2-7957-5651-8005-843ba39d4cb9",
+			"name": "Resideo Thermostats Integration",
+			"category": "Integrations",
+			"location": "https://raw.githubusercontent.com/evdev/hubitat-resideo/main/packageManifest.json",
+			"description": "First Alert thermostat and room-sensor integration running directly on Hubitat, with cloud authentication, push updates and polling fallback.",
+			"tags": [
+				"Climate Control",
+				"Temperature & Humidity",
+				"Cloud"
+			]
 		}
 	]
 }
